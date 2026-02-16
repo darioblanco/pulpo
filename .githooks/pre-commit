@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "==> Pre-commit: checking formatting..."
+cargo fmt --all -- --check
+cd web && npx prettier --check . && cd ..
+
+echo "==> Pre-commit: running clippy..."
+cargo clippy --workspace --all-targets -- -D warnings
+
+echo "==> Pre-commit: running ESLint + svelte-check..."
+cd web && npx eslint . && npx svelte-check --tsconfig ./tsconfig.json && cd ..
+
+echo "==> Pre-commit: running tests..."
+cargo test --workspace
+cd web && npx vitest run --passWithNoTests && cd ..
+
+echo "==> All checks passed."
