@@ -1,0 +1,19 @@
+[Unit]
+Description=Pulpo Agent Session Orchestrator
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/pulpod
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=pulpod=info
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=%h/.pulpo
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

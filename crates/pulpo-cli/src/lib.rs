@@ -1,0 +1,3718 @@
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use pulpo_common::api::{AuthTokenResponse, InterventionEventResponse, PeersResponse};
+use pulpo_common::schedule::{Schedule, ScheduleExecution};
+use pulpo_common::session::Session;
+
+#[derive(Parser, Debug)]
+#[command(
+    name = "pulpo",
+    about = "Manage agent sessions across your machines",
+    version
+)]
+pub struct Cli {
+    /// Target node (default: localhost)
+    #[arg(long, default_value = "localhost:7433")]
+    pub node: String,
+
+    /// Auth token (auto-discovered from local daemon if omitted)
+    #[arg(long)]
+    pub token: Option<String>,
+
+    #[command(subcommand)]
+    pub command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Attach to a session's tmux terminal
+    #[command(alias = "a")]
+    Attach {
+        /// Session name or ID
+        name: String,
+    },
+
+    /// Send input to a session
+    #[command(alias = "i")]
+    Input {
+        /// Session name or ID
+        name: String,
+        /// Text to send (sends Enter if omitted)
+        text: Option<String>,
+    },
+
+    /// Spawn a new agent session
+    #[command(alias = "s")]
+    Spawn {
+        /// Working directory
+        #[arg(long)]
+        workdir: String,
+
+        /// Session name (auto-derived from workdir if omitted)
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Agent provider (claude, codex)
+        #[arg(long, default_value = "claude")]
+        provider: String,
+
+        /// Run in autonomous mode (fire-and-forget)
+        #[arg(long)]
+        auto: bool,
+
+        /// Guard preset (strict, standard, yolo)
+        #[arg(long, default_value = "standard")]
+        guard: String,
+
+        /// Model override (e.g. opus, sonnet)
+        #[arg(long)]
+        model: Option<String>,
+
+        /// System prompt to append
+        #[arg(long)]
+        system_prompt: Option<String>,
+
+        /// Explicit allowed tools (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        allowed_tools: Option<Vec<String>>,
+
+        /// Persona name (from config)
+        #[arg(long)]
+        persona: Option<String>,
+
+        /// Maximum agent turns before stopping
+        #[arg(long)]
+        max_turns: Option<u32>,
+
+        /// Maximum budget in USD before stopping
+        #[arg(long)]
+        max_budget: Option<f64>,
+
+        /// Output format (e.g. json, stream-json)
+        #[arg(long)]
+        output_format: Option<String>,
+
+        /// Task prompt
+        prompt: Vec<String>,
+    },
+
+    /// List all sessions
+    #[command(alias = "ls")]
+    List,
+
+    /// Show session logs/output
+    #[command(alias = "l")]
+    Logs {
+        /// Session name or ID
+        name: String,
+
+        /// Number of lines to fetch
+        #[arg(long, default_value = "100")]
+        lines: usize,
+
+        /// Follow output (like `tail -f`)
+        #[arg(short, long)]
+        follow: bool,
+    },
+
+    /// Kill a session
+    #[command(alias = "k")]
+    Kill {
+        /// Session name or ID
+        name: String,
+    },
+
+    /// Permanently remove a session from history
+    #[command(alias = "rm")]
+    Delete {
+        /// Session name or ID
+        name: String,
+    },
+
+    /// Resume a stale session
+    #[command(alias = "r")]
+    Resume {
+        /// Session name or ID
+        name: String,
+    },
+
+    /// List all known nodes
+    #[command(alias = "n")]
+    Nodes,
+
+    /// Show intervention history for a session
+    #[command(alias = "iv")]
+    Interventions {
+        /// Session name or ID
+        name: String,
+    },
+
+    /// Manage scheduled agent runs
+    #[command(alias = "sched")]
+    Schedule {
+        #[command(subcommand)]
+        action: ScheduleAction,
+    },
+
+    /// Open the web dashboard in your browser
+    Ui,
+}
+
+#[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)]
+pub enum ScheduleAction {
+    /// Create a new schedule
+    Create {
+        /// Schedule name (required)
+        #[arg(long)]
+        name: String,
+
+        /// Cron expression, 5-field (required)
+        #[arg(long)]
+        cron: String,
+
+        /// Working directory (required)
+        #[arg(long)]
+        workdir: String,
+
+        /// Agent provider (claude, codex)
+        #[arg(long, default_value = "claude")]
+        provider: String,
+
+        /// Run in autonomous mode
+        #[arg(long)]
+        auto: bool,
+
+        /// Guard preset (strict, standard, yolo)
+        #[arg(long)]
+        guard: Option<String>,
+
+        /// Model override (e.g. opus, sonnet)
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Concurrency policy (skip, allow, replace)
+        #[arg(long, default_value = "skip")]
+        concurrency: String,
+
+        /// Max runs before exhausting
+        #[arg(long)]
+        max_executions: Option<u32>,
+
+        /// Persona name (from config)
+        #[arg(long)]
+        persona: Option<String>,
+
+        /// Maximum agent turns before stopping
+        #[arg(long)]
+        max_turns: Option<u32>,
+
+        /// Maximum budget in USD before stopping
+        #[arg(long)]
+        max_budget: Option<f64>,
+
+        /// Output format (e.g. json, stream-json)
+        #[arg(long)]
+        output_format: Option<String>,
+
+        /// Task prompt
+        prompt: Vec<String>,
+    },
+
+    /// List all schedules
+    #[command(alias = "ls")]
+    List,
+
+    /// Show schedule details
+    Get {
+        /// Schedule name or ID
+        name: String,
+    },
+
+    /// Delete a schedule
+    #[command(alias = "rm")]
+    Delete {
+        /// Schedule name or ID
+        name: String,
+    },
+
+    /// Manually trigger a schedule
+    Run {
+        /// Schedule name or ID
+        name: String,
+    },
+
+    /// Pause a schedule
+    Pause {
+        /// Schedule name or ID
+        name: String,
+    },
+
+    /// Resume a paused schedule
+    Resume {
+        /// Schedule name or ID
+        name: String,
+    },
+
+    /// Show execution history
+    #[command(alias = "hist")]
+    History {
+        /// Schedule name or ID
+        name: String,
+
+        /// Max entries
+        #[arg(long, default_value = "20")]
+        limit: u32,
+    },
+}
+
+/// Format the base URL from the node address.
+pub fn base_url(node: &str) -> String {
+    format!("http://{node}")
+}
+
+/// Response shape for the output endpoint.
+#[derive(serde::Deserialize)]
+struct OutputResponse {
+    output: String,
+}
+
+/// Format a list of sessions as a table.
+fn format_sessions(sessions: &[Session]) -> String {
+    if sessions.is_empty() {
+        return "No sessions.".into();
+    }
+    let mut lines = vec![format!(
+        "{:<20} {:<12} {:<10} {:<14} {}",
+        "NAME", "STATUS", "PROVIDER", "MODE", "PROMPT"
+    )];
+    for s in sessions {
+        let prompt_display = if s.prompt.len() > 40 {
+            format!("{}...", &s.prompt[..37])
+        } else {
+            s.prompt.clone()
+        };
+        let status_display = if s.waiting_for_input {
+            "waiting".to_owned()
+        } else {
+            s.status.to_string()
+        };
+        lines.push(format!(
+            "{:<20} {:<12} {:<10} {:<14} {}",
+            s.name, status_display, s.provider, s.mode, prompt_display
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Format the peers response as a table.
+fn format_nodes(resp: &PeersResponse) -> String {
+    let mut lines = vec![format!(
+        "{:<20} {:<25} {:<10} {}",
+        "NAME", "ADDRESS", "STATUS", "SESSIONS"
+    )];
+    lines.push(format!(
+        "{:<20} {:<25} {:<10} {}",
+        resp.local.name, "(local)", "online", "-"
+    ));
+    for p in &resp.peers {
+        let sessions = p
+            .session_count
+            .map_or_else(|| "-".into(), |c| c.to_string());
+        lines.push(format!(
+            "{:<20} {:<25} {:<10} {}",
+            p.name, p.address, p.status, sessions
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Format intervention events as a table.
+fn format_interventions(events: &[InterventionEventResponse]) -> String {
+    if events.is_empty() {
+        return "No intervention events.".into();
+    }
+    let mut lines = vec![format!("{:<8} {:<20} {}", "ID", "TIMESTAMP", "REASON")];
+    for e in events {
+        lines.push(format!("{:<8} {:<20} {}", e.id, e.created_at, e.reason));
+    }
+    lines.join("\n")
+}
+
+/// Format a list of schedules as a table.
+fn format_schedules(schedules: &[Schedule]) -> String {
+    if schedules.is_empty() {
+        return "No schedules.".into();
+    }
+    let mut lines = vec![format!(
+        "{:<20} {:<10} {:<16} {:<10} {:<6} {}",
+        "NAME", "STATUS", "CRON", "PROVIDER", "RUNS", "PROMPT"
+    )];
+    for s in schedules {
+        let prompt_display = if s.prompt.len() > 30 {
+            format!("{}...", &s.prompt[..27])
+        } else {
+            s.prompt.clone()
+        };
+        lines.push(format!(
+            "{:<20} {:<10} {:<16} {:<10} {:<6} {}",
+            s.name, s.status, s.cron, s.provider, s.execution_count, prompt_display
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Format a list of schedule executions as a table.
+fn format_executions(execs: &[ScheduleExecution]) -> String {
+    if execs.is_empty() {
+        return "No executions.".into();
+    }
+    let mut lines = vec![format!(
+        "{:<6} {:<10} {:<12} {:<38} {}",
+        "ID", "STATUS", "TRIGGER", "SESSION", "TIMESTAMP"
+    )];
+    for e in execs {
+        let session = e.session_id.map_or_else(|| "-".into(), |id| id.to_string());
+        lines.push(format!(
+            "{:<6} {:<10} {:<12} {:<38} {}",
+            e.id, e.status, e.triggered_by, session, e.created_at
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Build the command to open a URL in the default browser.
+#[cfg_attr(coverage, allow(dead_code))]
+fn build_open_command(url: &str) -> std::process::Command {
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg(url);
+        cmd
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(url);
+        cmd
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        // Fallback: try xdg-open
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(url);
+        cmd
+    }
+}
+
+/// Open a URL in the default browser.
+#[cfg(not(coverage))]
+fn open_browser(url: &str) -> Result<()> {
+    build_open_command(url).status()?;
+    Ok(())
+}
+
+/// Stub for coverage builds — avoids opening a browser during tests.
+#[cfg(coverage)]
+fn open_browser(_url: &str) -> Result<()> {
+    Ok(())
+}
+
+/// Build the command to attach to a tmux session.
+#[cfg_attr(coverage, allow(dead_code))]
+fn build_attach_command(name: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new("tmux");
+    cmd.args(["attach-session", "-t", &format!("pulpo-{name}")]);
+    cmd
+}
+
+/// Attach to a session's tmux terminal.
+#[cfg(not(any(test, coverage)))]
+fn attach_session(name: &str) -> Result<()> {
+    let status = build_attach_command(name).status()?;
+    if !status.success() {
+        anyhow::bail!("tmux exited with {status}");
+    }
+    Ok(())
+}
+
+/// Stub for test and coverage builds — avoids spawning tmux during tests.
+#[cfg(any(test, coverage))]
+#[allow(clippy::unnecessary_wraps, clippy::missing_const_for_fn)]
+fn attach_session(_name: &str) -> Result<()> {
+    Ok(())
+}
+
+/// Extract a clean error message from an API JSON response (or fall back to raw text).
+fn api_error(text: &str) -> anyhow::Error {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v["error"].as_str().map(String::from))
+        .map_or_else(|| anyhow::anyhow!("{text}"), |msg| anyhow::anyhow!("{msg}"))
+}
+
+/// Return the response body text, or a clean error if the response was non-success.
+async fn ok_or_api_error(resp: reqwest::Response) -> Result<String> {
+    if resp.status().is_success() {
+        Ok(resp.text().await?)
+    } else {
+        let text = resp.text().await?;
+        Err(api_error(&text))
+    }
+}
+
+/// Map a reqwest error to a user-friendly message.
+fn friendly_error(err: &reqwest::Error, node: &str) -> anyhow::Error {
+    if err.is_connect() {
+        anyhow::anyhow!(
+            "Could not connect to pulpod at {node}. Is the daemon running?\nStart it with: brew services start pulpo"
+        )
+    } else {
+        anyhow::anyhow!("Network error connecting to {node}: {err}")
+    }
+}
+
+/// Check if the node address points to localhost.
+fn is_localhost(node: &str) -> bool {
+    let host = node.split(':').next().unwrap_or(node);
+    host == "localhost" || host == "127.0.0.1" || node.starts_with("[::1]") || node == "::1"
+}
+
+/// Try to auto-discover the auth token from a local daemon.
+async fn discover_token(client: &reqwest::Client, base: &str) -> Option<String> {
+    let resp = client
+        .get(format!("{base}/api/v1/auth/token"))
+        .send()
+        .await
+        .ok()?;
+    let body: AuthTokenResponse = resp.json().await.ok()?;
+    if body.token.is_empty() {
+        None
+    } else {
+        Some(body.token)
+    }
+}
+
+/// Resolve the auth token: use explicit `--token`, auto-discover from localhost, or `None`.
+async fn resolve_token(
+    client: &reqwest::Client,
+    base: &str,
+    node: &str,
+    explicit: Option<&str>,
+) -> Option<String> {
+    if let Some(t) = explicit {
+        return Some(t.to_owned());
+    }
+    if is_localhost(node) {
+        return discover_token(client, base).await;
+    }
+    None
+}
+
+/// Build an authenticated GET request.
+fn authed_get(
+    client: &reqwest::Client,
+    url: String,
+    token: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let req = client.get(url);
+    if let Some(t) = token {
+        req.bearer_auth(t)
+    } else {
+        req
+    }
+}
+
+/// Build an authenticated POST request.
+fn authed_post(
+    client: &reqwest::Client,
+    url: String,
+    token: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let req = client.post(url);
+    if let Some(t) = token {
+        req.bearer_auth(t)
+    } else {
+        req
+    }
+}
+
+/// Build an authenticated DELETE request.
+fn authed_delete(
+    client: &reqwest::Client,
+    url: String,
+    token: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let req = client.delete(url);
+    if let Some(t) = token {
+        req.bearer_auth(t)
+    } else {
+        req
+    }
+}
+
+/// Fetch session output from the API.
+async fn fetch_output(
+    client: &reqwest::Client,
+    base: &str,
+    name: &str,
+    lines: usize,
+    token: Option<&str>,
+) -> Result<String> {
+    let resp = authed_get(
+        client,
+        format!("{base}/api/v1/sessions/{name}/output?lines={lines}"),
+        token,
+    )
+    .send()
+    .await?;
+    let text = ok_or_api_error(resp).await?;
+    let output: OutputResponse = serde_json::from_str(&text)?;
+    Ok(output.output)
+}
+
+/// Fetch session status from the API.
+async fn fetch_session_status(
+    client: &reqwest::Client,
+    base: &str,
+    name: &str,
+    token: Option<&str>,
+) -> Result<String> {
+    let resp = authed_get(client, format!("{base}/api/v1/sessions/{name}"), token)
+        .send()
+        .await?;
+    let text = ok_or_api_error(resp).await?;
+    let session: Session = serde_json::from_str(&text)?;
+    Ok(session.status.to_string())
+}
+
+/// Compute the new trailing lines that differ from the previous output.
+///
+/// The output endpoint returns the last N lines from the tmux pane. As new lines
+/// appear, old lines at the top scroll off. We find the overlap between the end
+/// of `prev` and the beginning-to-middle of `new`, then return only the truly new
+/// trailing lines.
+fn diff_output<'a>(prev: &str, new: &'a str) -> &'a str {
+    if prev.is_empty() {
+        return new;
+    }
+
+    let prev_lines: Vec<&str> = prev.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+
+    if new_lines.is_empty() {
+        return "";
+    }
+
+    // prev is non-empty (early return above), so last() always succeeds
+    let last_prev = prev_lines[prev_lines.len() - 1];
+
+    // Find the last line of prev in new to determine the overlap boundary
+    for i in (0..new_lines.len()).rev() {
+        if new_lines[i] == last_prev {
+            // Verify contiguous overlap: check that lines before this match too
+            let overlap_len = prev_lines.len().min(i + 1);
+            let prev_tail = &prev_lines[prev_lines.len() - overlap_len..];
+            let new_overlap = &new_lines[i + 1 - overlap_len..=i];
+            if prev_tail == new_overlap {
+                if i + 1 < new_lines.len() {
+                    // Return the slice of `new` after the overlap
+                    let consumed: usize = new_lines[..=i].iter().map(|l| l.len() + 1).sum();
+                    return new.get(consumed.min(new.len())..).unwrap_or("");
+                }
+                return "";
+            }
+        }
+    }
+
+    // No overlap found — output changed completely, print it all
+    new
+}
+
+/// Follow logs by polling, printing only new output. Returns when the session ends.
+async fn follow_logs(
+    client: &reqwest::Client,
+    base: &str,
+    name: &str,
+    lines: usize,
+    token: Option<&str>,
+    writer: &mut (dyn std::io::Write + Send),
+) -> Result<()> {
+    let mut prev_output = fetch_output(client, base, name, lines, token).await?;
+    write!(writer, "{prev_output}")?;
+
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+
+        // Check session status
+        let status = fetch_session_status(client, base, name, token).await?;
+        let is_terminal = status == "completed" || status == "dead" || status == "stale";
+
+        // Fetch latest output
+        let new_output = fetch_output(client, base, name, lines, token).await?;
+
+        let diff = diff_output(&prev_output, &new_output);
+        if !diff.is_empty() {
+            write!(writer, "{diff}")?;
+        }
+        prev_output = new_output;
+
+        if is_terminal {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Execute the given CLI command against the specified node.
+#[allow(clippy::too_many_lines)]
+pub async fn execute(cli: &Cli) -> Result<String> {
+    let url = base_url(&cli.node);
+    let client = reqwest::Client::new();
+    let node = &cli.node;
+    let token = resolve_token(&client, &url, node, cli.token.as_deref()).await;
+
+    match &cli.command {
+        Commands::Attach { name } => {
+            attach_session(name)?;
+            Ok(format!("Detached from session {name}."))
+        }
+        Commands::Input { name, text } => {
+            let input_text = text.as_deref().unwrap_or("\n");
+            let body = serde_json::json!({ "text": input_text });
+            let resp = authed_post(
+                &client,
+                format!("{url}/api/v1/sessions/{name}/input"),
+                token.as_deref(),
+            )
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| friendly_error(&e, node))?;
+            ok_or_api_error(resp).await?;
+            Ok(format!("Sent input to session {name}."))
+        }
+        Commands::List => {
+            let resp = authed_get(&client, format!("{url}/api/v1/sessions"), token.as_deref())
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let sessions: Vec<Session> = serde_json::from_str(&text)?;
+            Ok(format_sessions(&sessions))
+        }
+        Commands::Nodes => {
+            let resp = authed_get(&client, format!("{url}/api/v1/peers"), token.as_deref())
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let resp: PeersResponse = serde_json::from_str(&text)?;
+            Ok(format_nodes(&resp))
+        }
+        Commands::Spawn {
+            workdir,
+            name,
+            provider,
+            auto,
+            guard,
+            model,
+            system_prompt,
+            allowed_tools,
+            persona,
+            max_turns,
+            max_budget,
+            output_format,
+            prompt,
+        } => {
+            let prompt_text = prompt.join(" ");
+            let mode = if *auto { "autonomous" } else { "interactive" };
+            let mut body = serde_json::json!({
+                "workdir": workdir,
+                "provider": provider,
+                "prompt": prompt_text,
+                "mode": mode,
+                "guard_preset": guard,
+            });
+            if let Some(n) = name {
+                body["name"] = serde_json::json!(n);
+            }
+            if let Some(m) = model {
+                body["model"] = serde_json::json!(m);
+            }
+            if let Some(sp) = system_prompt {
+                body["system_prompt"] = serde_json::json!(sp);
+            }
+            if let Some(tools) = allowed_tools {
+                body["allowed_tools"] = serde_json::json!(tools);
+            }
+            if let Some(p) = persona {
+                body["persona"] = serde_json::json!(p);
+            }
+            if let Some(mt) = max_turns {
+                body["max_turns"] = serde_json::json!(mt);
+            }
+            if let Some(mb) = max_budget {
+                body["max_budget_usd"] = serde_json::json!(mb);
+            }
+            if let Some(of) = output_format {
+                body["output_format"] = serde_json::json!(of);
+            }
+            let resp = authed_post(&client, format!("{url}/api/v1/sessions"), token.as_deref())
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let session: Session = serde_json::from_str(&text)?;
+            Ok(format!(
+                "Created session \"{}\" ({})",
+                session.name, session.id
+            ))
+        }
+        Commands::Kill { name } => {
+            let resp = authed_post(
+                &client,
+                format!("{url}/api/v1/sessions/{name}/kill"),
+                token.as_deref(),
+            )
+            .send()
+            .await
+            .map_err(|e| friendly_error(&e, node))?;
+            ok_or_api_error(resp).await?;
+            Ok(format!("Session {name} killed."))
+        }
+        Commands::Delete { name } => {
+            let resp = authed_delete(
+                &client,
+                format!("{url}/api/v1/sessions/{name}"),
+                token.as_deref(),
+            )
+            .send()
+            .await
+            .map_err(|e| friendly_error(&e, node))?;
+            ok_or_api_error(resp).await?;
+            Ok(format!("Session {name} deleted."))
+        }
+        Commands::Logs {
+            name,
+            lines,
+            follow,
+        } => {
+            if *follow {
+                let mut stdout = std::io::stdout();
+                follow_logs(&client, &url, name, *lines, token.as_deref(), &mut stdout)
+                    .await
+                    .map_err(|e| {
+                        // Unwrap reqwest errors to friendly messages
+                        match e.downcast::<reqwest::Error>() {
+                            Ok(re) => friendly_error(&re, node),
+                            Err(other) => other,
+                        }
+                    })?;
+                Ok(String::new())
+            } else {
+                let output = fetch_output(&client, &url, name, *lines, token.as_deref())
+                    .await
+                    .map_err(|e| match e.downcast::<reqwest::Error>() {
+                        Ok(re) => friendly_error(&re, node),
+                        Err(other) => other,
+                    })?;
+                Ok(output)
+            }
+        }
+        Commands::Interventions { name } => {
+            let resp = authed_get(
+                &client,
+                format!("{url}/api/v1/sessions/{name}/interventions"),
+                token.as_deref(),
+            )
+            .send()
+            .await
+            .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let events: Vec<InterventionEventResponse> = serde_json::from_str(&text)?;
+            Ok(format_interventions(&events))
+        }
+        Commands::Ui => {
+            let dashboard = base_url(&cli.node);
+            open_browser(&dashboard)?;
+            Ok(format!("Opening {dashboard}"))
+        }
+        Commands::Resume { name } => {
+            let resp = authed_post(
+                &client,
+                format!("{url}/api/v1/sessions/{name}/resume"),
+                token.as_deref(),
+            )
+            .send()
+            .await
+            .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let session: Session = serde_json::from_str(&text)?;
+            Ok(format!("Resumed session \"{}\"", session.name))
+        }
+        Commands::Schedule { action } => {
+            execute_schedule(action, &client, &url, node, token.as_deref()).await
+        }
+    }
+}
+
+/// Execute a schedule subcommand.
+#[allow(clippy::too_many_lines)]
+async fn execute_schedule(
+    action: &ScheduleAction,
+    client: &reqwest::Client,
+    url: &str,
+    node: &str,
+    token: Option<&str>,
+) -> Result<String> {
+    match action {
+        ScheduleAction::Create {
+            name,
+            cron,
+            workdir,
+            provider,
+            auto,
+            guard,
+            model,
+            concurrency,
+            max_executions,
+            persona,
+            max_turns,
+            max_budget,
+            output_format,
+            prompt,
+        } => {
+            let prompt_text = prompt.join(" ");
+            let mode = if *auto { "autonomous" } else { "interactive" };
+            let mut body = serde_json::json!({
+                "name": name,
+                "cron": cron,
+                "workdir": workdir,
+                "provider": provider,
+                "prompt": prompt_text,
+                "mode": mode,
+                "concurrency": concurrency,
+            });
+            if let Some(g) = guard {
+                body["guard_preset"] = serde_json::json!(g);
+            }
+            if let Some(m) = model {
+                body["model"] = serde_json::json!(m);
+            }
+            if let Some(max) = max_executions {
+                body["max_executions"] = serde_json::json!(max);
+            }
+            if let Some(p) = persona {
+                body["persona"] = serde_json::json!(p);
+            }
+            if let Some(mt) = max_turns {
+                body["max_turns"] = serde_json::json!(mt);
+            }
+            if let Some(mb) = max_budget {
+                body["max_budget_usd"] = serde_json::json!(mb);
+            }
+            if let Some(of) = output_format {
+                body["output_format"] = serde_json::json!(of);
+            }
+            let resp = authed_post(client, format!("{url}/api/v1/schedules"), token)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let sched: Schedule = serde_json::from_str(&text)?;
+            Ok(format!(
+                "Created schedule \"{}\" ({})",
+                sched.name, sched.id
+            ))
+        }
+        ScheduleAction::List => {
+            let resp = authed_get(client, format!("{url}/api/v1/schedules"), token)
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let schedules: Vec<Schedule> = serde_json::from_str(&text)?;
+            Ok(format_schedules(&schedules))
+        }
+        ScheduleAction::Get { name } => {
+            let resp = authed_get(client, format!("{url}/api/v1/schedules/{name}"), token)
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let sched: Schedule = serde_json::from_str(&text)?;
+            let next = sched
+                .next_run_at
+                .map_or_else(|| "-".into(), |t| t.to_string());
+            let last = sched
+                .last_run_at
+                .map_or_else(|| "-".into(), |t| t.to_string());
+            Ok(format!(
+                "Name:        {}\nStatus:      {}\nCron:        {}\nProvider:    {}\nMode:        {}\nConcurrency: {}\nRuns:        {}{}\nNext run:    {}\nLast run:    {}\nPrompt:      {}",
+                sched.name,
+                sched.status,
+                sched.cron,
+                sched.provider,
+                sched.mode,
+                sched.concurrency,
+                sched.execution_count,
+                sched
+                    .max_executions
+                    .map_or_else(String::new, |m| format!("/{m}")),
+                next,
+                last,
+                sched.prompt,
+            ))
+        }
+        ScheduleAction::Delete { name } => {
+            let resp = authed_delete(client, format!("{url}/api/v1/schedules/{name}"), token)
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+            ok_or_api_error(resp).await?;
+            Ok(format!("Schedule {name} deleted."))
+        }
+        ScheduleAction::Run { name } => {
+            let resp = authed_post(client, format!("{url}/api/v1/schedules/{name}/run"), token)
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let result: serde_json::Value = serde_json::from_str(&text)?;
+            let status = result["status"].as_str().unwrap_or("unknown");
+            Ok(result["session_id"].as_str().map_or_else(
+                || format!("Schedule {name}: {status}"),
+                |session_id| format!("Schedule {name} triggered: {status} (session {session_id})"),
+            ))
+        }
+        ScheduleAction::Pause { name } => {
+            let resp = authed_post(
+                client,
+                format!("{url}/api/v1/schedules/{name}/pause"),
+                token,
+            )
+            .send()
+            .await
+            .map_err(|e| friendly_error(&e, node))?;
+            ok_or_api_error(resp).await?;
+            Ok(format!("Schedule {name} paused."))
+        }
+        ScheduleAction::Resume { name } => {
+            let resp = authed_post(
+                client,
+                format!("{url}/api/v1/schedules/{name}/resume"),
+                token,
+            )
+            .send()
+            .await
+            .map_err(|e| friendly_error(&e, node))?;
+            ok_or_api_error(resp).await?;
+            Ok(format!("Schedule {name} resumed."))
+        }
+        ScheduleAction::History { name, limit } => {
+            let resp = authed_get(
+                client,
+                format!("{url}/api/v1/schedules/{name}/executions?limit={limit}"),
+                token,
+            )
+            .send()
+            .await
+            .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let execs: Vec<ScheduleExecution> = serde_json::from_str(&text)?;
+            Ok(format_executions(&execs))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_base_url() {
+        assert_eq!(base_url("localhost:7433"), "http://localhost:7433");
+        assert_eq!(base_url("my-machine:9999"), "http://my-machine:9999");
+    }
+
+    #[test]
+    fn test_cli_parse_list() {
+        let cli = Cli::try_parse_from(["pulpo", "list"]).unwrap();
+        assert_eq!(cli.node, "localhost:7433");
+        assert!(matches!(cli.command, Commands::List));
+    }
+
+    #[test]
+    fn test_cli_parse_nodes() {
+        let cli = Cli::try_parse_from(["pulpo", "nodes"]).unwrap();
+        assert!(matches!(cli.command, Commands::Nodes));
+    }
+
+    #[test]
+    fn test_cli_parse_ui() {
+        let cli = Cli::try_parse_from(["pulpo", "ui"]).unwrap();
+        assert!(matches!(cli.command, Commands::Ui));
+    }
+
+    #[test]
+    fn test_cli_parse_ui_custom_node() {
+        let cli = Cli::try_parse_from(["pulpo", "--node", "mac-mini:7433", "ui"]).unwrap();
+        assert!(matches!(cli.command, Commands::Ui));
+        assert_eq!(cli.node, "mac-mini:7433");
+    }
+
+    #[test]
+    fn test_build_open_command() {
+        let cmd = build_open_command("http://localhost:7433");
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(args, vec!["http://localhost:7433"]);
+        #[cfg(target_os = "macos")]
+        assert_eq!(cmd.get_program(), "open");
+        #[cfg(target_os = "linux")]
+        assert_eq!(cmd.get_program(), "xdg-open");
+    }
+
+    #[test]
+    fn test_cli_parse_spawn() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "spawn",
+            "--workdir",
+            "/tmp/repo",
+            "Fix",
+            "the",
+            "bug",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { workdir, provider, auto, guard, prompt, .. }
+                if workdir == "/tmp/repo" && provider == "claude" && !auto
+                && guard == "standard" && prompt == &["Fix", "the", "bug"]
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_with_provider() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "spawn",
+            "--workdir",
+            "/tmp",
+            "--provider",
+            "codex",
+            "Do it",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { provider, .. } if provider == "codex"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_auto() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "--workdir", "/tmp", "--auto", "Do it"])
+            .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { auto, .. } if *auto
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_with_guard() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "spawn",
+            "--workdir",
+            "/tmp",
+            "--guard",
+            "strict",
+            "Do it",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { guard, .. } if guard == "strict"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_guard_default() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "--workdir", "/tmp", "Do it"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { guard, .. } if guard == "standard"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_with_name() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "spawn",
+            "--workdir",
+            "/tmp/repo",
+            "--name",
+            "my-task",
+            "Fix it",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { workdir, name, .. }
+                if workdir == "/tmp/repo" && name.as_deref() == Some("my-task")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_without_name() {
+        let cli =
+            Cli::try_parse_from(["pulpo", "spawn", "--workdir", "/tmp/repo", "Fix it"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { name, .. } if name.is_none()
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_logs() {
+        let cli = Cli::try_parse_from(["pulpo", "logs", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Logs { name, lines, follow } if name == "my-session" && *lines == 100 && !follow
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_logs_with_lines() {
+        let cli = Cli::try_parse_from(["pulpo", "logs", "my-session", "--lines", "50"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Logs { name, lines, follow } if name == "my-session" && *lines == 50 && !follow
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_logs_follow() {
+        let cli = Cli::try_parse_from(["pulpo", "logs", "my-session", "--follow"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Logs { name, follow, .. } if name == "my-session" && *follow
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_logs_follow_short() {
+        let cli = Cli::try_parse_from(["pulpo", "logs", "my-session", "-f"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Logs { name, follow, .. } if name == "my-session" && *follow
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_kill() {
+        let cli = Cli::try_parse_from(["pulpo", "kill", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Kill { name } if name == "my-session"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_delete() {
+        let cli = Cli::try_parse_from(["pulpo", "delete", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Delete { name } if name == "my-session"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_resume() {
+        let cli = Cli::try_parse_from(["pulpo", "resume", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Resume { name } if name == "my-session"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_input() {
+        let cli = Cli::try_parse_from(["pulpo", "input", "my-session", "yes"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Input { name, text } if name == "my-session" && text.as_deref() == Some("yes")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_input_no_text() {
+        let cli = Cli::try_parse_from(["pulpo", "input", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Input { name, text } if name == "my-session" && text.is_none()
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_input_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "i", "my-session", "y"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Input { name, text } if name == "my-session" && text.as_deref() == Some("y")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_custom_node() {
+        let cli = Cli::try_parse_from(["pulpo", "--node", "win-pc:8080", "list"]).unwrap();
+        assert_eq!(cli.node, "win-pc:8080");
+    }
+
+    #[test]
+    fn test_cli_version() {
+        let result = Cli::try_parse_from(["pulpo", "--version"]);
+        // clap exits with an error (kind DisplayVersion) when --version is used
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+    }
+
+    #[test]
+    fn test_cli_parse_no_subcommand_fails() {
+        let result = Cli::try_parse_from(["pulpo"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cli_debug() {
+        let cli = Cli::try_parse_from(["pulpo", "list"]).unwrap();
+        let debug = format!("{cli:?}");
+        assert!(debug.contains("List"));
+    }
+
+    #[test]
+    fn test_commands_debug() {
+        let cmd = Commands::List;
+        assert_eq!(format!("{cmd:?}"), "List");
+    }
+
+    /// A valid Session JSON for test responses.
+    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","provider":"claude","prompt":"Fix bug","status":"running","mode":"interactive","conversation_id":null,"exit_code":null,"tmux_session":null,"output_snapshot":null,"git_branch":null,"git_sha":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"recovery_count":0,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+
+    /// Start a lightweight test HTTP server and return its address.
+    async fn start_test_server() -> String {
+        use axum::http::StatusCode;
+        use axum::{
+            Json, Router,
+            routing::{delete, get, post},
+        };
+
+        let session_json = TEST_SESSION_JSON;
+
+        let app = Router::new()
+            .route(
+                "/api/v1/sessions",
+                get(|| async { Json::<Vec<()>>(vec![]) }).post(move || async move {
+                    (StatusCode::CREATED, session_json.to_owned())
+                }),
+            )
+            .route(
+                "/api/v1/sessions/{id}",
+                delete(|| async { StatusCode::NO_CONTENT }),
+            )
+            .route(
+                "/api/v1/sessions/{id}/kill",
+                post(|| async { StatusCode::NO_CONTENT }),
+            )
+            .route(
+                "/api/v1/sessions/{id}/output",
+                get(|| async { r#"{"output":"test output"}"#.to_owned() }),
+            )
+            .route(
+                "/api/v1/peers",
+                get(|| async {
+                    r#"{"local":{"name":"test","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":0,"gpu":null},"peers":[]}"#.to_owned()
+                }),
+            )
+            .route(
+                "/api/v1/sessions/{id}/resume",
+                axum::routing::post(move || async move { session_json.to_owned() }),
+            )
+            .route(
+                "/api/v1/sessions/{id}/interventions",
+                get(|| async { "[]".to_owned() }),
+            )
+            .route(
+                "/api/v1/sessions/{id}/input",
+                post(|| async { StatusCode::NO_CONTENT }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        format!("127.0.0.1:{}", addr.port())
+    }
+
+    #[tokio::test]
+    async fn test_execute_list_success() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::List,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert_eq!(result, "No sessions.");
+    }
+
+    #[tokio::test]
+    async fn test_execute_nodes_success() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Nodes,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("test"));
+        assert!(result.contains("(local)"));
+        assert!(result.contains("NAME"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_spawn_success() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Spawn {
+                workdir: "/tmp/repo".into(),
+                name: None,
+                provider: "claude".into(),
+                auto: false,
+                guard: "standard".into(),
+                model: None,
+                system_prompt: None,
+                allowed_tools: None,
+                persona: None,
+                max_turns: None,
+                max_budget: None,
+                output_format: None,
+                prompt: vec!["Fix".into(), "bug".into()],
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Created session"));
+        assert!(result.contains("repo"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_spawn_with_all_new_flags() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Spawn {
+                workdir: "/tmp/repo".into(),
+                name: None,
+                provider: "claude".into(),
+                auto: false,
+                guard: "standard".into(),
+                model: Some("opus".into()),
+                system_prompt: Some("Be helpful".into()),
+                allowed_tools: Some(vec!["Read".into(), "Write".into()]),
+                persona: Some("coder".into()),
+                max_turns: Some(5),
+                max_budget: Some(2.5),
+                output_format: Some("json".into()),
+                prompt: vec!["Fix".into(), "bug".into()],
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Created session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_spawn_auto_mode() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Spawn {
+                workdir: "/tmp/repo".into(),
+                name: None,
+                provider: "claude".into(),
+                auto: true,
+                guard: "standard".into(),
+                model: None,
+                system_prompt: None,
+                allowed_tools: None,
+                persona: None,
+                max_turns: None,
+                max_budget: None,
+                output_format: None,
+                prompt: vec!["Do it".into()],
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Created session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_spawn_with_name() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Spawn {
+                workdir: "/tmp/repo".into(),
+                name: Some("my-task".into()),
+                provider: "claude".into(),
+                auto: false,
+                guard: "standard".into(),
+                model: None,
+                system_prompt: None,
+                allowed_tools: None,
+                persona: None,
+                max_turns: None,
+                max_budget: None,
+                output_format: None,
+                prompt: vec!["Fix".into(), "bug".into()],
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Created session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_kill_success() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Kill {
+                name: "test-session".into(),
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("killed"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_delete_success() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Delete {
+                name: "test-session".into(),
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("deleted"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_logs_success() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Logs {
+                name: "test-session".into(),
+                lines: 50,
+                follow: false,
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("test output"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_list_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::List,
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Could not connect to pulpod"),
+            "Expected friendly error, got: {err}"
+        );
+        assert!(err.contains("localhost:1"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_nodes_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Nodes,
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_kill_error_response() {
+        use axum::{Router, http::StatusCode, routing::post};
+
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}/kill",
+            post(|| async {
+                (
+                    StatusCode::NOT_FOUND,
+                    "{\"error\":\"session not found: test-session\"}",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Kill {
+                name: "test-session".into(),
+            },
+        };
+        let err = execute(&cli).await.unwrap_err();
+        assert_eq!(err.to_string(), "session not found: test-session");
+    }
+
+    #[tokio::test]
+    async fn test_execute_delete_error_response() {
+        use axum::{Router, http::StatusCode, routing::delete};
+
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}",
+            delete(|| async {
+                (
+                    StatusCode::CONFLICT,
+                    "{\"error\":\"cannot delete session in 'running' state\"}",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Delete {
+                name: "test-session".into(),
+            },
+        };
+        let err = execute(&cli).await.unwrap_err();
+        assert_eq!(err.to_string(), "cannot delete session in 'running' state");
+    }
+
+    #[tokio::test]
+    async fn test_execute_logs_error_response() {
+        use axum::{Router, http::StatusCode, routing::get};
+
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}/output",
+            get(|| async {
+                (
+                    StatusCode::NOT_FOUND,
+                    "{\"error\":\"session not found: ghost\"}",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Logs {
+                name: "ghost".into(),
+                lines: 50,
+                follow: false,
+            },
+        };
+        let err = execute(&cli).await.unwrap_err();
+        assert_eq!(err.to_string(), "session not found: ghost");
+    }
+
+    #[tokio::test]
+    async fn test_execute_resume_error_response() {
+        use axum::{Router, http::StatusCode, routing::post};
+
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}/resume",
+            post(|| async {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "{\"error\":\"session is not stale (status: running)\"}",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Resume {
+                name: "test-session".into(),
+            },
+        };
+        let err = execute(&cli).await.unwrap_err();
+        assert_eq!(err.to_string(), "session is not stale (status: running)");
+    }
+
+    #[tokio::test]
+    async fn test_execute_spawn_error_response() {
+        use axum::{Router, http::StatusCode, routing::post};
+
+        let app = Router::new().route(
+            "/api/v1/sessions",
+            post(|| async {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "{\"error\":\"failed to spawn session\"}",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Spawn {
+                workdir: "/tmp/repo".into(),
+                name: None,
+                provider: "claude".into(),
+                auto: false,
+                guard: "standard".into(),
+                model: None,
+                system_prompt: None,
+                allowed_tools: None,
+                persona: None,
+                max_turns: None,
+                max_budget: None,
+                output_format: None,
+                prompt: vec!["test".into()],
+            },
+        };
+        let err = execute(&cli).await.unwrap_err();
+        assert_eq!(err.to_string(), "failed to spawn session");
+    }
+
+    #[tokio::test]
+    async fn test_execute_interventions_error_response() {
+        use axum::{Router, http::StatusCode, routing::get};
+
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}/interventions",
+            get(|| async {
+                (
+                    StatusCode::NOT_FOUND,
+                    "{\"error\":\"session not found: ghost\"}",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Interventions {
+                name: "ghost".into(),
+            },
+        };
+        let err = execute(&cli).await.unwrap_err();
+        assert_eq!(err.to_string(), "session not found: ghost");
+    }
+
+    #[tokio::test]
+    async fn test_execute_resume_success() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Resume {
+                name: "test-session".into(),
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Resumed session"));
+        assert!(result.contains("repo"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_input_success() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Input {
+                name: "test-session".into(),
+                text: Some("yes".into()),
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Sent input to session test-session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_input_no_text() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Input {
+                name: "test-session".into(),
+                text: None,
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Sent input to session test-session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_input_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Input {
+                name: "test".into(),
+                text: Some("y".into()),
+            },
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_input_error_response() {
+        use axum::{Router, http::StatusCode, routing::post};
+
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}/input",
+            post(|| async {
+                (
+                    StatusCode::NOT_FOUND,
+                    "{\"error\":\"session not found: ghost\"}",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Input {
+                name: "ghost".into(),
+                text: Some("y".into()),
+            },
+        };
+        let err = execute(&cli).await.unwrap_err();
+        assert_eq!(err.to_string(), "session not found: ghost");
+    }
+
+    #[tokio::test]
+    async fn test_execute_ui() {
+        let cli = Cli {
+            node: "localhost:7433".into(),
+            token: None,
+            command: Commands::Ui,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Opening"));
+        assert!(result.contains("http://localhost:7433"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_ui_custom_node() {
+        let cli = Cli {
+            node: "mac-mini:7433".into(),
+            token: None,
+            command: Commands::Ui,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("http://mac-mini:7433"));
+    }
+
+    #[test]
+    fn test_format_sessions_empty() {
+        assert_eq!(format_sessions(&[]), "No sessions.");
+    }
+
+    #[test]
+    fn test_format_sessions_with_data() {
+        use chrono::Utc;
+        use pulpo_common::session::{Provider, SessionMode, SessionStatus};
+        use uuid::Uuid;
+
+        let sessions = vec![Session {
+            id: Uuid::nil(),
+            name: "my-api".into(),
+            workdir: "/tmp/repo".into(),
+            provider: Provider::Claude,
+            prompt: "Fix the bug".into(),
+            status: SessionStatus::Running,
+            mode: SessionMode::Interactive,
+            conversation_id: None,
+            exit_code: None,
+            tmux_session: None,
+            output_snapshot: None,
+            git_branch: None,
+            git_sha: None,
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            persona: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            intervention_reason: None,
+            intervention_at: None,
+            recovery_count: 0,
+            last_output_at: None,
+            idle_since: None,
+            waiting_for_input: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_sessions(&sessions);
+        assert!(output.contains("NAME"));
+        assert!(output.contains("my-api"));
+        assert!(output.contains("running"));
+        assert!(output.contains("claude"));
+        assert!(output.contains("Fix the bug"));
+    }
+
+    #[test]
+    fn test_format_sessions_long_prompt_truncated() {
+        use chrono::Utc;
+        use pulpo_common::session::{Provider, SessionMode, SessionStatus};
+        use uuid::Uuid;
+
+        let sessions = vec![Session {
+            id: Uuid::nil(),
+            name: "test".into(),
+            workdir: "/tmp".into(),
+            provider: Provider::Codex,
+            prompt: "A very long prompt that exceeds forty characters in total length".into(),
+            status: SessionStatus::Completed,
+            mode: SessionMode::Autonomous,
+            conversation_id: None,
+            exit_code: None,
+            tmux_session: None,
+            output_snapshot: None,
+            git_branch: None,
+            git_sha: None,
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            persona: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            intervention_reason: None,
+            intervention_at: None,
+            recovery_count: 0,
+            last_output_at: None,
+            idle_since: None,
+            waiting_for_input: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_sessions(&sessions);
+        assert!(output.contains("..."));
+    }
+
+    #[test]
+    fn test_format_sessions_waiting_for_input() {
+        use chrono::Utc;
+        use pulpo_common::session::{Provider, SessionMode, SessionStatus};
+        use uuid::Uuid;
+
+        let sessions = vec![Session {
+            id: Uuid::nil(),
+            name: "blocked".into(),
+            workdir: "/tmp".into(),
+            provider: Provider::Claude,
+            prompt: "Fix bug".into(),
+            status: SessionStatus::Running,
+            mode: SessionMode::Interactive,
+            conversation_id: None,
+            exit_code: None,
+            tmux_session: None,
+            output_snapshot: None,
+            git_branch: None,
+            git_sha: None,
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            persona: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            intervention_reason: None,
+            intervention_at: None,
+            recovery_count: 0,
+            last_output_at: None,
+            idle_since: None,
+            waiting_for_input: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_sessions(&sessions);
+        assert!(output.contains("waiting"));
+        assert!(!output.contains("running"));
+    }
+
+    #[test]
+    fn test_format_nodes() {
+        use pulpo_common::node::NodeInfo;
+        use pulpo_common::peer::{PeerInfo, PeerSource, PeerStatus};
+
+        let resp = PeersResponse {
+            local: NodeInfo {
+                name: "mac-mini".into(),
+                hostname: "h".into(),
+                os: "macos".into(),
+                arch: "arm64".into(),
+                cpus: 8,
+                memory_mb: 16384,
+                gpu: None,
+            },
+            peers: vec![PeerInfo {
+                name: "win-pc".into(),
+                address: "win-pc:7433".into(),
+                status: PeerStatus::Online,
+                node_info: None,
+                session_count: Some(3),
+                source: PeerSource::Configured,
+            }],
+        };
+        let output = format_nodes(&resp);
+        assert!(output.contains("mac-mini"));
+        assert!(output.contains("(local)"));
+        assert!(output.contains("win-pc"));
+        assert!(output.contains('3'));
+    }
+
+    #[test]
+    fn test_format_nodes_no_session_count() {
+        use pulpo_common::node::NodeInfo;
+        use pulpo_common::peer::{PeerInfo, PeerSource, PeerStatus};
+
+        let resp = PeersResponse {
+            local: NodeInfo {
+                name: "local".into(),
+                hostname: "h".into(),
+                os: "linux".into(),
+                arch: "x86_64".into(),
+                cpus: 4,
+                memory_mb: 8192,
+                gpu: None,
+            },
+            peers: vec![PeerInfo {
+                name: "peer".into(),
+                address: "peer:7433".into(),
+                status: PeerStatus::Offline,
+                node_info: None,
+                session_count: None,
+                source: PeerSource::Configured,
+            }],
+        };
+        let output = format_nodes(&resp);
+        assert!(output.contains("offline"));
+        // No session count → shows "-"
+        let lines: Vec<&str> = output.lines().collect();
+        assert!(lines[2].contains('-'));
+    }
+
+    #[tokio::test]
+    async fn test_execute_resume_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Resume {
+                name: "test".into(),
+            },
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_spawn_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Spawn {
+                workdir: "/tmp".into(),
+                name: None,
+                provider: "claude".into(),
+                auto: false,
+                guard: "standard".into(),
+                model: None,
+                system_prompt: None,
+                allowed_tools: None,
+                persona: None,
+                max_turns: None,
+                max_budget: None,
+                output_format: None,
+                prompt: vec!["test".into()],
+            },
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_kill_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Kill {
+                name: "test".into(),
+            },
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_delete_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Delete {
+                name: "test".into(),
+            },
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_logs_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Logs {
+                name: "test".into(),
+                lines: 50,
+                follow: false,
+            },
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_friendly_error_connect() {
+        // Make a request to a closed port to get a connect error
+        let err = reqwest::Client::new()
+            .get("http://127.0.0.1:1")
+            .send()
+            .await
+            .unwrap_err();
+        let friendly = friendly_error(&err, "test-node:1");
+        let msg = friendly.to_string();
+        assert!(
+            msg.contains("Could not connect"),
+            "Expected connect message, got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_friendly_error_other() {
+        // A request to an invalid URL creates a builder error, not a connect error
+        let err = reqwest::Client::new()
+            .get("http://[::invalid::url")
+            .send()
+            .await
+            .unwrap_err();
+        let friendly = friendly_error(&err, "bad-host");
+        let msg = friendly.to_string();
+        assert!(
+            msg.contains("Network error"),
+            "Expected network error message, got: {msg}"
+        );
+        assert!(msg.contains("bad-host"));
+    }
+
+    // -- Auth helper tests --
+
+    #[test]
+    fn test_is_localhost_variants() {
+        assert!(is_localhost("localhost:7433"));
+        assert!(is_localhost("127.0.0.1:7433"));
+        assert!(is_localhost("[::1]:7433"));
+        assert!(is_localhost("::1"));
+        assert!(is_localhost("localhost"));
+        assert!(!is_localhost("mac-mini:7433"));
+        assert!(!is_localhost("192.168.1.100:7433"));
+    }
+
+    #[test]
+    fn test_authed_get_with_token() {
+        let client = reqwest::Client::new();
+        let req = authed_get(&client, "http://h:1/api".into(), Some("tok"))
+            .build()
+            .unwrap();
+        let auth = req
+            .headers()
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(auth, "Bearer tok");
+    }
+
+    #[test]
+    fn test_authed_get_without_token() {
+        let client = reqwest::Client::new();
+        let req = authed_get(&client, "http://h:1/api".into(), None)
+            .build()
+            .unwrap();
+        assert!(req.headers().get("authorization").is_none());
+    }
+
+    #[test]
+    fn test_authed_post_with_token() {
+        let client = reqwest::Client::new();
+        let req = authed_post(&client, "http://h:1/api".into(), Some("secret"))
+            .build()
+            .unwrap();
+        let auth = req
+            .headers()
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(auth, "Bearer secret");
+    }
+
+    #[test]
+    fn test_authed_post_without_token() {
+        let client = reqwest::Client::new();
+        let req = authed_post(&client, "http://h:1/api".into(), None)
+            .build()
+            .unwrap();
+        assert!(req.headers().get("authorization").is_none());
+    }
+
+    #[test]
+    fn test_authed_delete_with_token() {
+        let client = reqwest::Client::new();
+        let req = authed_delete(&client, "http://h:1/api".into(), Some("del-tok"))
+            .build()
+            .unwrap();
+        let auth = req
+            .headers()
+            .get("authorization")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(auth, "Bearer del-tok");
+    }
+
+    #[test]
+    fn test_authed_delete_without_token() {
+        let client = reqwest::Client::new();
+        let req = authed_delete(&client, "http://h:1/api".into(), None)
+            .build()
+            .unwrap();
+        assert!(req.headers().get("authorization").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_token_explicit() {
+        let client = reqwest::Client::new();
+        let token =
+            resolve_token(&client, "http://localhost:1", "localhost:1", Some("my-tok")).await;
+        assert_eq!(token, Some("my-tok".into()));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_token_remote_no_explicit() {
+        let client = reqwest::Client::new();
+        let token = resolve_token(&client, "http://remote:7433", "remote:7433", None).await;
+        assert_eq!(token, None);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_token_localhost_auto_discover() {
+        use axum::{Json, Router, routing::get};
+
+        let app = Router::new().route(
+            "/api/v1/auth/token",
+            get(|| async {
+                Json(AuthTokenResponse {
+                    token: "discovered".into(),
+                })
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+
+        let node = format!("localhost:{}", addr.port());
+        let base = base_url(&node);
+        let client = reqwest::Client::new();
+        let token = resolve_token(&client, &base, &node, None).await;
+        assert_eq!(token, Some("discovered".into()));
+    }
+
+    #[tokio::test]
+    async fn test_discover_token_empty_returns_none() {
+        use axum::{Json, Router, routing::get};
+
+        let app = Router::new().route(
+            "/api/v1/auth/token",
+            get(|| async {
+                Json(AuthTokenResponse {
+                    token: String::new(),
+                })
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+
+        let base = format!("http://127.0.0.1:{}", addr.port());
+        let client = reqwest::Client::new();
+        assert_eq!(discover_token(&client, &base).await, None);
+    }
+
+    #[tokio::test]
+    async fn test_discover_token_unreachable_returns_none() {
+        let client = reqwest::Client::new();
+        assert_eq!(discover_token(&client, "http://127.0.0.1:1").await, None);
+    }
+
+    #[test]
+    fn test_cli_parse_with_token() {
+        let cli = Cli::try_parse_from(["pulpo", "--token", "my-secret", "list"]).unwrap();
+        assert_eq!(cli.token, Some("my-secret".into()));
+    }
+
+    #[test]
+    fn test_cli_parse_without_token() {
+        let cli = Cli::try_parse_from(["pulpo", "list"]).unwrap();
+        assert_eq!(cli.token, None);
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_explicit_token_sends_header() {
+        use axum::{Router, extract::Request, http::StatusCode, routing::get};
+
+        let app = Router::new().route(
+            "/api/v1/sessions",
+            get(|req: Request| async move {
+                let auth = req
+                    .headers()
+                    .get("authorization")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                assert_eq!(auth, "Bearer test-token");
+                (StatusCode::OK, "[]".to_owned())
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: Some("test-token".into()),
+            command: Commands::List,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert_eq!(result, "No sessions.");
+    }
+
+    // -- Interventions tests --
+
+    #[test]
+    fn test_cli_parse_interventions() {
+        let cli = Cli::try_parse_from(["pulpo", "interventions", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Interventions { name } if name == "my-session"
+        ));
+    }
+
+    #[test]
+    fn test_format_interventions_empty() {
+        assert_eq!(format_interventions(&[]), "No intervention events.");
+    }
+
+    #[test]
+    fn test_format_interventions_with_data() {
+        let events = vec![
+            InterventionEventResponse {
+                id: 1,
+                session_id: "sess-1".into(),
+                reason: "Memory exceeded threshold".into(),
+                created_at: "2026-01-01T00:00:00Z".into(),
+            },
+            InterventionEventResponse {
+                id: 2,
+                session_id: "sess-1".into(),
+                reason: "Idle for 10 minutes".into(),
+                created_at: "2026-01-02T00:00:00Z".into(),
+            },
+        ];
+        let output = format_interventions(&events);
+        assert!(output.contains("ID"));
+        assert!(output.contains("TIMESTAMP"));
+        assert!(output.contains("REASON"));
+        assert!(output.contains("Memory exceeded threshold"));
+        assert!(output.contains("Idle for 10 minutes"));
+        assert!(output.contains("2026-01-01T00:00:00Z"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_interventions_empty() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Interventions {
+                name: "my-session".into(),
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert_eq!(result, "No intervention events.");
+    }
+
+    #[tokio::test]
+    async fn test_execute_interventions_with_data() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}/interventions",
+            get(|| async {
+                r#"[{"id":1,"session_id":"s","reason":"OOM","created_at":"2026-01-01T00:00:00Z"}]"#
+                    .to_owned()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Interventions {
+                name: "test".into(),
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("OOM"));
+        assert!(result.contains("2026-01-01T00:00:00Z"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_interventions_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Interventions {
+                name: "test".into(),
+            },
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    // -- Attach command tests --
+
+    #[test]
+    fn test_build_attach_command() {
+        let cmd = build_attach_command("my-session");
+        assert_eq!(cmd.get_program(), "tmux");
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(args, vec!["attach-session", "-t", "pulpo-my-session"]);
+    }
+
+    #[test]
+    fn test_cli_parse_attach() {
+        let cli = Cli::try_parse_from(["pulpo", "attach", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Attach { name } if name == "my-session"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_attach_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "a", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Attach { name } if name == "my-session"
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_execute_attach_success() {
+        let cli = Cli {
+            node: "localhost:7433".into(),
+            token: None,
+            command: Commands::Attach {
+                name: "test-session".into(),
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Detached from session test-session"));
+    }
+
+    // -- Alias parse tests --
+
+    #[test]
+    fn test_cli_parse_alias_spawn() {
+        let cli = Cli::try_parse_from(["pulpo", "s", "--workdir", "/tmp", "Do it"]).unwrap();
+        assert!(matches!(&cli.command, Commands::Spawn { .. }));
+    }
+
+    #[test]
+    fn test_cli_parse_alias_list() {
+        let cli = Cli::try_parse_from(["pulpo", "ls"]).unwrap();
+        assert!(matches!(cli.command, Commands::List));
+    }
+
+    #[test]
+    fn test_cli_parse_alias_logs() {
+        let cli = Cli::try_parse_from(["pulpo", "l", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Logs { name, .. } if name == "my-session"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_alias_kill() {
+        let cli = Cli::try_parse_from(["pulpo", "k", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Kill { name } if name == "my-session"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_alias_delete() {
+        let cli = Cli::try_parse_from(["pulpo", "rm", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Delete { name } if name == "my-session"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_alias_resume() {
+        let cli = Cli::try_parse_from(["pulpo", "r", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Resume { name } if name == "my-session"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_alias_nodes() {
+        let cli = Cli::try_parse_from(["pulpo", "n"]).unwrap();
+        assert!(matches!(cli.command, Commands::Nodes));
+    }
+
+    #[test]
+    fn test_cli_parse_alias_interventions() {
+        let cli = Cli::try_parse_from(["pulpo", "iv", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Interventions { name } if name == "my-session"
+        ));
+    }
+
+    #[test]
+    fn test_api_error_json() {
+        let err = api_error("{\"error\":\"session not found: foo\"}");
+        assert_eq!(err.to_string(), "session not found: foo");
+    }
+
+    #[test]
+    fn test_api_error_plain_text() {
+        let err = api_error("plain text error");
+        assert_eq!(err.to_string(), "plain text error");
+    }
+
+    // -- diff_output tests --
+
+    #[test]
+    fn test_diff_output_empty_prev() {
+        assert_eq!(diff_output("", "line1\nline2\n"), "line1\nline2\n");
+    }
+
+    #[test]
+    fn test_diff_output_identical() {
+        assert_eq!(diff_output("line1\nline2", "line1\nline2"), "");
+    }
+
+    #[test]
+    fn test_diff_output_new_lines_appended() {
+        let prev = "line1\nline2";
+        let new = "line1\nline2\nline3\nline4";
+        assert_eq!(diff_output(prev, new), "line3\nline4");
+    }
+
+    #[test]
+    fn test_diff_output_scrolled_window() {
+        // Window of 3 lines: old lines scroll off top, new appear at bottom
+        let prev = "line1\nline2\nline3";
+        let new = "line2\nline3\nline4";
+        assert_eq!(diff_output(prev, new), "line4");
+    }
+
+    #[test]
+    fn test_diff_output_completely_different() {
+        let prev = "aaa\nbbb";
+        let new = "xxx\nyyy";
+        assert_eq!(diff_output(prev, new), "xxx\nyyy");
+    }
+
+    #[test]
+    fn test_diff_output_last_line_matches_but_overlap_fails() {
+        // Last line of prev appears in new but preceding lines don't match
+        let prev = "aaa\ncommon";
+        let new = "zzz\ncommon\nnew_line";
+        // "common" matches at index 1 of new, overlap_len = min(2, 2) = 2
+        // prev_tail = ["aaa", "common"], new_overlap = ["zzz", "common"] — mismatch
+        // Falls through, no verified overlap, so returns everything
+        assert_eq!(diff_output(prev, new), "zzz\ncommon\nnew_line");
+    }
+
+    #[test]
+    fn test_diff_output_new_empty() {
+        assert_eq!(diff_output("line1", ""), "");
+    }
+
+    // -- follow_logs tests --
+
+    /// Start a test server that simulates evolving output and session status transitions.
+    async fn start_follow_test_server() -> String {
+        use axum::{Router, extract::Path, extract::Query, routing::get};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let output_count = call_count.clone();
+        let status_count = Arc::new(AtomicUsize::new(0));
+        let status_count_inner = status_count.clone();
+
+        let app = Router::new()
+            .route(
+                "/api/v1/sessions/{id}/output",
+                get(
+                    move |_path: Path<String>,
+                          _query: Query<std::collections::HashMap<String, String>>| {
+                        let count = output_count.clone();
+                        async move {
+                            let n = count.fetch_add(1, Ordering::SeqCst);
+                            let output = match n {
+                                0 => "line1\nline2".to_owned(),
+                                1 => "line1\nline2\nline3".to_owned(),
+                                _ => "line2\nline3\nline4".to_owned(),
+                            };
+                            format!(r#"{{"output":{}}}"#, serde_json::json!(output))
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/sessions/{id}",
+                get(move |_path: Path<String>| {
+                    let count = status_count_inner.clone();
+                    async move {
+                        let n = count.fetch_add(1, Ordering::SeqCst);
+                        let status = if n < 2 { "running" } else { "completed" };
+                        format!(
+                            r#"{{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"{status}","mode":"interactive","conversation_id":null,"exit_code":null,"tmux_session":null,"output_snapshot":null,"git_branch":null,"git_sha":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"recovery_count":0,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#
+                        )
+                    }
+                }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        format!("http://127.0.0.1:{}", addr.port())
+    }
+
+    #[tokio::test]
+    async fn test_follow_logs_polls_and_exits_on_completed() {
+        let base = start_follow_test_server().await;
+        let client = reqwest::Client::new();
+        let mut buf = Vec::new();
+
+        follow_logs(&client, &base, "test", 100, None, &mut buf)
+            .await
+            .unwrap();
+
+        let output = String::from_utf8(buf).unwrap();
+        // Should contain initial output + new lines
+        assert!(output.contains("line1"));
+        assert!(output.contains("line2"));
+        assert!(output.contains("line3"));
+        assert!(output.contains("line4"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_logs_follow_success() {
+        let base = start_follow_test_server().await;
+        // Extract host:port from http://127.0.0.1:PORT
+        let node = base.strip_prefix("http://").unwrap().to_owned();
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Logs {
+                name: "test".into(),
+                lines: 100,
+                follow: true,
+            },
+        };
+        // execute() with follow writes to stdout and returns empty string
+        let result = execute(&cli).await.unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[tokio::test]
+    async fn test_execute_logs_follow_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Logs {
+                name: "test".into(),
+                lines: 50,
+                follow: true,
+            },
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("Could not connect to pulpod"),
+            "Expected friendly error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_follow_logs_exits_on_dead() {
+        use axum::{Router, extract::Path, extract::Query, routing::get};
+
+        let app = Router::new()
+            .route(
+                "/api/v1/sessions/{id}/output",
+                get(
+                    |_path: Path<String>,
+                     _query: Query<std::collections::HashMap<String, String>>| async {
+                        r#"{"output":"some output"}"#.to_owned()
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/sessions/{id}",
+                get(|_path: Path<String>| async {
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"dead","mode":"interactive","conversation_id":null,"exit_code":null,"tmux_session":null,"output_snapshot":null,"git_branch":null,"git_sha":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"recovery_count":0,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let base = format!("http://127.0.0.1:{}", addr.port());
+
+        let client = reqwest::Client::new();
+        let mut buf = Vec::new();
+        follow_logs(&client, &base, "test", 100, None, &mut buf)
+            .await
+            .unwrap();
+
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("some output"));
+    }
+
+    #[tokio::test]
+    async fn test_follow_logs_exits_on_stale() {
+        use axum::{Router, extract::Path, extract::Query, routing::get};
+
+        let app = Router::new()
+            .route(
+                "/api/v1/sessions/{id}/output",
+                get(
+                    |_path: Path<String>,
+                     _query: Query<std::collections::HashMap<String, String>>| async {
+                        r#"{"output":"stale output"}"#.to_owned()
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/sessions/{id}",
+                get(|_path: Path<String>| async {
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"stale","mode":"interactive","conversation_id":null,"exit_code":null,"tmux_session":null,"output_snapshot":null,"git_branch":null,"git_sha":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"recovery_count":0,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let base = format!("http://127.0.0.1:{}", addr.port());
+
+        let client = reqwest::Client::new();
+        let mut buf = Vec::new();
+        follow_logs(&client, &base, "test", 100, None, &mut buf)
+            .await
+            .unwrap();
+
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("stale output"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_logs_follow_non_reqwest_error() {
+        use axum::{Router, extract::Path, extract::Query, routing::get};
+
+        // Session status endpoint returns invalid JSON to trigger a serde error
+        let app = Router::new()
+            .route(
+                "/api/v1/sessions/{id}/output",
+                get(
+                    |_path: Path<String>,
+                     _query: Query<std::collections::HashMap<String, String>>| async {
+                        r#"{"output":"initial"}"#.to_owned()
+                    },
+                ),
+            )
+            .route(
+                "/api/v1/sessions/{id}",
+                get(|_path: Path<String>| async { "not valid json".to_owned() }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Logs {
+                name: "test".into(),
+                lines: 100,
+                follow: true,
+            },
+        };
+        let err = execute(&cli).await.unwrap_err();
+        // serde_json error, not a reqwest error — hits the Err(other) branch
+        let msg = err.to_string();
+        assert!(
+            msg.contains("expected ident"),
+            "Expected serde parse error, got: {msg}"
+        );
+    }
+
+    // -- Schedule CLI tests --
+
+    const TEST_SCHEDULE_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"nightly-review","cron":"0 2 * * *","workdir":"/tmp/repo","prompt":"Review code","provider":"claude","mode":"interactive","guard_preset":null,"guard_config":null,"model":null,"allowed_tools":null,"system_prompt":null,"metadata":null,"persona":null,"concurrency":"skip","status":"active","max_executions":null,"execution_count":0,"last_run_at":null,"next_run_at":"2026-03-03T02:00:00Z","last_session_id":null,"worktree":null,"created_at":"2026-03-02T00:00:00Z","updated_at":"2026-03-02T00:00:00Z"}"#;
+
+    /// Start a test HTTP server with schedule endpoints.
+    async fn start_schedule_test_server() -> String {
+        use axum::http::StatusCode;
+        use axum::{
+            Router,
+            routing::{get, post},
+        };
+
+        let schedule_json = TEST_SCHEDULE_JSON;
+
+        let app = Router::new()
+            .route(
+                "/api/v1/schedules",
+                get(|| async { "[]".to_owned() })
+                    .post(move || async move { (StatusCode::CREATED, schedule_json.to_owned()) }),
+            )
+            .route(
+                "/api/v1/schedules/{id}",
+                get(move || async move { schedule_json.to_owned() })
+                    .delete(|| async { StatusCode::NO_CONTENT }),
+            )
+            .route(
+                "/api/v1/schedules/{id}/run",
+                post(|| async {
+                    r#"{"session_id":"00000000-0000-0000-0000-000000000003","status":"spawned"}"#
+                        .to_owned()
+                }),
+            )
+            .route(
+                "/api/v1/schedules/{id}/pause",
+                post(|| async { StatusCode::NO_CONTENT }),
+            )
+            .route(
+                "/api/v1/schedules/{id}/resume",
+                post(|| async { StatusCode::NO_CONTENT }),
+            )
+            .route(
+                "/api/v1/schedules/{id}/executions",
+                get(|| async { "[]".to_owned() }),
+            );
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        format!("127.0.0.1:{}", addr.port())
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_create() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "schedule",
+            "create",
+            "--name",
+            "nightly",
+            "--cron",
+            "0 2 * * *",
+            "--workdir",
+            "/tmp/repo",
+            "Review code",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Schedule { action: ScheduleAction::Create { name, cron, workdir, .. } }
+                if name == "nightly" && cron == "0 2 * * *" && workdir == "/tmp/repo"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "sched", "list"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Schedule {
+                action: ScheduleAction::List
+            }
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_list() {
+        let cli = Cli::try_parse_from(["pulpo", "schedule", "list"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Schedule {
+                action: ScheduleAction::List
+            }
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_list_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "schedule", "ls"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Commands::Schedule {
+                action: ScheduleAction::List
+            }
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_get() {
+        let cli = Cli::try_parse_from(["pulpo", "schedule", "get", "nightly"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Schedule { action: ScheduleAction::Get { name } } if name == "nightly"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_delete() {
+        let cli = Cli::try_parse_from(["pulpo", "schedule", "delete", "nightly"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Schedule { action: ScheduleAction::Delete { name } } if name == "nightly"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_delete_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "schedule", "rm", "nightly"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Schedule { action: ScheduleAction::Delete { name } } if name == "nightly"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_run() {
+        let cli = Cli::try_parse_from(["pulpo", "schedule", "run", "nightly"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Schedule { action: ScheduleAction::Run { name } } if name == "nightly"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_pause() {
+        let cli = Cli::try_parse_from(["pulpo", "schedule", "pause", "nightly"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Schedule { action: ScheduleAction::Pause { name } } if name == "nightly"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_resume() {
+        let cli = Cli::try_parse_from(["pulpo", "schedule", "resume", "nightly"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Schedule { action: ScheduleAction::Resume { name } } if name == "nightly"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_history() {
+        let cli = Cli::try_parse_from(["pulpo", "schedule", "history", "nightly"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Schedule { action: ScheduleAction::History { name, limit } }
+                if name == "nightly" && *limit == 20
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_history_alias() {
+        let cli =
+            Cli::try_parse_from(["pulpo", "schedule", "hist", "nightly", "--limit", "5"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Schedule { action: ScheduleAction::History { name, limit } }
+                if name == "nightly" && *limit == 5
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_create_with_options() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "schedule",
+            "create",
+            "--name",
+            "full",
+            "--cron",
+            "*/5 * * * *",
+            "--workdir",
+            "/tmp",
+            "--auto",
+            "--guard",
+            "strict",
+            "--model",
+            "opus",
+            "--concurrency",
+            "allow",
+            "--max-executions",
+            "10",
+            "--persona",
+            "reviewer",
+            "Do the work",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Schedule { action: ScheduleAction::Create {
+                name, auto, guard, model, concurrency, max_executions, persona, ..
+            } } if name == "full" && *auto && guard.as_deref() == Some("strict")
+                && model.as_deref() == Some("opus") && concurrency == "allow"
+                && *max_executions == Some(10) && persona.as_deref() == Some("reviewer")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_with_guardrails() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "spawn",
+            "--workdir",
+            "/tmp",
+            "--max-turns",
+            "10",
+            "--max-budget",
+            "5.5",
+            "--output-format",
+            "json",
+            "Do it",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { max_turns, max_budget, output_format, .. }
+                if *max_turns == Some(10) && *max_budget == Some(5.5)
+                && output_format.as_deref() == Some("json")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_create_with_guardrails() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "schedule",
+            "create",
+            "--name",
+            "guarded",
+            "--cron",
+            "0 * * * *",
+            "--workdir",
+            "/tmp",
+            "--max-turns",
+            "5",
+            "--max-budget",
+            "2.0",
+            "--output-format",
+            "stream-json",
+            "Do it",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Schedule { action: ScheduleAction::Create {
+                max_turns, max_budget, output_format, ..
+            } } if *max_turns == Some(5) && *max_budget == Some(2.0)
+                && output_format.as_deref() == Some("stream-json")
+        ));
+    }
+
+    #[test]
+    fn test_schedule_action_debug() {
+        let action = ScheduleAction::List;
+        assert_eq!(format!("{action:?}"), "List");
+    }
+
+    #[test]
+    fn test_format_schedules_empty() {
+        assert_eq!(format_schedules(&[]), "No schedules.");
+    }
+
+    #[test]
+    fn test_format_schedules_with_data() {
+        use chrono::Utc;
+        use pulpo_common::schedule::{ConcurrencyPolicy, ScheduleStatus};
+        use pulpo_common::session::{Provider, SessionMode};
+        use uuid::Uuid;
+
+        let schedules = vec![Schedule {
+            id: Uuid::nil(),
+            name: "nightly-review".into(),
+            cron: "0 2 * * *".into(),
+            workdir: "/tmp/repo".into(),
+            prompt: "Review code".into(),
+            provider: Provider::Claude,
+            mode: SessionMode::Autonomous,
+            guard_preset: None,
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            persona: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            concurrency: ConcurrencyPolicy::Skip,
+            status: ScheduleStatus::Active,
+            max_executions: None,
+            execution_count: 5,
+            last_run_at: None,
+            next_run_at: Some(Utc::now()),
+            last_session_id: None,
+            worktree: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_schedules(&schedules);
+        assert!(output.contains("NAME"));
+        assert!(output.contains("nightly-review"));
+        assert!(output.contains("active"));
+        assert!(output.contains("0 2 * * *"));
+        assert!(output.contains("claude"));
+        assert!(output.contains('5'));
+    }
+
+    #[test]
+    fn test_format_schedules_long_prompt_truncated() {
+        use chrono::Utc;
+        use pulpo_common::schedule::{ConcurrencyPolicy, ScheduleStatus};
+        use pulpo_common::session::{Provider, SessionMode};
+        use uuid::Uuid;
+
+        let schedules = vec![Schedule {
+            id: Uuid::nil(),
+            name: "test".into(),
+            cron: "0 0 * * *".into(),
+            workdir: "/tmp".into(),
+            prompt: "A very long prompt that definitely exceeds thirty characters".into(),
+            provider: Provider::Claude,
+            mode: SessionMode::Interactive,
+            guard_preset: None,
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            persona: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            concurrency: ConcurrencyPolicy::Skip,
+            status: ScheduleStatus::Active,
+            max_executions: None,
+            execution_count: 0,
+            last_run_at: None,
+            next_run_at: None,
+            last_session_id: None,
+            worktree: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_schedules(&schedules);
+        assert!(output.contains("..."));
+    }
+
+    #[test]
+    fn test_format_executions_empty() {
+        assert_eq!(format_executions(&[]), "No executions.");
+    }
+
+    #[test]
+    fn test_format_executions_with_data() {
+        use chrono::Utc;
+        use pulpo_common::schedule::ExecutionStatus;
+        use uuid::Uuid;
+
+        let execs = vec![
+            ScheduleExecution {
+                id: 1,
+                schedule_id: Uuid::nil(),
+                session_id: Some(Uuid::nil()),
+                status: ExecutionStatus::Spawned,
+                error: None,
+                triggered_by: "cron".into(),
+                created_at: Utc::now(),
+            },
+            ScheduleExecution {
+                id: 2,
+                schedule_id: Uuid::nil(),
+                session_id: None,
+                status: ExecutionStatus::Skipped,
+                error: None,
+                triggered_by: "cron".into(),
+                created_at: Utc::now(),
+            },
+        ];
+        let output = format_executions(&execs);
+        assert!(output.contains("ID"));
+        assert!(output.contains("STATUS"));
+        assert!(output.contains("spawned"));
+        assert!(output.contains("skipped"));
+        assert!(output.contains("cron"));
+        // Second execution has no session → shows "-"
+        assert!(output.contains('-'));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_create_success() {
+        let node = start_schedule_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Create {
+                    name: "nightly".into(),
+                    cron: "0 2 * * *".into(),
+                    workdir: "/tmp/repo".into(),
+                    provider: "claude".into(),
+                    auto: false,
+                    guard: None,
+                    model: None,
+                    concurrency: "skip".into(),
+                    max_executions: None,
+                    persona: None,
+                    max_turns: None,
+                    max_budget: None,
+                    output_format: None,
+                    prompt: vec!["Review".into(), "code".into()],
+                },
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Created schedule"));
+        assert!(result.contains("nightly-review"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_create_with_options() {
+        let node = start_schedule_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Create {
+                    name: "full".into(),
+                    cron: "*/5 * * * *".into(),
+                    workdir: "/tmp".into(),
+                    provider: "claude".into(),
+                    auto: true,
+                    guard: Some("strict".into()),
+                    model: Some("opus".into()),
+                    concurrency: "allow".into(),
+                    max_executions: Some(10),
+                    persona: Some("reviewer".into()),
+                    max_turns: Some(3),
+                    max_budget: Some(1.0),
+                    output_format: Some("stream-json".into()),
+                    prompt: vec!["Do".into(), "it".into()],
+                },
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Created schedule"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_list_success() {
+        let node = start_schedule_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::List,
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert_eq!(result, "No schedules.");
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_get_success() {
+        let node = start_schedule_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Get {
+                    name: "nightly-review".into(),
+                },
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("nightly-review"));
+        assert!(result.contains("active"));
+        assert!(result.contains("0 2 * * *"));
+        assert!(result.contains("claude"));
+        assert!(result.contains("Review code"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_delete_success() {
+        let node = start_schedule_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Delete {
+                    name: "nightly".into(),
+                },
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("deleted"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_run_success() {
+        let node = start_schedule_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Run {
+                    name: "nightly".into(),
+                },
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("triggered"));
+        assert!(result.contains("spawned"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_pause_success() {
+        let node = start_schedule_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Pause {
+                    name: "nightly".into(),
+                },
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("paused"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_resume_success() {
+        let node = start_schedule_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Resume {
+                    name: "nightly".into(),
+                },
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("resumed"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_history_success() {
+        let node = start_schedule_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::History {
+                    name: "nightly".into(),
+                    limit: 20,
+                },
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert_eq!(result, "No executions.");
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_create_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Create {
+                    name: "fail".into(),
+                    cron: "0 1 * * *".into(),
+                    workdir: "/tmp".into(),
+                    provider: "claude".into(),
+                    auto: false,
+                    guard: None,
+                    model: None,
+                    concurrency: "skip".into(),
+                    max_executions: None,
+                    persona: None,
+                    max_turns: None,
+                    max_budget: None,
+                    output_format: None,
+                    prompt: vec!["test".into()],
+                },
+            },
+        };
+        let err = execute(&cli).await.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_list_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::List,
+            },
+        };
+        let err = execute(&cli).await.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_get_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Get {
+                    name: "test".into(),
+                },
+            },
+        };
+        let err = execute(&cli).await.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_delete_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Delete {
+                    name: "test".into(),
+                },
+            },
+        };
+        let err = execute(&cli).await.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_run_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Run {
+                    name: "test".into(),
+                },
+            },
+        };
+        let err = execute(&cli).await.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_pause_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Pause {
+                    name: "test".into(),
+                },
+            },
+        };
+        let err = execute(&cli).await.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_resume_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Resume {
+                    name: "test".into(),
+                },
+            },
+        };
+        let err = execute(&cli).await.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_history_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::History {
+                    name: "test".into(),
+                    limit: 20,
+                },
+            },
+        };
+        let err = execute(&cli).await.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_create_error_response() {
+        use axum::{Router, http::StatusCode, routing::post};
+
+        let app = Router::new().route(
+            "/api/v1/schedules",
+            post(|| async {
+                (
+                    StatusCode::CONFLICT,
+                    r#"{"error":"schedule with name 'nightly' already exists"}"#,
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Create {
+                    name: "nightly".into(),
+                    cron: "0 2 * * *".into(),
+                    workdir: "/tmp".into(),
+                    provider: "claude".into(),
+                    auto: false,
+                    guard: None,
+                    model: None,
+                    concurrency: "skip".into(),
+                    max_executions: None,
+                    persona: None,
+                    max_turns: None,
+                    max_budget: None,
+                    output_format: None,
+                    prompt: vec!["test".into()],
+                },
+            },
+        };
+        let err = execute(&cli).await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "schedule with name 'nightly' already exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_run_skipped() {
+        use axum::{Router, routing::post};
+
+        let app = Router::new().route(
+            "/api/v1/schedules/{id}/run",
+            post(|| async { r#"{"session_id":null,"status":"skipped"}"#.to_owned() }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Run {
+                    name: "test".into(),
+                },
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("skipped"));
+        // No session_id in output since it's null
+        assert!(!result.contains("session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_get_with_max_and_last_run() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/api/v1/schedules/{id}",
+            get(|| async {
+                r#"{"id":"00000000-0000-0000-0000-000000000002","name":"bounded","cron":"0 2 * * *","workdir":"/tmp","prompt":"test","provider":"claude","mode":"interactive","guard_preset":null,"guard_config":null,"model":null,"allowed_tools":null,"system_prompt":null,"metadata":null,"persona":null,"concurrency":"skip","status":"active","max_executions":10,"execution_count":3,"last_run_at":"2026-03-01T02:00:00Z","next_run_at":"2026-03-03T02:00:00Z","last_session_id":null,"worktree":null,"created_at":"2026-03-02T00:00:00Z","updated_at":"2026-03-02T00:00:00Z"}"#.to_owned()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Get {
+                    name: "bounded".into(),
+                },
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("3/10")); // execution_count/max_executions
+        assert!(result.contains("2026-03-01")); // last_run_at
+    }
+
+    #[tokio::test]
+    async fn test_fetch_session_status_connection_error() {
+        let client = reqwest::Client::new();
+        let result = fetch_session_status(&client, "http://127.0.0.1:1", "test", None).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_execute_schedule_get_null_next_run() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/api/v1/schedules/{id}",
+            get(|| async {
+                r#"{"id":"00000000-0000-0000-0000-000000000002","name":"paused-sched","cron":"0 2 * * *","workdir":"/tmp","prompt":"test","provider":"claude","mode":"interactive","guard_preset":null,"guard_config":null,"model":null,"allowed_tools":null,"system_prompt":null,"metadata":null,"persona":null,"concurrency":"skip","status":"paused","max_executions":null,"execution_count":0,"last_run_at":null,"next_run_at":null,"last_session_id":null,"worktree":null,"created_at":"2026-03-02T00:00:00Z","updated_at":"2026-03-02T00:00:00Z"}"#.to_owned()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Schedule {
+                action: ScheduleAction::Get {
+                    name: "paused-sched".into(),
+                },
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("paused-sched"));
+        // next_run_at is null, should display "-"
+        assert!(result.contains("Next run:    -"));
+        assert!(result.contains("Last run:    -"));
+    }
+}

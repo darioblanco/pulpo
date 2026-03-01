@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  web:
+    name: Web (build + lint + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: cd web && npm ci
+      - run: cd web && npm run build
+      - run: cd web && npx prettier --check .
+      - run: cd web && npx eslint .
+      - run: cd web && npx svelte-check --tsconfig ./tsconfig.json
+      - run: cd web && npx vitest run
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: web/build/
+          retention-days: 1
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: web/build/
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: web/build/
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - run: cargo test --workspace
+
+  coverage:
+    name: Coverage (100% lines)
+    needs: web
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    env:
+      # Override workspace RUSTFLAGS — coverage builds with cfg(coverage) make
+      # main.rs-only code appear dead. Warnings are already caught by clippy.
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: web/build/
+      - run: cargo install cargo-llvm-cov
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+      # CI runs on Linux where some platform-specific code (macOS memory parsing,
+      # WSL branches) is unreachable. Local pre-commit enforces 100% on dev platform.
+      - run: cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$" --fail-under-lines 99

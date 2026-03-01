@@ -1,0 +1,21 @@
+[package]
+name = "pulpo-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Shared types for pulpo daemon and CLI"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+toml.workspace = true
+
+[lints]
+workspace = true

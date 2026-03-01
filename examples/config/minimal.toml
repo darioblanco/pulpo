@@ -1,0 +1,9 @@
+[node]
+name = "pulpo-local"
+
+[auth]
+# local = bind to 127.0.0.1 (default)
+bind = "local"
+
+[guards]
+preset = "standard"

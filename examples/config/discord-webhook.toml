@@ -1,0 +1,11 @@
+[node]
+name = "pulpo-discord"
+
+[auth]
+bind = "lan"
+token = "replace-with-long-random-token"
+
+[notifications.discord]
+webhook_url = "https://discord.com/api/webhooks/123/abc"
+# Optional filter. Omit to receive all session + schedule events.
+events = ["running", "completed", "dead", "failed", "fired"]

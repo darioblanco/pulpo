@@ -1,0 +1,63 @@
+[package]
+name = "pulpod"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+repository.workspace = true
+homepage.workspace = true
+description = "Pulpo daemon — manages agent sessions via tmux/Docker"
+
+[package.metadata.dist]
+dist = true
+
+[lib]
+name = "pulpod"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pulpod"
+path = "src/main.rs"
+
+[dependencies]
+pulpo-common = { path = "../pulpo-common" }
+tokio.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+reqwest.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+toml.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+rust-embed.workspace = true
+mime_guess.workspace = true
+pty-process.workspace = true
+futures.workspace = true
+tokio-stream.workspace = true
+hostname.workspace = true
+shellexpand.workspace = true
+dirs.workspace = true
+num_cpus.workspace = true
+rand.workspace = true
+base64.workspace = true
+mdns-sd.workspace = true
+rmcp.workspace = true
+schemars.workspace = true
+cron.workspace = true
+
+[dev-dependencies]
+axum-test = "17"
+tokio = { workspace = true, features = ["test-util"] }
+tokio-tungstenite = "0.26"
+tempfile = "3"
+
+[lints]
+workspace = true

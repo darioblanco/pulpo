@@ -1,0 +1,11 @@
+# Pulpo local development config
+# Copy to .pulpo/config.toml (gitignored) and customise as needed.
+# `make dev` copies this automatically on first run.
+
+[node]
+name = "local-dev"
+# data_dir is set relative to the repo so dev data stays local
+data_dir = ".pulpo/data"
+
+[auth]
+bind = "localhost"

@@ -1,0 +1,30 @@
+[node]
+name = "pulpo-personas"
+
+[auth]
+bind = "local"
+
+[guards]
+preset = "standard"
+max_turns = 50
+max_budget_usd = 10.0
+
+[personas.reviewer]
+provider = "claude"
+model = "sonnet"
+mode = "autonomous"
+guard_preset = "strict"
+allowed_tools = ["Read", "Glob", "Grep"]
+system_prompt = "You are a code reviewer. Prioritize correctness and security."
+max_turns = 20
+max_budget_usd = 3.0
+
+[personas.coder]
+provider = "claude"
+model = "opus"
+mode = "autonomous"
+guard_preset = "standard"
+allowed_tools = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
+system_prompt = "Implement the task with tests and clear commit messages."
+max_turns = 80
+max_budget_usd = 15.0

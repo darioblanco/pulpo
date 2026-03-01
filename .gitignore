@@ -1,0 +1,12 @@
+/target
+/dist
+node_modules
+/web/.svelte-kit
+/web/build
+/web/coverage
+*.db
+*.db-journal
+.pulpo/config.toml
+.pulpo/data/
+.DS_Store
+.claude/

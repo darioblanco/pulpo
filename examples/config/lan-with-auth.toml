@@ -1,0 +1,12 @@
+[node]
+name = "pulpo-lan"
+port = 7433
+
+[auth]
+# lan = bind to 0.0.0.0 so other devices can reach pulpod
+bind = "lan"
+# Generate a strong token and keep it secret
+token = "replace-with-long-random-token"
+
+[guards]
+preset = "standard"
