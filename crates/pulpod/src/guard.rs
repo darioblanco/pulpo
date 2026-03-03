@@ -17,6 +17,8 @@ pub struct SpawnParams {
     /// Provider-native worktree isolation (e.g. Claude `--worktree <name>`).
     /// Only supported by providers with built-in worktree support.
     pub worktree: Option<String>,
+    /// Conversation ID for resuming a previous session.
+    pub conversation_id: Option<String>,
 }
 
 /// POSIX single-quote shell escaping: wraps in single quotes,
@@ -118,7 +120,13 @@ impl ClaudeTranslator {
 
 impl GuardTranslator for ClaudeTranslator {
     fn build_flags(&self, params: &SpawnParams) -> Vec<String> {
-        let mut flags = vec!["-p".into(), shell_escape(&params.prompt)];
+        let mut flags = Vec::new();
+        if let Some(id) = &params.conversation_id {
+            flags.push("--resume".into());
+            flags.push(id.clone());
+        }
+        flags.push("-p".into());
+        flags.push(shell_escape(&params.prompt));
         flags.extend(Self::permission_flags(params));
         flags.extend(Self::common_flags(params));
         flags.extend(Self::system_prompt_flags(params));
@@ -130,6 +138,17 @@ impl GuardTranslator for ClaudeTranslator {
     }
 
     fn build_interactive_flags(&self, params: &SpawnParams) -> Vec<String> {
+        if let Some(id) = &params.conversation_id {
+            // Resume: --resume <id> + model + permissions only.
+            // Skip worktree, max-turns, max-budget-usd, system-prompt (inherited).
+            let mut flags = vec!["--resume".into(), id.clone()];
+            if let Some(m) = &params.model {
+                flags.push("--model".into());
+                flags.push(m.clone());
+            }
+            flags.extend(Self::permission_flags(params));
+            return flags;
+        }
         let mut flags = vec![shell_escape(&params.prompt)];
         flags.extend(Self::permission_flags(params));
         flags.extend(Self::common_flags(params));
@@ -151,6 +170,19 @@ pub struct CodexTranslator;
 
 impl GuardTranslator for CodexTranslator {
     fn build_flags(&self, params: &SpawnParams) -> Vec<String> {
+        if let Some(id) = &params.conversation_id {
+            let mut flags = vec![
+                "exec".into(),
+                "resume".into(),
+                id.clone(),
+                shell_escape(&params.prompt),
+            ];
+            if let Some(m) = &params.model {
+                flags.push("--model".into());
+                flags.push(m.clone());
+            }
+            return flags;
+        }
         let mut flags = vec!["-q".into(), shell_escape(&params.prompt)];
         if let Some(m) = &params.model {
             flags.push("--model".into());
@@ -160,6 +192,14 @@ impl GuardTranslator for CodexTranslator {
     }
 
     fn build_interactive_flags(&self, params: &SpawnParams) -> Vec<String> {
+        if let Some(id) = &params.conversation_id {
+            let mut flags = vec!["resume".into(), id.clone()];
+            if let Some(m) = &params.model {
+                flags.push("--model".into());
+                flags.push(m.clone());
+            }
+            return flags;
+        }
         let mut flags = vec!["--full-auto".into(), shell_escape(&params.prompt)];
         if let Some(m) = &params.model {
             flags.push("--model".into());
@@ -782,16 +822,19 @@ mod tests {
         assert!(p.max_turns.is_none());
         assert!(p.max_budget_usd.is_none());
         assert!(p.output_format.is_none());
+        assert!(p.conversation_id.is_none());
     }
 
     #[test]
     fn test_spawn_params_debug() {
         let p = SpawnParams {
             prompt: "test".into(),
+            conversation_id: Some("conv-123".into()),
             ..SpawnParams::default()
         };
         let debug = format!("{p:?}");
         assert!(debug.contains("test"));
+        assert!(debug.contains("conv-123"));
     }
 
     #[test]
@@ -799,11 +842,148 @@ mod tests {
         let p = SpawnParams {
             prompt: "test".into(),
             max_turns: Some(5),
+            conversation_id: Some("conv-abc".into()),
             ..SpawnParams::default()
         };
         #[allow(clippy::redundant_clone)]
         let p2 = p.clone();
         assert_eq!(p2.prompt, "test");
         assert_eq!(p2.max_turns, Some(5));
+        assert_eq!(p2.conversation_id, Some("conv-abc".into()));
+    }
+
+    #[test]
+    fn test_claude_interactive_resume_flags() {
+        let t = ClaudeTranslator;
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: GuardConfig::from_preset(GuardPreset::Standard),
+            model: Some("sonnet".into()),
+            conversation_id: Some("conv-123".into()),
+            worktree: Some("my-session".into()),
+            max_turns: Some(10),
+            system_prompt: Some("Be concise".into()),
+            ..SpawnParams::default()
+        };
+        let flags = t.build_interactive_flags(&p);
+        assert_eq!(flags[0], "--resume");
+        assert_eq!(flags[1], "conv-123");
+        assert!(flags.contains(&"--model".into()));
+        assert!(flags.contains(&"sonnet".into()));
+        assert!(flags.contains(&"--allowedTools".into()));
+        // Resume skips worktree, max-turns, system-prompt
+        assert!(!flags.contains(&"--worktree".into()));
+        assert!(!flags.contains(&"--max-turns".into()));
+        assert!(!flags.contains(&"--append-system-prompt".into()));
+    }
+
+    #[test]
+    fn test_claude_interactive_resume_yolo() {
+        let t = ClaudeTranslator;
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: GuardConfig::from_preset(GuardPreset::Yolo),
+            conversation_id: Some("conv-456".into()),
+            ..SpawnParams::default()
+        };
+        let flags = t.build_interactive_flags(&p);
+        assert_eq!(flags[0], "--resume");
+        assert_eq!(flags[1], "conv-456");
+        assert!(flags.contains(&"--dangerously-skip-permissions".into()));
+        assert!(!flags.contains(&"--allowedTools".into()));
+    }
+
+    #[test]
+    fn test_claude_autonomous_resume_flags() {
+        let t = ClaudeTranslator;
+        let p = SpawnParams {
+            prompt: "Fix bug".into(),
+            guards: GuardConfig::from_preset(GuardPreset::Standard),
+            model: Some("opus".into()),
+            conversation_id: Some("conv-789".into()),
+            system_prompt: Some("Review only".into()),
+            ..SpawnParams::default()
+        };
+        let flags = t.build_flags(&p);
+        // --resume prepended before -p
+        assert_eq!(flags[0], "--resume");
+        assert_eq!(flags[1], "conv-789");
+        assert!(flags.contains(&"-p".into()));
+        assert!(flags.contains(&"--model".into()));
+        assert!(flags.contains(&"opus".into()));
+        assert!(flags.contains(&"--allowedTools".into()));
+        assert!(flags.contains(&"--append-system-prompt".into()));
+    }
+
+    #[test]
+    fn test_claude_interactive_resume_no_model() {
+        let t = ClaudeTranslator;
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: GuardConfig::from_preset(GuardPreset::Standard),
+            conversation_id: Some("conv-000".into()),
+            ..SpawnParams::default()
+        };
+        let flags = t.build_interactive_flags(&p);
+        assert_eq!(flags[0], "--resume");
+        assert_eq!(flags[1], "conv-000");
+        assert!(!flags.contains(&"--model".into()));
+        assert!(flags.contains(&"--allowedTools".into()));
+    }
+
+    #[test]
+    fn test_codex_interactive_resume_flags() {
+        let t = CodexTranslator;
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: GuardConfig::from_preset(GuardPreset::Standard),
+            model: Some("gpt-4".into()),
+            conversation_id: Some("conv-codex-1".into()),
+            ..SpawnParams::default()
+        };
+        let flags = t.build_interactive_flags(&p);
+        assert_eq!(flags[0], "resume");
+        assert_eq!(flags[1], "conv-codex-1");
+        assert!(flags.contains(&"--model".into()));
+        assert!(flags.contains(&"gpt-4".into()));
+        // Should NOT contain --full-auto or prompt
+        assert!(!flags.contains(&"--full-auto".into()));
+        assert!(!flags.contains(&"'test'".into()));
+    }
+
+    #[test]
+    fn test_codex_autonomous_resume_flags() {
+        let t = CodexTranslator;
+        let p = SpawnParams {
+            prompt: "Fix bug".into(),
+            guards: GuardConfig::from_preset(GuardPreset::Standard),
+            model: Some("gpt-4".into()),
+            conversation_id: Some("conv-codex-2".into()),
+            ..SpawnParams::default()
+        };
+        let flags = t.build_flags(&p);
+        assert_eq!(flags[0], "exec");
+        assert_eq!(flags[1], "resume");
+        assert_eq!(flags[2], "conv-codex-2");
+        assert_eq!(flags[3], "'Fix bug'");
+        assert!(flags.contains(&"--model".into()));
+        assert!(flags.contains(&"gpt-4".into()));
+        // Should NOT contain -q
+        assert!(!flags.contains(&"-q".into()));
+    }
+
+    #[test]
+    fn test_codex_interactive_resume_no_model() {
+        let t = CodexTranslator;
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: GuardConfig::from_preset(GuardPreset::Standard),
+            conversation_id: Some("conv-codex-3".into()),
+            ..SpawnParams::default()
+        };
+        let flags = t.build_interactive_flags(&p);
+        assert_eq!(flags[0], "resume");
+        assert_eq!(flags[1], "conv-codex-3");
+        assert_eq!(flags.len(), 2);
     }
 }

@@ -340,13 +340,10 @@ async fn attempt_recovery(
             max_budget_usd: session.max_budget_usd,
             output_format: session.output_format.clone(),
             worktree: Some(session.name.clone()),
+            conversation_id: session.conversation_id.clone(),
         };
-        let resume_cmd = crate::session::manager::build_resume_command(
-            session.provider,
-            session.mode,
-            session.conversation_id.as_deref(),
-            &params,
-        );
+        let resume_cmd =
+            crate::session::manager::build_command(session.provider, session.mode, &params);
         if let Err(e) = backend.create_session(&session.tmux_name, &session.workdir, &resume_cmd) {
             warn!(
                 session_id = %session.id,

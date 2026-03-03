@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::fmt::Write;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
@@ -382,12 +381,8 @@ impl SessionManager {
             session.output_format.as_deref(),
         );
         spawn_params.worktree = Some(session.name.clone());
-        let command = build_resume_command(
-            session.provider,
-            session.mode,
-            session.conversation_id.as_deref(),
-            &spawn_params,
-        );
+        spawn_params.conversation_id = session.conversation_id.clone();
+        let command = build_command(session.provider, session.mode, &spawn_params);
 
         self.backend
             .create_session(&session.name, &session.workdir, &command)?;
@@ -444,60 +439,11 @@ fn build_spawn_params(
         max_budget_usd,
         output_format: output_format.map(Into::into),
         worktree: None,
+        conversation_id: None,
     }
 }
 
-pub(crate) fn build_resume_command(
-    provider: Provider,
-    mode: SessionMode,
-    conversation_id: Option<&str>,
-    params: &crate::guard::SpawnParams,
-) -> String {
-    let binary = provider.to_string();
-    match (provider, mode) {
-        (Provider::Claude, SessionMode::Interactive) => conversation_id.map_or_else(
-            || {
-                let translator = crate::guard::translator_for(provider);
-                let flags = translator.build_interactive_flags(params);
-                format!("{binary} {}", flags.join(" "))
-            },
-            |id| {
-                let mut c = format!("{binary} --resume {id}");
-                if let Some(m) = &params.model {
-                    let _ = write!(c, " --model {m}");
-                }
-                // Permission flags for resumed interactive
-                let perm_flags = crate::guard::ClaudeTranslator::permission_flags(params);
-                for f in &perm_flags {
-                    let _ = write!(c, " {f}");
-                }
-                c
-            },
-        ),
-        (Provider::Claude, SessionMode::Autonomous) => {
-            let translator = crate::guard::translator_for(provider);
-            let flags = translator.build_flags(params);
-            let inner = conversation_id.map_or_else(
-                || format!("{binary} {}", flags.join(" ")),
-                |id| format!("{binary} --resume {id} {}", flags.join(" ")),
-            );
-            format!("bash -c '{inner}; echo \"[pulpo] Agent exited ($?)\"; exec bash'")
-        }
-        (Provider::Codex, SessionMode::Interactive) => {
-            let translator = crate::guard::translator_for(provider);
-            let flags = translator.build_interactive_flags(params);
-            format!("{binary} {}", flags.join(" "))
-        }
-        (Provider::Codex, SessionMode::Autonomous) => {
-            let translator = crate::guard::translator_for(provider);
-            let flags = translator.build_flags(params);
-            let inner = format!("{binary} {}", flags.join(" "));
-            format!("bash -c '{inner}; echo \"[pulpo] Agent exited ($?)\"; exec bash'")
-        }
-    }
-}
-
-fn build_command(
+pub(crate) fn build_command(
     provider: Provider,
     mode: SessionMode,
     params: &crate::guard::SpawnParams,
@@ -1319,101 +1265,98 @@ mod tests {
     }
 
     #[test]
-    fn test_build_resume_command_interactive_claude_with_id() {
+    fn test_build_command_interactive_claude_resume() {
         let guards = GuardConfig::default();
         let params = crate::guard::SpawnParams {
             prompt: "test".into(),
             guards,
+            conversation_id: Some("conv-123".into()),
             ..crate::guard::SpawnParams::default()
         };
-        let cmd = build_resume_command(
-            Provider::Claude,
-            SessionMode::Interactive,
-            Some("conv-123"),
-            &params,
-        );
+        let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
         assert!(cmd.contains("claude --resume conv-123"));
-        // Permission flags should be present for resumed interactive
         assert!(cmd.contains("--allowedTools"));
     }
 
     #[test]
-    fn test_build_resume_command_interactive_claude_without_id() {
-        let guards = GuardConfig::default();
-        let params = crate::guard::SpawnParams {
-            prompt: "test".into(),
-            guards,
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_resume_command(Provider::Claude, SessionMode::Interactive, None, &params);
-        // Falls back to build_interactive_flags
-        assert!(cmd.starts_with("claude "));
-        assert!(cmd.contains("'test'"));
-    }
-
-    #[test]
-    fn test_build_resume_command_autonomous_claude_with_id_yolo() {
+    fn test_build_command_autonomous_claude_resume_yolo() {
         let guards = GuardConfig::from_preset(pulpo_common::guard::GuardPreset::Yolo);
         let params = crate::guard::SpawnParams {
             prompt: "Fix bug".into(),
             guards,
+            conversation_id: Some("conv-456".into()),
             ..crate::guard::SpawnParams::default()
         };
-        let cmd = build_resume_command(
-            Provider::Claude,
-            SessionMode::Autonomous,
-            Some("conv-456"),
-            &params,
-        );
+        let cmd = build_command(Provider::Claude, SessionMode::Autonomous, &params);
         assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("claude --resume conv-456"));
+        assert!(cmd.contains("--resume conv-456"));
         assert!(cmd.contains("--dangerously-skip-permissions"));
     }
 
     #[test]
-    fn test_build_resume_command_autonomous_claude_without_id_standard() {
+    fn test_build_command_interactive_claude_resume_with_model() {
         let guards = GuardConfig::default();
         let params = crate::guard::SpawnParams {
-            prompt: "Fix bug".into(),
+            prompt: "test".into(),
             guards,
+            model: Some("sonnet".into()),
+            conversation_id: Some("conv-123".into()),
             ..crate::guard::SpawnParams::default()
         };
-        let cmd = build_resume_command(Provider::Claude, SessionMode::Autonomous, None, &params);
-        assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("--allowedTools"));
-        assert!(!cmd.contains("--dangerously-skip-permissions"));
+        let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
+        assert!(cmd.contains("claude --resume conv-123"));
+        assert!(cmd.contains("--model sonnet"));
     }
 
     #[test]
-    fn test_build_resume_command_codex() {
+    fn test_build_command_autonomous_claude_resume_all_flags() {
+        let guards = GuardConfig::default();
+        let params = crate::guard::SpawnParams {
+            prompt: "Fix it".into(),
+            guards,
+            explicit_tools: Some(vec!["Read".into()]),
+            model: Some("opus".into()),
+            system_prompt: Some("Review only".into()),
+            conversation_id: Some("conv-789".into()),
+            ..crate::guard::SpawnParams::default()
+        };
+        let cmd = build_command(Provider::Claude, SessionMode::Autonomous, &params);
+        assert!(cmd.contains("bash -c"));
+        assert!(cmd.contains("--resume conv-789"));
+        assert!(cmd.contains("--model"));
+        assert!(cmd.contains("opus"));
+        assert!(cmd.contains("--allowedTools"));
+        assert!(cmd.contains("Read"));
+        assert!(cmd.contains("--append-system-prompt"));
+    }
+
+    #[test]
+    fn test_build_command_codex_resume() {
         let guards = GuardConfig::default();
         let params_interactive = crate::guard::SpawnParams {
             prompt: "test".into(),
             guards,
+            conversation_id: Some("conv-codex".into()),
             ..crate::guard::SpawnParams::default()
         };
-        let cmd_interactive = build_resume_command(
+        let cmd_interactive = build_command(
             Provider::Codex,
             SessionMode::Interactive,
-            None,
             &params_interactive,
         );
         assert!(cmd_interactive.starts_with("codex "));
-        assert!(cmd_interactive.contains("'test'"));
+        assert!(cmd_interactive.contains("resume conv-codex"));
 
         let params_autonomous = crate::guard::SpawnParams {
             prompt: "test".into(),
             guards: GuardConfig::default(),
+            conversation_id: Some("conv-codex-auto".into()),
             ..crate::guard::SpawnParams::default()
         };
-        let cmd_autonomous = build_resume_command(
-            Provider::Codex,
-            SessionMode::Autonomous,
-            Some("id"),
-            &params_autonomous,
-        );
+        let cmd_autonomous =
+            build_command(Provider::Codex, SessionMode::Autonomous, &params_autonomous);
         assert!(cmd_autonomous.contains("bash -c"));
-        assert!(cmd_autonomous.contains("codex "));
+        assert!(cmd_autonomous.contains("exec resume conv-codex-auto"));
     }
 
     #[test]
@@ -1521,51 +1464,6 @@ mod tests {
         assert!(cmd.contains("Read,Grep"));
         assert!(cmd.contains("--append-system-prompt"));
         assert!(cmd.contains("Be concise"));
-    }
-
-    #[test]
-    fn test_build_resume_command_interactive_with_model() {
-        let guards = GuardConfig::default();
-        let params = crate::guard::SpawnParams {
-            prompt: "test".into(),
-            guards,
-            model: Some("sonnet".into()),
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_resume_command(
-            Provider::Claude,
-            SessionMode::Interactive,
-            Some("conv-123"),
-            &params,
-        );
-        assert!(cmd.contains("claude --resume conv-123"));
-        assert!(cmd.contains("--model sonnet"));
-    }
-
-    #[test]
-    fn test_build_resume_command_autonomous_with_all_new_flags() {
-        let guards = GuardConfig::default();
-        let params = crate::guard::SpawnParams {
-            prompt: "Fix it".into(),
-            guards,
-            explicit_tools: Some(vec!["Read".into()]),
-            model: Some("opus".into()),
-            system_prompt: Some("Review only".into()),
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_resume_command(
-            Provider::Claude,
-            SessionMode::Autonomous,
-            Some("conv-789"),
-            &params,
-        );
-        assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("--resume conv-789"));
-        assert!(cmd.contains("--model"));
-        assert!(cmd.contains("opus"));
-        assert!(cmd.contains("--allowedTools"));
-        assert!(cmd.contains("Read"));
-        assert!(cmd.contains("--append-system-prompt"));
     }
 
     #[tokio::test]
