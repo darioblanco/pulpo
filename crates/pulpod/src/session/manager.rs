@@ -110,9 +110,8 @@ impl SessionManager {
         spawn_params.worktree = Some(name.clone());
         let command = build_command(provider, mode, &spawn_params);
         let final_command = if !guards.env.allow.is_empty() || !guards.env.deny.is_empty() {
-            let translator = crate::guard::translator_for(provider);
             let current_env: std::collections::HashMap<String, String> = std::env::vars().collect();
-            let sanitized = translator.sanitize_env(&guards, current_env);
+            let sanitized = crate::guard::sanitize_env(&guards, current_env);
             crate::guard::wrap_with_env(&sanitized, &command)
         } else {
             command
@@ -415,7 +414,12 @@ fn derive_name(workdir: &str) -> String {
 fn resolve_guard_config(req: &CreateSessionRequest, default: &GuardConfig) -> GuardConfig {
     req.guard_config
         .clone()
-        .or_else(|| req.guard_preset.map(GuardConfig::from_preset))
+        .or_else(|| {
+            req.guard_preset.map(|p| GuardConfig {
+                preset: p,
+                env: pulpo_common::guard::EnvFilter::default(),
+            })
+        })
         .unwrap_or_else(|| default.clone())
 }
 
@@ -449,14 +453,12 @@ pub(crate) fn build_command(
     params: &crate::guard::SpawnParams,
 ) -> String {
     let binary = provider.to_string();
-    let translator = crate::guard::translator_for(provider);
+    let flags = crate::guard::build_flags(provider, mode, params);
     match mode {
         SessionMode::Interactive => {
-            let flags = translator.build_interactive_flags(params);
             format!("{binary} {}", flags.join(" "))
         }
         SessionMode::Autonomous => {
-            let flags = translator.build_flags(params);
             let inner = format!("{binary} {}", flags.join(" "));
             format!("bash -c '{inner}; echo \"[pulpo] Agent exited ($?)\"; exec bash'")
         }
@@ -758,7 +760,7 @@ mod tests {
         assert!(fetched.guard_config.is_some());
         let gc = fetched.guard_config.unwrap();
         // Default is Standard preset
-        assert_eq!(gc.shell, pulpo_common::guard::ShellAccess::Restricted);
+        assert_eq!(gc.preset, pulpo_common::guard::GuardPreset::Standard);
     }
 
     #[tokio::test]
@@ -783,15 +785,15 @@ mod tests {
         };
         let session = mgr.create_session(req).await.unwrap();
         let gc = session.guard_config.unwrap();
-        assert_eq!(gc.shell, pulpo_common::guard::ShellAccess::None);
+        assert_eq!(gc.preset, pulpo_common::guard::GuardPreset::Strict);
     }
 
     #[tokio::test]
     async fn test_create_session_with_guard_config_override() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let custom = GuardConfig {
-            file_write: pulpo_common::guard::FileScope::Unrestricted,
-            ..GuardConfig::default()
+            preset: pulpo_common::guard::GuardPreset::Yolo,
+            env: pulpo_common::guard::EnvFilter::default(),
         };
         let req = CreateSessionRequest {
             name: None,
@@ -813,7 +815,7 @@ mod tests {
         let session = mgr.create_session(req).await.unwrap();
         // guard_config takes precedence over guard_preset
         let gc = session.guard_config.unwrap();
-        assert_eq!(gc.file_write, pulpo_common::guard::FileScope::Unrestricted);
+        assert_eq!(gc.preset, pulpo_common::guard::GuardPreset::Yolo);
     }
 
     #[tokio::test]
@@ -1207,7 +1209,7 @@ mod tests {
         let req = make_req("test");
         let default = GuardConfig::default();
         let result = resolve_guard_config(&req, &default);
-        assert_eq!(result.shell, pulpo_common::guard::ShellAccess::Restricted);
+        assert_eq!(result.preset, pulpo_common::guard::GuardPreset::Standard);
     }
 
     #[test]
@@ -1230,14 +1232,14 @@ mod tests {
             output_format: None,
         };
         let result = resolve_guard_config(&req, &GuardConfig::default());
-        assert_eq!(result.shell, pulpo_common::guard::ShellAccess::None);
+        assert_eq!(result.preset, pulpo_common::guard::GuardPreset::Strict);
     }
 
     #[test]
     fn test_resolve_guard_config_config_wins() {
         let custom = GuardConfig {
-            file_write: pulpo_common::guard::FileScope::Unrestricted,
-            ..GuardConfig::default()
+            preset: pulpo_common::guard::GuardPreset::Yolo,
+            env: pulpo_common::guard::EnvFilter::default(),
         };
         let req = CreateSessionRequest {
             name: None,
@@ -1258,10 +1260,7 @@ mod tests {
         };
         let result = resolve_guard_config(&req, &GuardConfig::default());
         // guard_config wins over guard_preset
-        assert_eq!(
-            result.file_write,
-            pulpo_common::guard::FileScope::Unrestricted
-        );
+        assert_eq!(result.preset, pulpo_common::guard::GuardPreset::Yolo);
     }
 
     #[test]
@@ -1280,7 +1279,10 @@ mod tests {
 
     #[test]
     fn test_build_command_autonomous_claude_resume_yolo() {
-        let guards = GuardConfig::from_preset(pulpo_common::guard::GuardPreset::Yolo);
+        let guards = GuardConfig {
+            preset: pulpo_common::guard::GuardPreset::Yolo,
+            env: pulpo_common::guard::EnvFilter::default(),
+        };
         let params = crate::guard::SpawnParams {
             prompt: "Fix bug".into(),
             guards,
@@ -1389,7 +1391,10 @@ mod tests {
 
     #[test]
     fn test_build_command_autonomous_claude_yolo() {
-        let guards = GuardConfig::from_preset(pulpo_common::guard::GuardPreset::Yolo);
+        let guards = GuardConfig {
+            preset: pulpo_common::guard::GuardPreset::Yolo,
+            env: pulpo_common::guard::EnvFilter::default(),
+        };
         let params = crate::guard::SpawnParams {
             prompt: "Fix bug".into(),
             guards,

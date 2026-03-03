@@ -6,68 +6,6 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum FileScope {
-    RepoOnly,
-    Workspace,
-    Unrestricted,
-}
-
-impl fmt::Display for FileScope {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::RepoOnly => write!(f, "repo_only"),
-            Self::Workspace => write!(f, "workspace"),
-            Self::Unrestricted => write!(f, "unrestricted"),
-        }
-    }
-}
-
-impl FromStr for FileScope {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "repo_only" => Ok(Self::RepoOnly),
-            "workspace" => Ok(Self::Workspace),
-            "unrestricted" => Ok(Self::Unrestricted),
-            other => Err(format!("unknown file scope: {other}")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ShellAccess {
-    None,
-    Restricted,
-    Unrestricted,
-}
-
-impl fmt::Display for ShellAccess {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::None => write!(f, "none"),
-            Self::Restricted => write!(f, "restricted"),
-            Self::Unrestricted => write!(f, "unrestricted"),
-        }
-    }
-}
-
-impl FromStr for ShellAccess {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "none" => Ok(Self::None),
-            "restricted" => Ok(Self::Restricted),
-            "unrestricted" => Ok(Self::Unrestricted),
-            other => Err(format!("unknown shell access: {other}")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
 pub enum GuardPreset {
     Strict,
     Standard,
@@ -105,229 +43,80 @@ pub struct EnvFilter {
     pub deny: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct GuardConfig {
-    pub file_write: FileScope,
-    pub file_read: FileScope,
-    pub shell: ShellAccess,
-    pub network: bool,
-    pub install_packages: bool,
-    pub git_push: bool,
+    pub preset: GuardPreset,
     #[serde(default)]
     pub env: EnvFilter,
 }
 
-impl GuardConfig {
-    #[must_use]
-    pub fn from_preset(preset: GuardPreset) -> Self {
-        match preset {
-            GuardPreset::Strict => Self {
-                file_write: FileScope::RepoOnly,
-                file_read: FileScope::RepoOnly,
-                shell: ShellAccess::None,
-                network: false,
-                install_packages: false,
-                git_push: false,
-                env: EnvFilter::default(),
-            },
-            GuardPreset::Standard => Self {
-                file_write: FileScope::RepoOnly,
-                file_read: FileScope::Workspace,
-                shell: ShellAccess::Restricted,
-                network: true,
-                install_packages: false,
-                git_push: false,
-                env: EnvFilter::default(),
-            },
-            GuardPreset::Yolo => Self {
-                file_write: FileScope::Unrestricted,
-                file_read: FileScope::Unrestricted,
-                shell: ShellAccess::Unrestricted,
-                network: true,
-                install_packages: true,
-                git_push: true,
-                env: EnvFilter::default(),
-            },
+impl Default for GuardConfig {
+    fn default() -> Self {
+        Self {
+            preset: GuardPreset::Standard,
+            env: EnvFilter::default(),
         }
     }
 }
 
-impl Default for GuardConfig {
-    fn default() -> Self {
-        Self::from_preset(GuardPreset::Standard)
+/// Custom deserializer that handles both the new format and the legacy DB format.
+///
+/// New format: `{"preset": "standard", "env": {...}}`
+/// Legacy format: `{"file_write": "repo_only", "file_read": "workspace", "shell": "restricted",
+///   "network": true, "install_packages": false, "git_push": false, "env": {...}}`
+impl<'de> Deserialize<'de> for GuardConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawGuardConfig {
+            // New format field
+            preset: Option<GuardPreset>,
+            // Legacy format fields
+            shell: Option<String>,
+            network: Option<bool>,
+            install_packages: Option<bool>,
+            git_push: Option<bool>,
+            // Common field
+            #[serde(default)]
+            env: EnvFilter,
+        }
+
+        let raw = RawGuardConfig::deserialize(deserializer)?;
+
+        if let Some(preset) = raw.preset {
+            // New format
+            return Ok(Self {
+                preset,
+                env: raw.env,
+            });
+        }
+
+        // Legacy format — infer preset from fields
+        let shell = raw.shell.as_deref().unwrap_or("restricted");
+        let network = raw.network.unwrap_or(true);
+        let install_packages = raw.install_packages.unwrap_or(false);
+        let git_push = raw.git_push.unwrap_or(false);
+
+        let preset = if shell == "unrestricted" && network && install_packages && git_push {
+            GuardPreset::Yolo
+        } else if shell == "none" {
+            GuardPreset::Strict
+        } else {
+            GuardPreset::Standard
+        };
+
+        Ok(Self {
+            preset,
+            env: raw.env,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // FileScope tests
-
-    #[test]
-    fn test_file_scope_serialize() {
-        assert_eq!(
-            serde_json::to_string(&FileScope::RepoOnly).unwrap(),
-            "\"repo_only\""
-        );
-        assert_eq!(
-            serde_json::to_string(&FileScope::Workspace).unwrap(),
-            "\"workspace\""
-        );
-        assert_eq!(
-            serde_json::to_string(&FileScope::Unrestricted).unwrap(),
-            "\"unrestricted\""
-        );
-    }
-
-    #[test]
-    fn test_file_scope_deserialize() {
-        assert_eq!(
-            serde_json::from_str::<FileScope>("\"repo_only\"").unwrap(),
-            FileScope::RepoOnly
-        );
-        assert_eq!(
-            serde_json::from_str::<FileScope>("\"workspace\"").unwrap(),
-            FileScope::Workspace
-        );
-        assert_eq!(
-            serde_json::from_str::<FileScope>("\"unrestricted\"").unwrap(),
-            FileScope::Unrestricted
-        );
-    }
-
-    #[test]
-    fn test_file_scope_invalid_deserialize() {
-        assert!(serde_json::from_str::<FileScope>("\"invalid\"").is_err());
-    }
-
-    #[test]
-    fn test_file_scope_display() {
-        assert_eq!(FileScope::RepoOnly.to_string(), "repo_only");
-        assert_eq!(FileScope::Workspace.to_string(), "workspace");
-        assert_eq!(FileScope::Unrestricted.to_string(), "unrestricted");
-    }
-
-    #[test]
-    fn test_file_scope_from_str() {
-        assert_eq!(
-            "repo_only".parse::<FileScope>().unwrap(),
-            FileScope::RepoOnly
-        );
-        assert_eq!(
-            "workspace".parse::<FileScope>().unwrap(),
-            FileScope::Workspace
-        );
-        assert_eq!(
-            "unrestricted".parse::<FileScope>().unwrap(),
-            FileScope::Unrestricted
-        );
-    }
-
-    #[test]
-    fn test_file_scope_from_str_invalid() {
-        let err = "invalid".parse::<FileScope>().unwrap_err();
-        assert!(err.contains("unknown file scope"));
-    }
-
-    #[test]
-    fn test_file_scope_clone_and_copy() {
-        let s = FileScope::RepoOnly;
-        let s2 = s;
-        #[allow(clippy::clone_on_copy)]
-        let s3 = s.clone();
-        assert_eq!(s, s2);
-        assert_eq!(s, s3);
-    }
-
-    #[test]
-    fn test_file_scope_debug() {
-        assert_eq!(format!("{:?}", FileScope::RepoOnly), "RepoOnly");
-        assert_eq!(format!("{:?}", FileScope::Workspace), "Workspace");
-        assert_eq!(format!("{:?}", FileScope::Unrestricted), "Unrestricted");
-    }
-
-    // ShellAccess tests
-
-    #[test]
-    fn test_shell_access_serialize() {
-        assert_eq!(
-            serde_json::to_string(&ShellAccess::None).unwrap(),
-            "\"none\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ShellAccess::Restricted).unwrap(),
-            "\"restricted\""
-        );
-        assert_eq!(
-            serde_json::to_string(&ShellAccess::Unrestricted).unwrap(),
-            "\"unrestricted\""
-        );
-    }
-
-    #[test]
-    fn test_shell_access_deserialize() {
-        assert_eq!(
-            serde_json::from_str::<ShellAccess>("\"none\"").unwrap(),
-            ShellAccess::None
-        );
-        assert_eq!(
-            serde_json::from_str::<ShellAccess>("\"restricted\"").unwrap(),
-            ShellAccess::Restricted
-        );
-        assert_eq!(
-            serde_json::from_str::<ShellAccess>("\"unrestricted\"").unwrap(),
-            ShellAccess::Unrestricted
-        );
-    }
-
-    #[test]
-    fn test_shell_access_invalid_deserialize() {
-        assert!(serde_json::from_str::<ShellAccess>("\"invalid\"").is_err());
-    }
-
-    #[test]
-    fn test_shell_access_display() {
-        assert_eq!(ShellAccess::None.to_string(), "none");
-        assert_eq!(ShellAccess::Restricted.to_string(), "restricted");
-        assert_eq!(ShellAccess::Unrestricted.to_string(), "unrestricted");
-    }
-
-    #[test]
-    fn test_shell_access_from_str() {
-        assert_eq!("none".parse::<ShellAccess>().unwrap(), ShellAccess::None);
-        assert_eq!(
-            "restricted".parse::<ShellAccess>().unwrap(),
-            ShellAccess::Restricted
-        );
-        assert_eq!(
-            "unrestricted".parse::<ShellAccess>().unwrap(),
-            ShellAccess::Unrestricted
-        );
-    }
-
-    #[test]
-    fn test_shell_access_from_str_invalid() {
-        let err = "invalid".parse::<ShellAccess>().unwrap_err();
-        assert!(err.contains("unknown shell access"));
-    }
-
-    #[test]
-    fn test_shell_access_clone_and_copy() {
-        let s = ShellAccess::Restricted;
-        let s2 = s;
-        #[allow(clippy::clone_on_copy)]
-        let s3 = s.clone();
-        assert_eq!(s, s2);
-        assert_eq!(s, s3);
-    }
-
-    #[test]
-    fn test_shell_access_debug() {
-        assert_eq!(format!("{:?}", ShellAccess::None), "None");
-        assert_eq!(format!("{:?}", ShellAccess::Restricted), "Restricted");
-        assert_eq!(format!("{:?}", ShellAccess::Unrestricted), "Unrestricted");
-    }
 
     // GuardPreset tests
 
@@ -481,46 +270,34 @@ mod tests {
     #[test]
     fn test_guard_config_default_is_standard() {
         let config = GuardConfig::default();
-        let standard = GuardConfig::from_preset(GuardPreset::Standard);
-        assert_eq!(config, standard);
+        assert_eq!(config.preset, GuardPreset::Standard);
+        assert_eq!(config.env, EnvFilter::default());
     }
 
     #[test]
-    fn test_guard_config_from_preset_strict() {
-        let config = GuardConfig::from_preset(GuardPreset::Strict);
-        assert_eq!(config.file_write, FileScope::RepoOnly);
-        assert_eq!(config.file_read, FileScope::RepoOnly);
-        assert_eq!(config.shell, ShellAccess::None);
-        assert!(!config.network);
-        assert!(!config.install_packages);
-        assert!(!config.git_push);
+    fn test_guard_config_strict() {
+        let config = GuardConfig {
+            preset: GuardPreset::Strict,
+            env: EnvFilter::default(),
+        };
+        assert_eq!(config.preset, GuardPreset::Strict);
     }
 
     #[test]
-    fn test_guard_config_from_preset_standard() {
-        let config = GuardConfig::from_preset(GuardPreset::Standard);
-        assert_eq!(config.file_write, FileScope::RepoOnly);
-        assert_eq!(config.file_read, FileScope::Workspace);
-        assert_eq!(config.shell, ShellAccess::Restricted);
-        assert!(config.network);
-        assert!(!config.install_packages);
-        assert!(!config.git_push);
-    }
-
-    #[test]
-    fn test_guard_config_from_preset_yolo() {
-        let config = GuardConfig::from_preset(GuardPreset::Yolo);
-        assert_eq!(config.file_write, FileScope::Unrestricted);
-        assert_eq!(config.file_read, FileScope::Unrestricted);
-        assert_eq!(config.shell, ShellAccess::Unrestricted);
-        assert!(config.network);
-        assert!(config.install_packages);
-        assert!(config.git_push);
+    fn test_guard_config_yolo() {
+        let config = GuardConfig {
+            preset: GuardPreset::Yolo,
+            env: EnvFilter::default(),
+        };
+        assert_eq!(config.preset, GuardPreset::Yolo);
     }
 
     #[test]
     fn test_guard_config_serialize_roundtrip() {
-        let config = GuardConfig::from_preset(GuardPreset::Strict);
+        let config = GuardConfig {
+            preset: GuardPreset::Strict,
+            env: EnvFilter::default(),
+        };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: GuardConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config, deserialized);
@@ -528,10 +305,12 @@ mod tests {
 
     #[test]
     fn test_guard_config_serialize_with_env() {
-        let mut config = GuardConfig::from_preset(GuardPreset::Standard);
-        config.env = EnvFilter {
-            allow: vec!["PATH".into()],
-            deny: vec!["AWS_*".into()],
+        let config = GuardConfig {
+            preset: GuardPreset::Standard,
+            env: EnvFilter {
+                allow: vec!["PATH".into()],
+                deny: vec!["AWS_*".into()],
+            },
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: GuardConfig = serde_json::from_str(&json).unwrap();
@@ -542,7 +321,10 @@ mod tests {
 
     #[test]
     fn test_guard_config_clone() {
-        let config = GuardConfig::from_preset(GuardPreset::Yolo);
+        let config = GuardConfig {
+            preset: GuardPreset::Yolo,
+            env: EnvFilter::default(),
+        };
         #[allow(clippy::redundant_clone)]
         let cloned = config.clone();
         assert_eq!(config, cloned);
@@ -553,11 +335,29 @@ mod tests {
         let config = GuardConfig::default();
         let debug = format!("{config:?}");
         assert!(debug.contains("GuardConfig"));
-        assert!(debug.contains("Restricted"));
+        assert!(debug.contains("Standard"));
+    }
+
+    // Backward-compatible deserialization tests
+
+    #[test]
+    fn test_guard_config_deserialize_new_format() {
+        let json = r#"{"preset":"strict","env":{"allow":["PATH"],"deny":[]}}"#;
+        let config: GuardConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.preset, GuardPreset::Strict);
+        assert_eq!(config.env.allow, vec!["PATH"]);
     }
 
     #[test]
-    fn test_guard_config_deserialize_without_env() {
+    fn test_guard_config_deserialize_new_format_without_env() {
+        let json = r#"{"preset":"yolo"}"#;
+        let config: GuardConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.preset, GuardPreset::Yolo);
+        assert_eq!(config.env, EnvFilter::default());
+    }
+
+    #[test]
+    fn test_guard_config_deserialize_legacy_standard() {
         let json = r#"{
             "file_write": "repo_only",
             "file_read": "workspace",
@@ -567,6 +367,66 @@ mod tests {
             "git_push": false
         }"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.preset, GuardPreset::Standard);
         assert_eq!(config.env, EnvFilter::default());
+    }
+
+    #[test]
+    fn test_guard_config_deserialize_legacy_strict() {
+        let json = r#"{
+            "file_write": "repo_only",
+            "file_read": "repo_only",
+            "shell": "none",
+            "network": false,
+            "install_packages": false,
+            "git_push": false
+        }"#;
+        let config: GuardConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.preset, GuardPreset::Strict);
+    }
+
+    #[test]
+    fn test_guard_config_deserialize_legacy_yolo() {
+        let json = r#"{
+            "file_write": "unrestricted",
+            "file_read": "unrestricted",
+            "shell": "unrestricted",
+            "network": true,
+            "install_packages": true,
+            "git_push": true
+        }"#;
+        let config: GuardConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.preset, GuardPreset::Yolo);
+    }
+
+    #[test]
+    fn test_guard_config_deserialize_legacy_with_env() {
+        let json = r#"{
+            "file_write": "repo_only",
+            "file_read": "workspace",
+            "shell": "restricted",
+            "network": true,
+            "install_packages": false,
+            "git_push": false,
+            "env": {"allow": ["PATH"], "deny": ["SECRET"]}
+        }"#;
+        let config: GuardConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.preset, GuardPreset::Standard);
+        assert_eq!(config.env.allow, vec!["PATH"]);
+        assert_eq!(config.env.deny, vec!["SECRET"]);
+    }
+
+    #[test]
+    fn test_guard_config_deserialize_legacy_partial_yolo_is_standard() {
+        // Has unrestricted shell and network, but missing install_packages/git_push
+        let json = r#"{
+            "shell": "unrestricted",
+            "network": true,
+            "install_packages": false,
+            "git_push": true
+        }"#;
+        let config: GuardConfig = serde_json::from_str(json).unwrap();
+        // Not all yolo fields set, so falls to Standard
+        assert_eq!(config.preset, GuardPreset::Standard);
     }
 }

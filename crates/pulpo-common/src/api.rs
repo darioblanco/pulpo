@@ -555,10 +555,19 @@ mod tests {
 
     #[test]
     fn test_create_session_request_with_guard_config() {
-        let json = r#"{"workdir":"/repo","prompt":"test","guard_config":{"file_write":"repo_only","file_read":"workspace","shell":"restricted","network":true,"install_packages":false,"git_push":false}}"#;
+        let json = r#"{"workdir":"/repo","prompt":"test","guard_config":{"preset":"standard"}}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert!(req.guard_config.is_some());
         assert!(req.guard_preset.is_none());
+    }
+
+    #[test]
+    fn test_create_session_request_with_legacy_guard_config() {
+        let json = r#"{"workdir":"/repo","prompt":"test","guard_config":{"file_write":"repo_only","file_read":"workspace","shell":"restricted","network":true,"install_packages":false,"git_push":false}}"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert!(req.guard_config.is_some());
+        let gc = req.guard_config.unwrap();
+        assert_eq!(gc.preset, crate::guard::GuardPreset::Standard);
     }
 
     #[test]

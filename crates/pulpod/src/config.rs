@@ -121,11 +121,10 @@ impl Default for GuardDefaultConfig {
 
 impl GuardDefaultConfig {
     pub fn to_guard_config(&self) -> GuardConfig {
-        let mut config = GuardConfig::from_preset(self.preset);
-        if let Some(env) = &self.env {
-            config.env = env.clone();
+        GuardConfig {
+            preset: self.preset,
+            env: self.env.clone().unwrap_or_default(),
         }
-        config
     }
 }
 
@@ -621,8 +620,8 @@ output_format = "stream-json"
             output_format: None,
         };
         let gc = gdc.to_guard_config();
-        assert_eq!(gc.file_write, pulpo_common::guard::FileScope::RepoOnly);
-        assert_eq!(gc.shell, pulpo_common::guard::ShellAccess::None);
+        assert_eq!(gc.preset, pulpo_common::guard::GuardPreset::Strict);
+        assert_eq!(gc.env, pulpo_common::guard::EnvFilter::default());
     }
 
     #[test]
