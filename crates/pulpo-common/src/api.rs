@@ -131,28 +131,6 @@ pub struct InterventionEventResponse {
     pub created_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DetectionEventResponse {
-    pub id: i64,
-    pub session_id: String,
-    pub detector: String,
-    pub action: String,
-    pub was_false_positive: bool,
-    pub created_at: String,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct DetectionEventsQuery {
-    pub detector: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct DetectorStatsResponse {
-    pub total: i64,
-    pub false_positives: i64,
-    pub rate: f64,
-}
-
 #[derive(Debug, Default, Deserialize)]
 pub struct ListSessionsQuery {
     pub status: Option<String>,
@@ -992,87 +970,6 @@ mod tests {
         let debug = format!("{resp:?}");
         assert!(debug.contains("debug.local"));
         assert!(debug.contains("dbg"));
-    }
-
-    #[test]
-    fn test_detection_event_response_serde() {
-        let resp = DetectionEventResponse {
-            id: 1,
-            session_id: "sess-1".into(),
-            detector: "memory".into(),
-            action: "kill".into(),
-            was_false_positive: false,
-            created_at: "2025-01-01T00:00:00Z".into(),
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let deserialized: DetectionEventResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.id, 1);
-        assert_eq!(deserialized.session_id, "sess-1");
-        assert_eq!(deserialized.detector, "memory");
-        assert_eq!(deserialized.action, "kill");
-        assert!(!deserialized.was_false_positive);
-        assert_eq!(deserialized.created_at, "2025-01-01T00:00:00Z");
-    }
-
-    #[test]
-    fn test_detection_event_response_debug_clone() {
-        let resp = DetectionEventResponse {
-            id: 2,
-            session_id: "sess-2".into(),
-            detector: "idle".into(),
-            action: "alert".into(),
-            was_false_positive: true,
-            created_at: "2025-06-01T12:00:00Z".into(),
-        };
-        let cloned = resp.clone();
-        assert_eq!(format!("{resp:?}"), format!("{cloned:?}"));
-    }
-
-    #[test]
-    fn test_detection_events_query_default() {
-        let query = DetectionEventsQuery::default();
-        assert!(query.detector.is_none());
-    }
-
-    #[test]
-    fn test_detection_events_query_with_detector() {
-        let json = r#"{"detector":"memory"}"#;
-        let query: DetectionEventsQuery = serde_json::from_str(json).unwrap();
-        assert_eq!(query.detector.as_deref(), Some("memory"));
-    }
-
-    #[test]
-    fn test_detection_events_query_debug() {
-        let query = DetectionEventsQuery {
-            detector: Some("idle".into()),
-        };
-        let debug = format!("{query:?}");
-        assert!(debug.contains("idle"));
-    }
-
-    #[test]
-    fn test_detector_stats_response_serde() {
-        let resp = DetectorStatsResponse {
-            total: 10,
-            false_positives: 2,
-            rate: 0.2,
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let deserialized: DetectorStatsResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.total, 10);
-        assert_eq!(deserialized.false_positives, 2);
-        assert!((deserialized.rate - 0.2).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_detector_stats_response_debug_clone() {
-        let resp = DetectorStatsResponse {
-            total: 5,
-            false_positives: 1,
-            rate: 0.2,
-        };
-        let cloned = resp.clone();
-        assert_eq!(format!("{resp:?}"), format!("{cloned:?}"));
     }
 
     // --- CreateScheduleRequest tests ---

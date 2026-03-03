@@ -9,7 +9,6 @@ use tower_http::cors::{Any, CorsLayer};
 use super::AppState;
 use super::auth;
 use super::config;
-use super::detections;
 use super::events;
 use super::health;
 use super::node;
@@ -63,12 +62,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
         .route("/api/v1/personas", get(personas::list))
         .route("/api/v1/events", get(events::stream))
-        .route("/api/v1/detection-events", get(detections::list))
-        .route("/api/v1/detection-events/stats", get(detections::stats))
-        .route(
-            "/api/v1/detection-events/{id}/mark",
-            post(detections::mark_false_positive),
-        )
         .route(
             "/api/v1/schedules",
             get(schedules::list).post(schedules::create),
@@ -1381,150 +1374,6 @@ mod tests {
             .await
             .unwrap();
         assert_ne!(resp.status(), 401);
-    }
-
-    async fn test_server_with_store() -> (TestServer, Store) {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-            },
-            auth: crate::config::AuthConfig::default(),
-            peers: HashMap::new(),
-            guards: crate::config::GuardDefaultConfig::default(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
-            notifications: crate::config::NotificationsConfig::default(),
-        };
-        let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store.clone(),
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        );
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry);
-        let app = build(state);
-        (TestServer::new(app).unwrap(), store)
-    }
-
-    #[tokio::test]
-    async fn test_detection_events_list_empty() {
-        let server = test_server().await;
-        let resp = server.get("/api/v1/detection-events").await;
-        resp.assert_status_ok();
-        let body: Vec<serde_json::Value> = resp.json();
-        assert!(body.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_detection_events_list_with_data() {
-        let (server, store) = test_server_with_store().await;
-        store
-            .insert_detection_event("sess-1", "memory", "kill")
-            .await
-            .unwrap();
-        store
-            .insert_detection_event("sess-2", "idle", "alert")
-            .await
-            .unwrap();
-
-        let resp = server.get("/api/v1/detection-events").await;
-        resp.assert_status_ok();
-        let body: Vec<serde_json::Value> = resp.json();
-        assert_eq!(body.len(), 2);
-        assert_eq!(body[0]["detector"], "memory");
-        assert_eq!(body[1]["detector"], "idle");
-    }
-
-    #[tokio::test]
-    async fn test_detection_events_filter_by_detector() {
-        let (server, store) = test_server_with_store().await;
-        store
-            .insert_detection_event("sess-1", "memory", "kill")
-            .await
-            .unwrap();
-        store
-            .insert_detection_event("sess-2", "idle", "alert")
-            .await
-            .unwrap();
-
-        let resp = server.get("/api/v1/detection-events?detector=memory").await;
-        resp.assert_status_ok();
-        let body: Vec<serde_json::Value> = resp.json();
-        assert_eq!(body.len(), 1);
-        assert_eq!(body[0]["detector"], "memory");
-    }
-
-    #[tokio::test]
-    async fn test_detection_events_mark_false_positive() {
-        let (server, store) = test_server_with_store().await;
-        let id = store
-            .insert_detection_event("sess-1", "memory", "kill")
-            .await
-            .unwrap();
-
-        let resp = server
-            .post(&format!("/api/v1/detection-events/{id}/mark"))
-            .await;
-        resp.assert_status(StatusCode::NO_CONTENT);
-
-        // Verify it was marked
-        let events = store.list_detection_events(None).await.unwrap();
-        assert!(events[0].was_false_positive);
-    }
-
-    #[tokio::test]
-    async fn test_detection_events_mark_not_found() {
-        let server = test_server().await;
-        let resp = server.post("/api/v1/detection-events/999/mark").await;
-        resp.assert_status(StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_detection_events_stats_empty() {
-        let server = test_server().await;
-        let resp = server.get("/api/v1/detection-events/stats").await;
-        resp.assert_status_ok();
-        let body: serde_json::Value = resp.json();
-        assert!(body.as_object().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_detection_events_stats_with_data() {
-        let (server, store) = test_server_with_store().await;
-        let id1 = store
-            .insert_detection_event("s1", "memory", "kill")
-            .await
-            .unwrap();
-        store
-            .insert_detection_event("s2", "memory", "kill")
-            .await
-            .unwrap();
-        store
-            .insert_detection_event("s3", "idle", "alert")
-            .await
-            .unwrap();
-        store.mark_detection_false_positive(id1).await.unwrap();
-
-        let resp = server.get("/api/v1/detection-events/stats").await;
-        resp.assert_status_ok();
-        let body: serde_json::Value = resp.json();
-        let mem = &body["memory"];
-        assert_eq!(mem["total"], 2);
-        assert_eq!(mem["false_positives"], 1);
-        assert_eq!(mem["rate"], 0.5);
-
-        let idle = &body["idle"];
-        assert_eq!(idle["total"], 1);
-        assert_eq!(idle["false_positives"], 0);
-        assert_eq!(idle["rate"], 0.0);
     }
 
     // -- Schedule integration tests --

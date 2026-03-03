@@ -20,25 +20,6 @@ pub struct InterventionEvent {
     pub created_at: DateTime<Utc>,
 }
 
-/// A detection event for tracking watchdog accuracy (false-positive analysis).
-#[derive(Debug, Clone)]
-pub struct DetectionEvent {
-    pub id: i64,
-    pub session_id: String,
-    pub detector: String,
-    pub action: String,
-    pub was_false_positive: bool,
-    pub created_at: DateTime<Utc>,
-}
-
-/// Per-detector statistics for false-positive tracking.
-#[derive(Debug, Clone)]
-pub struct DetectorStats {
-    pub total: i64,
-    pub false_positives: i64,
-    pub rate: f64,
-}
-
 #[derive(Clone)]
 pub struct Store {
     pool: SqlitePool,
@@ -207,20 +188,6 @@ impl Store {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
                 reason TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )",
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Idempotent migration: detection events for false-positive tracking
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS detection_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                detector TEXT NOT NULL,
-                action TEXT NOT NULL,
-                was_false_positive INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             )",
         )
@@ -605,56 +572,6 @@ impl Store {
         Ok(())
     }
 
-    pub async fn insert_detection_event(
-        &self,
-        session_id: &str,
-        detector: &str,
-        action: &str,
-    ) -> Result<i64> {
-        let now = Utc::now().to_rfc3339();
-        let result = sqlx::query(
-            "INSERT INTO detection_events (session_id, detector, action, created_at) VALUES (?, ?, ?, ?)",
-        )
-        .bind(session_id)
-        .bind(detector)
-        .bind(action)
-        .bind(&now)
-        .execute(&self.pool)
-        .await?;
-        Ok(result.last_insert_rowid())
-    }
-
-    pub async fn list_detection_events(
-        &self,
-        detector: Option<&str>,
-    ) -> Result<Vec<DetectionEvent>> {
-        let rows = if let Some(det) = detector {
-            sqlx::query(
-                "SELECT id, session_id, detector, action, was_false_positive, created_at
-                 FROM detection_events WHERE detector = ? ORDER BY id ASC",
-            )
-            .bind(det)
-            .fetch_all(&self.pool)
-            .await?
-        } else {
-            sqlx::query(
-                "SELECT id, session_id, detector, action, was_false_positive, created_at
-                 FROM detection_events ORDER BY id ASC",
-            )
-            .fetch_all(&self.pool)
-            .await?
-        };
-        rows.iter().map(row_to_detection_event).collect()
-    }
-
-    pub async fn mark_detection_false_positive(&self, id: i64) -> Result<bool> {
-        let result = sqlx::query("UPDATE detection_events SET was_false_positive = 1 WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(result.rows_affected() > 0)
-    }
-
     // --- Schedule CRUD ---
 
     #[allow(clippy::too_many_lines)]
@@ -880,36 +797,6 @@ impl Store {
         rows.iter().map(row_to_execution).collect()
     }
 
-    pub async fn detection_event_stats(
-        &self,
-    ) -> Result<std::collections::HashMap<String, DetectorStats>> {
-        let rows = sqlx::query(
-            "SELECT detector,
-                    COUNT(*) as total,
-                    SUM(was_false_positive) as false_positives
-             FROM detection_events GROUP BY detector",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        let mut map = std::collections::HashMap::new();
-        for row in &rows {
-            let detector: String = row.get("detector");
-            let total: i64 = row.get("total");
-            let false_positives: i64 = row.get("false_positives");
-            // total is always >= 1 (GROUP BY ensures at least one row per detector)
-            #[allow(clippy::cast_precision_loss)]
-            let rate = (false_positives as f64) / (total as f64);
-            map.insert(
-                detector,
-                DetectorStats {
-                    total,
-                    false_positives,
-                    rate,
-                },
-            );
-        }
-        Ok(map)
-    }
 }
 
 fn row_to_session(row: &SqliteRow) -> Result<Session> {
@@ -1000,19 +887,6 @@ fn row_to_intervention_event(row: &SqliteRow) -> Result<InterventionEvent> {
         id: row.get("id"),
         session_id: row.get("session_id"),
         reason: row.get("reason"),
-        created_at: DateTime::parse_from_rfc3339(&created_str)?.with_timezone(&Utc),
-    })
-}
-
-fn row_to_detection_event(row: &SqliteRow) -> Result<DetectionEvent> {
-    let created_str: String = row.get("created_at");
-    let fp_int: i32 = row.get("was_false_positive");
-    Ok(DetectionEvent {
-        id: row.get("id"),
-        session_id: row.get("session_id"),
-        detector: row.get("detector"),
-        action: row.get("action"),
-        was_false_positive: fp_int != 0,
         created_at: DateTime::parse_from_rfc3339(&created_str)?.with_timezone(&Utc),
     })
 }
@@ -2430,163 +2304,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_insert_detection_event() {
-        let store = test_store().await;
-        let id = store
-            .insert_detection_event("sess-1", "memory", "kill")
-            .await
-            .unwrap();
-        assert!(id > 0);
-
-        let id2 = store
-            .insert_detection_event("sess-1", "idle", "alert")
-            .await
-            .unwrap();
-        assert!(id2 > id);
-    }
-
-    #[tokio::test]
-    async fn test_list_detection_events_all() {
-        let store = test_store().await;
-        store
-            .insert_detection_event("sess-1", "memory", "kill")
-            .await
-            .unwrap();
-        store
-            .insert_detection_event("sess-2", "idle", "alert")
-            .await
-            .unwrap();
-
-        let all = store.list_detection_events(None).await.unwrap();
-        assert_eq!(all.len(), 2);
-        assert_eq!(all[0].detector, "memory");
-        assert_eq!(all[1].detector, "idle");
-    }
-
-    #[tokio::test]
-    async fn test_list_detection_events_filtered() {
-        let store = test_store().await;
-        store
-            .insert_detection_event("sess-1", "memory", "kill")
-            .await
-            .unwrap();
-        store
-            .insert_detection_event("sess-2", "idle", "alert")
-            .await
-            .unwrap();
-
-        let memory_only = store.list_detection_events(Some("memory")).await.unwrap();
-        assert_eq!(memory_only.len(), 1);
-        assert_eq!(memory_only[0].detector, "memory");
-        assert_eq!(memory_only[0].action, "kill");
-        assert!(!memory_only[0].was_false_positive);
-
-        let idle_only = store.list_detection_events(Some("idle")).await.unwrap();
-        assert_eq!(idle_only.len(), 1);
-        assert_eq!(idle_only[0].detector, "idle");
-    }
-
-    #[tokio::test]
-    async fn test_mark_detection_false_positive() {
-        let store = test_store().await;
-        let id = store
-            .insert_detection_event("sess-1", "memory", "kill")
-            .await
-            .unwrap();
-
-        // Initially not false positive
-        let events = store.list_detection_events(None).await.unwrap();
-        assert!(!events[0].was_false_positive);
-
-        // Mark as false positive
-        let found = store.mark_detection_false_positive(id).await.unwrap();
-        assert!(found);
-
-        // Now it should be marked
-        let events = store.list_detection_events(None).await.unwrap();
-        assert!(events[0].was_false_positive);
-    }
-
-    #[tokio::test]
-    async fn test_mark_detection_false_positive_not_found() {
-        let store = test_store().await;
-        let found = store.mark_detection_false_positive(999).await.unwrap();
-        assert!(!found);
-    }
-
-    #[tokio::test]
-    async fn test_detection_event_stats_empty() {
-        let store = test_store().await;
-        let stats = store.detection_event_stats().await.unwrap();
-        assert!(stats.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_detection_event_stats() {
-        let store = test_store().await;
-        let id1 = store
-            .insert_detection_event("s1", "memory", "kill")
-            .await
-            .unwrap();
-        store
-            .insert_detection_event("s2", "memory", "kill")
-            .await
-            .unwrap();
-        store
-            .insert_detection_event("s3", "idle", "alert")
-            .await
-            .unwrap();
-
-        // Mark one memory event as false positive
-        store.mark_detection_false_positive(id1).await.unwrap();
-
-        let stats = store.detection_event_stats().await.unwrap();
-        assert_eq!(stats.len(), 2);
-
-        let mem = &stats["memory"];
-        assert_eq!(mem.total, 2);
-        assert_eq!(mem.false_positives, 1);
-        assert!((mem.rate - 0.5).abs() < f64::EPSILON);
-
-        let idle = &stats["idle"];
-        assert_eq!(idle.total, 1);
-        assert_eq!(idle.false_positives, 0);
-        assert!((idle.rate - 0.0).abs() < f64::EPSILON);
-    }
-
-    #[tokio::test]
-    async fn test_detection_event_fields() {
-        let store = test_store().await;
-        let id = store
-            .insert_detection_event("sess-abc", "memory", "kill")
-            .await
-            .unwrap();
-
-        let events = store.list_detection_events(None).await.unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].id, id);
-        assert_eq!(events[0].session_id, "sess-abc");
-        assert_eq!(events[0].detector, "memory");
-        assert_eq!(events[0].action, "kill");
-        assert!(!events[0].was_false_positive);
-        // created_at should be a valid timestamp
-        assert!(events[0].created_at.to_rfc3339().contains('T'));
-    }
-
-    #[tokio::test]
-    async fn test_detection_event_debug_clone() {
-        let store = test_store().await;
-        store
-            .insert_detection_event("s1", "memory", "kill")
-            .await
-            .unwrap();
-        let events = store.list_detection_events(None).await.unwrap();
-        let event = &events[0];
-        let cloned = event.clone();
-        assert_eq!(format!("{event:?}"), format!("{cloned:?}"));
-    }
-
-    #[tokio::test]
     async fn test_new_session_fields_roundtrip() {
         let store = test_store().await;
         let mut session = make_session("new-fields-test");
@@ -2732,17 +2449,6 @@ mod tests {
             .unwrap();
             assert_eq!(count, 1, "column {col} should exist after migration");
         }
-    }
-
-    #[tokio::test]
-    async fn test_detector_stats_debug_clone() {
-        let stats = DetectorStats {
-            total: 5,
-            false_positives: 1,
-            rate: 0.2,
-        };
-        let cloned = stats.clone();
-        assert_eq!(format!("{stats:?}"), format!("{cloned:?}"));
     }
 
     // --- Schedule store tests ---

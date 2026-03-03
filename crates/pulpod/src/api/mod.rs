@@ -1,6 +1,5 @@
 pub mod auth;
 pub mod config;
-pub mod detections;
 mod embed;
 pub mod events;
 pub mod health;

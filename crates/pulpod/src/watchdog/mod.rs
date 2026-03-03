@@ -216,13 +216,6 @@ async fn intervene(
                 "Failed to record intervention: {e}"
             );
         }
-        if let Err(e) = store
-            .insert_detection_event(&session.id.to_string(), "memory", "kill")
-            .await
-        {
-            warn!("Failed to record detection event: {e}");
-        }
-
         let usage = snapshot.usage_percent();
         warn!(
             session_id = %session.id,
@@ -548,12 +541,6 @@ async fn handle_idle_session(
                         session.name
                     );
                 }
-                if let Err(e) = store
-                    .insert_detection_event(&session.id.to_string(), "idle", "alert")
-                    .await
-                {
-                    warn!("Failed to record idle detection event: {e}");
-                }
             }
         }
         IdleAction::Kill => {
@@ -576,13 +563,6 @@ async fn handle_idle_session(
                     session.name
                 );
             }
-            if let Err(e) = store
-                .insert_detection_event(&session.id.to_string(), "idle", "kill")
-                .await
-            {
-                warn!("Failed to record idle detection event: {e}");
-            }
-
             warn!(
                 "Idle check: killed idle session {} after {minutes} minutes",
                 session.name
@@ -3005,162 +2985,6 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(fetched.idle_since.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_intervene_detection_event_insert_fails() {
-        let backend = Arc::new(MockBackend::new());
-        let store = test_store().await;
-
-        create_running_session(&store, "det-fail").await;
-        // Drop detection_events table so insert_detection_event fails
-        sqlx::query("DROP TABLE detection_events")
-            .execute(store.pool())
-            .await
-            .unwrap();
-
-        let snapshot = MemorySnapshot {
-            total_mb: 1000,
-            available_mb: 50,
-        };
-        let dyn_backend: Arc<dyn Backend> = backend;
-        // intervene should still succeed (kill + intervention recorded), just detection event fails
-        let killed = intervene(&dyn_backend, &store, &snapshot).await;
-        assert_eq!(killed.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_handle_idle_session_alert_detection_event_fails() {
-        let backend = Arc::new(MockBackend::new());
-        let store = test_store().await;
-
-        let session = Session {
-            id: uuid::Uuid::new_v4(),
-            name: "alert-det-fail".into(),
-            workdir: "/tmp/repo".into(),
-            provider: Provider::Claude,
-            prompt: "test".into(),
-            status: SessionStatus::Running,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
-            exit_code: None,
-            tmux_session: Some("pulpo-alert-det-fail".into()),
-            output_snapshot: Some("test output".into()),
-            git_branch: None,
-            git_sha: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            persona: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_reason: None,
-            intervention_at: None,
-            recovery_count: 0,
-            last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-            idle_since: None,
-            waiting_for_input: false,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-        store.insert_session(&session).await.unwrap();
-
-        // Drop detection_events table
-        sqlx::query("DROP TABLE detection_events")
-            .execute(store.pool())
-            .await
-            .unwrap();
-
-        let idle_config = IdleConfig {
-            enabled: true,
-            timeout_secs: 600,
-            action: IdleAction::Alert,
-        };
-        let now = chrono::Utc::now();
-        let timeout = chrono::Duration::seconds(600);
-        let dyn_backend: Arc<dyn Backend> = backend;
-
-        // Should not panic — detection event insert fails gracefully
-        handle_idle_session(
-            &dyn_backend,
-            &store,
-            &idle_config,
-            &session,
-            "pulpo-alert-det-fail",
-            now,
-            timeout,
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn test_handle_idle_session_kill_detection_event_fails() {
-        let backend = Arc::new(MockBackend::new());
-        let store = test_store().await;
-
-        let session = Session {
-            id: uuid::Uuid::new_v4(),
-            name: "kill-det-fail".into(),
-            workdir: "/tmp/repo".into(),
-            provider: Provider::Claude,
-            prompt: "test".into(),
-            status: SessionStatus::Running,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
-            exit_code: None,
-            tmux_session: Some("pulpo-kill-det-fail".into()),
-            output_snapshot: Some("test output".into()),
-            git_branch: None,
-            git_sha: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            persona: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_reason: None,
-            intervention_at: None,
-            recovery_count: 0,
-            last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-            idle_since: None,
-            waiting_for_input: false,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-        store.insert_session(&session).await.unwrap();
-
-        // Drop detection_events table
-        sqlx::query("DROP TABLE detection_events")
-            .execute(store.pool())
-            .await
-            .unwrap();
-
-        let idle_config = IdleConfig {
-            enabled: true,
-            timeout_secs: 600,
-            action: IdleAction::Kill,
-        };
-        let now = chrono::Utc::now();
-        let timeout = chrono::Duration::seconds(600);
-        let dyn_backend: Arc<dyn Backend> = backend;
-
-        // Should not panic — kill succeeds, intervention recorded, detection event fails
-        handle_idle_session(
-            &dyn_backend,
-            &store,
-            &idle_config,
-            &session,
-            "pulpo-kill-det-fail",
-            now,
-            timeout,
-        )
-        .await;
     }
 
     #[test]
