@@ -2721,17 +2721,17 @@ mod tests {
         // Run migration — should add max_turns, max_budget_usd, output_format
         store.migrate().await.unwrap();
 
-        // Verify columns exist by inserting a schedule with the new fields
-        let schedule = make_schedule("migrated");
-        store.insert_schedule(&schedule).await.unwrap();
-
-        // Verify we can read it back
-        let fetched = store
-            .get_schedule_by_name("migrated")
+        // Verify each guardrail column was added via pragma (avoids pool
+        // schema-cache issues that can occur with SELECT * after ALTER TABLE)
+        for col in &["max_turns", "max_budget_usd", "output_format"] {
+            let count: i32 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(*) FROM pragma_table_info('schedules') WHERE name = '{col}'"
+            ))
+            .fetch_one(store.pool())
             .await
-            .unwrap()
             .unwrap();
-        assert_eq!(fetched.name, "migrated");
+            assert_eq!(count, 1, "column {col} should exist after migration");
+        }
     }
 
     #[tokio::test]
