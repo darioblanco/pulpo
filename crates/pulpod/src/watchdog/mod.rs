@@ -7,9 +7,6 @@ use memory::{MemoryReader, MemorySnapshot};
 use pulpo_common::session::SessionStatus;
 use tracing::{debug, info, warn};
 
-use pulpo_common::guard::GuardConfig;
-use pulpo_common::session::{Provider, SessionMode};
-
 use crate::backend::Backend;
 use crate::store::Store;
 
@@ -38,27 +35,8 @@ impl Default for IdleConfig {
     }
 }
 
-/// Configuration for auto-recovery after watchdog intervention.
-#[derive(Debug, Clone)]
-pub struct RecoveryConfig {
-    pub enabled: bool,
-    pub max_recoveries: u32,
-    pub backoff_secs: u64,
-}
-
-impl Default for RecoveryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            max_recoveries: 3,
-            backoff_secs: 30,
-        }
-    }
-}
-
 /// Runs the watchdog loop that monitors system memory and intervenes when sustained pressure
 /// is detected. Kills running sessions after `breach_count` consecutive checks above `threshold`.
-#[allow(clippy::too_many_arguments)]
 pub async fn run_watchdog_loop(
     backend: Arc<dyn Backend>,
     store: Store,
@@ -66,7 +44,6 @@ pub async fn run_watchdog_loop(
     threshold: u8,
     interval: Duration,
     breach_count: u32,
-    recovery: RecoveryConfig,
     idle: IdleConfig,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
@@ -95,10 +72,7 @@ pub async fn run_watchdog_loop(
                             );
 
                             if consecutive_breaches >= breach_count {
-                                let killed = intervene(&backend, &store, &snapshot).await;
-                                if recovery.enabled {
-                                    attempt_recovery(&backend, &store, &killed, &recovery).await;
-                                }
+                                intervene(&backend, &store, &snapshot).await;
                                 consecutive_breaches = 0;
                             }
                         } else {
@@ -130,17 +104,12 @@ pub async fn run_watchdog_loop(
     }
 }
 
-#[allow(clippy::too_many_lines)]
-async fn intervene(
-    backend: &Arc<dyn Backend>,
-    store: &Store,
-    snapshot: &MemorySnapshot,
-) -> Vec<KilledSession> {
+async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemorySnapshot) {
     let sessions = match store.list_sessions().await {
         Ok(s) => s,
         Err(e) => {
             warn!("Watchdog: failed to list sessions: {e}");
-            return Vec::new();
+            return;
         }
     };
 
@@ -155,10 +124,8 @@ async fn intervene(
             usage,
             "Memory pressure but no running sessions to intervene on"
         );
-        return Vec::new();
+        return;
     }
-
-    let mut killed = Vec::new();
 
     for session in &running {
         let tmux_name = session
@@ -224,139 +191,6 @@ async fn intervene(
             available_mb = snapshot.available_mb,
             total_mb = snapshot.total_mb,
             "Watchdog intervention: killed session due to memory pressure"
-        );
-
-        killed.push(KilledSession {
-            id: session.id.to_string(),
-            name: session.name.clone(),
-            workdir: session.workdir.clone(),
-            prompt: session.prompt.clone(),
-            tmux_name: tmux_name.clone(),
-            recovery_count: session.recovery_count,
-            provider: session.provider,
-            mode: session.mode,
-            guard_config: session.guard_config.clone(),
-            model: session.model.clone(),
-            allowed_tools: session.allowed_tools.clone(),
-            system_prompt: session.system_prompt.clone(),
-            conversation_id: session.conversation_id.clone(),
-            max_turns: session.max_turns,
-            max_budget_usd: session.max_budget_usd,
-            output_format: session.output_format.clone(),
-        });
-    }
-
-    killed
-}
-
-struct KilledSession {
-    id: String,
-    name: String,
-    workdir: String,
-    prompt: String,
-    tmux_name: String,
-    recovery_count: u32,
-    provider: Provider,
-    mode: SessionMode,
-    guard_config: Option<GuardConfig>,
-    model: Option<String>,
-    allowed_tools: Option<Vec<String>>,
-    system_prompt: Option<String>,
-    conversation_id: Option<String>,
-    max_turns: Option<u32>,
-    max_budget_usd: Option<f64>,
-    output_format: Option<String>,
-}
-
-async fn attempt_recovery(
-    backend: &Arc<dyn Backend>,
-    store: &Store,
-    killed: &[KilledSession],
-    config: &RecoveryConfig,
-) {
-    for session in killed {
-        if session.recovery_count >= config.max_recoveries {
-            warn!(
-                session_id = %session.id,
-                session_name = %session.name,
-                recovery_count = session.recovery_count,
-                max_recoveries = config.max_recoveries,
-                "Auto-recovery: max retries reached, leaving session dead"
-            );
-            continue;
-        }
-
-        info!(
-            session_id = %session.id,
-            session_name = %session.name,
-            backoff_secs = config.backoff_secs,
-            "Auto-recovery: waiting before restart"
-        );
-        tokio::time::sleep(Duration::from_secs(config.backoff_secs)).await;
-
-        // Increment recovery count
-        match store.increment_recovery_count(&session.id).await {
-            Ok(count) => {
-                info!(
-                    session_id = %session.id,
-                    recovery_count = count,
-                    "Auto-recovery: incremented recovery count"
-                );
-            }
-            Err(e) => {
-                warn!(
-                    session_id = %session.id,
-                    "Auto-recovery: failed to increment recovery count: {e}"
-                );
-                continue;
-            }
-        }
-
-        // Resume the session in the store
-        if let Err(e) = store.resume_dead_session(&session.id).await {
-            warn!(
-                session_id = %session.id,
-                "Auto-recovery: failed to resume session in store: {e}"
-            );
-            continue;
-        }
-
-        // Build proper agent CLI command for recovery
-        let guards = session.guard_config.clone().unwrap_or_default();
-        let params = crate::guard::SpawnParams {
-            prompt: session.prompt.clone(),
-            guards,
-            explicit_tools: session.allowed_tools.clone(),
-            model: session.model.clone(),
-            system_prompt: session.system_prompt.clone(),
-            max_turns: session.max_turns,
-            max_budget_usd: session.max_budget_usd,
-            output_format: session.output_format.clone(),
-            worktree: Some(session.name.clone()),
-            conversation_id: session.conversation_id.clone(),
-        };
-        let resume_cmd =
-            crate::session::manager::build_command(session.provider, session.mode, &params);
-        if let Err(e) = backend.create_session(&session.tmux_name, &session.workdir, &resume_cmd) {
-            warn!(
-                session_id = %session.id,
-                session_name = %session.name,
-                "Auto-recovery: failed to create tmux session: {e}"
-            );
-            // Mark dead again since we couldn't restart
-            if let Err(e2) = store
-                .update_session_intervention(&session.id, "Auto-recovery failed to create session")
-                .await
-            {
-                warn!("Auto-recovery: failed to re-mark session dead: {e2}");
-            }
-            continue;
-        }
-
-        info!(
-            session_id = %session.id,
-            session_name = %session.name,
-            "Auto-recovery: session restarted successfully"
         );
     }
 }
@@ -797,7 +631,6 @@ mod tests {
             90,
             Duration::from_millis(10),
             3,
-            RecoveryConfig::default(),
             IdleConfig {
                 enabled: false,
                 ..IdleConfig::default()
@@ -839,7 +672,6 @@ mod tests {
             90,
             Duration::from_millis(10),
             3,
-            RecoveryConfig::default(),
             IdleConfig {
                 enabled: false,
                 ..IdleConfig::default()
@@ -887,7 +719,6 @@ mod tests {
             90,
             Duration::from_millis(10),
             3,
-            RecoveryConfig::default(),
             IdleConfig {
                 enabled: false,
                 ..IdleConfig::default()
@@ -935,7 +766,6 @@ mod tests {
             90,
             Duration::from_millis(10),
             3,
-            RecoveryConfig::default(),
             IdleConfig {
                 enabled: false,
                 ..IdleConfig::default()
@@ -999,7 +829,6 @@ mod tests {
             90,
             Duration::from_millis(10),
             3,
-            RecoveryConfig::default(),
             IdleConfig {
                 enabled: false,
                 ..IdleConfig::default()
@@ -1029,7 +858,6 @@ mod tests {
             90,
             Duration::from_millis(10),
             3,
-            RecoveryConfig::default(),
             IdleConfig {
                 enabled: false,
                 ..IdleConfig::default()
@@ -1075,7 +903,6 @@ mod tests {
             90,
             Duration::from_millis(10),
             3,
-            RecoveryConfig::default(),
             IdleConfig {
                 enabled: false,
                 ..IdleConfig::default()
@@ -1139,7 +966,6 @@ mod tests {
             90,
             Duration::from_millis(10),
             3,
-            RecoveryConfig::default(),
             IdleConfig {
                 enabled: false,
                 ..IdleConfig::default()
@@ -1226,7 +1052,6 @@ mod tests {
             90,
             Duration::from_millis(10),
             3,
-            RecoveryConfig::default(),
             IdleConfig {
                 enabled: false,
                 ..IdleConfig::default()
@@ -1288,7 +1113,6 @@ mod tests {
             90,
             Duration::from_millis(10),
             3,
-            RecoveryConfig::default(),
             IdleConfig {
                 enabled: false,
                 ..IdleConfig::default()
@@ -1338,7 +1162,6 @@ mod tests {
             90,
             Duration::from_millis(10),
             3,
-            RecoveryConfig::default(),
             IdleConfig {
                 enabled: false,
                 ..IdleConfig::default()
@@ -1441,601 +1264,6 @@ mod tests {
     fn test_mock_backend_failing_create() {
         let b = MockBackend::failing_create();
         assert!(b.create_session("n", "d", "c").is_err());
-    }
-
-    #[test]
-    fn test_recovery_config_default() {
-        let rc = RecoveryConfig::default();
-        assert!(!rc.enabled);
-        assert_eq!(rc.max_recoveries, 3);
-        assert_eq!(rc.backoff_secs, 30);
-    }
-
-    #[test]
-    fn test_recovery_config_debug_clone() {
-        let rc = RecoveryConfig {
-            enabled: true,
-            max_recoveries: 5,
-            backoff_secs: 10,
-        };
-        let debug = format!("{rc:?}");
-        assert!(debug.contains("enabled"));
-        #[allow(clippy::redundant_clone)]
-        let cloned = rc.clone();
-        assert!(cloned.enabled);
-    }
-
-    #[tokio::test]
-    async fn test_auto_recovery_resumes_session() {
-        let backend = Arc::new(MockBackend::new());
-        let store = test_store().await;
-        let session = create_running_session(&store, "recover-me").await;
-
-        let reader = MockMemoryReader::new(vec![
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-        ]);
-
-        let recovery = RecoveryConfig {
-            enabled: true,
-            max_recoveries: 3,
-            backoff_secs: 0, // no delay in test
-        };
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let backend_clone = backend.clone();
-        let store_clone = store.clone();
-
-        let handle = tokio::spawn(run_watchdog_loop(
-            backend_clone,
-            store_clone,
-            Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            recovery,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-            shutdown_rx,
-        ));
-
-        time::sleep(Duration::from_millis(80)).await;
-        shutdown_tx.send(true).unwrap();
-        handle.await.unwrap();
-
-        // Session should have been killed then resumed
-        assert!(
-            backend
-                .kill_calls
-                .lock()
-                .unwrap()
-                .contains(&"pulpo-recover-me".to_owned())
-        );
-        assert!(
-            backend
-                .create_calls
-                .lock()
-                .unwrap()
-                .contains(&"pulpo-recover-me".to_owned())
-        );
-
-        // Recovery command should be a proper agent CLI invocation, not raw text
-        let cmd = {
-            let commands = backend.create_commands.lock().unwrap();
-            assert!(!commands.is_empty(), "expected at least one create command");
-            commands[0].clone()
-        };
-        assert!(
-            cmd.contains("claude"),
-            "recovery command should contain 'claude', got: {cmd}"
-        );
-        assert!(
-            !cmd.contains("Previous session was killed"),
-            "recovery command should not contain raw watchdog text"
-        );
-
-        // Session should be running again with incremented recovery_count
-        let fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Running);
-        assert_eq!(fetched.recovery_count, 1);
-        assert!(fetched.intervention_reason.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_auto_recovery_stops_at_max() {
-        let backend = Arc::new(MockBackend::new());
-        let store = test_store().await;
-
-        // Create session with recovery_count already at max
-        let session_data = Session {
-            id: uuid::Uuid::new_v4(),
-            name: "maxed-out".into(),
-            workdir: "/tmp/repo".into(),
-            provider: Provider::Claude,
-            prompt: "test".into(),
-            status: SessionStatus::Running,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
-            exit_code: None,
-            tmux_session: Some("pulpo-maxed-out".into()),
-            output_snapshot: None,
-            git_branch: None,
-            git_sha: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            persona: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_reason: None,
-            intervention_at: None,
-            recovery_count: 3, // at max
-            last_output_at: None,
-            idle_since: None,
-            waiting_for_input: false,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-        store.insert_session(&session_data).await.unwrap();
-
-        let reader = MockMemoryReader::new(vec![
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-        ]);
-
-        let recovery = RecoveryConfig {
-            enabled: true,
-            max_recoveries: 3,
-            backoff_secs: 0,
-        };
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let backend_clone = backend.clone();
-        let store_clone = store.clone();
-
-        let handle = tokio::spawn(run_watchdog_loop(
-            backend_clone,
-            store_clone,
-            Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            recovery,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-            shutdown_rx,
-        ));
-
-        time::sleep(Duration::from_millis(80)).await;
-        shutdown_tx.send(true).unwrap();
-        handle.await.unwrap();
-
-        // Should have been killed but NOT recovered
-        assert!(
-            backend
-                .kill_calls
-                .lock()
-                .unwrap()
-                .contains(&"pulpo-maxed-out".to_owned())
-        );
-        assert!(backend.create_calls.lock().unwrap().is_empty());
-
-        // Session should remain dead
-        let fetched = store
-            .get_session(&session_data.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
-    }
-
-    #[tokio::test]
-    async fn test_auto_recovery_disabled_by_default() {
-        let backend = Arc::new(MockBackend::new());
-        let store = test_store().await;
-        let session = create_running_session(&store, "no-recover").await;
-
-        let reader = MockMemoryReader::new(vec![
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-        ]);
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let backend_clone = backend.clone();
-        let store_clone = store.clone();
-
-        let handle = tokio::spawn(run_watchdog_loop(
-            backend_clone,
-            store_clone,
-            Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            RecoveryConfig::default(), // disabled
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-            shutdown_rx,
-        ));
-
-        time::sleep(Duration::from_millis(80)).await;
-        shutdown_tx.send(true).unwrap();
-        handle.await.unwrap();
-
-        // Session killed but no create call (no recovery)
-        assert!(
-            backend
-                .kill_calls
-                .lock()
-                .unwrap()
-                .contains(&"pulpo-no-recover".to_owned())
-        );
-        assert!(backend.create_calls.lock().unwrap().is_empty());
-
-        let fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
-    }
-
-    #[tokio::test]
-    async fn test_auto_recovery_create_failure() {
-        let backend = Arc::new(MockBackend::failing_create());
-        let store = test_store().await;
-        let session = create_running_session(&store, "create-fail").await;
-
-        let snapshot = MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        };
-        let dyn_backend: Arc<dyn Backend> = backend.clone();
-        let killed = intervene(&dyn_backend, &store, &snapshot).await;
-
-        let recovery = RecoveryConfig {
-            enabled: true,
-            max_recoveries: 3,
-            backoff_secs: 0,
-        };
-        attempt_recovery(&dyn_backend, &store, &killed, &recovery).await;
-
-        // Session should remain dead since create_session failed
-        let fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
-        assert_eq!(fetched.recovery_count, 1);
-    }
-
-    #[tokio::test]
-    async fn test_auto_recovery_increment_failure() {
-        let backend = Arc::new(MockBackend::new());
-        let store = test_store().await;
-        create_running_session(&store, "inc-fail").await;
-
-        let snapshot = MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        };
-        let dyn_backend: Arc<dyn Backend> = backend.clone();
-        let killed = intervene(&dyn_backend, &store, &snapshot).await;
-
-        // Drop sessions table so increment fails
-        sqlx::query("DROP TABLE sessions")
-            .execute(store.pool())
-            .await
-            .unwrap();
-
-        let recovery = RecoveryConfig {
-            enabled: true,
-            max_recoveries: 3,
-            backoff_secs: 0,
-        };
-        attempt_recovery(&dyn_backend, &store, &killed, &recovery).await;
-
-        // create_session should NOT be called since increment failed
-        assert!(backend.create_calls.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_auto_recovery_resume_failure() {
-        let backend = Arc::new(MockBackend::new());
-        let store = test_store().await;
-        create_running_session(&store, "resume-fail").await;
-
-        let snapshot = MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        };
-        let dyn_backend: Arc<dyn Backend> = backend.clone();
-        let killed = intervene(&dyn_backend, &store, &snapshot).await;
-
-        // Rename status column so resume_dead_session fails
-        sqlx::query("ALTER TABLE sessions RENAME COLUMN status TO status_old")
-            .execute(store.pool())
-            .await
-            .unwrap();
-
-        let recovery = RecoveryConfig {
-            enabled: true,
-            max_recoveries: 3,
-            backoff_secs: 0,
-        };
-        attempt_recovery(&dyn_backend, &store, &killed, &recovery).await;
-
-        // create_session should NOT be called since resume failed
-        assert!(backend.create_calls.lock().unwrap().is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_auto_recovery_create_failure_remark_failure() {
-        let backend = Arc::new(MockBackend::failing_create());
-        let store = test_store().await;
-        create_running_session(&store, "double-fail").await;
-
-        let snapshot = MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        };
-        let dyn_backend: Arc<dyn Backend> = backend.clone();
-        let killed = intervene(&dyn_backend, &store, &snapshot).await;
-
-        // Drop intervention_events table so re-marking dead fails
-        // (update_session_intervention inserts into intervention_events)
-        sqlx::query("DROP TABLE intervention_events")
-            .execute(store.pool())
-            .await
-            .unwrap();
-
-        let recovery = RecoveryConfig {
-            enabled: true,
-            max_recoveries: 3,
-            backoff_secs: 0,
-        };
-        attempt_recovery(&dyn_backend, &store, &killed, &recovery).await;
-
-        // Should not panic — both create and re-mark failures are logged gracefully
-    }
-
-    #[tokio::test]
-    async fn test_auto_recovery_uses_resume_with_conversation_id() {
-        let backend = Arc::new(MockBackend::new());
-        let store = test_store().await;
-
-        // Create a session with a conversation_id
-        let session = Session {
-            id: uuid::Uuid::new_v4(),
-            name: "conv-session".into(),
-            workdir: "/tmp/repo".into(),
-            provider: Provider::Claude,
-            prompt: "do work".into(),
-            status: SessionStatus::Running,
-            mode: SessionMode::Interactive,
-            conversation_id: Some("conv-abc123".into()),
-            exit_code: None,
-            tmux_session: Some("pulpo-conv-session".into()),
-            output_snapshot: None,
-            git_branch: None,
-            git_sha: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            persona: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_reason: None,
-            intervention_at: None,
-            recovery_count: 0,
-            last_output_at: None,
-            idle_since: None,
-            waiting_for_input: false,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-        store.insert_session(&session).await.unwrap();
-
-        let reader = MockMemoryReader::new(vec![
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-        ]);
-
-        let recovery = RecoveryConfig {
-            enabled: true,
-            max_recoveries: 3,
-            backoff_secs: 0,
-        };
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let backend_clone = backend.clone();
-        let store_clone = store.clone();
-
-        let handle = tokio::spawn(run_watchdog_loop(
-            backend_clone,
-            store_clone,
-            Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            recovery,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-            shutdown_rx,
-        ));
-
-        time::sleep(Duration::from_millis(80)).await;
-        shutdown_tx.send(true).unwrap();
-        handle.await.unwrap();
-
-        // Recovery command should use --resume with the conversation_id
-        let cmd = {
-            let commands = backend.create_commands.lock().unwrap();
-            assert!(!commands.is_empty(), "expected at least one create command");
-            commands[0].clone()
-        };
-        assert!(
-            cmd.contains("--resume conv-abc123"),
-            "recovery command should use --resume with conversation_id, got: {cmd}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_auto_recovery_autonomous_wraps_in_bash() {
-        let backend = Arc::new(MockBackend::new());
-        let store = test_store().await;
-
-        // Create an autonomous session
-        let session = Session {
-            id: uuid::Uuid::new_v4(),
-            name: "auto-session".into(),
-            workdir: "/tmp/repo".into(),
-            provider: Provider::Claude,
-            prompt: "run tests".into(),
-            status: SessionStatus::Running,
-            mode: SessionMode::Autonomous,
-            conversation_id: None,
-            exit_code: None,
-            tmux_session: Some("pulpo-auto-session".into()),
-            output_snapshot: None,
-            git_branch: None,
-            git_sha: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            persona: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_reason: None,
-            intervention_at: None,
-            recovery_count: 0,
-            last_output_at: None,
-            idle_since: None,
-            waiting_for_input: false,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-        store.insert_session(&session).await.unwrap();
-
-        let reader = MockMemoryReader::new(vec![
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-            MemorySnapshot {
-                available_mb: 100,
-                total_mb: 8192,
-            },
-        ]);
-
-        let recovery = RecoveryConfig {
-            enabled: true,
-            max_recoveries: 3,
-            backoff_secs: 0,
-        };
-
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let backend_clone = backend.clone();
-        let store_clone = store.clone();
-
-        let handle = tokio::spawn(run_watchdog_loop(
-            backend_clone,
-            store_clone,
-            Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            recovery,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-            shutdown_rx,
-        ));
-
-        time::sleep(Duration::from_millis(80)).await;
-        shutdown_tx.send(true).unwrap();
-        handle.await.unwrap();
-
-        // Autonomous mode recovery should be wrapped in bash -c
-        let cmd = {
-            let commands = backend.create_commands.lock().unwrap();
-            assert!(!commands.is_empty(), "expected at least one create command");
-            commands[0].clone()
-        };
-        assert!(
-            cmd.contains("bash -c"),
-            "autonomous recovery should be wrapped in bash -c, got: {cmd}"
-        );
-        assert!(
-            cmd.contains("exec bash"),
-            "autonomous recovery should keep pane alive with exec bash, got: {cmd}"
-        );
     }
 
     #[test]
@@ -2689,7 +1917,6 @@ mod tests {
             90,
             Duration::from_millis(10),
             3,
-            RecoveryConfig::default(),
             idle_config,
             shutdown_rx,
         ));

@@ -143,12 +143,6 @@ pub struct WatchdogConfig {
     pub check_interval_secs: u64,
     #[serde(default = "default_breach_count")]
     pub breach_count: u32,
-    #[serde(default)]
-    pub auto_recover: bool,
-    #[serde(default = "default_max_recoveries")]
-    pub max_recoveries: u32,
-    #[serde(default = "default_recovery_backoff_secs")]
-    pub recovery_backoff_secs: u64,
     #[serde(default = "default_idle_timeout_secs")]
     pub idle_timeout_secs: u64,
     #[serde(default = "default_idle_action")]
@@ -169,14 +163,6 @@ impl WatchdogConfig {
         if self.breach_count == 0 {
             anyhow::bail!("watchdog.breach_count must be >= 1");
         }
-        if self.auto_recover && self.max_recoveries == 0 {
-            anyhow::bail!("watchdog.max_recoveries must be >= 1 when auto_recover is enabled");
-        }
-        if self.auto_recover && self.recovery_backoff_secs == 0 {
-            anyhow::bail!(
-                "watchdog.recovery_backoff_secs must be >= 1 when auto_recover is enabled"
-            );
-        }
         if self.idle_action != "alert" && self.idle_action != "kill" {
             anyhow::bail!(
                 "watchdog.idle_action must be \"alert\" or \"kill\", got \"{}\"",
@@ -194,9 +180,6 @@ impl Default for WatchdogConfig {
             memory_threshold: default_memory_threshold(),
             check_interval_secs: default_check_interval_secs(),
             breach_count: default_breach_count(),
-            auto_recover: false,
-            max_recoveries: default_max_recoveries(),
-            recovery_backoff_secs: default_recovery_backoff_secs(),
             idle_timeout_secs: default_idle_timeout_secs(),
             idle_action: default_idle_action(),
         }
@@ -217,14 +200,6 @@ const fn default_check_interval_secs() -> u64 {
 
 const fn default_breach_count() -> u32 {
     3
-}
-
-const fn default_max_recoveries() -> u32 {
-    3
-}
-
-const fn default_recovery_backoff_secs() -> u64 {
-    30
 }
 
 const fn default_idle_timeout_secs() -> u64 {
@@ -1158,9 +1133,6 @@ token = "peer-secret"
         assert_eq!(wc.memory_threshold, 90);
         assert_eq!(wc.check_interval_secs, 10);
         assert_eq!(wc.breach_count, 3);
-        assert!(!wc.auto_recover);
-        assert_eq!(wc.max_recoveries, 3);
-        assert_eq!(wc.recovery_backoff_secs, 30);
         assert_eq!(wc.idle_timeout_secs, 600);
         assert_eq!(wc.idle_action, "alert");
     }
@@ -1246,9 +1218,6 @@ breach_count = 5
                 memory_threshold: 75,
                 check_interval_secs: 30,
                 breach_count: 5,
-                auto_recover: false,
-                max_recoveries: 3,
-                recovery_backoff_secs: 30,
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
             },
@@ -1363,131 +1332,6 @@ memory_threshold = 0
         let result = load(tmpfile.path().to_str().unwrap());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("memory_threshold"));
-    }
-
-    #[test]
-    fn test_watchdog_validate_auto_recover_max_zero() {
-        let wd = WatchdogConfig {
-            auto_recover: true,
-            max_recoveries: 0,
-            ..WatchdogConfig::default()
-        };
-        let err = wd.validate().unwrap_err();
-        assert!(err.to_string().contains("max_recoveries"));
-    }
-
-    #[test]
-    fn test_watchdog_validate_auto_recover_backoff_zero() {
-        let wd = WatchdogConfig {
-            auto_recover: true,
-            recovery_backoff_secs: 0,
-            ..WatchdogConfig::default()
-        };
-        let err = wd.validate().unwrap_err();
-        assert!(err.to_string().contains("recovery_backoff_secs"));
-    }
-
-    #[test]
-    fn test_watchdog_validate_auto_recover_disabled_ignores_zeros() {
-        let wd = WatchdogConfig {
-            auto_recover: false,
-            max_recoveries: 0,
-            recovery_backoff_secs: 0,
-            ..WatchdogConfig::default()
-        };
-        assert!(wd.validate().is_ok());
-    }
-
-    #[test]
-    fn test_watchdog_validate_auto_recover_valid() {
-        let wd = WatchdogConfig {
-            auto_recover: true,
-            max_recoveries: 5,
-            recovery_backoff_secs: 60,
-            ..WatchdogConfig::default()
-        };
-        assert!(wd.validate().is_ok());
-    }
-
-    #[test]
-    fn test_load_config_with_auto_recover() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "recover"
-
-[watchdog]
-auto_recover = true
-max_recoveries = 5
-recovery_backoff_secs = 60
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(config.watchdog.auto_recover);
-        assert_eq!(config.watchdog.max_recoveries, 5);
-        assert_eq!(config.watchdog.recovery_backoff_secs, 60);
-    }
-
-    #[test]
-    fn test_load_config_rejects_auto_recover_max_zero() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "bad-recover"
-
-[watchdog]
-auto_recover = true
-max_recoveries = 0
-"#
-        )
-        .unwrap();
-
-        let result = load(tmpfile.path().to_str().unwrap());
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("max_recoveries"));
-    }
-
-    #[test]
-    fn test_save_and_load_roundtrip_with_auto_recover() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("recover-rt.toml");
-        let config = Config {
-            node: NodeConfig {
-                name: "recover-rt".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-            },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            watchdog: WatchdogConfig {
-                auto_recover: true,
-                max_recoveries: 5,
-                recovery_backoff_secs: 60,
-                ..WatchdogConfig::default()
-            },
-            personas: HashMap::new(),
-            notifications: NotificationsConfig::default(),
-        };
-        save(&config, &path).unwrap();
-        let loaded = load(path.to_str().unwrap()).unwrap();
-        assert!(loaded.watchdog.auto_recover);
-        assert_eq!(loaded.watchdog.max_recoveries, 5);
-        assert_eq!(loaded.watchdog.recovery_backoff_secs, 60);
-    }
-
-    #[test]
-    fn test_missing_config_has_default_auto_recover() {
-        let config = load("/nonexistent/recover/config.toml").unwrap();
-        assert!(!config.watchdog.auto_recover);
-        assert_eq!(config.watchdog.max_recoveries, 3);
-        assert_eq!(config.watchdog.recovery_backoff_secs, 30);
     }
 
     #[test]

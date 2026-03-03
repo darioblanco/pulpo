@@ -198,11 +198,6 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                 breach_count = wd_breach_count,
                 "Starting memory watchdog"
             );
-            let wd_recovery = watchdog::RecoveryConfig {
-                enabled: config.watchdog.auto_recover,
-                max_recoveries: config.watchdog.max_recoveries,
-                backoff_secs: config.watchdog.recovery_backoff_secs,
-            };
             let wd_idle = watchdog::IdleConfig {
                 enabled: config.watchdog.idle_timeout_secs > 0,
                 timeout_secs: config.watchdog.idle_timeout_secs,
@@ -219,7 +214,6 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                 wd_threshold,
                 wd_interval,
                 wd_breach_count,
-                wd_recovery,
                 wd_idle,
                 wd_shutdown_rx,
             ));

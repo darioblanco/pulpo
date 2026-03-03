@@ -511,35 +511,6 @@ impl Store {
         Ok(())
     }
 
-    pub async fn increment_recovery_count(&self, id: &str) -> Result<u32> {
-        let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "UPDATE sessions SET recovery_count = recovery_count + 1, updated_at = ? WHERE id = ?",
-        )
-        .bind(&now)
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-        let row = sqlx::query("SELECT recovery_count FROM sessions WHERE id = ?")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await?;
-        let count: i32 = row.get("recovery_count");
-        Ok(count.cast_unsigned())
-    }
-
-    pub async fn resume_dead_session(&self, id: &str) -> Result<()> {
-        let now = Utc::now().to_rfc3339();
-        sqlx::query(
-            "UPDATE sessions SET status = 'running', intervention_reason = NULL, intervention_at = NULL, updated_at = ? WHERE id = ?",
-        )
-        .bind(&now)
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
     pub async fn update_session_idle_since(&self, id: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query("UPDATE sessions SET idle_since = ?, updated_at = ? WHERE id = ?")
@@ -796,7 +767,6 @@ impl Store {
         .await?;
         rows.iter().map(row_to_execution).collect()
     }
-
 }
 
 fn row_to_session(row: &SqliteRow) -> Result<Session> {
@@ -2004,71 +1974,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(fetched.recovery_count, 3);
-    }
-
-    #[tokio::test]
-    async fn test_increment_recovery_count() {
-        let store = test_store().await;
-        let session = make_session("inc-recovery");
-
-        store.insert_session(&session).await.unwrap();
-        let id = session.id.to_string();
-
-        let count = store.increment_recovery_count(&id).await.unwrap();
-        assert_eq!(count, 1);
-
-        let count = store.increment_recovery_count(&id).await.unwrap();
-        assert_eq!(count, 2);
-
-        let fetched = store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.recovery_count, 2);
-    }
-
-    #[tokio::test]
-    async fn test_increment_recovery_count_after_table_dropped() {
-        let store = test_store().await;
-        sqlx::query("DROP TABLE sessions")
-            .execute(store.pool())
-            .await
-            .unwrap();
-        let result = store.increment_recovery_count("nonexistent").await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_resume_dead_session() {
-        let store = test_store().await;
-        let session = make_session("resume-test");
-        let id = session.id.to_string();
-
-        store.insert_session(&session).await.unwrap();
-        store
-            .update_session_intervention(&id, "Memory 95%")
-            .await
-            .unwrap();
-
-        let fetched = store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
-        assert!(fetched.intervention_reason.is_some());
-        assert!(fetched.intervention_at.is_some());
-
-        store.resume_dead_session(&id).await.unwrap();
-
-        let fetched = store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Running);
-        assert!(fetched.intervention_reason.is_none());
-        assert!(fetched.intervention_at.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_resume_dead_session_after_table_dropped() {
-        let store = test_store().await;
-        sqlx::query("DROP TABLE sessions")
-            .execute(store.pool())
-            .await
-            .unwrap();
-        let result = store.resume_dead_session("nonexistent").await;
-        assert!(result.is_err());
     }
 
     #[tokio::test]
