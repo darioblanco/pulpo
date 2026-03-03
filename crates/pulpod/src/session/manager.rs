@@ -237,34 +237,20 @@ impl SessionManager {
     pub async fn get_session(&self, id: &str) -> Result<Option<Session>> {
         let session = self.store.get_session(id).await?;
         match session {
-            Some(mut s) if s.status == SessionStatus::Running => {
-                let alive = self.backend.is_alive(&s.name)?;
-                if !alive {
-                    self.store
-                        .update_session_status(&s.id.to_string(), SessionStatus::Stale)
-                        .await?;
-                    s.status = SessionStatus::Stale;
+            Some(mut s) => {
+                if self.check_and_mark_stale(&mut s).await? {
                     self.emit_event(&s, Some(SessionStatus::Running));
                 }
                 Ok(Some(s))
             }
-            other => Ok(other),
+            None => Ok(None),
         }
     }
 
     pub async fn list_sessions(&self) -> Result<Vec<Session>> {
         let mut sessions = self.store.list_sessions().await?;
         for session in &mut sessions {
-            if session.status == SessionStatus::Running
-                && let Ok(alive) = self.backend.is_alive(&session.name)
-                && !alive
-            {
-                let _ = self
-                    .store
-                    .update_session_status(&session.id.to_string(), SessionStatus::Stale)
-                    .await;
-                session.status = SessionStatus::Stale;
-            }
+            let _ = self.check_and_mark_stale(session).await;
         }
         Ok(sessions)
     }
@@ -275,18 +261,26 @@ impl SessionManager {
     ) -> Result<Vec<Session>> {
         let mut sessions = self.store.list_sessions_filtered(query).await?;
         for session in &mut sessions {
-            if session.status == SessionStatus::Running
-                && let Ok(alive) = self.backend.is_alive(&session.name)
-                && !alive
-            {
-                let _ = self
-                    .store
-                    .update_session_status(&session.id.to_string(), SessionStatus::Stale)
-                    .await;
-                session.status = SessionStatus::Stale;
-            }
+            let _ = self.check_and_mark_stale(session).await;
         }
         Ok(sessions)
+    }
+
+    /// Check if a running session is still alive; if not, mark it stale.
+    /// Returns `Ok(true)` if the session was transitioned to stale.
+    async fn check_and_mark_stale(&self, session: &mut Session) -> Result<bool> {
+        if session.status != SessionStatus::Running {
+            return Ok(false);
+        }
+        let alive = self.backend.is_alive(&session.name)?;
+        if alive {
+            return Ok(false);
+        }
+        self.store
+            .update_session_status(&session.id.to_string(), SessionStatus::Stale)
+            .await?;
+        session.status = SessionStatus::Stale;
+        Ok(true)
     }
 
     pub async fn kill_session(&self, id: &str) -> Result<()> {

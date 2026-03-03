@@ -102,30 +102,6 @@ export interface InterventionEvent {
   created_at: string;
 }
 
-export interface SessionEvent {
-  session_id: string;
-  session_name: string;
-  status: string;
-  previous_status: string | null;
-  node_name: string;
-  output_snippet: string | null;
-  waiting_for_input: boolean | null;
-  timestamp: string;
-}
-
-export function subscribeToEvents(onEvent: (event: SessionEvent) => void): EventSource {
-  const base = getBaseUrl();
-  const apiBase = base ? `${base}/api/v1` : '/api/v1';
-  const token = getAuthToken();
-  const url = token ? `${apiBase}/events?token=${encodeURIComponent(token)}` : `${apiBase}/events`;
-  const source = new EventSource(url);
-  source.addEventListener('session', (e: MessageEvent) => {
-    const data = JSON.parse(e.data) as SessionEvent;
-    onEvent(data);
-  });
-  return source;
-}
-
 export interface PersonaConfig {
   provider: string | null;
   model: string | null;

@@ -42,7 +42,6 @@ import {
   removePeer,
   getPairingUrl,
   getPersonas,
-  subscribeToEvents,
   resolveWsUrl,
 } from './api';
 
@@ -487,62 +486,6 @@ describe('getPersonas', () => {
 
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/personas', { headers: {} });
     expect(result).toEqual(resp);
-  });
-});
-
-describe('subscribeToEvents', () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let listeners: Record<string, (e: any) => void>;
-  let constructedUrl: string;
-
-  beforeEach(() => {
-    listeners = {};
-    constructedUrl = '';
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const MockEventSource = function (this: any, url: string) {
-      constructedUrl = url;
-      this.addEventListener = vi.fn((event: string, cb: (e: MessageEvent) => void) => {
-        listeners[event] = cb;
-      });
-      this.close = vi.fn();
-    };
-    vi.stubGlobal('EventSource', MockEventSource);
-  });
-
-  it('creates EventSource with correct URL and no token', () => {
-    const handler = vi.fn();
-    const source = subscribeToEvents(handler);
-
-    expect(constructedUrl).toBe('/api/v1/events');
-    expect(source.addEventListener).toHaveBeenCalledWith('session', expect.any(Function));
-
-    // Simulate receiving an event
-    listeners['session']({
-      data: JSON.stringify({
-        session_id: 'id-1',
-        session_name: 'test',
-        status: 'running',
-        previous_status: 'creating',
-        node_name: 'node',
-        output_snippet: null,
-        timestamp: '2026-01-01T00:00:00Z',
-      }),
-    });
-    expect(handler).toHaveBeenCalledWith(
-      expect.objectContaining({ session_id: 'id-1', status: 'running' }),
-    );
-  });
-
-  it('includes token as query param when set', () => {
-    connMock.__setTestToken('my-token');
-    subscribeToEvents(vi.fn());
-    expect(constructedUrl).toBe('/api/v1/events?token=my-token');
-  });
-
-  it('uses absolute URL when base is set', () => {
-    connMock.__setTestUrl('http://mac-mini:7433');
-    subscribeToEvents(vi.fn());
-    expect(constructedUrl).toBe('http://mac-mini:7433/api/v1/events');
   });
 });
 
