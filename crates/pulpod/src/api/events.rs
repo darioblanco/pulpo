@@ -13,7 +13,6 @@ use tokio_stream::wrappers::BroadcastStream;
 fn event_to_sse(event: &PulpoEvent) -> Option<Result<Event, Infallible>> {
     let (event_type, json) = match event {
         PulpoEvent::Session(se) => ("session", serde_json::to_string(se).ok()?),
-        PulpoEvent::Schedule(se) => ("schedule", serde_json::to_string(se).ok()?),
     };
     Some(Ok(Event::default().event(event_type).data(json)))
 }
@@ -39,7 +38,7 @@ mod tests {
     use crate::session::manager::SessionManager;
     use crate::store::Store;
     use anyhow::Result;
-    use pulpo_common::event::{ScheduleEvent, SessionEvent};
+    use pulpo_common::event::SessionEvent;
     use std::collections::HashMap;
 
     struct StubBackend;
@@ -123,41 +122,6 @@ mod tests {
         assert!(
             matches!(&received, PulpoEvent::Session(se) if se.session_id == "id-1" && se.status == "running")
         );
-    }
-
-    #[tokio::test]
-    async fn test_broadcast_schedule_event_received() {
-        let (tx, mut rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
-        let event = PulpoEvent::Schedule(ScheduleEvent {
-            schedule_id: "sch-1".into(),
-            schedule_name: "nightly".into(),
-            event_type: "fired".into(),
-            session_id: Some("sess-1".into()),
-            error: None,
-            node_name: "test".into(),
-            timestamp: "2026-01-01T02:00:00Z".into(),
-        });
-        tx.send(event).unwrap();
-        let received = rx.recv().await.unwrap();
-        assert!(
-            matches!(&received, PulpoEvent::Schedule(se) if se.schedule_id == "sch-1" && se.event_type == "fired")
-        );
-    }
-
-    #[test]
-    fn test_event_to_sse_schedule() {
-        let event = PulpoEvent::Schedule(ScheduleEvent {
-            schedule_id: "sch-1".into(),
-            schedule_name: "nightly".into(),
-            event_type: "fired".into(),
-            session_id: Some("sess-1".into()),
-            error: None,
-            node_name: "test".into(),
-            timestamp: "2026-01-01T02:00:00Z".into(),
-        });
-
-        let result = event_to_sse(&event);
-        assert!(result.is_some());
     }
 
     #[test]

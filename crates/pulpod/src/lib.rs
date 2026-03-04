@@ -7,13 +7,11 @@ pub mod mcp;
 pub mod notifications;
 pub mod peers;
 pub mod platform;
-pub mod schedule;
 pub mod session;
 pub mod store;
 pub mod watchdog;
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
@@ -254,24 +252,6 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         info!("Discord notifications enabled");
     }
 
-    // Start scheduler loop for cron-driven schedules
-    {
-        let sched_manager = manager.clone();
-        let sched_store = sched_manager.store().clone();
-        let sched_event_tx = Some(event_tx.clone());
-        let sched_node = config.node.name.clone();
-        let (sched_shutdown_tx, sched_shutdown_rx) = watch::channel(false);
-        info!("Starting schedule loop");
-        tokio::spawn(schedule::run_scheduler_loop(
-            sched_manager,
-            sched_store,
-            sched_event_tx,
-            sched_node,
-            Duration::from_secs(30),
-            sched_shutdown_rx,
-        ));
-        shutdown_handle.add_sender(sched_shutdown_tx);
-    }
 
     let state = api::AppState::with_event_tx(config, config_path, manager, peer_registry, event_tx);
     let app = api::router(state);

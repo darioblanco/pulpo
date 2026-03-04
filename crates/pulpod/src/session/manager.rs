@@ -462,15 +462,14 @@ pub(crate) fn build_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pulpo_common::event::{ScheduleEvent, SessionEvent};
+    use pulpo_common::event::SessionEvent;
     use pulpo_common::guard::GuardPreset;
     use std::sync::Mutex;
 
-    /// Extract the inner `SessionEvent` from a `PulpoEvent`, panicking if it's not a session event.
+    /// Extract the inner `SessionEvent` from a `PulpoEvent`.
     fn unwrap_session_event(event: PulpoEvent) -> SessionEvent {
         match event {
             PulpoEvent::Session(se) => se,
-            PulpoEvent::Schedule(_) => panic!("expected Session event"),
         }
     }
 
@@ -2244,18 +2243,4 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    #[should_panic(expected = "expected Session event")]
-    fn test_unwrap_session_event_panics_on_schedule() {
-        let schedule_event = PulpoEvent::Schedule(ScheduleEvent {
-            schedule_id: "s1".into(),
-            schedule_name: "test".into(),
-            event_type: "fired".into(),
-            session_id: None,
-            error: None,
-            node_name: "n".into(),
-            timestamp: "t".into(),
-        });
-        unwrap_session_event(schedule_event);
-    }
 }

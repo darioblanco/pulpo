@@ -7,7 +7,6 @@ pub mod node;
 pub mod peers;
 pub mod personas;
 pub mod routes;
-pub mod schedules;
 pub mod sessions;
 pub mod static_files;
 pub mod ws;

@@ -1,4 +1,4 @@
-use pulpo_common::event::{PulpoEvent, ScheduleEvent, SessionEvent};
+use pulpo_common::event::{PulpoEvent, SessionEvent};
 use serde::Serialize;
 use tracing::{error, info};
 
@@ -51,21 +51,6 @@ pub const fn status_color(status: &str) -> u32 {
     }
 }
 
-/// Returns the Discord embed color for a schedule event type.
-///
-/// - fired    → green  (`0x2ecc71`)
-/// - failed   → red    (`0xe74c3c`)
-/// - exhausted → blue  (`0x3498db`)
-/// - other    → gray   (`0x95a5a6`)
-pub const fn schedule_event_color(event_type: &str) -> u32 {
-    match event_type.as_bytes() {
-        b"fired" => 0x2e_cc71,
-        b"failed" => 0xe7_4c3c,
-        b"exhausted" => 0x34_98db,
-        _ => 0x95_a5a6,
-    }
-}
-
 /// Builds the Discord webhook JSON payload for a session event.
 pub fn build_discord_payload(event: &SessionEvent) -> serde_json::Value {
     let color = status_color(&event.status);
@@ -110,63 +95,9 @@ pub fn build_discord_payload(event: &SessionEvent) -> serde_json::Value {
     serde_json::to_value(&payload).unwrap_or_default()
 }
 
-/// Builds the Discord webhook JSON payload for a schedule event.
-pub fn build_schedule_discord_payload(event: &ScheduleEvent) -> serde_json::Value {
-    let color = schedule_event_color(&event.event_type);
-    let mut fields = vec![
-        DiscordField {
-            name: "Event".into(),
-            value: event.event_type.clone(),
-            inline: true,
-        },
-        DiscordField {
-            name: "Node".into(),
-            value: event.node_name.clone(),
-            inline: true,
-        },
-    ];
-
-    if let Some(session_id) = &event.session_id {
-        fields.push(DiscordField {
-            name: "Session".into(),
-            value: session_id.clone(),
-            inline: true,
-        });
-    }
-
-    if let Some(err) = &event.error {
-        fields.push(DiscordField {
-            name: "Error".into(),
-            value: format!("```\n{err}\n```"),
-            inline: false,
-        });
-    }
-
-    let payload = DiscordPayload {
-        embeds: vec![DiscordEmbed {
-            title: format!("Schedule: {}", event.schedule_name),
-            description: format!(
-                "Schedule `{}` — **{}**",
-                event.schedule_id, event.event_type
-            ),
-            color,
-            fields,
-        }],
-    };
-
-    serde_json::to_value(&payload).unwrap_or_default()
-}
-
 /// Returns whether the notifier should send a notification for the given status.
 pub fn should_notify(config: &DiscordWebhookConfig, status: &str) -> bool {
     config.events.is_empty() || config.events.iter().any(|e| e == status)
-}
-
-/// Returns whether the notifier should send a notification for a schedule event.
-pub fn should_notify_schedule(config: &DiscordWebhookConfig, event_type: &str) -> bool {
-    // Schedule events are always sent if event filter is empty,
-    // or if "schedule_fired", "schedule_failed" etc. are in the filter
-    config.events.is_empty() || config.events.iter().any(|e| e == event_type)
 }
 
 impl DiscordNotifier {
@@ -199,17 +130,6 @@ impl DiscordNotifier {
         );
         self.send_payload(&payload).await
     }
-
-    /// Send a schedule event as a Discord webhook notification.
-    pub async fn send_schedule(&self, event: &ScheduleEvent) -> Result<(), reqwest::Error> {
-        let payload = build_schedule_discord_payload(event);
-        info!(
-            schedule = %event.schedule_name,
-            event_type = %event.event_type,
-            "Sending Discord schedule notification"
-        );
-        self.send_payload(&payload).await
-    }
 }
 
 /// Run the notification loop — subscribes to the event bus and sends Discord notifications.
@@ -228,13 +148,6 @@ pub async fn run_notification_loop(
                                 && let Err(e) = notifier.send(se).await
                             {
                                 error!(error = %e, "Discord notification failed");
-                            }
-                        }
-                        PulpoEvent::Schedule(ref se) => {
-                            if should_notify_schedule(&notifier.config, &se.event_type)
-                                && let Err(e) = notifier.send_schedule(se).await
-                            {
-                                error!(error = %e, "Discord schedule notification failed");
                             }
                         }
                     },
@@ -272,18 +185,6 @@ mod tests {
         }
     }
 
-    fn test_schedule_event(event_type: &str) -> ScheduleEvent {
-        ScheduleEvent {
-            schedule_id: "sch-1".into(),
-            schedule_name: "nightly-review".into(),
-            event_type: event_type.into(),
-            session_id: None,
-            error: None,
-            node_name: "node-1".into(),
-            timestamp: "2026-01-01T02:00:00Z".into(),
-        }
-    }
-
     // --- status_color tests ---
 
     #[test]
@@ -312,29 +213,6 @@ mod tests {
         assert_eq!(status_color(""), 0x95_a5a6);
     }
 
-    // --- schedule_event_color tests ---
-
-    #[test]
-    fn test_schedule_event_color_fired() {
-        assert_eq!(schedule_event_color("fired"), 0x2e_cc71);
-    }
-
-    #[test]
-    fn test_schedule_event_color_failed() {
-        assert_eq!(schedule_event_color("failed"), 0xe7_4c3c);
-    }
-
-    #[test]
-    fn test_schedule_event_color_exhausted() {
-        assert_eq!(schedule_event_color("exhausted"), 0x34_98db);
-    }
-
-    #[test]
-    fn test_schedule_event_color_unknown() {
-        assert_eq!(schedule_event_color("paused"), 0x95_a5a6);
-        assert_eq!(schedule_event_color(""), 0x95_a5a6);
-    }
-
     // --- should_notify tests ---
 
     #[test]
@@ -358,28 +236,6 @@ mod tests {
         assert!(should_notify(&config, "dead"));
         assert!(should_notify(&config, "completed"));
         assert!(!should_notify(&config, "stale"));
-    }
-
-    // --- should_notify_schedule tests ---
-
-    #[test]
-    fn test_should_notify_schedule_empty_filter() {
-        let config = DiscordWebhookConfig {
-            webhook_url: "https://example.com".into(),
-            events: vec![],
-        };
-        assert!(should_notify_schedule(&config, "fired"));
-        assert!(should_notify_schedule(&config, "failed"));
-    }
-
-    #[test]
-    fn test_should_notify_schedule_with_filter() {
-        let config = DiscordWebhookConfig {
-            webhook_url: "https://example.com".into(),
-            events: vec!["fired".into()],
-        };
-        assert!(should_notify_schedule(&config, "fired"));
-        assert!(!should_notify_schedule(&config, "failed"));
     }
 
     // --- build_discord_payload tests ---
@@ -454,67 +310,6 @@ mod tests {
         assert_eq!(payload["embeds"][0]["color"], 0xe7_4c3c);
     }
 
-    // --- build_schedule_discord_payload tests ---
-
-    #[test]
-    fn test_build_schedule_payload_basic() {
-        let event = test_schedule_event("fired");
-        let payload = build_schedule_discord_payload(&event);
-
-        let embeds = payload["embeds"].as_array().unwrap();
-        assert_eq!(embeds.len(), 1);
-
-        let embed = &embeds[0];
-        assert_eq!(embed["title"], "Schedule: nightly-review");
-        assert!(embed["description"].as_str().unwrap().contains("sch-1"));
-        assert_eq!(embed["color"], 0x2e_cc71);
-
-        let fields = embed["fields"].as_array().unwrap();
-        assert_eq!(fields.len(), 2); // Event + Node
-        assert_eq!(fields[0]["name"], "Event");
-        assert_eq!(fields[0]["value"], "fired");
-    }
-
-    #[test]
-    fn test_build_schedule_payload_with_session() {
-        let event = ScheduleEvent {
-            session_id: Some("sess-42".into()),
-            ..test_schedule_event("fired")
-        };
-        let payload = build_schedule_discord_payload(&event);
-
-        let fields = payload["embeds"][0]["fields"].as_array().unwrap();
-        assert_eq!(fields.len(), 3);
-        assert_eq!(fields[2]["name"], "Session");
-        assert_eq!(fields[2]["value"], "sess-42");
-    }
-
-    #[test]
-    fn test_build_schedule_payload_with_error() {
-        let event = ScheduleEvent {
-            error: Some("spawn failed".into()),
-            ..test_schedule_event("failed")
-        };
-        let payload = build_schedule_discord_payload(&event);
-
-        let fields = payload["embeds"][0]["fields"].as_array().unwrap();
-        assert_eq!(fields.len(), 3);
-        assert_eq!(fields[2]["name"], "Error");
-        assert!(
-            fields[2]["value"]
-                .as_str()
-                .unwrap()
-                .contains("spawn failed")
-        );
-    }
-
-    #[test]
-    fn test_build_schedule_payload_failed_color() {
-        let event = test_schedule_event("failed");
-        let payload = build_schedule_discord_payload(&event);
-        assert_eq!(payload["embeds"][0]["color"], 0xe7_4c3c);
-    }
-
     // --- DiscordNotifier tests ---
 
     #[test]
@@ -580,29 +375,6 @@ mod tests {
         let notifier = DiscordNotifier::new(config);
         let result = notifier.send(&test_event("running")).await;
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_send_schedule_success() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buf = vec![0u8; 4096];
-            let _ = socket.read(&mut buf).await;
-            socket
-                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
-                .await
-                .unwrap();
-        });
-
-        let config = DiscordWebhookConfig {
-            webhook_url: format!("http://{addr}/webhook"),
-            events: vec![],
-        };
-        let notifier = DiscordNotifier::new(config);
-        let result = notifier.send_schedule(&test_schedule_event("fired")).await;
-        assert!(result.is_ok());
     }
 
     // --- run_notification_loop tests ---
@@ -736,59 +508,6 @@ mod tests {
         let handle = tokio::spawn(run_notification_loop(notifier, rx, shutdown_rx));
 
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        shutdown_tx.send(true).unwrap();
-
-        tokio::time::timeout(std::time::Duration::from_secs(2), handle)
-            .await
-            .expect("should finish")
-            .expect("should not panic");
-    }
-
-    #[tokio::test]
-    async fn test_notification_loop_schedule_send_error() {
-        // Use a URL that will fail immediately — tests the schedule send error path
-        let config = DiscordWebhookConfig {
-            webhook_url: "http://127.0.0.1:1/webhook".into(),
-            events: vec![],
-        };
-        let notifier = DiscordNotifier::new(config);
-        let (event_tx, rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        event_tx
-            .send(PulpoEvent::Schedule(test_schedule_event("fired")))
-            .unwrap();
-
-        let handle = tokio::spawn(run_notification_loop(notifier, rx, shutdown_rx));
-
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        shutdown_tx.send(true).unwrap();
-
-        tokio::time::timeout(std::time::Duration::from_secs(5), handle)
-            .await
-            .expect("should finish")
-            .expect("should not panic");
-    }
-
-    #[tokio::test]
-    async fn test_notification_loop_schedule_event() {
-        // Use a filter that won't match schedule events, so no HTTP
-        let config = DiscordWebhookConfig {
-            webhook_url: "https://example.com/webhook".into(),
-            events: vec!["dead".into()],
-        };
-        let notifier = DiscordNotifier::new(config);
-        let (event_tx, rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        // Send a schedule event
-        event_tx
-            .send(PulpoEvent::Schedule(test_schedule_event("fired")))
-            .unwrap();
-
-        let handle = tokio::spawn(run_notification_loop(notifier, rx, shutdown_rx));
-
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         shutdown_tx.send(true).unwrap();
 
         tokio::time::timeout(std::time::Duration::from_secs(2), handle)
