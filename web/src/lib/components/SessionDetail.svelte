@@ -74,11 +74,7 @@
         <span
           data-testid="guard-badge"
           class="text-[0.625rem] uppercase px-1.5 py-0.5 rounded-sm border border-[var(--color-border)] bg-[var(--color-bg)] text-[var(--color-text-muted)]"
-          >{session.guard_config.shell === 'unrestricted'
-            ? 'yolo'
-            : session.guard_config.shell === 'none'
-              ? 'strict'
-              : 'standard'}</span
+          >{session.guard_config.preset}</span
         >
       {/if}
       {#if session.status === 'dead' && session.intervention_reason}

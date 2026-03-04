@@ -367,7 +367,7 @@ describe('getConfig', () => {
     const config = {
       node: { name: 'mac-mini', port: 7433, data_dir: '~/.pulpo' },
       peers: {},
-      guards: { preset: 'standard', env: null },
+      guards: { preset: 'standard' },
     };
     mockFetch.mockResolvedValue(jsonResponse(config));
 
@@ -384,7 +384,7 @@ describe('updateConfig', () => {
       config: {
         node: { name: 'new-name', port: 7433, data_dir: '~/.pulpo' },
         peers: {},
-        guards: { preset: 'standard', env: null },
+        guards: { preset: 'standard' },
       },
       restart_required: false,
     };
@@ -406,7 +406,7 @@ describe('updateConfig', () => {
       config: {
         node: { name: 'mac-mini', port: 9000, data_dir: '~/.pulpo' },
         peers: {},
-        guards: { preset: 'standard', env: null },
+        guards: { preset: 'standard' },
       },
       restart_required: true,
     };

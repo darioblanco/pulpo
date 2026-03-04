@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use base64::Engine;
 use pulpo_common::auth::BindMode;
-use pulpo_common::guard::{EnvFilter, GuardConfig, GuardPreset};
+use pulpo_common::guard::{GuardConfig, GuardPreset};
 use pulpo_common::peer::PeerEntry;
 use serde::{Deserialize, Serialize};
 
@@ -98,8 +98,6 @@ pub struct GuardDefaultConfig {
     #[serde(default = "default_preset")]
     pub preset: GuardPreset,
     #[serde(default)]
-    pub env: Option<EnvFilter>,
-    #[serde(default)]
     pub max_turns: Option<u32>,
     #[serde(default)]
     pub max_budget_usd: Option<f64>,
@@ -111,7 +109,6 @@ impl Default for GuardDefaultConfig {
     fn default() -> Self {
         Self {
             preset: default_preset(),
-            env: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -120,10 +117,9 @@ impl Default for GuardDefaultConfig {
 }
 
 impl GuardDefaultConfig {
-    pub fn to_guard_config(&self) -> GuardConfig {
+    pub const fn to_guard_config(&self) -> GuardConfig {
         GuardConfig {
             preset: self.preset,
-            env: self.env.clone().unwrap_or_default(),
         }
     }
 }
@@ -533,7 +529,6 @@ port = 7433
             config.guards.preset,
             pulpo_common::guard::GuardPreset::Standard
         );
-        assert!(config.guards.env.is_none());
     }
 
     #[test]
@@ -557,33 +552,6 @@ preset = "strict"
             config.guards.preset,
             pulpo_common::guard::GuardPreset::Strict
         );
-    }
-
-    #[test]
-    fn test_load_config_with_guards_env() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "env-guarded"
-
-[guards]
-preset = "strict"
-
-[guards.env]
-allow = ["ANTHROPIC_API_KEY", "PATH", "HOME", "TERM"]
-deny = ["AWS_*", "SSH_*", "GITHUB_TOKEN"]
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        let env = config.guards.env.as_ref().unwrap();
-        assert_eq!(env.allow.len(), 4);
-        assert_eq!(env.deny.len(), 3);
-        assert!(env.allow.contains(&"ANTHROPIC_API_KEY".into()));
-        assert!(env.deny.contains(&"AWS_*".into()));
     }
 
     #[test]
@@ -614,38 +582,18 @@ output_format = "stream-json"
     fn test_guard_default_config_to_guard_config() {
         let gdc = GuardDefaultConfig {
             preset: pulpo_common::guard::GuardPreset::Strict,
-            env: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
         };
         let gc = gdc.to_guard_config();
         assert_eq!(gc.preset, pulpo_common::guard::GuardPreset::Strict);
-        assert_eq!(gc.env, pulpo_common::guard::EnvFilter::default());
-    }
-
-    #[test]
-    fn test_guard_default_config_to_guard_config_with_env() {
-        let gdc = GuardDefaultConfig {
-            preset: pulpo_common::guard::GuardPreset::Standard,
-            env: Some(pulpo_common::guard::EnvFilter {
-                allow: vec!["PATH".into()],
-                deny: vec!["SECRET".into()],
-            }),
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-        };
-        let gc = gdc.to_guard_config();
-        assert_eq!(gc.env.allow, vec!["PATH"]);
-        assert_eq!(gc.env.deny, vec!["SECRET"]);
     }
 
     #[test]
     fn test_guard_default_config_default() {
         let gdc = GuardDefaultConfig::default();
         assert_eq!(gdc.preset, pulpo_common::guard::GuardPreset::Standard);
-        assert!(gdc.env.is_none());
         assert!(gdc.max_turns.is_none());
         assert!(gdc.max_budget_usd.is_none());
         assert!(gdc.output_format.is_none());
@@ -707,10 +655,6 @@ output_format = "stream-json"
             peers,
             guards: GuardDefaultConfig {
                 preset: pulpo_common::guard::GuardPreset::Strict,
-                env: Some(pulpo_common::guard::EnvFilter {
-                    allow: vec!["PATH".into()],
-                    deny: vec!["SECRET".into()],
-                }),
                 max_turns: None,
                 max_budget_usd: None,
                 output_format: None,
@@ -731,9 +675,6 @@ output_format = "stream-json"
             loaded.guards.preset,
             pulpo_common::guard::GuardPreset::Strict
         );
-        let env = loaded.guards.env.unwrap();
-        assert_eq!(env.allow, vec!["PATH"]);
-        assert_eq!(env.deny, vec!["SECRET"]);
     }
 
     #[test]

@@ -132,7 +132,7 @@
         >
           <option value="standard">Standard</option>
           <option value="strict">Strict</option>
-          <option value="yolo">Yolo</option>
+          <option value="unrestricted">Unrestricted</option>
         </select>
       </div>
 

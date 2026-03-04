@@ -254,7 +254,7 @@ pulpo/
 │   │   ├── main.rs               # Thin entry point (cfg(coverage) excluded)
 │   │   ├── lib.rs                # Daemon logic: Cli, init_tracing, build_app
 │   │   ├── config.rs             # TOML config loading
-│   │   ├── guard.rs              # Guard config resolution + env sanitization
+│   │   ├── guard.rs              # Guard config resolution + flag building
 │   │   ├── platform.rs           # OS detection (macOS/Linux/WSL2)
 │   │   ├── api/                  # Axum REST API
 │   │   │   ├── mod.rs            # AppState, router setup
@@ -302,7 +302,7 @@ pulpo/
 │       ├── session.rs            # Session, Provider, SessionStatus types
 │       ├── node.rs               # NodeInfo type
 │       ├── peer.rs               # PeerInfo, PeerStatus types
-│       ├── guard.rs              # GuardConfig, GuardPreset, EnvFilter types
+│       ├── guard.rs              # GuardConfig, GuardPreset types
 │       ├── event.rs              # SessionEvent for SSE + notifications
 │       └── api.rs                # API request/response types
 └── web/                          # Svelte 5 + SvelteKit + Tailwind v4 + Konsta UI

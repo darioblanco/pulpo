@@ -1023,13 +1023,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_guard_config_roundtrip() {
-        use pulpo_common::guard::{EnvFilter, GuardConfig, GuardPreset};
+        use pulpo_common::guard::{GuardConfig, GuardPreset};
 
         let store = test_store().await;
         let mut session = make_session("guard-test");
         let strict = GuardConfig {
             preset: GuardPreset::Strict,
-            env: EnvFilter::default(),
         };
         session.guard_config = Some(strict.clone());
 
@@ -1058,31 +1057,6 @@ mod tests {
             .unwrap();
 
         assert!(fetched.guard_config.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_guard_config_with_env_roundtrip() {
-        use pulpo_common::guard::{EnvFilter, GuardConfig, GuardPreset};
-
-        let store = test_store().await;
-        let mut session = make_session("guard-env-test");
-        let config = GuardConfig {
-            preset: GuardPreset::Standard,
-            env: EnvFilter {
-                allow: vec!["PATH".into(), "HOME".into()],
-                deny: vec!["AWS_*".into()],
-            },
-        };
-        session.guard_config = Some(config.clone());
-
-        store.insert_session(&session).await.unwrap();
-        let fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(fetched.guard_config.unwrap(), config);
     }
 
     #[tokio::test]

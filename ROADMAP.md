@@ -22,8 +22,7 @@ Infrastructure layer for autonomous coding agents. Pulpo manages **where and how
 
 ### Phase 4: Guard System + Multi-Provider
 
-- Guard presets (standard/strict/yolo) with per-provider flags
-- Environment variable sanitization (allow/deny patterns)
+- Guard presets (standard/strict/unrestricted) with per-provider flags
 - Claude Code and OpenAI Codex providers
 - Autonomous mode (fire-and-forget spawning)
 

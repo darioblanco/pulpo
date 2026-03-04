@@ -44,7 +44,7 @@
 
   let showPairing = $state(false);
 
-  const presets = ['permissive', 'standard', 'strict', 'locked'] as const;
+  const presets = ['strict', 'standard', 'unrestricted'] as const;
 
   async function loadConfig() {
     try {

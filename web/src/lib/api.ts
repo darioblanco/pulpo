@@ -62,12 +62,7 @@ export interface PeersResponse {
 }
 
 export interface GuardConfig {
-  file_write: string;
-  file_read: string;
-  shell: string;
-  network: boolean;
-  install_packages: boolean;
-  git_push: boolean;
+  preset: string;
 }
 
 export interface Session {
@@ -271,15 +266,10 @@ export async function removePeer(name: string): Promise<void> {
   }
 }
 
-export interface EnvFilter {
-  allow: string[];
-  block: string[];
-}
-
 export interface ConfigResponse {
   node: { name: string; port: number; data_dir: string };
   peers: Record<string, string>;
-  guards: { preset: string; env: EnvFilter | null };
+  guards: { preset: string };
 }
 
 export interface UpdateConfigRequest {
@@ -287,7 +277,6 @@ export interface UpdateConfigRequest {
   port?: number;
   data_dir?: string;
   guard_preset?: string;
-  guard_env?: EnvFilter;
   peers?: Record<string, string>;
 }
 

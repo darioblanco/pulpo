@@ -73,15 +73,8 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-function makeGuardConfig(shell: string): GuardConfig {
-  return {
-    file_write: 'repo_only',
-    file_read: 'unrestricted',
-    shell,
-    network: true,
-    install_packages: false,
-    git_push: false,
-  };
+function makeGuardConfig(preset: string): GuardConfig {
+  return { preset };
 }
 
 function clickHeader(container: HTMLElement) {
@@ -102,17 +95,17 @@ describe('SessionDetail', () => {
     expect(screen.getByText('Fix the bug')).toBeTruthy();
   });
 
-  it('shows yolo guard badge when shell is unrestricted', () => {
+  it('shows unrestricted guard badge', () => {
     const session = makeSession({ guard_config: makeGuardConfig('unrestricted') });
     render(SessionDetail, {
       props: { session, onkill: vi.fn() },
     });
 
-    expect(screen.getByText('yolo')).toBeTruthy();
+    expect(screen.getByText('unrestricted')).toBeTruthy();
   });
 
-  it('shows strict guard badge when shell is none', () => {
-    const session = makeSession({ guard_config: makeGuardConfig('none') });
+  it('shows strict guard badge', () => {
+    const session = makeSession({ guard_config: makeGuardConfig('strict') });
     render(SessionDetail, {
       props: { session, onkill: vi.fn() },
     });
@@ -120,8 +113,8 @@ describe('SessionDetail', () => {
     expect(screen.getByText('strict')).toBeTruthy();
   });
 
-  it('shows standard guard badge for restricted shell', () => {
-    const session = makeSession({ guard_config: makeGuardConfig('restricted') });
+  it('shows standard guard badge', () => {
+    const session = makeSession({ guard_config: makeGuardConfig('standard') });
     render(SessionDetail, {
       props: { session, onkill: vi.fn() },
     });
@@ -134,7 +127,7 @@ describe('SessionDetail', () => {
       props: { session: makeSession({ guard_config: null }), onkill: vi.fn() },
     });
 
-    expect(screen.queryByText('yolo')).toBeNull();
+    expect(screen.queryByText('unrestricted')).toBeNull();
     expect(screen.queryByText('strict')).toBeNull();
     const container = document.querySelector('[data-testid="guard-badge"]');
     expect(container).toBeNull();

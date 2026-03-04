@@ -111,7 +111,7 @@ describe('NewSessionForm', () => {
     await fireEvent.input(promptInput, { target: { value: 'Do stuff' } });
     await fireEvent.change(providerSelect, { target: { value: 'codex' } });
     await fireEvent.change(modeSelect, { target: { value: 'autonomous' } });
-    await fireEvent.change(guardSelect, { target: { value: 'yolo' } });
+    await fireEvent.change(guardSelect, { target: { value: 'unrestricted' } });
 
     const form = repoInput.closest('form')!;
     await fireEvent.submit(form);
@@ -121,7 +121,7 @@ describe('NewSessionForm', () => {
       prompt: 'Do stuff',
       provider: 'codex',
       mode: 'autonomous',
-      guard_preset: 'yolo',
+      guard_preset: 'unrestricted',
     });
   });
 

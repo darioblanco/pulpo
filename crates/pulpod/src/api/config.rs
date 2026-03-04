@@ -30,7 +30,6 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
         peers: config.peers.clone(),
         guards: GuardDefaultConfigResponse {
             preset: config.guards.preset,
-            env: config.guards.env.clone(),
         },
     }
 }
@@ -66,9 +65,6 @@ pub async fn update_config(
     }
     if let Some(preset) = req.guard_preset {
         config.guards.preset = preset;
-    }
-    if let Some(env) = req.guard_env {
-        config.guards.env = Some(env);
     }
     if let Some(peers) = req.peers {
         config.peers = peers;
@@ -218,7 +214,6 @@ mod tests {
             resp.guards.preset,
             pulpo_common::guard::GuardPreset::Standard
         );
-        assert!(resp.guards.env.is_none());
         assert!(resp.peers.is_empty());
     }
 
@@ -231,7 +226,7 @@ mod tests {
             data_dir: None,
             bind: None,
             guard_preset: None,
-            guard_env: None,
+
             peers: None,
         };
         let Json(resp) = update_config(State(state.clone()), Json(req))
@@ -254,7 +249,7 @@ mod tests {
             data_dir: None,
             bind: None,
             guard_preset: None,
-            guard_env: None,
+
             peers: None,
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -271,7 +266,7 @@ mod tests {
             data_dir: None,
             bind: None,
             guard_preset: None,
-            guard_env: None,
+
             peers: None,
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -287,7 +282,7 @@ mod tests {
             data_dir: None,
             bind: None,
             guard_preset: Some(pulpo_common::guard::GuardPreset::Strict),
-            guard_env: None,
+
             peers: None,
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -295,27 +290,6 @@ mod tests {
             resp.config.guards.preset,
             pulpo_common::guard::GuardPreset::Strict
         );
-    }
-
-    #[tokio::test]
-    async fn test_update_config_guard_env() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            node_name: None,
-            port: None,
-            data_dir: None,
-            bind: None,
-            guard_preset: None,
-            guard_env: Some(pulpo_common::guard::EnvFilter {
-                allow: vec!["PATH".into()],
-                deny: vec!["SECRET".into()],
-            }),
-            peers: None,
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        let env = resp.config.guards.env.unwrap();
-        assert_eq!(env.allow, vec!["PATH"]);
-        assert_eq!(env.deny, vec!["SECRET"]);
     }
 
     #[tokio::test]
@@ -329,7 +303,7 @@ mod tests {
             data_dir: None,
             bind: None,
             guard_preset: None,
-            guard_env: None,
+
             peers: Some(peers),
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -349,7 +323,7 @@ mod tests {
             data_dir: Some("/new/data/dir".into()),
             bind: None,
             guard_preset: None,
-            guard_env: None,
+
             peers: None,
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -364,8 +338,8 @@ mod tests {
             port: Some(8888),
             data_dir: None,
             bind: None,
-            guard_preset: Some(pulpo_common::guard::GuardPreset::Yolo),
-            guard_env: None,
+            guard_preset: Some(pulpo_common::guard::GuardPreset::Unrestricted),
+
             peers: None,
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -373,7 +347,7 @@ mod tests {
         assert_eq!(resp.config.node.port, 8888);
         assert_eq!(
             resp.config.guards.preset,
-            pulpo_common::guard::GuardPreset::Yolo
+            pulpo_common::guard::GuardPreset::Unrestricted
         );
         assert!(resp.restart_required);
     }
@@ -387,7 +361,7 @@ mod tests {
             data_dir: None,
             bind: None,
             guard_preset: None,
-            guard_env: None,
+
             peers: None,
         };
         let Json(resp) = update_config(State(state.clone()), Json(req))
@@ -409,7 +383,7 @@ mod tests {
             data_dir: None,
             bind: None,
             guard_preset: Some(pulpo_common::guard::GuardPreset::Strict),
-            guard_env: None,
+
             peers: None,
         };
         let _ = update_config(State(state.clone()), Json(req))
@@ -435,7 +409,7 @@ mod tests {
             data_dir: None,
             bind: None,
             guard_preset: None,
-            guard_env: None,
+
             peers: None,
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -475,7 +449,7 @@ mod tests {
             data_dir: None,
             bind: Some(pulpo_common::auth::BindMode::Lan),
             guard_preset: None,
-            guard_env: None,
+
             peers: None,
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -492,7 +466,7 @@ mod tests {
             data_dir: None,
             bind: Some(pulpo_common::auth::BindMode::Local),
             guard_preset: None,
-            guard_env: None,
+
             peers: None,
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -565,7 +539,7 @@ mod tests {
             data_dir: None,
             bind: None,
             guard_preset: None,
-            guard_env: None,
+
             peers: None,
         };
         let result = update_config(State(state), Json(req)).await;

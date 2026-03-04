@@ -212,7 +212,7 @@ What happened: `pulpod` started, checked SQLite for active sessions, found no ma
 - **Single binary** — `pulpod` embeds the web UI. No runtime dependencies besides tmux.
 - **Resource watchdog** — monitors memory pressure, kills runaway agents, logs interventions.
 - **Idle detection** — detects sessions with no output for a configurable timeout.
-- **Guard presets** — standard, strict, or yolo modes control agent permissions and env sanitization.
+- **Guard presets** — standard, strict, or unrestricted modes control agent permissions.
 - **Session persistence** — sessions survive daemon restarts; resume after reboot.
 - **Multi-provider** — Claude Code and OpenAI Codex out of the box.
 - **Multi-node dashboard** — see agents across all machines in one view.
@@ -262,7 +262,7 @@ system_prompt = "You are a code reviewer."
 webhook_url = "https://discord.com/api/webhooks/..."
 ```
 
-See [SPEC.md](SPEC.md#configuration) for all options (watchdog, guards, auth, peers, env filters).
+See [SPEC.md](SPEC.md#configuration) for all options (watchdog, guards, auth, peers).
 
 ## CLI Reference
 
@@ -275,7 +275,7 @@ pulpo spawn [OPTIONS] <PROMPT>       Spawn a new agent session (alias: s)
   --workdir <PATH>                  Working directory (required)
   --name <NAME>                     Session name (auto-derived if omitted)
   --provider <claude|codex>         Agent provider (default: claude)
-  --guard <strict|standard|yolo>    Guard preset (default: standard)
+  --guard <strict|standard|unrestricted>  Guard preset (default: standard)
   --model <MODEL>                   Model override (e.g. opus, sonnet)
   --system-prompt <TEXT>            System prompt to append
   --allowed-tools <TOOL,...>        Allowed tools (comma-separated)
@@ -314,7 +314,7 @@ pulpo --node macbook:7433 list
 - [x] Single-node MVP: daemon, CLI, web UI, tmux backend, Claude Code
 - [x] Live terminal: WebSocket streaming, xterm.js, session resume
 - [x] Multi-node: manual peer config, aggregated dashboard, remote spawning
-- [x] Guard presets: standard, strict, yolo environment control
+- [x] Guard presets: standard, strict, unrestricted permission control
 - [x] Token auth, mobile-friendly web UI
 - [x] Resource watchdog: memory pressure detection, safe intervention, audit trail
 - [x] Idle detection: detect and act on sessions with no output

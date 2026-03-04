@@ -47,7 +47,7 @@ pub struct SpawnSessionParams {
     pub provider: Option<Provider>,
     /// Session mode (interactive or autonomous). Defaults to interactive.
     pub mode: Option<SessionMode>,
-    /// Guard preset (strict, standard, yolo). Overrides default.
+    /// Guard preset (strict, standard, unrestricted). Overrides default.
     pub guard_preset: Option<GuardPreset>,
     /// Custom session name. Auto-derived from `workdir` if omitted.
     pub name: Option<String>,
@@ -807,7 +807,7 @@ mod tests {
             prompt: "Do stuff".into(),
             provider: Some(Provider::Claude),
             mode: Some(SessionMode::Autonomous),
-            guard_preset: Some(GuardPreset::Yolo),
+            guard_preset: Some(GuardPreset::Unrestricted),
             name: Some("custom-name".into()),
             node: Some("test-node".into()), // matches local
         };

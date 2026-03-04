@@ -29,7 +29,7 @@ function makeConfig(overrides: Partial<ConfigResponse> = {}): ConfigResponse {
   return {
     node: { name: 'mac-mini', port: 7433, data_dir: '~/.pulpo' },
     peers: {},
-    guards: { preset: 'standard', env: null },
+    guards: { preset: 'standard' },
     ...overrides,
   };
 }
@@ -104,12 +104,11 @@ describe('settings page', () => {
     render(Page);
 
     await vi.waitFor(() => {
-      expect(screen.getByText('permissive')).toBeTruthy();
+      expect(screen.getByText('strict')).toBeTruthy();
     });
 
     expect(screen.getByText('standard')).toBeTruthy();
-    expect(screen.getByText('strict')).toBeTruthy();
-    expect(screen.getByText('locked')).toBeTruthy();
+    expect(screen.getByText('unrestricted')).toBeTruthy();
   });
 
   it('saves config on button click', async () => {
@@ -259,7 +258,7 @@ describe('settings page', () => {
     mockGetConfig.mockResolvedValue(makeConfig());
     mockUpdateConfig.mockResolvedValue({
       config: makeConfig({
-        guards: { preset: 'strict', env: null },
+        guards: { preset: 'strict' },
       }),
       restart_required: false,
     });

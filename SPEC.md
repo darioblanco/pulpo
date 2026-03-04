@@ -595,8 +595,7 @@ Ship the smallest useful thing first.
 ### Phase 4: Sandboxing ✅
 
 - ✅ Codex provider support
-- ✅ Environment sanitization (control what env vars the agent sees)
-- ✅ Guard presets (standard/strict/yolo) with per-provider flags
+- ✅ Guard presets (standard/strict/unrestricted) with per-provider flags
 
 ### Phase 5: Web UI + Konsta UI ✅
 
@@ -665,11 +664,7 @@ bind = "local"          # "local" (127.0.0.1) or "lan" (0.0.0.0)
 # token is auto-generated on first run
 
 [guards]
-preset = "standard"     # standard (default), strict, or yolo
-
-[guards.env]
-allow = ["ANTHROPIC_API_KEY", "PATH", "HOME"]
-deny = ["AWS_*", "SSH_*"]
+preset = "standard"     # standard (default), strict, or unrestricted
 
 [watchdog]
 enabled = true

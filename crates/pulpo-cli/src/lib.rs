@@ -60,7 +60,7 @@ pub enum Commands {
         #[arg(long)]
         auto: bool,
 
-        /// Guard preset (strict, standard, yolo)
+        /// Guard preset (strict, standard, unrestricted)
         #[arg(long, default_value = "standard")]
         guard: String,
 

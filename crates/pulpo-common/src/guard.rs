@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 pub enum GuardPreset {
     Strict,
     Standard,
-    Yolo,
+    #[serde(alias = "yolo")]
+    Unrestricted,
 }
 
 impl fmt::Display for GuardPreset {
@@ -17,7 +18,7 @@ impl fmt::Display for GuardPreset {
         match self {
             Self::Strict => write!(f, "strict"),
             Self::Standard => write!(f, "standard"),
-            Self::Yolo => write!(f, "yolo"),
+            Self::Unrestricted => write!(f, "unrestricted"),
         }
     }
 }
@@ -29,41 +30,30 @@ impl FromStr for GuardPreset {
         match s {
             "strict" => Ok(Self::Strict),
             "standard" => Ok(Self::Standard),
-            "yolo" => Ok(Self::Yolo),
+            "unrestricted" | "yolo" => Ok(Self::Unrestricted),
             other => Err(format!("unknown guard preset: {other}")),
         }
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct EnvFilter {
-    #[serde(default)]
-    pub allow: Vec<String>,
-    #[serde(default)]
-    pub deny: Vec<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct GuardConfig {
     pub preset: GuardPreset,
-    #[serde(default)]
-    pub env: EnvFilter,
 }
 
 impl Default for GuardConfig {
     fn default() -> Self {
         Self {
             preset: GuardPreset::Standard,
-            env: EnvFilter::default(),
         }
     }
 }
 
 /// Custom deserializer that handles both the new format and the legacy DB format.
 ///
-/// New format: `{"preset": "standard", "env": {...}}`
+/// New format: `{"preset": "standard"}`
 /// Legacy format: `{"file_write": "repo_only", "file_read": "workspace", "shell": "restricted",
-///   "network": true, "install_packages": false, "git_push": false, "env": {...}}`
+///   "network": true, "install_packages": false, "git_push": false, ...}`
 impl<'de> Deserialize<'de> for GuardConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -78,19 +68,13 @@ impl<'de> Deserialize<'de> for GuardConfig {
             network: Option<bool>,
             install_packages: Option<bool>,
             git_push: Option<bool>,
-            // Common field
-            #[serde(default)]
-            env: EnvFilter,
         }
 
         let raw = RawGuardConfig::deserialize(deserializer)?;
 
         if let Some(preset) = raw.preset {
             // New format
-            return Ok(Self {
-                preset,
-                env: raw.env,
-            });
+            return Ok(Self { preset });
         }
 
         // Legacy format — infer preset from fields
@@ -100,17 +84,14 @@ impl<'de> Deserialize<'de> for GuardConfig {
         let git_push = raw.git_push.unwrap_or(false);
 
         let preset = if shell == "unrestricted" && network && install_packages && git_push {
-            GuardPreset::Yolo
+            GuardPreset::Unrestricted
         } else if shell == "none" {
             GuardPreset::Strict
         } else {
             GuardPreset::Standard
         };
 
-        Ok(Self {
-            preset,
-            env: raw.env,
-        })
+        Ok(Self { preset })
     }
 }
 
@@ -131,8 +112,8 @@ mod tests {
             "\"standard\""
         );
         assert_eq!(
-            serde_json::to_string(&GuardPreset::Yolo).unwrap(),
-            "\"yolo\""
+            serde_json::to_string(&GuardPreset::Unrestricted).unwrap(),
+            "\"unrestricted\""
         );
     }
 
@@ -147,8 +128,25 @@ mod tests {
             GuardPreset::Standard
         );
         assert_eq!(
+            serde_json::from_str::<GuardPreset>("\"unrestricted\"").unwrap(),
+            GuardPreset::Unrestricted
+        );
+    }
+
+    #[test]
+    fn test_guard_preset_deserialize_yolo_alias() {
+        // Backward compat: "yolo" in old DB rows maps to Unrestricted
+        assert_eq!(
             serde_json::from_str::<GuardPreset>("\"yolo\"").unwrap(),
-            GuardPreset::Yolo
+            GuardPreset::Unrestricted
+        );
+    }
+
+    #[test]
+    fn test_guard_preset_from_str_yolo_alias() {
+        assert_eq!(
+            "yolo".parse::<GuardPreset>().unwrap(),
+            GuardPreset::Unrestricted
         );
     }
 
@@ -161,7 +159,7 @@ mod tests {
     fn test_guard_preset_display() {
         assert_eq!(GuardPreset::Strict.to_string(), "strict");
         assert_eq!(GuardPreset::Standard.to_string(), "standard");
-        assert_eq!(GuardPreset::Yolo.to_string(), "yolo");
+        assert_eq!(GuardPreset::Unrestricted.to_string(), "unrestricted");
     }
 
     #[test]
@@ -174,7 +172,10 @@ mod tests {
             "standard".parse::<GuardPreset>().unwrap(),
             GuardPreset::Standard
         );
-        assert_eq!("yolo".parse::<GuardPreset>().unwrap(), GuardPreset::Yolo);
+        assert_eq!(
+            "unrestricted".parse::<GuardPreset>().unwrap(),
+            GuardPreset::Unrestricted
+        );
     }
 
     #[test]
@@ -197,72 +198,7 @@ mod tests {
     fn test_guard_preset_debug() {
         assert_eq!(format!("{:?}", GuardPreset::Strict), "Strict");
         assert_eq!(format!("{:?}", GuardPreset::Standard), "Standard");
-        assert_eq!(format!("{:?}", GuardPreset::Yolo), "Yolo");
-    }
-
-    // EnvFilter tests
-
-    #[test]
-    fn test_env_filter_default() {
-        let f = EnvFilter::default();
-        assert!(f.allow.is_empty());
-        assert!(f.deny.is_empty());
-    }
-
-    #[test]
-    fn test_env_filter_serialize() {
-        let f = EnvFilter {
-            allow: vec!["PATH".into(), "HOME".into()],
-            deny: vec!["AWS_*".into()],
-        };
-        let json = serde_json::to_string(&f).unwrap();
-        assert!(json.contains("PATH"));
-        assert!(json.contains("AWS_*"));
-    }
-
-    #[test]
-    fn test_env_filter_deserialize() {
-        let json = r#"{"allow":["PATH"],"deny":["SECRET"]}"#;
-        let f: EnvFilter = serde_json::from_str(json).unwrap();
-        assert_eq!(f.allow, vec!["PATH"]);
-        assert_eq!(f.deny, vec!["SECRET"]);
-    }
-
-    #[test]
-    fn test_env_filter_roundtrip() {
-        let f = EnvFilter {
-            allow: vec!["A".into()],
-            deny: vec!["B".into()],
-        };
-        let json = serde_json::to_string(&f).unwrap();
-        let f2: EnvFilter = serde_json::from_str(&json).unwrap();
-        assert_eq!(f, f2);
-    }
-
-    #[test]
-    fn test_env_filter_clone() {
-        let f = EnvFilter {
-            allow: vec!["X".into()],
-            deny: vec!["Y".into()],
-        };
-        #[allow(clippy::redundant_clone)]
-        let f2 = f.clone();
-        assert_eq!(f, f2);
-    }
-
-    #[test]
-    fn test_env_filter_debug() {
-        let f = EnvFilter::default();
-        let debug = format!("{f:?}");
-        assert!(debug.contains("EnvFilter"));
-    }
-
-    #[test]
-    fn test_env_filter_deserialize_empty_object() {
-        let json = "{}";
-        let f: EnvFilter = serde_json::from_str(json).unwrap();
-        assert!(f.allow.is_empty());
-        assert!(f.deny.is_empty());
+        assert_eq!(format!("{:?}", GuardPreset::Unrestricted), "Unrestricted");
     }
 
     // GuardConfig tests
@@ -271,59 +207,38 @@ mod tests {
     fn test_guard_config_default_is_standard() {
         let config = GuardConfig::default();
         assert_eq!(config.preset, GuardPreset::Standard);
-        assert_eq!(config.env, EnvFilter::default());
     }
 
     #[test]
     fn test_guard_config_strict() {
         let config = GuardConfig {
             preset: GuardPreset::Strict,
-            env: EnvFilter::default(),
         };
         assert_eq!(config.preset, GuardPreset::Strict);
     }
 
     #[test]
-    fn test_guard_config_yolo() {
+    fn test_guard_config_unrestricted() {
         let config = GuardConfig {
-            preset: GuardPreset::Yolo,
-            env: EnvFilter::default(),
+            preset: GuardPreset::Unrestricted,
         };
-        assert_eq!(config.preset, GuardPreset::Yolo);
+        assert_eq!(config.preset, GuardPreset::Unrestricted);
     }
 
     #[test]
     fn test_guard_config_serialize_roundtrip() {
         let config = GuardConfig {
             preset: GuardPreset::Strict,
-            env: EnvFilter::default(),
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: GuardConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config, deserialized);
-    }
-
-    #[test]
-    fn test_guard_config_serialize_with_env() {
-        let config = GuardConfig {
-            preset: GuardPreset::Standard,
-            env: EnvFilter {
-                allow: vec!["PATH".into()],
-                deny: vec!["AWS_*".into()],
-            },
-        };
-        let json = serde_json::to_string(&config).unwrap();
-        let deserialized: GuardConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(config, deserialized);
-        assert_eq!(deserialized.env.allow, vec!["PATH"]);
-        assert_eq!(deserialized.env.deny, vec!["AWS_*"]);
     }
 
     #[test]
     fn test_guard_config_clone() {
         let config = GuardConfig {
-            preset: GuardPreset::Yolo,
-            env: EnvFilter::default(),
+            preset: GuardPreset::Unrestricted,
         };
         #[allow(clippy::redundant_clone)]
         let cloned = config.clone();
@@ -342,18 +257,17 @@ mod tests {
 
     #[test]
     fn test_guard_config_deserialize_new_format() {
-        let json = r#"{"preset":"strict","env":{"allow":["PATH"],"deny":[]}}"#;
+        let json = r#"{"preset":"strict"}"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.preset, GuardPreset::Strict);
-        assert_eq!(config.env.allow, vec!["PATH"]);
     }
 
     #[test]
-    fn test_guard_config_deserialize_new_format_without_env() {
-        let json = r#"{"preset":"yolo"}"#;
+    fn test_guard_config_deserialize_new_format_ignores_env() {
+        // Old DB rows may still have an env field — silently ignore it
+        let json = r#"{"preset":"unrestricted","env":{"allow":["PATH"],"deny":[]}}"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.preset, GuardPreset::Yolo);
-        assert_eq!(config.env, EnvFilter::default());
+        assert_eq!(config.preset, GuardPreset::Unrestricted);
     }
 
     #[test]
@@ -368,7 +282,6 @@ mod tests {
         }"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.preset, GuardPreset::Standard);
-        assert_eq!(config.env, EnvFilter::default());
     }
 
     #[test]
@@ -386,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn test_guard_config_deserialize_legacy_yolo() {
+    fn test_guard_config_deserialize_legacy_unrestricted() {
         let json = r#"{
             "file_write": "unrestricted",
             "file_read": "unrestricted",
@@ -396,11 +309,12 @@ mod tests {
             "git_push": true
         }"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.preset, GuardPreset::Yolo);
+        assert_eq!(config.preset, GuardPreset::Unrestricted);
     }
 
     #[test]
-    fn test_guard_config_deserialize_legacy_with_env() {
+    fn test_guard_config_deserialize_legacy_with_env_ignored() {
+        // Legacy rows with env field — env is silently ignored
         let json = r#"{
             "file_write": "repo_only",
             "file_read": "workspace",
@@ -412,8 +326,6 @@ mod tests {
         }"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.preset, GuardPreset::Standard);
-        assert_eq!(config.env.allow, vec!["PATH"]);
-        assert_eq!(config.env.deny, vec!["SECRET"]);
     }
 
     #[test]

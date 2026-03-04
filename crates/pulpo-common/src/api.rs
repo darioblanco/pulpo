@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::BindMode;
-use crate::guard::{EnvFilter, GuardConfig, GuardPreset};
+use crate::guard::{GuardConfig, GuardPreset};
 use crate::node::NodeInfo;
 use crate::peer::{PeerEntry, PeerInfo};
 use crate::session::{Provider, SessionMode};
@@ -96,7 +96,6 @@ pub struct NodeConfigResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GuardDefaultConfigResponse {
     pub preset: GuardPreset,
-    pub env: Option<EnvFilter>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,7 +105,6 @@ pub struct UpdateConfigRequest {
     pub data_dir: Option<String>,
     pub bind: Option<BindMode>,
     pub guard_preset: Option<GuardPreset>,
-    pub guard_env: Option<EnvFilter>,
     pub peers: Option<HashMap<String, PeerEntry>>,
 }
 
@@ -157,7 +155,6 @@ mod tests {
             peers: HashMap::new(),
             guards: GuardDefaultConfigResponse {
                 preset: GuardPreset::Standard,
-                env: None,
             },
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -167,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d"},"auth":{"bind":"local"},"peers":{},"guards":{"preset":"strict","env":null}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d"},"auth":{"bind":"local"},"peers":{},"guards":{"preset":"strict"}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
@@ -189,7 +186,6 @@ mod tests {
             peers: HashMap::new(),
             guards: GuardDefaultConfigResponse {
                 preset: GuardPreset::Standard,
-                env: None,
             },
         };
         let debug = format!("{resp:?}");
@@ -210,11 +206,10 @@ mod tests {
     #[test]
     fn test_guard_default_config_response_debug() {
         let resp = GuardDefaultConfigResponse {
-            preset: GuardPreset::Yolo,
-            env: None,
+            preset: GuardPreset::Unrestricted,
         };
         let debug = format!("{resp:?}");
-        assert!(debug.contains("Yolo"));
+        assert!(debug.contains("Unrestricted"));
     }
 
     #[test]
@@ -226,7 +221,6 @@ mod tests {
         assert!(req.data_dir.is_none());
         assert!(req.bind.is_none());
         assert!(req.guard_preset.is_none());
-        assert!(req.guard_env.is_none());
         assert!(req.peers.is_none());
     }
 
@@ -246,7 +240,6 @@ mod tests {
             data_dir: None,
             bind: None,
             guard_preset: None,
-            guard_env: None,
             peers: None,
         };
         let debug = format!("{req:?}");
@@ -268,7 +261,6 @@ mod tests {
                 peers: HashMap::new(),
                 guards: GuardDefaultConfigResponse {
                     preset: GuardPreset::Standard,
-                    env: None,
                 },
             },
             restart_required: true,
@@ -292,7 +284,6 @@ mod tests {
                 peers: HashMap::new(),
                 guards: GuardDefaultConfigResponse {
                     preset: GuardPreset::Standard,
-                    env: None,
                 },
             },
             restart_required: false,
@@ -317,7 +308,6 @@ mod tests {
             peers,
             guards: GuardDefaultConfigResponse {
                 preset: GuardPreset::Standard,
-                env: None,
             },
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -325,40 +315,14 @@ mod tests {
     }
 
     #[test]
-    fn test_config_response_with_env_filter() {
-        let resp = ConfigResponse {
-            node: NodeConfigResponse {
-                name: "n".into(),
-                port: 7433,
-                data_dir: "/d".into(),
-            },
-            auth: AuthConfigResponse {
-                bind: BindMode::Local,
-            },
-            peers: HashMap::new(),
-            guards: GuardDefaultConfigResponse {
-                preset: GuardPreset::Standard,
-                env: Some(EnvFilter {
-                    allow: vec!["PATH".into()],
-                    deny: vec!["SECRET".into()],
-                }),
-            },
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("PATH"));
-        assert!(json.contains("SECRET"));
-    }
-
-    #[test]
     fn test_update_config_request_with_all_fields() {
-        let json = r#"{"node_name":"new","port":9999,"data_dir":"/d","bind":"lan","guard_preset":"strict","guard_env":{"allow":["PATH"],"deny":[]},"peers":{"remote":"10.0.0.1:7433"}}"#;
+        let json = r#"{"node_name":"new","port":9999,"data_dir":"/d","bind":"lan","guard_preset":"strict","peers":{"remote":"10.0.0.1:7433"}}"#;
         let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.node_name, Some("new".into()));
         assert_eq!(req.port, Some(9999));
         assert_eq!(req.data_dir, Some("/d".into()));
         assert_eq!(req.bind, Some(BindMode::Lan));
         assert_eq!(req.guard_preset, Some(GuardPreset::Strict));
-        assert!(req.guard_env.is_some());
         assert!(req.peers.is_some());
     }
 

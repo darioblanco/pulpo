@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-
-use pulpo_common::guard::{EnvFilter, GuardConfig, GuardPreset};
+use pulpo_common::guard::{GuardConfig, GuardPreset};
 use pulpo_common::session::{Provider, SessionMode};
 
 /// Provider-agnostic parameter set for spawning an agent session.
@@ -37,8 +35,8 @@ pub fn shell_escape(s: &str) -> String {
     out
 }
 
-pub fn is_yolo(guards: &GuardConfig) -> bool {
-    guards.preset == GuardPreset::Yolo
+pub fn is_unrestricted(guards: &GuardConfig) -> bool {
+    guards.preset == GuardPreset::Unrestricted
 }
 
 /// Build flags for the given provider and session mode.
@@ -49,12 +47,6 @@ pub fn build_flags(provider: Provider, mode: SessionMode, params: &SpawnParams) 
         (Provider::Codex, SessionMode::Autonomous) => build_codex_flags(params),
         (Provider::Codex, SessionMode::Interactive) => build_codex_interactive_flags(params),
     }
-}
-
-/// Sanitize environment variables according to guard env filter.
-#[allow(clippy::implicit_hasher)]
-pub fn sanitize_env(guards: &GuardConfig, env: HashMap<String, String>) -> HashMap<String, String> {
-    filter_env(&guards.env, env)
 }
 
 // -- Claude flag builders --
@@ -84,7 +76,7 @@ fn claude_common_flags(params: &SpawnParams) -> Vec<String> {
 /// Build permission flags (--allowedTools or --dangerously-skip-permissions).
 pub fn claude_permission_flags(params: &SpawnParams) -> Vec<String> {
     let mut flags = Vec::new();
-    if is_yolo(&params.guards) && params.explicit_tools.is_none() {
+    if is_unrestricted(&params.guards) && params.explicit_tools.is_none() {
         flags.push("--dangerously-skip-permissions".into());
     } else {
         let tools = params.explicit_tools.as_ref().map_or_else(
@@ -97,7 +89,7 @@ pub fn claude_permission_flags(params: &SpawnParams) -> Vec<String> {
                     "Grep".to_owned(),
                 ];
                 match params.guards.preset {
-                    GuardPreset::Standard | GuardPreset::Yolo => {
+                    GuardPreset::Standard | GuardPreset::Unrestricted => {
                         default_tools.push("Bash".into());
                     }
                     GuardPreset::Strict => {}
@@ -207,47 +199,6 @@ pub fn build_codex_interactive_flags(params: &SpawnParams) -> Vec<String> {
     flags
 }
 
-// -- Environment helpers --
-
-#[allow(clippy::implicit_hasher)]
-pub fn filter_env(env_filter: &EnvFilter, env: HashMap<String, String>) -> HashMap<String, String> {
-    if env_filter.allow.is_empty() && env_filter.deny.is_empty() {
-        return env;
-    }
-
-    env.into_iter()
-        .filter(|(key, _)| {
-            // If allow list is non-empty, key must match at least one allow pattern
-            let allowed =
-                env_filter.allow.is_empty() || env_filter.allow.iter().any(|p| glob_match(p, key));
-            // Key must not match any deny pattern
-            let denied = env_filter.deny.iter().any(|p| glob_match(p, key));
-            allowed && !denied
-        })
-        .collect()
-}
-
-/// Simple prefix-wildcard glob match: `AWS_*` matches `AWS_ACCESS_KEY_ID`.
-/// If the pattern ends with `*`, it's a prefix match. Otherwise exact match.
-pub fn glob_match(pattern: &str, value: &str) -> bool {
-    pattern
-        .strip_suffix('*')
-        .map_or_else(|| pattern == value, |prefix| value.starts_with(prefix))
-}
-
-#[allow(clippy::implicit_hasher)]
-pub fn wrap_with_env(env: &HashMap<String, String>, command: &str) -> String {
-    let mut parts = vec!["env".to_owned(), "-i".to_owned()];
-    let mut keys: Vec<&String> = env.keys().collect();
-    keys.sort();
-    for key in keys {
-        let value = &env[key];
-        parts.push(format!("{key}={value}"));
-    }
-    parts.push(command.to_owned());
-    parts.join(" ")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,7 +214,6 @@ mod tests {
     fn strict_guards() -> GuardConfig {
         GuardConfig {
             preset: GuardPreset::Strict,
-            env: EnvFilter::default(),
         }
     }
 
@@ -271,10 +221,9 @@ mod tests {
         GuardConfig::default()
     }
 
-    fn yolo_guards() -> GuardConfig {
+    fn unrestricted_guards() -> GuardConfig {
         GuardConfig {
-            preset: GuardPreset::Yolo,
-            env: EnvFilter::default(),
+            preset: GuardPreset::Unrestricted,
         }
     }
 
@@ -299,8 +248,8 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_flags_yolo() {
-        let p = params("Fix bug", yolo_guards());
+    fn test_claude_flags_unrestricted() {
+        let p = params("Fix bug", unrestricted_guards());
         let flags = build_claude_flags(&p);
         assert!(flags.contains(&"--dangerously-skip-permissions".into()));
         assert!(flags.contains(&"-p".into()));
@@ -381,10 +330,10 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_flags_yolo_with_explicit_tools() {
+    fn test_claude_flags_unrestricted_with_explicit_tools() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: yolo_guards(),
+            guards: unrestricted_guards(),
             explicit_tools: Some(vec!["Read".into()]),
             ..SpawnParams::default()
         };
@@ -407,10 +356,10 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_flags_yolo_with_model() {
+    fn test_claude_flags_unrestricted_with_model() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: yolo_guards(),
+            guards: unrestricted_guards(),
             model: Some("sonnet".into()),
             ..SpawnParams::default()
         };
@@ -434,10 +383,10 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_flags_yolo_with_system_prompt() {
+    fn test_claude_flags_unrestricted_with_system_prompt() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: yolo_guards(),
+            guards: unrestricted_guards(),
             system_prompt: Some("Be concise".into()),
             ..SpawnParams::default()
         };
@@ -514,8 +463,8 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_interactive_flags_yolo() {
-        let p = params("test", yolo_guards());
+    fn test_claude_interactive_flags_unrestricted() {
+        let p = params("test", unrestricted_guards());
         let flags = build_claude_interactive_flags(&p);
         assert!(!flags.contains(&"-p".into()));
         assert!(flags.contains(&"--dangerously-skip-permissions".into()));
@@ -596,25 +545,8 @@ mod tests {
     }
 
     #[test]
-    fn test_codex_sanitize_env() {
-        let guards = GuardConfig {
-            preset: GuardPreset::Standard,
-            env: EnvFilter {
-                allow: vec!["PATH".into()],
-                deny: vec![],
-            },
-        };
-        let mut env = HashMap::new();
-        env.insert("PATH".into(), "/usr/bin".into());
-        env.insert("SECRET".into(), "xyz".into());
-        let filtered = sanitize_env(&guards, env);
-        assert_eq!(filtered.len(), 1);
-        assert!(filtered.contains_key("PATH"));
-    }
-
-    #[test]
     fn test_build_flags_claude_autonomous() {
-        let p = params("test", yolo_guards());
+        let p = params("test", unrestricted_guards());
         let flags = build_flags(Provider::Claude, SessionMode::Autonomous, &p);
         assert!(flags.contains(&"--dangerously-skip-permissions".into()));
     }
@@ -642,137 +574,21 @@ mod tests {
     }
 
     #[test]
-    fn test_is_yolo_true() {
-        let guards = yolo_guards();
-        assert!(is_yolo(&guards));
+    fn test_is_unrestricted_true() {
+        let guards = unrestricted_guards();
+        assert!(is_unrestricted(&guards));
     }
 
     #[test]
-    fn test_is_yolo_false_standard() {
+    fn test_is_unrestricted_false_standard() {
         let guards = standard_guards();
-        assert!(!is_yolo(&guards));
+        assert!(!is_unrestricted(&guards));
     }
 
     #[test]
-    fn test_is_yolo_false_strict() {
+    fn test_is_unrestricted_false_strict() {
         let guards = strict_guards();
-        assert!(!is_yolo(&guards));
-    }
-
-    #[test]
-    fn test_glob_match_exact() {
-        assert!(glob_match("PATH", "PATH"));
-        assert!(!glob_match("PATH", "HOME"));
-    }
-
-    #[test]
-    fn test_glob_match_wildcard() {
-        assert!(glob_match("AWS_*", "AWS_ACCESS_KEY_ID"));
-        assert!(glob_match("AWS_*", "AWS_SECRET_ACCESS_KEY"));
-        assert!(!glob_match("AWS_*", "PATH"));
-    }
-
-    #[test]
-    fn test_glob_match_empty_prefix() {
-        assert!(glob_match("*", "ANYTHING"));
-    }
-
-    #[test]
-    fn test_filter_env_empty_filters() {
-        let filter = EnvFilter::default();
-        let mut env = HashMap::new();
-        env.insert("A".into(), "1".into());
-        let result = filter_env(&filter, env);
-        assert_eq!(result.len(), 1);
-        assert!(result.contains_key("A"));
-    }
-
-    #[test]
-    fn test_filter_env_allow_only() {
-        let filter = EnvFilter {
-            allow: vec!["PATH".into(), "HOME".into()],
-            deny: vec![],
-        };
-        let mut env = HashMap::new();
-        env.insert("PATH".into(), "/usr/bin".into());
-        env.insert("HOME".into(), "/home/user".into());
-        env.insert("SECRET".into(), "hidden".into());
-        let result = filter_env(&filter, env);
-        assert_eq!(result.len(), 2);
-        assert!(result.contains_key("PATH"));
-        assert!(result.contains_key("HOME"));
-    }
-
-    #[test]
-    fn test_filter_env_deny_only() {
-        let filter = EnvFilter {
-            allow: vec![],
-            deny: vec!["AWS_*".into(), "SSH_*".into()],
-        };
-        let mut env = HashMap::new();
-        env.insert("PATH".into(), "/usr/bin".into());
-        env.insert("AWS_KEY".into(), "secret".into());
-        env.insert("SSH_AUTH".into(), "sock".into());
-        let result = filter_env(&filter, env);
-        assert_eq!(result.len(), 1);
-        assert!(result.contains_key("PATH"));
-    }
-
-    #[test]
-    fn test_filter_env_allow_and_deny() {
-        let filter = EnvFilter {
-            allow: vec!["PATH".into(), "AWS_*".into()],
-            deny: vec!["AWS_SECRET*".into()],
-        };
-        let mut env = HashMap::new();
-        env.insert("PATH".into(), "/usr/bin".into());
-        env.insert("AWS_KEY".into(), "key".into());
-        env.insert("AWS_SECRET_KEY".into(), "secret".into());
-        env.insert("HOME".into(), "/home".into());
-        let result = filter_env(&filter, env);
-        assert_eq!(result.len(), 2);
-        assert!(result.contains_key("PATH"));
-        assert!(result.contains_key("AWS_KEY"));
-    }
-
-    #[test]
-    fn test_wrap_with_env_basic() {
-        let mut env = HashMap::new();
-        env.insert("PATH".into(), "/usr/bin".into());
-        let result = wrap_with_env(&env, "claude");
-        assert_eq!(result, "env -i PATH=/usr/bin claude");
-    }
-
-    #[test]
-    fn test_wrap_with_env_sorted_keys() {
-        let mut env = HashMap::new();
-        env.insert("Z".into(), "1".into());
-        env.insert("A".into(), "2".into());
-        let result = wrap_with_env(&env, "cmd");
-        assert_eq!(result, "env -i A=2 Z=1 cmd");
-    }
-
-    #[test]
-    fn test_wrap_with_env_empty() {
-        let env = HashMap::new();
-        let result = wrap_with_env(&env, "claude");
-        assert_eq!(result, "env -i claude");
-    }
-
-    #[test]
-    fn test_claude_sanitize_env() {
-        let guards = GuardConfig {
-            preset: GuardPreset::Standard,
-            env: EnvFilter {
-                allow: vec!["PATH".into()],
-                deny: vec![],
-            },
-        };
-        let mut env = HashMap::new();
-        env.insert("PATH".into(), "/usr/bin".into());
-        env.insert("SECRET".into(), "xyz".into());
-        let filtered = sanitize_env(&guards, env);
-        assert_eq!(filtered.len(), 1);
+        assert!(!is_unrestricted(&guards));
     }
 
     #[test]
@@ -840,10 +656,10 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_interactive_resume_yolo() {
+    fn test_claude_interactive_resume_unrestricted() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: yolo_guards(),
+            guards: unrestricted_guards(),
             conversation_id: Some("conv-456".into()),
             ..SpawnParams::default()
         };
