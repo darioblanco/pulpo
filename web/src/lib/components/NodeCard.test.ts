@@ -36,7 +36,6 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     max_turns: null,
     max_budget_usd: null,
     output_format: null,
-    recovery_count: 0,
     last_output_at: null,
     waiting_for_input: false,
     created_at: '2025-01-01T00:00:00Z',

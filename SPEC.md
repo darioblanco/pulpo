@@ -165,8 +165,6 @@ Stored in `~/.pulpo/state.db` (SQLite):
 | `exit_code`       | Process exit code (null if still running)               |
 | `tmux_session`    | tmux session name                                       |
 | `output_snapshot` | Last N lines of terminal output                         |
-| `git_branch`      | Branch name at session start                            |
-| `git_sha`         | Commit SHA at session start                             |
 | `created_at`      | Timestamp                                               |
 | `updated_at`      | Timestamp                                               |
 
@@ -364,9 +362,6 @@ is used as defaults; explicit fields override persona values.
     "persona": "reviewer",
     "guard_config": { "...": "..." },
     "output_snapshot": "Analyzing login.py...\nFound issue in validate_token()...",
-    "git_branch": "main",
-    "git_sha": "abc1234",
-    "recovery_count": 0,
     "created_at": "2026-02-16T10:30:00Z",
     "updated_at": "2026-02-16T10:35:00Z"
   }

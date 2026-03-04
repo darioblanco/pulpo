@@ -289,8 +289,6 @@ mod tests {
             tmux_session: Some("custom-tmux".into()),
 
             output_snapshot: None,
-            git_branch: None,
-            git_sha: None,
             guard_config: None,
             model: None,
             allowed_tools: None,
@@ -302,7 +300,6 @@ mod tests {
             output_format: None,
             intervention_reason: None,
             intervention_at: None,
-            recovery_count: 0,
             last_output_at: None,
             idle_since: None,
             waiting_for_input: false,
@@ -328,8 +325,6 @@ mod tests {
             tmux_session: None,
 
             output_snapshot: None,
-            git_branch: None,
-            git_sha: None,
             guard_config: None,
             model: None,
             allowed_tools: None,
@@ -341,7 +336,6 @@ mod tests {
             output_format: None,
             intervention_reason: None,
             intervention_at: None,
-            recovery_count: 0,
             last_output_at: None,
             idle_since: None,
             waiting_for_input: false,

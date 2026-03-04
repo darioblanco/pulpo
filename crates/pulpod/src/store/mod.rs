@@ -49,10 +49,7 @@ impl Store {
                 conversation_id TEXT,
                 exit_code INTEGER,
                 tmux_session TEXT,
-                docker_container TEXT,
                 output_snapshot TEXT,
-                git_branch TEXT,
-                git_sha TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )",
@@ -83,18 +80,6 @@ impl Store {
                 .execute(&self.pool)
                 .await?;
             sqlx::query("ALTER TABLE sessions ADD COLUMN intervention_at TEXT")
-                .execute(&self.pool)
-                .await?;
-        }
-
-        // Idempotent migration: recovery_count column
-        let has_recovery: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'recovery_count'",
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        if has_recovery == 0 {
-            sqlx::query("ALTER TABLE sessions ADD COLUMN recovery_count INTEGER DEFAULT 0")
                 .execute(&self.pool)
                 .await?;
         }
@@ -230,12 +215,12 @@ impl Store {
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
                 conversation_id, exit_code, tmux_session,
-                output_snapshot, git_branch, git_sha, guard_config,
+                output_snapshot, guard_config,
                 model, allowed_tools, system_prompt, metadata, persona,
                 max_turns, max_budget_usd, output_format,
-                intervention_reason, intervention_at, recovery_count,
+                intervention_reason, intervention_at,
                 last_output_at, idle_since, waiting_for_input, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
         .bind(&session.name)
@@ -248,8 +233,6 @@ impl Store {
         .bind(session.exit_code)
         .bind(&session.tmux_session)
         .bind(&session.output_snapshot)
-        .bind(&session.git_branch)
-        .bind(&session.git_sha)
         .bind(&guard_json)
         .bind(&session.model)
         .bind(&allowed_tools_json)
@@ -261,7 +244,6 @@ impl Store {
         .bind(&session.output_format)
         .bind(&session.intervention_reason)
         .bind(&intervention_at_str)
-        .bind(session.recovery_count)
         .bind(&last_output_at_str)
         .bind(&idle_since_str)
         .bind(session.waiting_for_input)
@@ -519,8 +501,6 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
         exit_code: row.get("exit_code"),
         tmux_session: row.get("tmux_session"),
         output_snapshot: row.get("output_snapshot"),
-        git_branch: row.get("git_branch"),
-        git_sha: row.get("git_sha"),
         guard_config,
         model: row.get("model"),
         allowed_tools,
@@ -535,7 +515,6 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
         output_format: row.get("output_format"),
         intervention_reason: row.get("intervention_reason"),
         intervention_at,
-        recovery_count: row.get::<i32, _>("recovery_count").cast_unsigned(),
         last_output_at: {
             let s: Option<String> = row.get("last_output_at");
             s.map(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)))
@@ -583,8 +562,6 @@ mod tests {
             exit_code: None,
             tmux_session: Some(format!("pulpo-{name}")),
             output_snapshot: None,
-            git_branch: Some("main".into()),
-            git_sha: Some("abc123".into()),
             guard_config: None,
             model: None,
             allowed_tools: None,
@@ -596,7 +573,6 @@ mod tests {
             output_format: None,
             intervention_reason: None,
             intervention_at: None,
-            recovery_count: 0,
             last_output_at: None,
             idle_since: None,
             waiting_for_input: false,
@@ -680,8 +656,6 @@ mod tests {
         assert_eq!(fetched.conversation_id, Some("conv-123".into()));
         assert_eq!(fetched.exit_code, None);
         assert_eq!(fetched.tmux_session, Some("pulpo-test-roundtrip".into()));
-        assert_eq!(fetched.git_branch, Some("main".into()));
-        assert_eq!(fetched.git_sha, Some("abc123".into()));
     }
 
     #[tokio::test]
@@ -810,8 +784,6 @@ mod tests {
             exit_code: None,
             tmux_session: None,
             output_snapshot: None,
-            git_branch: None,
-            git_sha: None,
             guard_config: None,
             model: None,
             allowed_tools: None,
@@ -823,7 +795,6 @@ mod tests {
             output_format: None,
             intervention_reason: None,
             intervention_at: None,
-            recovery_count: 0,
             last_output_at: None,
             idle_since: None,
             waiting_for_input: false,
@@ -844,8 +815,6 @@ mod tests {
         assert!(fetched.exit_code.is_none());
         assert!(fetched.tmux_session.is_none());
         assert!(fetched.output_snapshot.is_none());
-        assert!(fetched.git_branch.is_none());
-        assert!(fetched.git_sha.is_none());
     }
 
     #[tokio::test]
@@ -1537,22 +1506,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_recovery_count_roundtrip() {
-        let store = test_store().await;
-        let mut session = make_session("recovery-test");
-        session.recovery_count = 3;
-
-        store.insert_session(&session).await.unwrap();
-        let fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(fetched.recovery_count, 3);
-    }
-
-    #[tokio::test]
     async fn test_last_output_at_updated_on_change() {
         let store = test_store().await;
         let session = make_session("output-ts");
@@ -1841,10 +1794,7 @@ mod tests {
                 conversation_id TEXT,
                 exit_code INTEGER,
                 tmux_session TEXT,
-                docker_container TEXT,
                 output_snapshot TEXT,
-                git_branch TEXT,
-                git_sha TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )",

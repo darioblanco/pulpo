@@ -84,7 +84,6 @@ export interface Session {
   output_format: string | null;
   intervention_reason: string | null;
   intervention_at: string | null;
-  recovery_count: number;
   last_output_at: string | null;
   waiting_for_input: boolean;
   created_at: string;

@@ -54,7 +54,6 @@ describe('NewSessionForm', () => {
       guard_config: null,
       intervention_reason: null,
       intervention_at: null,
-      recovery_count: 0,
       last_output_at: null,
       created_at: '2025-01-01T00:00:00Z',
     });
@@ -93,7 +92,6 @@ describe('NewSessionForm', () => {
       guard_config: null,
       intervention_reason: null,
       intervention_at: null,
-      recovery_count: 0,
       last_output_at: null,
       created_at: '2025-01-01T00:00:00Z',
     });
@@ -137,7 +135,6 @@ describe('NewSessionForm', () => {
       guard_config: null,
       intervention_reason: null,
       intervention_at: null,
-      recovery_count: 0,
       last_output_at: null,
       created_at: '2025-01-01T00:00:00Z',
     });
@@ -236,7 +233,6 @@ describe('NewSessionForm', () => {
       guard_config: null,
       intervention_reason: null,
       intervention_at: null,
-      recovery_count: 0,
       last_output_at: null,
       created_at: '2025-01-01T00:00:00Z',
     });
