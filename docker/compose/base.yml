@@ -1,0 +1,21 @@
+services:
+  pulpo-base:
+    build:
+      context: ../..
+      dockerfile: docker/base/Dockerfile
+    image: pulpo-base:dev
+    container_name: pulpo-base
+    ports:
+      - "7433:7433"
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # Override env-file defaults as needed.
+      PULPO_BIND: lan
+    volumes:
+      - pulpo-data:/home/pulpo/.pulpo
+    restart: unless-stopped
+
+volumes:
+  pulpo-data:

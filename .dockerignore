@@ -1,0 +1,28 @@
+# VCS / local metadata
+.git
+.github
+.claude
+.DS_Store
+
+# Build artifacts
+target
+dist
+web/build
+web/.svelte-kit
+web/coverage
+coverage
+
+# Dependencies
+node_modules
+web/node_modules
+contrib/discord-bot/node_modules
+docs/node_modules
+
+# Local runtime state / secrets
+.pulpo
+*.db
+*.db-journal
+docker/.env
+
+# Editor / logs
+*.log

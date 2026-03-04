@@ -8,5 +8,6 @@ node_modules
 *.db-journal
 .pulpo/config.toml
 .pulpo/data/
+docker/.env
 .DS_Store
 .claude/

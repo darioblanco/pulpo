@@ -31,7 +31,7 @@ All `session` options support **autocomplete** — type a few characters and mat
 
 | Command | Description | Options |
 |---------|-------------|---------|
-| `/spawn` | Spawn a new agent session | `repo` (required), `prompt` (required), `persona`, `model`, `name` |
+| `/spawn` | Spawn a new agent session | `workdir` (required), `prompt` (required), `persona`, `model`, `name` |
 | `/status` | Show session status | `session` (optional, omit for all) |
 | `/logs` | Show recent session output | `session` (required), `lines` (1-500, default 50) |
 | `/kill` | Kill a running session | `session` (required) |

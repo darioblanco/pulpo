@@ -1,0 +1,27 @@
+services:
+  pulpo-agents:
+    build:
+      context: ../..
+      dockerfile: docker/agents/Dockerfile
+      args:
+        BASE_IMAGE: pulpo-base:dev
+        INSTALL_CLAUDE: "1"
+        INSTALL_CODEX: "1"
+    image: pulpo-agents:dev
+    container_name: pulpo-agents
+    ports:
+      - "7433:7433"
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      PULPO_BIND: lan
+      PULPO_GUARD_PRESET: strict
+    volumes:
+      - pulpo-data:/home/pulpo/.pulpo
+      # Optional: mounted provider auth state for local dev.
+      # - ~/.claude:/home/pulpo/.claude:ro
+    restart: unless-stopped
+
+volumes:
+  pulpo-data:
