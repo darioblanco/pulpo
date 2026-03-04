@@ -1,0 +1,120 @@
+name: Docker Images
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*.*.*'
+    paths:
+      - 'docker/**'
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'web/**'
+      - '.dockerignore'
+      - '.github/workflows/docker-images.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAMESPACE: ${{ secrets.DOCKERHUB_USERNAME }}
+
+jobs:
+  build-base:
+    name: Build & Push pulpo-base
+    runs-on: ubuntu-latest
+    outputs:
+      base_sha_image: ${{ steps.vars.outputs.base_sha_image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata (base)
+        id: meta_base
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pulpo-base
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=sha-{{sha}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push pulpo-base
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/base/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta_base.outputs.tags }}
+          labels: ${{ steps.meta_base.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Export base sha image
+        id: vars
+        run: |
+          echo "base_sha_image=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pulpo-base:sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+  build-agents:
+    name: Build & Push pulpo-agents
+    runs-on: ubuntu-latest
+    needs: build-base
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker metadata (agents)
+        id: meta_agents
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pulpo-agents
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=sha-{{sha}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push pulpo-agents
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/agents/Dockerfile
+          build-args: |
+            BASE_IMAGE=${{ needs.build-base.outputs.base_sha_image }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta_agents.outputs.tags }}
+          labels: ${{ steps.meta_agents.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
