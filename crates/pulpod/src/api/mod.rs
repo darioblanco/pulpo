@@ -34,9 +34,8 @@ pub struct AppState {
     /// `CachedProber<HttpPeerProber>` methods are never exercised (the handler
     /// call site is also gated) and would produce uncoverable lines.
     #[cfg(not(coverage))]
-    pub cached_prober: Option<
-        crate::peers::health::CachedProber<crate::peers::health::HttpPeerProber>,
-    >,
+    pub cached_prober:
+        Option<crate::peers::health::CachedProber<crate::peers::health::HttpPeerProber>>,
     pub event_tx: broadcast::Sender<PulpoEvent>,
 }
 

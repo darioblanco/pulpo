@@ -352,9 +352,7 @@ mod tests {
         };
         let cached = CachedProber::new(prober, Duration::from_secs(60));
 
-        let result = cached
-            .probe_peer("mystery", "10.99.99.99:7433", None)
-            .await;
+        let result = cached.probe_peer("mystery", "10.99.99.99:7433", None).await;
         assert!(result.is_none());
     }
 
@@ -721,7 +719,9 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app)
-                .with_graceful_shutdown(async { shutdown_rx.await.ok(); })
+                .with_graceful_shutdown(async {
+                    shutdown_rx.await.ok();
+                })
                 .await
                 .unwrap();
         });

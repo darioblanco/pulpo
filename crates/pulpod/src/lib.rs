@@ -252,7 +252,6 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         info!("Discord notifications enabled");
     }
 
-
     let state = api::AppState::with_event_tx(config, config_path, manager, peer_registry, event_tx);
     let app = api::router(state);
 

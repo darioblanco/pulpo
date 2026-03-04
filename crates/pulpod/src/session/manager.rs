@@ -2242,5 +2242,4 @@ mod tests {
         let result = mgr.delete_session("test").await;
         assert!(result.is_err());
     }
-
 }

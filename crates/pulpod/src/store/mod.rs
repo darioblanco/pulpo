@@ -471,7 +471,6 @@ impl Store {
             .await?;
         Ok(())
     }
-
 }
 
 fn row_to_session(row: &SqliteRow) -> Result<Session> {
@@ -1912,7 +1911,6 @@ mod tests {
         let result = store.migrate().await;
         assert!(result.is_err());
     }
-
 
     #[tokio::test]
     async fn test_update_session_waiting_for_input() {

@@ -1358,7 +1358,6 @@ mod tests {
         assert_ne!(resp.status(), 401);
     }
 
-
     #[tokio::test]
     async fn test_events_sse_stream() {
         use axum::body::Body;

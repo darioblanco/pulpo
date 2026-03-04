@@ -139,7 +139,6 @@ pub struct ListSessionsQuery {
     pub order: Option<String>,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -930,5 +929,4 @@ mod tests {
         assert!(debug.contains("debug.local"));
         assert!(debug.contains("dbg"));
     }
-
 }
