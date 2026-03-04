@@ -176,6 +176,10 @@ export async function createSession(data: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to create session');
+  }
   return res.json();
 }
 
@@ -203,6 +207,10 @@ export async function createRemoteSession(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to create session');
+  }
   return res.json();
 }
 

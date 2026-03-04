@@ -193,7 +193,7 @@ describe('getSession', () => {
 describe('createSession', () => {
   it('posts to /api/v1/sessions with JSON body', async () => {
     const created = { id: 'new-1', name: 'my-api' };
-    mockFetch.mockResolvedValue(jsonResponse(created));
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(created) });
 
     const data = {
       workdir: '/home/user/repo',
@@ -215,7 +215,7 @@ describe('createSession', () => {
   it('includes auth header with Content-Type when token is set', async () => {
     connMock.__setTestToken('post-token');
     const created = { id: 'new-1', name: 'my-api' };
-    mockFetch.mockResolvedValue(jsonResponse(created));
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(created) });
 
     const data = { workdir: '/repo', prompt: 'Do it' };
     await createSession(data);
@@ -226,12 +226,34 @@ describe('createSession', () => {
       body: JSON.stringify(data),
     });
   });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'working directory does not exist: /bad/path' }),
+    });
+
+    await expect(createSession({ workdir: '/bad/path', prompt: 'test' })).rejects.toThrow(
+      'working directory does not exist',
+    );
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(createSession({ workdir: '/repo', prompt: 'test' })).rejects.toThrow(
+      'Failed to create session',
+    );
+  });
 });
 
 describe('createRemoteSession', () => {
   it('posts to remote address with JSON body', async () => {
     const created = { id: 'remote-1', name: 'remote-api' };
-    mockFetch.mockResolvedValue(jsonResponse(created));
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(created) });
 
     const data = { workdir: '/repo', prompt: 'Do stuff' };
     const result = await createRemoteSession('macbook:7433', data);
@@ -242,6 +264,17 @@ describe('createRemoteSession', () => {
       body: JSON.stringify(data),
     });
     expect(result).toEqual(created);
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'provider not installed' }),
+    });
+
+    await expect(
+      createRemoteSession('macbook:7433', { workdir: '/repo', prompt: 'test' }),
+    ).rejects.toThrow('provider not installed');
   });
 });
 

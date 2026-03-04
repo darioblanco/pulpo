@@ -189,7 +189,7 @@ describe('NewSessionForm', () => {
 
     // Wait for the error to appear
     await vi.waitFor(() => {
-      expect(screen.getByText('Failed to create session')).toBeTruthy();
+      expect(screen.getByText('Network error')).toBeTruthy();
     });
   });
 

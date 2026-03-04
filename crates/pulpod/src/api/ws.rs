@@ -225,7 +225,7 @@ mod tests {
         let state = test_state_with_backend(Arc::new(DeadBackend)).await;
         let req = CreateSessionRequest {
             name: Some("dead-test".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,

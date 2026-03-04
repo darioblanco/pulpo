@@ -347,7 +347,7 @@ mod tests {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: Some("filter-test".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -394,7 +394,7 @@ mod tests {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: Some("test".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "Do something".into(),
             mode: None,
@@ -430,7 +430,7 @@ mod tests {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: Some("kill-test".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -456,7 +456,7 @@ mod tests {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: Some("output-test".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -495,7 +495,7 @@ mod tests {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: Some("input-test".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -642,7 +642,7 @@ mod tests {
         // Create a session first (create_session succeeds on FailingBackend)
         let req = CreateSessionRequest {
             name: Some("err-test".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -671,7 +671,7 @@ mod tests {
         let state = failing_state().await;
         let req = CreateSessionRequest {
             name: Some("kill-err".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -730,7 +730,7 @@ mod tests {
 
         let req = CreateSessionRequest {
             name: Some("fail".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -756,7 +756,7 @@ mod tests {
         let state = failing_state().await;
         let req = CreateSessionRequest {
             name: Some("out-err".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -786,7 +786,7 @@ mod tests {
         let state = failing_state().await;
         let req = CreateSessionRequest {
             name: Some("in-err".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -850,7 +850,7 @@ mod tests {
         let state = capture_fail_state().await;
         let req = CreateSessionRequest {
             name: Some("cap-err".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -880,7 +880,7 @@ mod tests {
         let state = capture_fail_state().await;
         let req = CreateSessionRequest {
             name: Some("send-err".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -974,7 +974,7 @@ mod tests {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: Some("dl-test".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -1008,7 +1008,7 @@ mod tests {
         let session = Session {
             id,
             name: "snap-test".into(),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: pulpo_common::session::Provider::Claude,
             prompt: "test".into(),
             status: SessionStatus::Dead,
@@ -1053,7 +1053,7 @@ mod tests {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: Some("no-snap".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -1093,7 +1093,7 @@ mod tests {
         let state = failing_state().await;
         let req = CreateSessionRequest {
             name: Some("dl-err".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -1122,7 +1122,7 @@ mod tests {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: Some("int-empty".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -1149,7 +1149,7 @@ mod tests {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: Some("int-events".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -1216,7 +1216,7 @@ mod tests {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: Some("resume-test".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -1310,7 +1310,7 @@ mod tests {
         // Create a session (StaleBackend.is_alive returns false)
         let req = CreateSessionRequest {
             name: Some("stale-test".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -1424,7 +1424,7 @@ mod tests {
         // Create a session
         let req = CreateSessionRequest {
             name: Some("resume-fail".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -1456,7 +1456,7 @@ mod tests {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: Some("del-test".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -1485,7 +1485,7 @@ mod tests {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: Some("del-run".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,

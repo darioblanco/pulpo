@@ -92,8 +92,10 @@ impl SessionManager {
     pub async fn create_session(&self, req: CreateSessionRequest) -> Result<Session> {
         let mut req = self.resolve_persona(req)?;
         self.apply_guardrail_defaults(&mut req);
+        validate_workdir(&req.workdir)?;
         let id = Uuid::new_v4();
         let provider = req.provider.unwrap_or(Provider::Claude);
+        crate::backend::tmux::check_provider_binary(&provider.to_string())?;
         let mode = req.mode.unwrap_or_default();
         let guards = resolve_guard_config(&req, &self.default_guard);
         let name = req.name.unwrap_or_else(|| derive_name(&req.workdir));
@@ -387,6 +389,17 @@ impl SessionManager {
     }
 }
 
+fn validate_workdir(workdir: &str) -> Result<()> {
+    let path = std::path::Path::new(workdir);
+    if !path.exists() {
+        bail!("working directory does not exist: {workdir}");
+    }
+    if !path.is_dir() {
+        bail!("working directory is not a directory: {workdir}");
+    }
+    Ok(())
+}
+
 fn derive_name(workdir: &str) -> String {
     std::path::Path::new(workdir)
         .file_name()
@@ -582,7 +595,7 @@ mod tests {
     fn make_req(prompt: &str) -> CreateSessionRequest {
         CreateSessionRequest {
             name: None,
-            workdir: "/tmp/my-project".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: prompt.into(),
             mode: None,
@@ -604,19 +617,19 @@ mod tests {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
         let session = mgr.create_session(make_req("Fix the bug")).await.unwrap();
 
-        assert_eq!(session.name, "my-project");
+        assert_eq!(session.name, "tmp");
         assert_eq!(session.provider, Provider::Claude);
         assert_eq!(session.mode, SessionMode::Interactive);
         assert_eq!(session.status, SessionStatus::Running);
-        assert_eq!(session.workdir, "/tmp/my-project");
+        assert_eq!(session.workdir, "/tmp");
         assert_eq!(session.prompt, "Fix the bug");
-        assert_eq!(session.tmux_session, Some("pulpo-my-project".into()));
+        assert_eq!(session.tmux_session, Some("pulpo-tmp".into()));
 
         let calls = backend.calls.lock().unwrap();
         // Interactive Claude: create session with prompt as positional arg, then setup logging
-        assert!(calls[0].contains("create:my-project:/tmp/my-project:claude"));
+        assert!(calls[0].contains("create:tmp:/tmp:claude"));
         assert!(calls[0].contains("Fix the bug"));
-        assert!(calls[1].starts_with("setup_logging:my-project:"));
+        assert!(calls[1].starts_with("setup_logging:tmp:"));
         assert_eq!(calls.len(), 2);
         drop(calls);
     }
@@ -639,7 +652,7 @@ mod tests {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
             name: Some("custom-name".into()),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -663,7 +676,7 @@ mod tests {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
             name: None,
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: Some(Provider::Claude),
             prompt: "Do something".into(),
             mode: Some(SessionMode::Autonomous),
@@ -699,7 +712,7 @@ mod tests {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
             name: None,
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: Some(Provider::Claude),
             prompt: "Do something".into(),
             mode: Some(SessionMode::Autonomous),
@@ -746,7 +759,7 @@ mod tests {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
             name: None,
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -774,7 +787,7 @@ mod tests {
         };
         let req = CreateSessionRequest {
             name: None,
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: None,
             prompt: "test".into(),
             mode: None,
@@ -793,6 +806,32 @@ mod tests {
         // guard_config takes precedence over guard_preset
         let gc = session.guard_config.unwrap();
         assert_eq!(gc.preset, pulpo_common::guard::GuardPreset::Unrestricted);
+    }
+
+    #[tokio::test]
+    async fn test_create_session_workdir_not_found() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let req = CreateSessionRequest {
+            workdir: "/nonexistent/path/that/does/not/exist".into(),
+            ..make_req("test")
+        };
+        let result = mgr.create_session(req).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("does not exist"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_create_session_workdir_is_file() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_str().unwrap().to_owned();
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let req = CreateSessionRequest {
+            workdir: path,
+            ..make_req("test")
+        };
+        let result = mgr.create_session(req).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not a directory"), "got: {err}");
     }
 
     #[tokio::test]
@@ -1023,6 +1062,27 @@ mod tests {
         assert_eq!(derive_name("/"), "session");
     }
 
+    #[test]
+    fn test_validate_workdir_ok() {
+        assert!(validate_workdir("/tmp").is_ok());
+    }
+
+    #[test]
+    fn test_validate_workdir_missing() {
+        let err = validate_workdir("/nonexistent/path")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("does not exist"), "got: {err}");
+    }
+
+    #[test]
+    fn test_validate_workdir_is_file() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let path = tmp.path().to_str().unwrap();
+        let err = validate_workdir(path).unwrap_err().to_string();
+        assert!(err.contains("not a directory"), "got: {err}");
+    }
+
     #[tokio::test]
     async fn test_resume_stale_session() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
@@ -1090,7 +1150,7 @@ mod tests {
         let session = Session {
             id,
             name: "legacy".into(),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
             status: SessionStatus::Running,
@@ -1931,7 +1991,7 @@ mod tests {
         let session = Session {
             id: Uuid::new_v4(),
             name: "test-session".into(),
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             provider: Provider::Claude,
             prompt: "fix bug".into(),
             status: SessionStatus::Running,

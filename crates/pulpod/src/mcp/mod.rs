@@ -127,6 +127,86 @@ pub struct WaitForSessionParams {
     pub node: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SpawnAndWaitParams {
+    /// Path to the git repository on the target machine.
+    pub workdir: String,
+    /// The prompt/task to give to the coding agent.
+    pub prompt: String,
+    /// AI provider to use (claude or codex). Defaults to claude.
+    pub provider: Option<Provider>,
+    /// Session mode (interactive or autonomous). Defaults to interactive.
+    pub mode: Option<SessionMode>,
+    /// Guard preset (strict, standard, unrestricted). Overrides default.
+    pub guard_preset: Option<GuardPreset>,
+    /// Custom session name. Auto-derived from `workdir` if omitted.
+    pub name: Option<String>,
+    /// Persona from config.
+    pub persona: Option<String>,
+    /// Model override (e.g. "opus", "sonnet").
+    pub model: Option<String>,
+    /// Target node name. If omitted, runs locally.
+    pub node: Option<String>,
+    /// Timeout in seconds. Defaults to 600 (10 min).
+    pub timeout_secs: Option<u64>,
+    /// Poll interval in seconds. Defaults to 5.
+    pub poll_interval_secs: Option<u64>,
+    /// Number of output lines to capture. Defaults to 200.
+    pub output_lines: Option<usize>,
+}
+
+/// A single task in a fan-out operation.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FanOutTask {
+    /// Path to the git repository on the target machine.
+    pub workdir: String,
+    /// The prompt/task to give to the coding agent.
+    pub prompt: String,
+    /// AI provider to use (claude or codex). Defaults to claude.
+    pub provider: Option<Provider>,
+    /// Session mode (interactive or autonomous). Defaults to interactive.
+    pub mode: Option<SessionMode>,
+    /// Guard preset (strict, standard, unrestricted). Overrides default.
+    pub guard_preset: Option<GuardPreset>,
+    /// Custom session name. Auto-derived from `workdir` if omitted.
+    pub name: Option<String>,
+    /// Persona from config.
+    pub persona: Option<String>,
+    /// Model override (e.g. "opus", "sonnet").
+    pub model: Option<String>,
+    /// Target node name. If omitted, runs locally.
+    pub node: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct FanOutParams {
+    /// List of tasks to spawn in parallel.
+    pub tasks: Vec<FanOutTask>,
+    /// Global timeout in seconds for all tasks. Defaults to 600 (10 min).
+    pub timeout_secs: Option<u64>,
+    /// Poll interval in seconds. Defaults to 5.
+    pub poll_interval_secs: Option<u64>,
+    /// Number of output lines to capture per task. Defaults to 200.
+    pub output_lines: Option<usize>,
+}
+
+/// Internal request struct for `spawn_and_wait_impl` to avoid too-many-arguments.
+struct SpawnAndWaitRequest {
+    workdir: String,
+    prompt: String,
+    provider: Option<Provider>,
+    mode: Option<SessionMode>,
+    guard_preset: Option<GuardPreset>,
+    name: Option<String>,
+    persona: Option<String>,
+    model: Option<String>,
+    node: Option<String>,
+    metadata: Option<std::collections::HashMap<String, String>>,
+    timeout_secs: u64,
+    poll_interval_secs: u64,
+    output_lines: usize,
+}
+
 // -- Tool result types --
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -134,6 +214,20 @@ struct WaitResult {
     session: Session,
     output: String,
     timed_out: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FanOutTaskResult {
+    session: Option<Session>,
+    output: String,
+    timed_out: bool,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FanOutResult {
+    results: Vec<FanOutTaskResult>,
+    all_completed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -236,6 +330,158 @@ impl PulpoMcp {
             cpus: num_cpus::get(),
             memory_mb: crate::api::node::get_memory_mb(),
             gpu: None,
+        }
+    }
+
+    /// Shared poll loop: check a session until it reaches terminal status or times out.
+    /// Returns `Ok((session, output, timed_out))` on success. Returns `Err` if the session
+    /// is not found or there's a communication error.
+    async fn poll_until_terminal(
+        &self,
+        session_id: &str,
+        node: Option<&str>,
+        timeout_secs: u64,
+        poll_interval_secs: u64,
+        output_lines: usize,
+    ) -> Result<(Session, String, bool)> {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+
+        loop {
+            let session_result = if self.is_local(node) {
+                self.session_manager.get_session(session_id).await
+            } else {
+                let n = node.unwrap_or_default();
+                let path = format!("/api/v1/sessions/{session_id}");
+                self.remote_get::<Option<Session>>(n, &path).await
+            };
+
+            match session_result {
+                Ok(Some(session)) => {
+                    let is_terminal = matches!(
+                        session.status,
+                        SessionStatus::Completed | SessionStatus::Dead | SessionStatus::Stale
+                    );
+                    if is_terminal {
+                        let output = if self.is_local(node) {
+                            self.session_manager.capture_output(
+                                session_id,
+                                &session.name,
+                                output_lines,
+                            )
+                        } else {
+                            String::new()
+                        };
+                        return Ok((session, output, false));
+                    }
+
+                    if tokio::time::Instant::now() >= deadline {
+                        let output = if self.is_local(node) {
+                            self.session_manager.capture_output(
+                                session_id,
+                                &session.name,
+                                output_lines,
+                            )
+                        } else {
+                            String::new()
+                        };
+                        return Ok((session, output, true));
+                    }
+                }
+                Ok(None) => return Err(anyhow::anyhow!("session not found: {session_id}")),
+                Err(e) => return Err(e),
+            }
+
+            tokio::time::sleep(std::time::Duration::from_secs(poll_interval_secs)).await;
+        }
+    }
+
+    /// Spawn a session and wait for it to finish. Used by both `spawn_and_wait` and `fan_out`.
+    async fn spawn_and_wait_impl(&self, req: SpawnAndWaitRequest) -> FanOutTaskResult {
+        let SpawnAndWaitRequest {
+            workdir,
+            prompt,
+            provider,
+            mode,
+            guard_preset,
+            name,
+            persona,
+            model,
+            node,
+            metadata,
+            timeout_secs,
+            poll_interval_secs,
+            output_lines,
+        } = req;
+        // 1. Spawn the session
+        let spawn_result = if self.is_local(node.as_deref()) {
+            let req = CreateSessionRequest {
+                name,
+                workdir,
+                provider,
+                prompt,
+                mode,
+                guard_preset,
+                guard_config: None,
+                model,
+                allowed_tools: None,
+                system_prompt: None,
+                metadata,
+                persona,
+                max_turns: None,
+                max_budget_usd: None,
+                output_format: None,
+            };
+            self.session_manager.create_session(req).await
+        } else {
+            let n = node.as_deref().unwrap_or_default();
+            let body = RemoteSpawnReq {
+                name,
+                workdir,
+                provider,
+                prompt,
+                mode,
+                guard_preset,
+            };
+            self.remote_post::<Session, _>(n, "/api/v1/sessions", &body)
+                .await
+        };
+
+        let session = match spawn_result {
+            Ok(s) => s,
+            Err(e) => {
+                return FanOutTaskResult {
+                    session: None,
+                    output: String::new(),
+                    timed_out: false,
+                    error: Some(format!("{e}")),
+                };
+            }
+        };
+
+        // 2. Poll until terminal
+        let session_id = session.id.to_string();
+        match self
+            .poll_until_terminal(
+                &session_id,
+                node.as_deref(),
+                timeout_secs,
+                poll_interval_secs,
+                output_lines,
+            )
+            .await
+        {
+            Ok((final_session, output, timed_out)) => FanOutTaskResult {
+                session: Some(final_session),
+                output,
+                timed_out,
+                error: None,
+            },
+            Err(e) => FanOutTaskResult {
+                session: None,
+                output: String::new(),
+                timed_out: false,
+                error: Some(format!("{e}")),
+            },
         }
     }
 }
@@ -451,59 +697,134 @@ impl PulpoMcp {
     ) -> String {
         let timeout_secs = params.timeout_secs.unwrap_or(300);
         let poll_interval_secs = params.poll_interval_secs.unwrap_or(5);
-        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
 
-        loop {
-            let session_result = if self.is_local(params.node.as_deref()) {
-                self.session_manager.get_session(&params.id).await
-            } else {
-                let node = params.node.as_deref().unwrap_or_default();
-                let path = format!("/api/v1/sessions/{}", params.id);
-                self.remote_get::<Option<Session>>(node, &path).await
-            };
-
-            match session_result {
-                Ok(Some(session)) => {
-                    let is_terminal = matches!(
-                        session.status,
-                        SessionStatus::Completed | SessionStatus::Dead | SessionStatus::Stale
-                    );
-                    if is_terminal {
-                        let output = if self.is_local(params.node.as_deref()) {
-                            self.session_manager
-                                .capture_output(&params.id, &session.name, 100)
-                        } else {
-                            String::new()
-                        };
-                        let result = WaitResult {
-                            session,
-                            output,
-                            timed_out: false,
-                        };
-                        return serde_json::to_string_pretty(&result).unwrap_or_default();
-                    }
-
-                    if tokio::time::Instant::now() >= deadline {
-                        let output = if self.is_local(params.node.as_deref()) {
-                            self.session_manager
-                                .capture_output(&params.id, &session.name, 100)
-                        } else {
-                            String::new()
-                        };
-                        let result = WaitResult {
-                            session,
-                            output,
-                            timed_out: true,
-                        };
-                        return serde_json::to_string_pretty(&result).unwrap_or_default();
-                    }
-                }
-                Ok(None) => return "Session not found".into(),
-                Err(e) => return format!("Error: {e}"),
+        match self
+            .poll_until_terminal(
+                &params.id,
+                params.node.as_deref(),
+                timeout_secs,
+                poll_interval_secs,
+                100,
+            )
+            .await
+        {
+            Ok((session, output, timed_out)) => {
+                let result = WaitResult {
+                    session,
+                    output,
+                    timed_out,
+                };
+                serde_json::to_string_pretty(&result).unwrap_or_default()
             }
-
-            tokio::time::sleep(std::time::Duration::from_secs(poll_interval_secs)).await;
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("session not found") {
+                    "Session not found".into()
+                } else {
+                    format!("Error: {e}")
+                }
+            }
         }
+    }
+
+    #[tool(
+        name = "spawn_and_wait",
+        description = "Compound tool: spawn a coding agent session, poll until it finishes (or times out), and return the final session state plus terminal output — all in one call. Eliminates the manual spawn → poll → get_output choreography."
+    )]
+    async fn spawn_and_wait(&self, Parameters(params): Parameters<SpawnAndWaitParams>) -> String {
+        let timeout_secs = params.timeout_secs.unwrap_or(600);
+        let poll_interval_secs = params.poll_interval_secs.unwrap_or(5);
+        let output_lines = params.output_lines.unwrap_or(200);
+
+        let task_result = self
+            .spawn_and_wait_impl(SpawnAndWaitRequest {
+                workdir: params.workdir,
+                prompt: params.prompt,
+                provider: params.provider,
+                mode: params.mode,
+                guard_preset: params.guard_preset,
+                name: params.name,
+                persona: params.persona,
+                model: params.model,
+                node: params.node,
+                metadata: None,
+                timeout_secs,
+                poll_interval_secs,
+                output_lines,
+            })
+            .await;
+
+        if let Some(error) = task_result.error {
+            return format!("Error: {error}");
+        }
+
+        // session is always Some when error is None (spawn succeeded, poll returned a session)
+        let session = task_result
+            .session
+            .expect("session must be present when error is None");
+        let result = WaitResult {
+            session,
+            output: task_result.output,
+            timed_out: task_result.timed_out,
+        };
+        serde_json::to_string_pretty(&result).unwrap_or_default()
+    }
+
+    #[tool(
+        name = "fan_out",
+        description = "Parallel multi-session orchestration: spawn multiple coding agent sessions (optionally across different nodes), wait for all to finish, and return collected results. Enables parallel code review, multi-repo tasks, and distributed work."
+    )]
+    async fn fan_out(&self, Parameters(params): Parameters<FanOutParams>) -> String {
+        let timeout_secs = params.timeout_secs.unwrap_or(600);
+        let poll_interval_secs = params.poll_interval_secs.unwrap_or(5);
+        let output_lines = params.output_lines.unwrap_or(200);
+
+        if params.tasks.is_empty() {
+            let result = FanOutResult {
+                results: vec![],
+                all_completed: true,
+            };
+            return serde_json::to_string_pretty(&result).unwrap_or_default();
+        }
+
+        // Spawn all tasks concurrently
+        let futures: Vec<_> = params
+            .tasks
+            .into_iter()
+            .map(|task| {
+                let mcp = self.clone();
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("fan_out".into(), "true".into());
+                async move {
+                    mcp.spawn_and_wait_impl(SpawnAndWaitRequest {
+                        workdir: task.workdir,
+                        prompt: task.prompt,
+                        provider: task.provider,
+                        mode: task.mode,
+                        guard_preset: task.guard_preset,
+                        name: task.name,
+                        persona: task.persona,
+                        model: task.model,
+                        node: task.node,
+                        metadata: Some(metadata),
+                        timeout_secs,
+                        poll_interval_secs,
+                        output_lines,
+                    })
+                    .await
+                }
+            })
+            .collect();
+
+        // Await all concurrently, collect in original order
+        let results: Vec<FanOutTaskResult> = futures::future::join_all(futures).await;
+        let all_completed = results.iter().all(|r| r.error.is_none() && !r.timed_out);
+
+        let result = FanOutResult {
+            results,
+            all_completed,
+        };
+        serde_json::to_string_pretty(&result).unwrap_or_default()
     }
 
     #[tool(
@@ -786,7 +1107,7 @@ mod tests {
     async fn test_spawn_session_local() {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnSessionParams {
-            workdir: "/tmp/my-project".into(),
+            workdir: "/tmp".into(),
             prompt: "Fix the bug".into(),
             provider: None,
             mode: None,
@@ -795,7 +1116,7 @@ mod tests {
             node: None,
         };
         let result = mcp.spawn_session(Parameters(params)).await;
-        assert!(result.contains("my-project"));
+        assert!(result.contains("\"name\": \"tmp\""));
         assert!(result.contains("running"));
     }
 
@@ -803,7 +1124,7 @@ mod tests {
     async fn test_spawn_session_local_explicit_node() {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "Do stuff".into(),
             provider: Some(Provider::Claude),
             mode: Some(SessionMode::Autonomous),
@@ -820,7 +1141,7 @@ mod tests {
     async fn test_spawn_session_remote_unknown_node() {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -852,7 +1173,7 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         // Create a session first
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -868,7 +1189,7 @@ mod tests {
             node: None,
         };
         let result = mcp.list_sessions(Parameters(params)).await;
-        assert!(result.contains("repo"));
+        assert!(result.contains("tmp"));
     }
 
     #[tokio::test]
@@ -913,7 +1234,7 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         // Create a session
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -950,7 +1271,7 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         // Create a session
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -998,7 +1319,7 @@ mod tests {
         let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
         // Create session, it becomes stale via get_session
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -1033,7 +1354,7 @@ mod tests {
     async fn test_resume_session_not_stale() {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -1070,7 +1391,7 @@ mod tests {
     async fn test_get_output_local() {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -1094,7 +1415,7 @@ mod tests {
     async fn test_get_output_default_lines() {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -1144,7 +1465,7 @@ mod tests {
     async fn test_send_input_local() {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -1217,7 +1538,7 @@ mod tests {
     async fn test_wait_for_session_already_terminal() {
         let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -1252,7 +1573,7 @@ mod tests {
     async fn test_wait_for_session_timeout() {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -1754,7 +2075,7 @@ mod tests {
     async fn test_send_input_backend_error() {
         let mcp = test_mcp_with_send_input_error().await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -1962,7 +2283,7 @@ mod tests {
         let (addr, _session) = start_mock_remote_server().await;
         let mcp = test_mcp_with_remote(&addr).await;
         let params = SpawnSessionParams {
-            workdir: "/tmp/remote-repo".into(),
+            workdir: "/tmp".into(),
             prompt: "remote test".into(),
             provider: None,
             mode: None,
@@ -2145,7 +2466,7 @@ mod tests {
         let (addr, _session) = start_mock_remote_server().await;
         let mcp = test_mcp_with_remote_and_token(&addr).await;
         let params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -2206,7 +2527,7 @@ mod tests {
 
         // Create a session
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp/repo".into(),
+            workdir: "/tmp".into(),
             prompt: "test".into(),
             provider: None,
             mode: None,
@@ -2304,7 +2625,7 @@ mod tests {
         let resp: serde_json::Value = serde_json::from_str(&response_line).unwrap();
         // Should have a result with resources array
         let resources = resp["result"]["resources"].as_array().unwrap();
-        assert_eq!(resources.len(), 2);
+        assert_eq!(resources.len(), 3);
 
         // Send resources/read request for pulpo://sessions
         let read_req = serde_json::json!({
@@ -2327,5 +2648,658 @@ mod tests {
         let resp2: serde_json::Value = serde_json::from_str(&response_line2).unwrap();
         // Should have contents
         assert!(resp2["result"]["contents"].is_array());
+    }
+
+    // -- spawn_and_wait tests --
+
+    #[tokio::test]
+    async fn test_spawn_and_wait_happy_path() {
+        // Backend starts alive=false so session immediately goes stale on poll
+        let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
+        let params = SpawnAndWaitParams {
+            workdir: "/tmp".into(),
+            prompt: "fix the bug".into(),
+            provider: None,
+            mode: None,
+            guard_preset: None,
+            name: None,
+            persona: None,
+            model: None,
+            node: None,
+            timeout_secs: Some(5),
+            poll_interval_secs: Some(0),
+            output_lines: Some(50),
+        };
+        let result = mcp.spawn_and_wait(Parameters(params)).await;
+        let wait: WaitResult = serde_json::from_str(&result).unwrap();
+        assert!(!wait.timed_out);
+        assert_eq!(wait.session.status, SessionStatus::Stale);
+        assert!(wait.output.contains("test output"));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_and_wait_timeout() {
+        // Backend alive=true so session stays running
+        let mcp = test_mcp(MockBackend::new()).await;
+        let params = SpawnAndWaitParams {
+            workdir: "/tmp".into(),
+            prompt: "test".into(),
+            provider: None,
+            mode: None,
+            guard_preset: None,
+            name: None,
+            persona: None,
+            model: None,
+            node: None,
+            timeout_secs: Some(0), // immediate timeout
+            poll_interval_secs: Some(1),
+            output_lines: None,
+        };
+        let result = mcp.spawn_and_wait(Parameters(params)).await;
+        let wait: WaitResult = serde_json::from_str(&result).unwrap();
+        assert!(wait.timed_out);
+        assert_eq!(wait.session.status, SessionStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn test_spawn_and_wait_spawn_failure() {
+        // Spawn to unknown remote node — spawn fails
+        let mcp = test_mcp(MockBackend::new()).await;
+        let params = SpawnAndWaitParams {
+            workdir: "/tmp".into(),
+            prompt: "test".into(),
+            provider: None,
+            mode: None,
+            guard_preset: None,
+            name: None,
+            persona: None,
+            model: None,
+            node: Some("nonexistent-node".into()),
+            timeout_secs: Some(5),
+            poll_interval_secs: Some(1),
+            output_lines: None,
+        };
+        let result = mcp.spawn_and_wait(Parameters(params)).await;
+        assert!(result.contains("Error"));
+        assert!(result.contains("unknown node"));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_and_wait_defaults() {
+        // Test with all defaults
+        let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
+        let params = SpawnAndWaitParams {
+            workdir: "/tmp".into(),
+            prompt: "test".into(),
+            provider: Some(Provider::Claude),
+            mode: Some(SessionMode::Autonomous),
+            guard_preset: Some(GuardPreset::Strict),
+            name: Some("custom-name".into()),
+            persona: None,
+            model: Some("opus".into()),
+            node: None,
+            timeout_secs: None,       // defaults to 600
+            poll_interval_secs: None, // defaults to 5
+            output_lines: None,       // defaults to 200
+        };
+        let result = mcp.spawn_and_wait(Parameters(params)).await;
+        let wait: WaitResult = serde_json::from_str(&result).unwrap();
+        assert!(!wait.timed_out);
+        assert_eq!(wait.session.name, "custom-name");
+    }
+
+    #[tokio::test]
+    async fn test_spawn_and_wait_params_debug() {
+        let params = SpawnAndWaitParams {
+            workdir: "/tmp".into(),
+            prompt: "test".into(),
+            provider: None,
+            mode: None,
+            guard_preset: None,
+            name: None,
+            persona: None,
+            model: None,
+            node: None,
+            timeout_secs: None,
+            poll_interval_secs: None,
+            output_lines: None,
+        };
+        let debug = format!("{params:?}");
+        assert!(debug.contains("/tmp"));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_and_wait_params_deserialize() {
+        let json = r#"{"workdir":"/tmp","prompt":"test"}"#;
+        let params: SpawnAndWaitParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.workdir, "/tmp");
+        assert!(params.timeout_secs.is_none());
+    }
+
+    // -- fan_out tests --
+
+    #[tokio::test]
+    async fn test_fan_out_empty_tasks() {
+        let mcp = test_mcp(MockBackend::new()).await;
+        let params = FanOutParams {
+            tasks: vec![],
+            timeout_secs: None,
+            poll_interval_secs: None,
+            output_lines: None,
+        };
+        let result = mcp.fan_out(Parameters(params)).await;
+        let fan_out: FanOutResult = serde_json::from_str(&result).unwrap();
+        assert!(fan_out.results.is_empty());
+        assert!(fan_out.all_completed);
+    }
+
+    #[tokio::test]
+    async fn test_fan_out_single_task() {
+        let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
+        let params = FanOutParams {
+            tasks: vec![FanOutTask {
+                workdir: "/tmp".into(),
+                prompt: "test task".into(),
+                provider: None,
+                mode: None,
+                guard_preset: None,
+                name: None,
+                persona: None,
+                model: None,
+                node: None,
+            }],
+            timeout_secs: Some(5),
+            poll_interval_secs: Some(0),
+            output_lines: Some(50),
+        };
+        let result = mcp.fan_out(Parameters(params)).await;
+        let fan_out: FanOutResult = serde_json::from_str(&result).unwrap();
+        assert_eq!(fan_out.results.len(), 1);
+        assert!(fan_out.all_completed);
+        assert!(fan_out.results[0].error.is_none());
+        assert!(!fan_out.results[0].timed_out);
+        assert!(fan_out.results[0].session.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_fan_out_two_tasks() {
+        let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
+        let params = FanOutParams {
+            tasks: vec![
+                FanOutTask {
+                    workdir: "/tmp".into(),
+                    prompt: "task A".into(),
+                    provider: None,
+                    mode: None,
+                    guard_preset: None,
+                    name: Some("task-a".into()),
+                    persona: None,
+                    model: None,
+                    node: None,
+                },
+                FanOutTask {
+                    workdir: "/tmp".into(),
+                    prompt: "task B".into(),
+                    provider: Some(Provider::Codex),
+                    mode: Some(SessionMode::Autonomous),
+                    guard_preset: Some(GuardPreset::Unrestricted),
+                    name: Some("task-b".into()),
+                    persona: None,
+                    model: None,
+                    node: None,
+                },
+            ],
+            timeout_secs: Some(5),
+            poll_interval_secs: Some(0),
+            output_lines: None,
+        };
+        let result = mcp.fan_out(Parameters(params)).await;
+        let fan_out: FanOutResult = serde_json::from_str(&result).unwrap();
+        assert_eq!(fan_out.results.len(), 2);
+        assert!(fan_out.all_completed);
+        // Both should have sessions
+        assert!(fan_out.results[0].session.is_some());
+        assert!(fan_out.results[1].session.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_fan_out_partial_failure() {
+        // One task local (succeeds), one task on unknown remote (fails)
+        let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
+        let params = FanOutParams {
+            tasks: vec![
+                FanOutTask {
+                    workdir: "/tmp".into(),
+                    prompt: "good task".into(),
+                    provider: None,
+                    mode: None,
+                    guard_preset: None,
+                    name: None,
+                    persona: None,
+                    model: None,
+                    node: None,
+                },
+                FanOutTask {
+                    workdir: "/tmp".into(),
+                    prompt: "bad task".into(),
+                    provider: None,
+                    mode: None,
+                    guard_preset: None,
+                    name: None,
+                    persona: None,
+                    model: None,
+                    node: Some("nonexistent-node".into()),
+                },
+            ],
+            timeout_secs: Some(5),
+            poll_interval_secs: Some(0),
+            output_lines: None,
+        };
+        let result = mcp.fan_out(Parameters(params)).await;
+        let fan_out: FanOutResult = serde_json::from_str(&result).unwrap();
+        assert_eq!(fan_out.results.len(), 2);
+        assert!(!fan_out.all_completed); // one failed
+
+        // First task succeeded
+        assert!(fan_out.results[0].session.is_some());
+        assert!(fan_out.results[0].error.is_none());
+
+        // Second task failed
+        assert!(fan_out.results[1].session.is_none());
+        assert!(fan_out.results[1].error.is_some());
+        assert!(
+            fan_out.results[1]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("unknown node")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_fan_out_timeout() {
+        // All tasks timeout (alive=true, timeout=0)
+        let mcp = test_mcp(MockBackend::new()).await;
+        let params = FanOutParams {
+            tasks: vec![FanOutTask {
+                workdir: "/tmp".into(),
+                prompt: "long running".into(),
+                provider: None,
+                mode: None,
+                guard_preset: None,
+                name: None,
+                persona: None,
+                model: None,
+                node: None,
+            }],
+            timeout_secs: Some(0),
+            poll_interval_secs: Some(1),
+            output_lines: None,
+        };
+        let result = mcp.fan_out(Parameters(params)).await;
+        let fan_out: FanOutResult = serde_json::from_str(&result).unwrap();
+        assert_eq!(fan_out.results.len(), 1);
+        assert!(!fan_out.all_completed);
+        assert!(fan_out.results[0].timed_out);
+    }
+
+    #[tokio::test]
+    async fn test_fan_out_metadata_tagging() {
+        let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
+        let params = FanOutParams {
+            tasks: vec![FanOutTask {
+                workdir: "/tmp".into(),
+                prompt: "test".into(),
+                provider: None,
+                mode: None,
+                guard_preset: None,
+                name: None,
+                persona: None,
+                model: None,
+                node: None,
+            }],
+            timeout_secs: Some(5),
+            poll_interval_secs: Some(0),
+            output_lines: None,
+        };
+        let result = mcp.fan_out(Parameters(params)).await;
+        let fan_out: FanOutResult = serde_json::from_str(&result).unwrap();
+        let session = fan_out.results[0].session.as_ref().unwrap();
+        // Session should have fan_out metadata
+        let meta = session.metadata.as_ref().unwrap();
+        assert_eq!(meta.get("fan_out"), Some(&"true".into()));
+    }
+
+    #[test]
+    fn test_fan_out_params_debug() {
+        let params = FanOutParams {
+            tasks: vec![],
+            timeout_secs: Some(60),
+            poll_interval_secs: None,
+            output_lines: None,
+        };
+        let debug = format!("{params:?}");
+        assert!(debug.contains("60"));
+    }
+
+    #[test]
+    fn test_fan_out_params_deserialize() {
+        let json = r#"{"tasks":[{"workdir":"/tmp","prompt":"test"}]}"#;
+        let params: FanOutParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.tasks.len(), 1);
+        assert!(params.timeout_secs.is_none());
+    }
+
+    #[test]
+    fn test_fan_out_task_debug() {
+        let task = FanOutTask {
+            workdir: "/tmp".into(),
+            prompt: "test".into(),
+            provider: None,
+            mode: None,
+            guard_preset: None,
+            name: None,
+            persona: None,
+            model: None,
+            node: None,
+        };
+        let debug = format!("{task:?}");
+        assert!(debug.contains("/tmp"));
+    }
+
+    #[test]
+    fn test_fan_out_task_deserialize() {
+        let json = r#"{"workdir":"/tmp","prompt":"test","provider":"codex","mode":"autonomous"}"#;
+        let task: FanOutTask = serde_json::from_str(json).unwrap();
+        assert_eq!(task.provider, Some(Provider::Codex));
+        assert_eq!(task.mode, Some(SessionMode::Autonomous));
+    }
+
+    #[test]
+    fn test_fan_out_task_result_debug() {
+        let result = FanOutTaskResult {
+            session: None,
+            output: "out".into(),
+            timed_out: false,
+            error: Some("err".into()),
+        };
+        let debug = format!("{result:?}");
+        assert!(debug.contains("err"));
+    }
+
+    #[test]
+    fn test_fan_out_task_result_serialize() {
+        let result = FanOutTaskResult {
+            session: None,
+            output: String::new(),
+            timed_out: true,
+            error: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"timed_out\":true"));
+    }
+
+    #[test]
+    fn test_fan_out_result_debug() {
+        let result = FanOutResult {
+            results: vec![],
+            all_completed: true,
+        };
+        let debug = format!("{result:?}");
+        assert!(debug.contains("all_completed"));
+    }
+
+    #[test]
+    fn test_fan_out_result_serialize() {
+        let result = FanOutResult {
+            results: vec![],
+            all_completed: true,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"all_completed\":true"));
+    }
+
+    // -- poll_until_terminal tests --
+
+    #[tokio::test]
+    async fn test_poll_until_terminal_not_found() {
+        let mcp = test_mcp(MockBackend::new()).await;
+        let result = mcp
+            .poll_until_terminal("nonexistent", None, 1, 1, 100)
+            .await;
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("session not found")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_poll_until_terminal_remote_error() {
+        let mcp = test_mcp(MockBackend::new()).await;
+        let result = mcp
+            .poll_until_terminal("id", Some("nonexistent-node"), 1, 1, 100)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_poll_until_terminal_already_terminal() {
+        let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
+        // Create and make stale
+        let spawn_result = mcp
+            .spawn_session(Parameters(SpawnSessionParams {
+                workdir: "/tmp".into(),
+                prompt: "test".into(),
+                provider: None,
+                mode: None,
+                guard_preset: None,
+                name: None,
+                node: None,
+            }))
+            .await;
+        let session: Session = serde_json::from_str(&spawn_result).unwrap();
+        // get_session triggers stale detection
+        let _ = mcp
+            .get_session(Parameters(GetSessionParams {
+                id: session.id.to_string(),
+                node: None,
+            }))
+            .await;
+
+        let result = mcp
+            .poll_until_terminal(&session.id.to_string(), None, 5, 0, 100)
+            .await;
+        let (s, output, timed_out) = result.unwrap();
+        assert_eq!(s.status, SessionStatus::Stale);
+        assert!(!timed_out);
+        assert!(output.contains("test output"));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_and_wait_poll_error() {
+        // Spawn succeeds locally, then we break the store so poll_until_terminal fails
+        let (mcp, pool) = test_mcp_with_pool(MockBackend::new()).await;
+
+        // Create a session first to ensure spawn works
+        let spawn_params = SpawnSessionParams {
+            workdir: "/tmp".into(),
+            prompt: "test".into(),
+            provider: None,
+            mode: None,
+            guard_preset: None,
+            name: None,
+            node: None,
+        };
+        let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
+        let session: Session = serde_json::from_str(&spawn_result).unwrap();
+
+        // Drop the sessions table to make poll_until_terminal's get_session fail
+        sqlx::query("DROP TABLE sessions")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // poll_until_terminal should error
+        let result = mcp
+            .poll_until_terminal(&session.id.to_string(), None, 1, 0, 100)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_spawn_and_wait_impl_poll_error() {
+        // Test the error path in spawn_and_wait_impl where spawn succeeds but poll errors.
+        // Use a backend that tracks calls so we know spawn worked, then break the store.
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct BreakableBackend {
+            break_after_spawn: Arc<AtomicBool>,
+        }
+
+        impl Backend for BreakableBackend {
+            fn create_session(&self, _n: &str, _d: &str, _c: &str) -> Result<()> {
+                // After spawn, mark that we should break
+                self.break_after_spawn.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+            fn kill_session(&self, _: &str) -> Result<()> {
+                Ok(())
+            }
+            fn is_alive(&self, _: &str) -> Result<bool> {
+                Ok(true)
+            }
+            fn capture_output(&self, _: &str, _: usize) -> Result<String> {
+                Ok(String::new())
+            }
+            fn send_input(&self, _: &str, _: &str) -> Result<()> {
+                Ok(())
+            }
+            fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        let break_flag = Arc::new(AtomicBool::new(false));
+        let backend = Arc::new(BreakableBackend {
+            break_after_spawn: break_flag.clone(),
+        });
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let pool = store.pool().clone();
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        );
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let mcp = PulpoMcp::new(manager, peer_registry, test_config());
+
+        // Spawn a background task that drops the sessions table once spawn completes
+        let pool_clone = pool.clone();
+        let flag_clone = break_flag.clone();
+        tokio::spawn(async move {
+            // Wait for spawn to complete
+            while !flag_clone.load(Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            // Give a tiny window for the insert to complete
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            // Break the store
+            let _ = sqlx::query("DROP TABLE sessions")
+                .execute(&pool_clone)
+                .await;
+        });
+
+        // Exercise all BreakableBackend trait methods for coverage
+        let bb = BreakableBackend {
+            break_after_spawn: Arc::new(AtomicBool::new(false)),
+        };
+        assert!(bb.kill_session("test").is_ok());
+        assert!(bb.is_alive("test").unwrap());
+        assert!(bb.capture_output("test", 10).unwrap().is_empty());
+        assert!(bb.send_input("test", "t").is_ok());
+        assert!(bb.setup_logging("test", "p").is_ok());
+
+        let result = mcp
+            .spawn_and_wait_impl(SpawnAndWaitRequest {
+                workdir: "/tmp".into(),
+                prompt: "test".into(),
+                provider: None,
+                mode: None,
+                guard_preset: None,
+                name: None,
+                persona: None,
+                model: None,
+                node: None,
+                metadata: None,
+                timeout_secs: 3,
+                poll_interval_secs: 0,
+                output_lines: 100,
+            })
+            .await;
+        // The poll should eventually error once the table is dropped
+        assert!(result.error.is_some());
+        assert!(result.session.is_none());
+    }
+
+    // -- spawn_and_wait remote tests --
+
+    #[tokio::test]
+    async fn test_spawn_and_wait_remote() {
+        use axum::{Router, routing::get, routing::post};
+
+        let (_addr, _session) = start_mock_completed_server().await;
+        let completed = make_completed_session();
+        let spawn_json = serde_json::to_string(&completed).unwrap();
+        let session_opt_json = serde_json::to_string(&Some(&completed)).unwrap();
+        let spawn_json2 = spawn_json.clone();
+
+        let app = Router::new()
+            .route(
+                "/api/v1/sessions",
+                post(move || {
+                    let body = spawn_json2.clone();
+                    async move { ([("content-type", "application/json")], body) }
+                }),
+            )
+            .route(
+                "/api/v1/sessions/{id}",
+                get(move || {
+                    let body = session_opt_json.clone();
+                    async move { ([("content-type", "application/json")], body) }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let remote_addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+
+        let addr = format!("127.0.0.1:{}", remote_addr.port());
+        let mcp = test_mcp_with_remote(&addr).await;
+        let params = SpawnAndWaitParams {
+            workdir: "/tmp/remote".into(),
+            prompt: "remote test".into(),
+            provider: None,
+            mode: None,
+            guard_preset: None,
+            name: None,
+            persona: None,
+            model: None,
+            node: Some("remote".into()),
+            timeout_secs: Some(5),
+            poll_interval_secs: Some(0),
+            output_lines: None,
+        };
+        let result = mcp.spawn_and_wait(Parameters(params)).await;
+        let wait: WaitResult = serde_json::from_str(&result).unwrap();
+        assert!(!wait.timed_out);
+        assert_eq!(wait.session.status, SessionStatus::Completed);
+        // Remote returns empty output
+        assert!(wait.output.is_empty());
     }
 }

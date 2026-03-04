@@ -40,8 +40,8 @@
       repoPath = '';
       prompt = '';
       oncreated();
-    } catch {
-      error = 'Failed to create session';
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to create session';
     } finally {
       submitting = false;
     }
