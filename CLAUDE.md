@@ -258,7 +258,9 @@ pulpo/
 │   │   ├── platform.rs           # OS detection (macOS/Linux/WSL2)
 │   │   ├── api/                  # Axum REST API
 │   │   │   ├── mod.rs            # AppState, router setup
-│   │   │   ├── routes.rs         # Route definitions
+│   │   │   ├── routes.rs         # Route definitions + auth middleware
+│   │   │   ├── auth.rs           # Auth token endpoint
+│   │   │   ├── config.rs         # Config API endpoint
 │   │   │   ├── health.rs         # Health check endpoint
 │   │   │   ├── sessions.rs       # Session CRUD handlers
 │   │   │   ├── node.rs           # Node info + memory detection
@@ -266,7 +268,6 @@ pulpo/
 │   │   │   ├── ws.rs             # WebSocket terminal streaming
 │   │   │   ├── personas.rs       # Personas endpoint
 │   │   │   ├── events.rs         # SSE event stream endpoint
-│   │   │   ├── detections.rs     # Detection events endpoints
 │   │   │   ├── static_files.rs   # rust-embed static file serving
 │   │   │   └── embed.rs          # rust-embed derive (excluded from coverage)
 │   │   ├── backend/              # Terminal backends
@@ -275,9 +276,7 @@ pulpo/
 │   │   ├── session/              # Session lifecycle
 │   │   │   ├── mod.rs            # Session module
 │   │   │   ├── manager.rs        # Orchestration (spawn, kill, resume)
-│   │   │   ├── output.rs         # Output capture
-│   │   │   ├── pty_bridge.rs     # PTY bridge for WebSocket streaming
-│   │   │   └── state.rs          # State machine
+│   │   │   └── pty_bridge.rs     # PTY bridge for WebSocket streaming
 │   │   ├── store/                # Persistence
 │   │   │   └── mod.rs            # SQLite store + migrations
 │   │   ├── notifications/        # Push notifications
@@ -285,7 +284,13 @@ pulpo/
 │   │   │   └── discord.rs        # Discord webhook notifier + loop
 │   │   ├── peers/                # Peer discovery
 │   │   │   ├── mod.rs            # PeerRegistry
-│   │   │   └── health.rs         # Peer health probing
+│   │   │   └── health.rs         # Peer health probing (cached on-demand)
+│   │   ├── watchdog/             # Resource monitoring
+│   │   │   ├── mod.rs            # Watchdog loop (memory + idle detection)
+│   │   │   └── memory.rs         # System memory probing
+│   │   ├── mcp/                  # MCP server
+│   │   │   ├── mod.rs            # MCP tool handlers
+│   │   │   └── resources.rs      # MCP resource definitions
 │   │   └── discovery/            # mDNS service discovery
 │   │       ├── mod.rs            # ServiceRegistration types + constants
 │   │       └── mdns.rs           # mDNS register, browse, shutdown

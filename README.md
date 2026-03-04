@@ -23,8 +23,6 @@ pulpo resume my-api                                   # → agent picks up where
 
 Control sessions from **CLI**, **web dashboard** (mobile-friendly), or **Discord bot** — on any machine in your network.
 
-> Screenshots coming soon — dashboard, session recovery, Discord bot.
-
 ## Why Pulpo
 
 You run agents, they crash, they eat all your RAM, you lose context. Managing across machines means SSH + tmux + hoping you remember which agent was doing what.
@@ -33,7 +31,7 @@ You run agents, they crash, they eat all your RAM, you lose context. Managing ac
 | --------------------------- | ----------- | -------------------- | --------------- | --------------------------- |
 | Multi-machine dashboard     | —           | —                    | First-class     | First-class                 |
 | Session survives reboot     | —           | —                    | Varies          | First-class (resume)        |
-| Crash recovery + retry      | —           | Limited              | Varies          | First-class (watchdog)      |
+| Resource watchdog           | —           | Limited              | Varies          | First-class (interventions) |
 | Environment guardrails      | Manual      | Limited              | Locked down     | Configurable (3 presets)    |
 | REST API + MCP              | —           | —                    | Proprietary     | First-class (open)          |
 | Audit trail                 | —           | —                    | Varies          | First-class (interventions) |
@@ -147,27 +145,21 @@ Check from your phone: open `http://mac-mini:7433` — the web UI is mobile-frie
 
 ### Schedule a recurring run
 
-Use the scheduler when you want recurring autonomous work (cron-based):
+Use the crontab wrapper for recurring autonomous work:
 
 ```bash
 # Every day at 02:00
-pulpo schedule create \
-  --name nightly-review \
-  --cron "0 2 * * *" \
+pulpo schedule install nightly-review "0 2 * * *" \
   --workdir ~/repos/my-api \
-  --persona reviewer \
-  --concurrency skip \
-  --max-executions 30 \
-  "Review changes from the last 24 hours and summarize risks"
+  "Review changes from the last 24 hours"
 
 pulpo schedule list
-pulpo schedule history nightly-review --limit 10
+pulpo schedule pause nightly-review
+pulpo schedule resume nightly-review
+pulpo schedule remove nightly-review
 ```
 
-Concurrency policies:
-- `skip`: do nothing if a previous run is still active
-- `allow`: run anyway (multiple overlapping runs)
-- `replace`: kill running session from previous run, then start a new one
+This writes tagged lines to your user crontab. Each run spawns a fresh `pulpo spawn --auto` session.
 
 ### Spawn from Discord, track in SSE, kill from phone
 
@@ -210,7 +202,7 @@ What happened: `pulpod` started, checked SQLite for active sessions, found no ma
 | `creating`  | tmux session being set up  | Wait                          |
 | `running`   | Agent is active            | `logs`, `attach`, `kill`      |
 | `completed` | Exited cleanly (exit 0)    | `delete` or keep for history  |
-| `dead`      | Crashed or was killed      | `spawn` new (or auto-recover) |
+| `dead`      | Crashed or was killed      | `spawn` new or `delete`       |
 | `stale`     | DB record, no tmux session | `resume`                      |
 
 `resume` only works for **stale** sessions. Dead sessions need a fresh `spawn`. See [SPEC.md](SPEC.md#failure--recovery) for full recovery flows.
@@ -220,16 +212,14 @@ What happened: `pulpod` started, checked SQLite for active sessions, found no ma
 - **Single binary** — `pulpod` embeds the web UI. No runtime dependencies besides tmux.
 - **Resource watchdog** — monitors memory pressure, kills runaway agents, logs interventions.
 - **Idle detection** — detects sessions with no output for a configurable timeout.
-- **Auto-recovery** — resumes watchdog-killed sessions with bounded retries and backoff.
-- **False-positive tracking** — records every intervention; mark false positives to track accuracy.
 - **Guard presets** — standard, strict, or yolo modes control agent permissions and env sanitization.
 - **Session persistence** — sessions survive daemon restarts; resume after reboot.
 - **Multi-provider** — Claude Code and OpenAI Codex out of the box.
 - **Multi-node dashboard** — see agents across all machines in one view.
 - **Personas** — pre-configured agent profiles (provider, model, guard, tools, system prompt).
-- **SSE events** — real-time session and schedule events via Server-Sent Events.
+- **SSE events** — real-time session lifecycle events via Server-Sent Events.
 - **Discord integration** — webhook notifications + bot with slash commands.
-- **Scheduler** — cron-based recurring runs with pause/resume/manual trigger and execution history.
+- **Scheduling** — crontab wrapper for recurring agent runs (install/list/pause/resume/remove).
 - **Output capture** — periodic terminal snapshots for offline viewing.
 - **MCP server** — session management as MCP tools for agent-to-agent orchestration.
 - **Trusted-network design** — works on any LAN, VPN, or Tailscale network. No TLS required when your network handles encryption.
@@ -244,7 +234,7 @@ What happened: `pulpod` started, checked SQLite for active sessions, found no ma
 - Guard presets are enforced at spawn time — env vars sanitized, tool flags set
 - Stale sessions are detectable and resumable with conversation context
 - Every watchdog intervention is logged with reason and timestamp
-- SSE events fire for session status transitions and schedule execution events
+- SSE events fire for session status transitions
 
 See [SPEC.md](SPEC.md#interventions) for details on intervention tracking and recovery flows.
 
@@ -280,6 +270,7 @@ All subcommands have short aliases for quick access.
 
 ```
 pulpo attach <NAME>                  Attach to a session's tmux terminal (alias: a)
+pulpo input <NAME> [TEXT]            Send input to a session (alias: i)
 pulpo spawn [OPTIONS] <PROMPT>       Spawn a new agent session (alias: s)
   --workdir <PATH>                  Working directory (required)
   --name <NAME>                     Session name (auto-derived if omitted)
@@ -289,6 +280,9 @@ pulpo spawn [OPTIONS] <PROMPT>       Spawn a new agent session (alias: s)
   --system-prompt <TEXT>            System prompt to append
   --allowed-tools <TOOL,...>        Allowed tools (comma-separated)
   --persona <NAME>                  Use a persona from config
+  --max-turns <N>                   Maximum agent turns before stopping
+  --max-budget <USD>                Maximum budget in USD before stopping
+  --output-format <FORMAT>          Output format (e.g. json, stream-json)
   --auto                            Autonomous mode (fire-and-forget)
 
 pulpo list                           List all sessions (alias: ls)
@@ -297,16 +291,13 @@ pulpo kill <NAME>                    Kill a session (alias: k)
 pulpo delete <NAME>                  Permanently remove a session from history (alias: rm)
 pulpo resume <NAME>                  Resume a session after reboot (alias: r)
 pulpo interventions <NAME>           View intervention history for a session (alias: iv)
-pulpo schedule <SUBCOMMAND>          Manage schedules (alias: sched)
-  create --name --cron --workdir <PROMPT>
-                                     Create a new schedule
-  list                               List all schedules (alias: ls)
-  get <NAME_OR_ID>                   Show schedule details
-  delete <NAME_OR_ID>                Delete a schedule (alias: rm)
-  run <NAME_OR_ID>                   Trigger a schedule immediately
-  pause <NAME_OR_ID>                 Pause a schedule
-  resume <NAME_OR_ID>                Resume a paused schedule
-  history <NAME_OR_ID> [--limit N]   Show execution history (alias: hist)
+pulpo schedule <SUBCOMMAND>          Manage cron schedules (alias: sched)
+  install <NAME> <CRON> --workdir <PATH> [--provider] <PROMPT>
+                                     Install a cron schedule
+  list                               List installed schedules (alias: ls)
+  remove <NAME>                      Remove a schedule (alias: rm)
+  pause <NAME>                       Pause a schedule (comments crontab line)
+  resume <NAME>                      Resume a paused schedule
 pulpo nodes                          List all known nodes on the network (alias: n)
 pulpo ui                             Open the web dashboard in your browser
 ```
@@ -326,15 +317,13 @@ pulpo --node macbook:7433 list
 - [x] Guard presets: standard, strict, yolo environment control
 - [x] Token auth, mobile-friendly web UI
 - [x] Resource watchdog: memory pressure detection, safe intervention, audit trail
-- [x] Auto-recovery: bounded retries for watchdog-killed sessions
 - [x] Idle detection: detect and act on sessions with no output
-- [x] False-positive tracking: detection event audit trail with accuracy stats
 - [x] mDNS discovery: automatic peer detection on LAN (activates in `lan` bind mode)
 - [x] Persona system: configurable agent personas with model, tools, and system prompt
 - [x] SSE event stream: real-time session lifecycle events
 - [x] MCP server: session management as MCP tools for agent-to-agent orchestration
 - [x] Discord integration: webhook notifications + bot with slash commands
-- [x] Scheduler: cron-based recurring runs with CLI/API + execution history
+- [x] Scheduling: crontab wrapper for recurring agent runs
 - [ ] Per-process kill: kill runaway child processes without killing the agent
 - [ ] Tailscale API discovery: automatic peer detection via Tailscale
 - [ ] Provider adapter registry: trait-based, config-driven provider system

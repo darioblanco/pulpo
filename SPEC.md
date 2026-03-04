@@ -71,7 +71,6 @@ Too many layers. And if a machine reboots, you lose your session state.
 Runs on every machine. Responsibilities:
 
 - **Session lifecycle**: create, list, attach, kill, resume sessions
-- **Scheduled lifecycle**: create, list, run, pause, resume recurring schedules
 - **Terminal backend**: manages tmux sessions (macOS/Linux)
 - **API server**: REST + WebSocket on a configurable port (default: 7433)
 - **Persistence**: SQLite for session state, output snapshots, conversation IDs
@@ -145,10 +144,10 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 | `creating`  | tmux session being set up     | `pulpo spawn` just ran       | Wait                          |
 | `running`   | Agent is active               | Session started successfully | `logs`, `attach`, `kill`      |
 | `completed` | Agent exited cleanly (exit 0) | Task finished                | `delete` or keep for history  |
-| `dead`      | Agent crashed or was killed   | Error, `kill`, or watchdog   | `spawn` new (or auto-recover) |
+| `dead`      | Agent crashed or was killed   | Error, `kill`, or watchdog   | `spawn` new or `delete`       |
 | `stale`     | DB record but no tmux session | Daemon restart / reboot      | `resume`                      |
 
-Key distinction: **stale** means the session record exists but the tmux process is gone (recoverable via `resume`). **Dead** means the process exited with an error or was killed (requires a fresh `spawn`, or auto-recovery if configured).
+Key distinction: **stale** means the session record exists but the tmux process is gone (recoverable via `resume`). **Dead** means the process exited with an error or was killed (requires a fresh `spawn`).
 
 ### Persistence (what survives a reboot)
 
@@ -200,8 +199,6 @@ The session itself also stores the most recent intervention in `intervention_rea
 
 - CLI: `pulpo interventions <name>` (alias: `iv`)
 - API: `GET /api/v1/sessions/:id/interventions`
-- Detection events (for false-positive tracking): `GET /api/v1/detection-events`
-
 ### Failure & Recovery
 
 Two recovery flows cover the common failure modes:
@@ -221,18 +218,13 @@ User runs: pulpo resume <name> ────────────────�
 
 `resume` **only works for stale sessions**. Dead sessions require a fresh `spawn`.
 
-#### 2. Watchdog kill → dead → auto-recover or manual spawn
+#### 2. Watchdog kill → dead → manual spawn
 
-The watchdog kills a session and records an intervention. What happens next depends on config:
-
-- **`auto_recover = true`**: the daemon automatically respawns the session with bounded retries. Each retry uses exponential backoff. After `max_recoveries` attempts, the session stays dead.
-- **`auto_recover = false`** (default): the session stays dead. The user decides whether to `spawn` a new session.
+The watchdog kills a session and records an intervention. The session stays dead — the user decides whether to `spawn` a new session.
 
 ```
 Watchdog detects issue → kills session → records intervention → session is DEAD
-    │                                                               │
-    ├─ auto_recover = true  → respawn with backoff (up to max_recoveries)
-    └─ auto_recover = false → user runs: pulpo spawn ... (fresh session)
+    └─ user runs: pulpo spawn ... (fresh session)
 ```
 
 **Relevant config knobs** (`[watchdog]` in `~/.pulpo/config.toml`):
@@ -242,8 +234,6 @@ Watchdog detects issue → kills session → records intervention → session is
 | `memory_threshold`    | `90`      | Kill when system memory usage exceeds this %    |
 | `check_interval_secs` | `10`      | How often to check (seconds)                    |
 | `breach_count`        | `3`       | Consecutive breaches before acting              |
-| `auto_recover`        | `false`   | Automatically respawn killed sessions           |
-| `max_recoveries`      | `3`       | Max auto-recovery attempts per session          |
 | `idle_timeout_secs`   | `600`     | Seconds of no output before idle action         |
 | `idle_action`         | `"alert"` | `"alert"` (log warning) or `"kill"` (terminate) |
 
@@ -256,7 +246,6 @@ Watchdog detects issue → kills session → records intervention → session is
 | Session is `dead`, wasn't killed          | Agent crashed or OOM            | Check `pulpo interventions <name>`, then `spawn` new      |
 | `resume` fails with "not stale"           | Session is dead, not stale      | Use `pulpo spawn` to start fresh                          |
 | Watchdog keeps killing sessions           | Memory threshold too low        | Raise `memory_threshold` or reduce concurrent sessions    |
-| Session shows intervention but seems fine | False positive                  | `POST /detection-events/:id/mark` to flag it              |
 | No output in `pulpo logs`                 | Session just started            | Wait, or use `--follow` to stream: `pulpo logs -f <name>` |
 
 ---
@@ -388,44 +377,6 @@ The full `Session` object includes additional nullable fields: `conversation_id`
 `exit_code`, `tmux_session`, `allowed_tools`, `system_prompt`, `metadata`,
 `intervention_reason`, `intervention_at`, `last_output_at`, `idle_since`.
 
-### Schedules
-
-```
-POST   /schedules                 Create a schedule
-GET    /schedules                 List schedules
-GET    /schedules/:id             Get schedule details
-PUT    /schedules/:id             Update a schedule
-DELETE /schedules/:id             Delete a schedule
-POST   /schedules/:id/run         Trigger a run now
-POST   /schedules/:id/pause       Pause a schedule
-POST   /schedules/:id/resume      Resume a paused schedule
-GET    /schedules/:id/executions  List execution history
-```
-
-#### POST /schedules
-
-```json
-{
-  "name": "nightly-review",
-  "cron": "0 2 * * *",
-  "workdir": "/home/user/repos/my-api",
-  "prompt": "Review changes from the last 24 hours",
-  "provider": "claude",
-  "mode": "autonomous",
-  "persona": "reviewer",
-  "concurrency": "skip",
-  "max_executions": 30
-}
-```
-
-`concurrency` controls overlap behavior:
-- `skip`: do nothing if a previous execution is still active
-- `allow`: start a new execution even if one is active
-- `replace`: kill previous execution, then start a new one
-
-Schedule execution history records `spawned`, `skipped`, or `failed` entries,
-plus `session_id` when a run actually spawned a session.
-
 ### Node
 
 ```
@@ -444,20 +395,11 @@ DELETE /peers/:name           Remove a peer
 
 ```
 GET    /personas              List configured personas
-GET    /events                SSE event stream (session + schedule events)
+GET    /events                SSE event stream (session lifecycle events)
 ```
 
 `/events` emits tagged events:
 - `kind: "session"` for session lifecycle updates (`creating`, `running`, `completed`, `dead`, `stale`)
-- `kind: "schedule"` for scheduler updates (`fired`, `skipped`, `failed`, `exhausted`)
-
-### Detection Events
-
-```
-GET    /detection-events          List detection events
-GET    /detection-events/stats    Detection stats per detector
-POST   /detection-events/:id/mark Mark event as false positive
-```
 
 ### Quick Reference
 
@@ -485,18 +427,6 @@ POST   /detection-events/:id/mark Mark event as false positive
 | `GET`    | `/auth/pairing-url`             | Get QR pairing URL (local)     |
 | `GET`    | `/personas`                     | List configured personas       |
 | `GET`    | `/events`                       | SSE event stream               |
-| `GET`    | `/detection-events`             | List detection events          |
-| `GET`    | `/detection-events/stats`       | Detection stats per detector   |
-| `POST`   | `/detection-events/:id/mark`    | Mark event as false positive   |
-| `GET`    | `/schedules`                    | List schedules                 |
-| `POST`   | `/schedules`                    | Create schedule                |
-| `GET`    | `/schedules/:id`                | Get schedule details           |
-| `PUT`    | `/schedules/:id`                | Update schedule                |
-| `DELETE` | `/schedules/:id`                | Delete schedule                |
-| `POST`   | `/schedules/:id/run`            | Trigger schedule run now       |
-| `POST`   | `/schedules/:id/pause`          | Pause schedule                 |
-| `POST`   | `/schedules/:id/resume`         | Resume paused schedule         |
-| `GET`    | `/schedules/:id/executions`     | Schedule execution history     |
 
 ---
 
@@ -746,8 +676,6 @@ enabled = true
 memory_threshold = 90
 check_interval_secs = 10
 breach_count = 3
-auto_recover = false
-max_recoveries = 3
 idle_timeout_secs = 600
 idle_action = "alert"       # "alert" or "kill"
 

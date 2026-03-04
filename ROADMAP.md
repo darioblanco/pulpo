@@ -58,13 +58,15 @@ Infrastructure layer for autonomous coding agents. Pulpo manages **where and how
 - Discord webhook notifications (`[notifications.discord]` config)
 - Discord bot (`contrib/discord-bot/`) — slash commands + SSE listener
 
-### Phase 9: Scheduler + Worktree Automation
+### Core Cleanup (post-Phase 8)
 
-- Cron scheduler API and CLI (`/api/v1/schedules`, `pulpo schedule ...`)
-- Concurrency policies (`skip`, `allow`, `replace`)
-- Execution history (`/api/v1/schedules/:id/executions`)
-- Optional git worktree config per schedule run
-- Scheduler events on SSE (`kind: schedule`)
+- Deleted dead code (state machine, output placeholder)
+- Removed detection events subsystem (watchdog acts directly, no storage overhead)
+- Removed watchdog auto-recovery (users prefer explicit `pulpo resume`)
+- Simplified guard system (preset-only config, free functions instead of trait)
+- Deduplicated stale detection, removed dead SSE client code
+- Replaced peer health polling with lazy on-demand probing (60s TTL cache)
+- Replaced internal scheduling engine (~3,400 lines) with crontab wrapper (~150 lines)
 
 ## Next Steps (in order)
 
