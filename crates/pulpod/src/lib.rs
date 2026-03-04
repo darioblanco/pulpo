@@ -175,17 +175,6 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
 
     #[cfg(not(coverage))]
     {
-        let health_registry = peer_registry.clone();
-        let prober = peers::health::HttpPeerProber::new();
-        let (health_shutdown_tx, shutdown_rx) = watch::channel(false);
-        tokio::spawn(peers::health::run_health_check_loop(
-            health_registry,
-            prober,
-            std::time::Duration::from_secs(30),
-            shutdown_rx,
-        ));
-        shutdown_handle.add_sender(health_shutdown_tx);
-
         if config.watchdog.enabled {
             let reader = watchdog::memory::SystemMemoryReader;
             let wd_threshold = config.watchdog.memory_threshold;

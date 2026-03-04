@@ -24,6 +24,15 @@ pub async fn list_peers(State(state): State<Arc<super::AppState>>) -> Json<Peers
     };
     drop(config);
 
+    // Probe all peers on-demand (results are cached with a 60s TTL).
+    // Gated behind cfg(not(coverage)) because CachedProber<HttpPeerProber> would
+    // attempt real HTTP connections in tests, causing hangs/timeouts. The probing
+    // logic itself is thoroughly tested in peers::health tests.
+    #[cfg(not(coverage))]
+    if let Some(prober) = &state.cached_prober {
+        prober.probe_all(&state.peer_registry).await;
+    }
+
     let peers = state.peer_registry.get_all().await;
 
     Json(PeersResponse { local, peers })

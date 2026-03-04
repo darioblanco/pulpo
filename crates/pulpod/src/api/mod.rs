@@ -30,6 +30,14 @@ pub struct AppState {
     pub config_path: PathBuf,
     pub session_manager: SessionManager,
     pub peer_registry: PeerRegistry,
+    /// On-demand peer prober with TTL cache. Only present in production builds;
+    /// excluded under coverage because the monomorphized
+    /// `CachedProber<HttpPeerProber>` methods are never exercised (the handler
+    /// call site is also gated) and would produce uncoverable lines.
+    #[cfg(not(coverage))]
+    pub cached_prober: Option<
+        crate::peers::health::CachedProber<crate::peers::health::HttpPeerProber>,
+    >,
     pub event_tx: broadcast::Sender<PulpoEvent>,
 }
 
@@ -45,6 +53,8 @@ impl AppState {
             config_path: PathBuf::new(),
             session_manager,
             peer_registry,
+            #[cfg(not(coverage))]
+            cached_prober: None,
             event_tx,
         })
     }
@@ -61,6 +71,11 @@ impl AppState {
             config_path,
             session_manager,
             peer_registry,
+            #[cfg(not(coverage))]
+            cached_prober: Some(crate::peers::health::CachedProber::new(
+                crate::peers::health::HttpPeerProber::new(),
+                std::time::Duration::from_secs(60),
+            )),
             event_tx,
         })
     }

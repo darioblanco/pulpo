@@ -1,9 +1,12 @@
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use pulpo_common::node::NodeInfo;
 use pulpo_common::peer::PeerStatus;
 use pulpo_common::session::Session;
+use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 use super::PeerRegistry;
@@ -82,53 +85,93 @@ impl PeerProber for HttpPeerProber {
     }
 }
 
-/// Run a background health check loop that periodically probes all peers.
-pub async fn run_health_check_loop<P: PeerProber>(
-    registry: PeerRegistry,
-    prober: P,
-    interval: Duration,
-    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
-) {
-    let mut tick = tokio::time::interval(interval);
-    tick.tick().await; // first tick completes immediately
+/// Cached result from a single peer probe.
+struct CachedProbeResult {
+    result: ProbeResult,
+    fetched_at: Instant,
+}
 
-    loop {
-        tokio::select! {
-            _ = tick.tick() => {
-                check_all_peers(&registry, &prober).await;
+/// On-demand peer prober with a per-peer TTL cache.
+///
+/// Instead of running a background polling loop, `CachedProber` probes peers
+/// lazily when `probe_all()` or `probe_peer()` is called and caches results
+/// for a configurable TTL (default 60 s). Subsequent calls within the TTL
+/// window return the cached value without hitting the network.
+pub struct CachedProber<P: PeerProber> {
+    prober: P,
+    cache: Arc<RwLock<HashMap<String, CachedProbeResult>>>,
+    ttl: Duration,
+}
+
+impl<P: PeerProber> CachedProber<P> {
+    pub fn new(prober: P, ttl: Duration) -> Self {
+        Self {
+            prober,
+            cache: Arc::new(RwLock::new(HashMap::new())),
+            ttl,
+        }
+    }
+
+    /// Probe a single peer, returning a cached result if still fresh.
+    pub async fn probe_peer(
+        &self,
+        name: &str,
+        address: &str,
+        token: Option<&str>,
+    ) -> Option<ProbeResult> {
+        // Check cache
+        if let Some(cached) = self.cache.read().await.get(name)
+            && cached.fetched_at.elapsed() < self.ttl
+        {
+            return Some(cached.result.clone());
+        }
+        // Probe and cache
+        match self.prober.probe(address, token).await {
+            Ok(result) => {
+                self.cache.write().await.insert(
+                    name.to_owned(),
+                    CachedProbeResult {
+                        result: result.clone(),
+                        fetched_at: Instant::now(),
+                    },
+                );
+                Some(result)
             }
-            _ = shutdown_rx.changed() => {
-                debug!("Peer health check loop shutting down");
-                break;
+            Err(e) => {
+                warn!("Peer {name} at {address} is offline: {e}");
+                None
             }
         }
     }
-}
 
-async fn check_all_peers<P: PeerProber>(registry: &PeerRegistry, prober: &P) {
-    let peers = registry.get_all().await;
-    for peer in peers {
-        let token = registry.get_token(&peer.name).await;
-        match prober.probe(&peer.address, token.as_deref()).await {
-            Ok(result) => {
-                debug!(
-                    "Peer {} at {} is online ({} sessions)",
-                    peer.name, peer.address, result.session_count
-                );
-                registry
-                    .update_status(
-                        &peer.name,
-                        PeerStatus::Online,
-                        Some(result.node_info),
-                        Some(result.session_count),
-                    )
-                    .await;
-            }
-            Err(e) => {
-                warn!("Peer {} at {} is offline: {e}", peer.name, peer.address);
-                registry
-                    .update_status(&peer.name, PeerStatus::Offline, None, None)
-                    .await;
+    /// Probe all peers in the registry, updating their statuses.
+    pub async fn probe_all(&self, registry: &PeerRegistry) {
+        let peers = registry.get_all().await;
+        for peer in peers {
+            let token = registry.get_token(&peer.name).await;
+            match self
+                .probe_peer(&peer.name, &peer.address, token.as_deref())
+                .await
+            {
+                Some(result) => {
+                    debug!(
+                        "Peer {} at {} is online ({} sessions)",
+                        peer.name, peer.address, result.session_count
+                    );
+                    registry
+                        .update_status(
+                            &peer.name,
+                            PeerStatus::Online,
+                            Some(result.node_info),
+                            Some(result.session_count),
+                        )
+                        .await;
+                }
+                None => {
+                    registry
+                        .update_status(&peer.name, PeerStatus::Offline, None, None)
+                        .await;
+                }
             }
         }
     }
@@ -137,10 +180,6 @@ async fn check_all_peers<P: PeerProber>(registry: &PeerRegistry, prober: &P) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     use pulpo_common::peer::PeerEntry;
 
     struct MockProber {
@@ -169,8 +208,61 @@ mod tests {
         }
     }
 
+    // ---- CachedProber tests ----
+    //
+    // All CachedProber tests use MockProber exclusively so that there is a
+    // single monomorphisation of `CachedProber<MockProber>`. This avoids
+    // LLVM coverage instrumentation artifacts where cross-instantiation
+    // region merging creates phantom "uncovered" lines.
+
     #[tokio::test]
-    async fn test_check_all_peers_online() {
+    async fn test_cached_prober_caches_result() {
+        let mut results = HashMap::new();
+        results.insert(
+            "10.0.0.1:7433".into(),
+            Ok(ProbeResult {
+                node_info: make_node_info("node-a"),
+                session_count: 1,
+            }),
+        );
+        let prober = MockProber { results };
+        let cached = CachedProber::new(prober, Duration::from_secs(60));
+
+        // First probe — hits the prober
+        let result = cached.probe_peer("node-a", "10.0.0.1:7433", None).await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().session_count, 1);
+
+        // Second probe within TTL — returns cached
+        let result = cached.probe_peer("node-a", "10.0.0.1:7433", None).await;
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().session_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_cached_prober_expires_cache() {
+        let mut results = HashMap::new();
+        results.insert(
+            "10.0.0.1:7433".into(),
+            Ok(ProbeResult {
+                node_info: make_node_info("node-a"),
+                session_count: 1,
+            }),
+        );
+        let prober = MockProber { results };
+        // Use a zero-duration TTL so cache expires immediately
+        let cached = CachedProber::new(prober, Duration::ZERO);
+
+        let result = cached.probe_peer("node-a", "10.0.0.1:7433", None).await;
+        assert!(result.is_some());
+
+        // TTL is zero, so cache is already stale — prober called again
+        let result = cached.probe_peer("node-a", "10.0.0.1:7433", None).await;
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_cached_prober_probe_all_updates_registry() {
         let mut configured = HashMap::new();
         configured.insert("node-a".into(), PeerEntry::Simple("10.0.0.1:7433".into()));
         let registry = PeerRegistry::new(&configured);
@@ -184,8 +276,9 @@ mod tests {
             }),
         );
         let prober = MockProber { results };
+        let cached = CachedProber::new(prober, Duration::from_secs(60));
 
-        check_all_peers(&registry, &prober).await;
+        cached.probe_all(&registry).await;
 
         let peer = registry.get("node-a").await.unwrap();
         assert_eq!(peer.status, PeerStatus::Online);
@@ -194,7 +287,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_all_peers_offline() {
+    async fn test_cached_prober_probe_all_offline() {
         let mut configured = HashMap::new();
         configured.insert("node-b".into(), PeerEntry::Simple("10.0.0.2:7433".into()));
         let registry = PeerRegistry::new(&configured);
@@ -202,8 +295,9 @@ mod tests {
         let mut results = HashMap::new();
         results.insert("10.0.0.2:7433".into(), Err("connection refused".into()));
         let prober = MockProber { results };
+        let cached = CachedProber::new(prober, Duration::from_secs(60));
 
-        check_all_peers(&registry, &prober).await;
+        cached.probe_all(&registry).await;
 
         let peer = registry.get("node-b").await.unwrap();
         assert_eq!(peer.status, PeerStatus::Offline);
@@ -212,7 +306,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_all_peers_mixed() {
+    async fn test_cached_prober_probe_all_mixed() {
         let mut configured = HashMap::new();
         configured.insert("online".into(), PeerEntry::Simple("10.0.0.1:7433".into()));
         configured.insert("offline".into(), PeerEntry::Simple("10.0.0.2:7433".into()));
@@ -228,8 +322,9 @@ mod tests {
         );
         results.insert("10.0.0.2:7433".into(), Err("timeout".into()));
         let prober = MockProber { results };
+        let cached = CachedProber::new(prober, Duration::from_secs(60));
 
-        check_all_peers(&registry, &prober).await;
+        cached.probe_all(&registry).await;
 
         let online = registry.get("online").await.unwrap();
         assert_eq!(online.status, PeerStatus::Online);
@@ -240,116 +335,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_all_peers_empty() {
+    async fn test_cached_prober_probe_all_empty() {
         let registry = PeerRegistry::new(&HashMap::new());
         let prober = MockProber {
             results: HashMap::new(),
         };
+        let cached = CachedProber::new(prober, Duration::from_secs(60));
         // Should not panic
-        check_all_peers(&registry, &prober).await;
-    }
-
-    struct ArcCountingProber {
-        count: Arc<AtomicUsize>,
-    }
-
-    impl PeerProber for ArcCountingProber {
-        async fn probe(&self, _address: &str, _token: Option<&str>) -> Result<ProbeResult> {
-            self.count.fetch_add(1, Ordering::SeqCst);
-            Ok(ProbeResult {
-                node_info: make_node_info("counter"),
-                session_count: 0,
-            })
-        }
+        cached.probe_all(&registry).await;
     }
 
     #[tokio::test]
-    async fn test_check_all_peers_unknown_address() {
-        // Exercise MockProber's None arm (unknown address)
-        let mut configured = HashMap::new();
-        configured.insert(
-            "mystery".into(),
-            PeerEntry::Simple("10.99.99.99:7433".into()),
-        );
-        let registry = PeerRegistry::new(&configured);
-
+    async fn test_cached_prober_probe_peer_unknown_address() {
         let prober = MockProber {
-            results: HashMap::new(), // no results for this address
+            results: HashMap::new(), // no results for any address
         };
-        check_all_peers(&registry, &prober).await;
+        let cached = CachedProber::new(prober, Duration::from_secs(60));
 
-        let peer = registry.get("mystery").await.unwrap();
-        assert_eq!(peer.status, PeerStatus::Offline);
+        let result = cached
+            .probe_peer("mystery", "10.99.99.99:7433", None)
+            .await;
+        assert!(result.is_none());
     }
 
     #[tokio::test]
-    async fn test_health_check_loop_shutdown() {
-        let mut configured = HashMap::new();
-        configured.insert("node".into(), PeerEntry::Simple("10.0.0.1:7433".into()));
-        let registry = PeerRegistry::new(&configured);
+    async fn test_cached_prober_different_peers_independent() {
+        let mut results = HashMap::new();
+        results.insert(
+            "10.0.0.1:7433".into(),
+            Ok(ProbeResult {
+                node_info: make_node_info("node-a"),
+                session_count: 1,
+            }),
+        );
+        results.insert(
+            "10.0.0.2:7433".into(),
+            Ok(ProbeResult {
+                node_info: make_node_info("node-b"),
+                session_count: 2,
+            }),
+        );
+        let prober = MockProber { results };
+        let cached = CachedProber::new(prober, Duration::from_secs(60));
 
-        let count = Arc::new(AtomicUsize::new(0));
-        let prober = ArcCountingProber {
-            count: count.clone(),
-        };
+        // Probe two different peers
+        let r1 = cached.probe_peer("node-a", "10.0.0.1:7433", None).await;
+        let r2 = cached.probe_peer("node-b", "10.0.0.2:7433", None).await;
+        assert_eq!(r1.unwrap().session_count, 1);
+        assert_eq!(r2.unwrap().session_count, 2);
 
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        tokio::time::pause();
-
-        let handle = tokio::spawn(run_health_check_loop(
-            registry.clone(),
-            prober,
-            Duration::from_secs(30),
-            shutdown_rx,
-        ));
-
-        // Advance past the first tick interval to trigger a health check
-        tokio::time::advance(Duration::from_secs(31)).await;
-        tokio::task::yield_now().await;
-
-        // Shutdown
-        shutdown_tx.send(true).unwrap();
-        handle.await.unwrap();
+        // Re-probe both — returns cached results
+        let r1 = cached.probe_peer("node-a", "10.0.0.1:7433", None).await;
+        let r2 = cached.probe_peer("node-b", "10.0.0.2:7433", None).await;
+        assert_eq!(r1.unwrap().session_count, 1);
+        assert_eq!(r2.unwrap().session_count, 2);
     }
 
-    #[tokio::test]
-    async fn test_health_check_loop_multiple_ticks() {
-        let mut configured = HashMap::new();
-        configured.insert("node".into(), PeerEntry::Simple("10.0.0.1:7433".into()));
-        let registry = PeerRegistry::new(&configured);
-
-        let count = Arc::new(AtomicUsize::new(0));
-        let prober = ArcCountingProber {
-            count: count.clone(),
-        };
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        tokio::time::pause();
-
-        let handle = tokio::spawn(run_health_check_loop(
-            registry,
-            prober,
-            Duration::from_secs(30),
-            shutdown_rx,
-        ));
-
-        // Advance through multiple intervals, yielding generously
-        for _ in 0..3 {
-            tokio::time::advance(Duration::from_secs(31)).await;
-            // Multiple yields to let the spawned task process
-            for _ in 0..5 {
-                tokio::task::yield_now().await;
-            }
-        }
-
-        shutdown_tx.send(true).unwrap();
-        handle.await.unwrap();
-
-        // At least 2 ticks should have fired (the exact count depends on
-        // scheduling, but we should get several with generous yielding)
-        assert!(count.load(Ordering::SeqCst) >= 2);
-    }
+    // ---- HttpPeerProber tests (kept from original) ----
 
     #[tokio::test]
     async fn test_http_peer_prober_new() {
@@ -469,7 +511,7 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        tokio::spawn(axum::serve(listener, app).into_future());
 
         let prober = HttpPeerProber::new();
         let result = prober
@@ -492,7 +534,7 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        tokio::spawn(axum::serve(listener, app).into_future());
 
         let prober = HttpPeerProber::new();
         let result = prober
@@ -522,7 +564,7 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        tokio::spawn(axum::serve(listener, app).into_future());
 
         let prober = HttpPeerProber::new();
         let result = prober
@@ -547,7 +589,7 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        tokio::spawn(axum::serve(listener, app).into_future());
 
         let prober = HttpPeerProber::new();
         let result = prober
@@ -594,7 +636,7 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        tokio::spawn(axum::serve(listener, app).into_future());
 
         let prober = HttpPeerProber::new();
         let result = prober
@@ -640,7 +682,7 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        tokio::spawn(axum::serve(listener, app).into_future());
 
         let prober = HttpPeerProber::new();
         let _ = prober
@@ -649,6 +691,46 @@ mod tests {
             .unwrap();
 
         assert!(!*has_auth.lock().unwrap());
+    }
+
+    /// Test that probe returns an error when the server shuts down between
+    /// the node and sessions requests (exercises the `.send().await?` error
+    /// path on the sessions request).
+    #[tokio::test]
+    async fn test_http_peer_prober_probe_sessions_send_error() {
+        use axum::{Router, routing::get};
+        use tokio::sync::oneshot;
+
+        let node_json = serde_json::to_string(&make_node_info("gone-peer")).unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let shutdown_tx = Arc::new(std::sync::Mutex::new(Some(shutdown_tx)));
+
+        let app = Router::new().route(
+            "/api/v1/node",
+            get(move || {
+                // After serving the node response, trigger server shutdown
+                // so the sessions request will find no server.
+                let _ = shutdown_tx.lock().unwrap().take().map(|tx| tx.send(()));
+                let body = node_json.clone();
+                async move { ([("content-type", "application/json")], body) }
+            }),
+        );
+        // No /api/v1/sessions route — server shuts down before it's needed
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async { shutdown_rx.await.ok(); })
+                .await
+                .unwrap();
+        });
+
+        let prober = HttpPeerProber::new();
+        let result = prober
+            .probe(&format!("127.0.0.1:{}", addr.port()), None)
+            .await;
+        assert!(result.is_err());
     }
 
     #[test]
