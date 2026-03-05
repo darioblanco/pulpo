@@ -36,7 +36,7 @@ impl Default for HttpPeerProber {
     fn default() -> Self {
         Self {
             client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(5))
                 .build()
                 .unwrap_or_default(),
         }
@@ -144,32 +144,43 @@ impl<P: PeerProber> CachedProber<P> {
         }
     }
 
-    /// Probe all peers in the registry, updating their statuses.
+    /// Probe all peers in the registry concurrently, updating their statuses.
     pub async fn probe_all(&self, registry: &PeerRegistry) {
         let peers = registry.get_all().await;
-        for peer in peers {
+
+        // Collect (name, address, token) tuples first, then probe concurrently.
+        let mut tasks = Vec::with_capacity(peers.len());
+        for peer in &peers {
             let token = registry.get_token(&peer.name).await;
-            match self
-                .probe_peer(&peer.name, &peer.address, token.as_deref())
-                .await
-            {
-                Some(result) => {
+            tasks.push((peer.name.clone(), peer.address.clone(), token));
+        }
+
+        let futures: Vec<_> = tasks
+            .iter()
+            .map(|(name, address, token)| self.probe_peer(name, address, token.as_deref()))
+            .collect();
+
+        let results = futures::future::join_all(futures).await;
+
+        for ((name, address, _), result) in tasks.iter().zip(results) {
+            match result {
+                Some(probe) => {
                     debug!(
                         "Peer {} at {} is online ({} sessions)",
-                        peer.name, peer.address, result.session_count
+                        name, address, probe.session_count
                     );
                     registry
                         .update_status(
-                            &peer.name,
+                            name,
                             PeerStatus::Online,
-                            Some(result.node_info),
-                            Some(result.session_count),
+                            Some(probe.node_info),
+                            Some(probe.session_count),
                         )
                         .await;
                 }
                 None => {
                     registry
-                        .update_status(&peer.name, PeerStatus::Offline, None, None)
+                        .update_status(name, PeerStatus::Offline, None, None)
                         .await;
                 }
             }

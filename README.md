@@ -224,7 +224,8 @@ What happened: `pulpod` started, checked SQLite for active sessions, found no ma
 - **MCP server** — session management as MCP tools for agent-to-agent orchestration.
 - **Trusted-network design** — works on any LAN, VPN, or Tailscale network. No TLS required when your network handles encryption.
 - **Token authentication** — bearer token auth for non-localhost deployments (auto-generated on first run).
-- **mDNS discovery** — automatic peer detection on LAN (activates in `lan` bind mode).
+- **mDNS discovery** — automatic peer detection on LAN (activates in `public` bind mode).
+- **Remote access** — use `tailscale serve` to expose pulpod over your tailnet (see [SPEC.md](SPEC.md#remote-access-via-tailscale)).
 
 ## What Pulpo Guarantees
 
@@ -318,7 +319,7 @@ pulpo --node macbook:7433 list
 - [x] Token auth, mobile-friendly web UI
 - [x] Resource watchdog: memory pressure detection, safe intervention, audit trail
 - [x] Idle detection: detect and act on sessions with no output
-- [x] mDNS discovery: automatic peer detection on LAN (activates in `lan` bind mode)
+- [x] mDNS discovery: automatic peer detection on LAN (activates in `public` bind mode)
 - [x] Persona system: configurable agent personas with model, tools, and system prompt
 - [x] SSE event stream: real-time session lifecycle events
 - [x] MCP server: session management as MCP tools for agent-to-agent orchestration

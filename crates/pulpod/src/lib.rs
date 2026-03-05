@@ -210,9 +210,9 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
 
     let bind_mode = config.auth.bind;
 
-    // Start mDNS registration + browsing when binding to LAN
+    // Start mDNS registration + browsing when binding to public network
     #[cfg(not(coverage))]
-    if bind_mode == pulpo_common::auth::BindMode::Lan {
+    if bind_mode == pulpo_common::auth::BindMode::Public {
         let reg = discovery::ServiceRegistration {
             node_name: config.node.name.clone(),
             port,
@@ -257,7 +257,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
 
     let bind_ip = match bind_mode {
         pulpo_common::auth::BindMode::Local => "127.0.0.1",
-        pulpo_common::auth::BindMode::Lan => "0.0.0.0",
+        pulpo_common::auth::BindMode::Public | pulpo_common::auth::BindMode::Container => "0.0.0.0",
     };
     let addr = format!("{bind_ip}:{port}");
     info!("pulpod v{} starting", env!("CARGO_PKG_VERSION"));
@@ -593,7 +593,7 @@ events = ["completed", "dead"]
     }
 
     #[tokio::test]
-    async fn test_build_app_bind_lan() {
+    async fn test_build_app_bind_public() {
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
         let data_dir = tmpdir.path().join("data");
@@ -608,7 +608,7 @@ data_dir = "{}"
 
 [auth]
 token = "existing-token-value"
-bind = "lan"
+bind = "public"
 "#,
                 data_dir.display()
             ),
@@ -626,5 +626,36 @@ bind = "lan"
         // Existing token should be preserved
         let saved = config::load(config_path.to_str().unwrap()).unwrap();
         assert_eq!(saved.auth.token, "existing-token-value");
+    }
+
+    #[tokio::test]
+    async fn test_build_app_bind_container() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let config_path = tmpdir.path().join("config.toml");
+        let data_dir = tmpdir.path().join("data");
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[node]
+name = "test"
+port = 0
+data_dir = "{}"
+
+[auth]
+bind = "container"
+"#,
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let cli = Cli {
+            config: config_path.to_str().unwrap().into(),
+            port: Some(0),
+            command: None,
+        };
+        let (_app, addr, _handle) = build_app(&cli).await.unwrap();
+        assert_eq!(addr, "0.0.0.0:0");
     }
 }

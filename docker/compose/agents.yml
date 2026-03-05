@@ -15,7 +15,7 @@ services:
       - path: ../.env
         required: false
     environment:
-      PULPO_BIND: lan
+      PULPO_BIND: container
       PULPO_GUARD_PRESET: strict
     volumes:
       - pulpo-data:/home/pulpo/.pulpo

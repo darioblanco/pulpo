@@ -1,4 +1,4 @@
-import type { Session } from '$lib/api';
+import type { Session } from '@/api/types';
 
 export interface StatusChange {
   sessionId: string;
@@ -34,6 +34,32 @@ export function detectStatusChanges(previous: Session[], current: Session[]): St
   }
 
   return changes;
+}
+
+/** Format a status change into a human-readable toast label. */
+export function formatStatusLabel(change: StatusChange): string {
+  const label = change.to === 'completed' ? 'completed' : change.to === 'dead' ? 'died' : 'resumed';
+  return `${change.sessionName} ${label}`;
+}
+
+/**
+ * Check for session status changes and trigger notifications.
+ * Returns updated previousSessions array for the next check.
+ */
+export function processSessionChanges(
+  previousSessions: Session[],
+  currentSessions: Session[],
+  toast: (msg: string) => void,
+  notify: (change: StatusChange) => void,
+): Session[] {
+  if (previousSessions.length > 0) {
+    const changes = detectStatusChanges(previousSessions, currentSessions);
+    for (const change of changes) {
+      toast(formatStatusLabel(change));
+      notify(change);
+    }
+  }
+  return [...currentSessions];
 }
 
 /** Request browser notification permission. Returns true if granted. */

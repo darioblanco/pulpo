@@ -9,15 +9,18 @@ pub enum BindMode {
     /// Bind to `127.0.0.1` — only reachable from the local machine.
     #[default]
     Local,
-    /// Bind to `0.0.0.0` — reachable from the LAN (requires auth token).
-    Lan,
+    /// Bind to `0.0.0.0` — reachable from the network (requires auth token).
+    Public,
+    /// Bind to `0.0.0.0` — for container environments (no auth, trusts container network isolation).
+    Container,
 }
 
 impl fmt::Display for BindMode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Local => write!(f, "local"),
-            Self::Lan => write!(f, "lan"),
+            Self::Public => write!(f, "public"),
+            Self::Container => write!(f, "container"),
         }
     }
 }
@@ -37,7 +40,14 @@ mod tests {
             serde_json::to_string(&BindMode::Local).unwrap(),
             "\"local\""
         );
-        assert_eq!(serde_json::to_string(&BindMode::Lan).unwrap(), "\"lan\"");
+        assert_eq!(
+            serde_json::to_string(&BindMode::Public).unwrap(),
+            "\"public\""
+        );
+        assert_eq!(
+            serde_json::to_string(&BindMode::Container).unwrap(),
+            "\"container\""
+        );
     }
 
     #[test]
@@ -47,8 +57,12 @@ mod tests {
             BindMode::Local
         );
         assert_eq!(
-            serde_json::from_str::<BindMode>("\"lan\"").unwrap(),
-            BindMode::Lan
+            serde_json::from_str::<BindMode>("\"public\"").unwrap(),
+            BindMode::Public
+        );
+        assert_eq!(
+            serde_json::from_str::<BindMode>("\"container\"").unwrap(),
+            BindMode::Container
         );
     }
 
@@ -60,18 +74,20 @@ mod tests {
     #[test]
     fn test_bind_mode_display() {
         assert_eq!(BindMode::Local.to_string(), "local");
-        assert_eq!(BindMode::Lan.to_string(), "lan");
+        assert_eq!(BindMode::Public.to_string(), "public");
+        assert_eq!(BindMode::Container.to_string(), "container");
     }
 
     #[test]
     fn test_bind_mode_debug() {
         assert_eq!(format!("{:?}", BindMode::Local), "Local");
-        assert_eq!(format!("{:?}", BindMode::Lan), "Lan");
+        assert_eq!(format!("{:?}", BindMode::Public), "Public");
+        assert_eq!(format!("{:?}", BindMode::Container), "Container");
     }
 
     #[test]
     fn test_bind_mode_clone_and_copy() {
-        let mode = BindMode::Lan;
+        let mode = BindMode::Public;
         let mode2 = mode;
         #[allow(clippy::clone_on_copy)]
         let mode3 = mode.clone();
@@ -81,7 +97,7 @@ mod tests {
 
     #[test]
     fn test_bind_mode_roundtrip() {
-        for mode in [BindMode::Local, BindMode::Lan] {
+        for mode in [BindMode::Local, BindMode::Public, BindMode::Container] {
             let json = serde_json::to_string(&mode).unwrap();
             let deserialized: BindMode = serde_json::from_str(&json).unwrap();
             assert_eq!(mode, deserialized);
@@ -95,11 +111,26 @@ mod tests {
             bind: BindMode,
         }
         let w = Wrapper {
-            bind: BindMode::Lan,
+            bind: BindMode::Public,
         };
         let toml_str = toml::to_string(&w).unwrap();
-        assert!(toml_str.contains("lan"));
+        assert!(toml_str.contains("public"));
         let parsed: Wrapper = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.bind, BindMode::Lan);
+        assert_eq!(parsed.bind, BindMode::Public);
+    }
+
+    #[test]
+    fn test_bind_mode_toml_roundtrip_container() {
+        #[derive(Serialize, Deserialize)]
+        struct Wrapper {
+            bind: BindMode,
+        }
+        let w = Wrapper {
+            bind: BindMode::Container,
+        };
+        let toml_str = toml::to_string(&w).unwrap();
+        assert!(toml_str.contains("container"));
+        let parsed: Wrapper = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.bind, BindMode::Container);
     }
 }

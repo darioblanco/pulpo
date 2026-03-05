@@ -22,7 +22,7 @@ bash examples/api/health.sh
 Most scripts use these environment variables:
 
 - `PULPOD_URL` (default: `http://localhost:7433`)
-- `PULPOD_TOKEN` (optional for `local` bind mode, required for `lan` bind mode)
+- `PULPOD_TOKEN` (optional for `local` bind mode, required for `public` bind mode)
 
 Example:
 

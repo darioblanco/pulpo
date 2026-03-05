@@ -316,12 +316,12 @@ mod tests {
 
     #[test]
     fn test_update_config_request_with_all_fields() {
-        let json = r#"{"node_name":"new","port":9999,"data_dir":"/d","bind":"lan","guard_preset":"strict","peers":{"remote":"10.0.0.1:7433"}}"#;
+        let json = r#"{"node_name":"new","port":9999,"data_dir":"/d","bind":"public","guard_preset":"strict","peers":{"remote":"10.0.0.1:7433"}}"#;
         let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.node_name, Some("new".into()));
         assert_eq!(req.port, Some(9999));
         assert_eq!(req.data_dir, Some("/d".into()));
-        assert_eq!(req.bind, Some(BindMode::Lan));
+        assert_eq!(req.bind, Some(BindMode::Public));
         assert_eq!(req.guard_preset, Some(GuardPreset::Strict));
         assert!(req.peers.is_some());
     }
@@ -776,12 +776,21 @@ mod tests {
     }
 
     #[test]
-    fn test_auth_config_response_serialize_lan() {
+    fn test_auth_config_response_serialize_public() {
         let resp = AuthConfigResponse {
-            bind: BindMode::Lan,
+            bind: BindMode::Public,
         };
         let json = serde_json::to_string(&resp).unwrap();
-        assert_eq!(json, r#"{"bind":"lan"}"#);
+        assert_eq!(json, r#"{"bind":"public"}"#);
+    }
+
+    #[test]
+    fn test_auth_config_response_serialize_container() {
+        let resp = AuthConfigResponse {
+            bind: BindMode::Container,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"bind":"container"}"#);
     }
 
     #[test]
@@ -792,20 +801,27 @@ mod tests {
     }
 
     #[test]
-    fn test_auth_config_response_deserialize_lan() {
-        let json = r#"{"bind":"lan"}"#;
+    fn test_auth_config_response_deserialize_public() {
+        let json = r#"{"bind":"public"}"#;
         let resp: AuthConfigResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.bind, BindMode::Lan);
+        assert_eq!(resp.bind, BindMode::Public);
+    }
+
+    #[test]
+    fn test_auth_config_response_deserialize_container() {
+        let json = r#"{"bind":"container"}"#;
+        let resp: AuthConfigResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.bind, BindMode::Container);
     }
 
     #[test]
     fn test_auth_config_response_roundtrip() {
         let original = AuthConfigResponse {
-            bind: BindMode::Lan,
+            bind: BindMode::Public,
         };
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: AuthConfigResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.bind, BindMode::Lan);
+        assert_eq!(deserialized.bind, BindMode::Public);
     }
 
     #[test]

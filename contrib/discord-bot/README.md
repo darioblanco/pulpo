@@ -18,7 +18,7 @@ Discord bot for controlling pulpod sessions — 7 slash commands with autocomple
    |----------|----------|-------------|
    | `DISCORD_TOKEN` | Yes | Bot token from Developer Portal |
    | `PULPOD_URL` | No | Pulpod URL (default: `http://localhost:7433`) |
-   | `PULPOD_TOKEN` | No | Auth token (required if pulpod uses `lan` bind mode) |
+   | `PULPOD_TOKEN` | No | Auth token (required if pulpod uses `public` bind mode) |
    | `DISCORD_NOTIFICATION_CHANNEL_ID` | No | Channel for SSE notifications (fallback: spawn channel) |
 
 3. **Install** — `npm install`

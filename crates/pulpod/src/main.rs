@@ -17,9 +17,25 @@ async fn main() -> anyhow::Result<()> {
             pulpod::init_tracing()?;
             let (app, addr, shutdown_handle) = pulpod::build_app(&cli).await?;
             let listener = tokio::net::TcpListener::bind(&addr).await?;
-            axum::serve(listener, app)
-                .with_graceful_shutdown(shutdown_signal(shutdown_handle))
-                .await?;
+
+            // After the shutdown signal fires, give in-flight streaming
+            // connections (SSE, WebSocket) 3 seconds to close before forcing exit.
+            let (shutdown_done_tx, shutdown_done_rx) = tokio::sync::oneshot::channel::<()>();
+            let server = axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    shutdown_signal(shutdown_handle).await;
+                    let _ = shutdown_done_tx.send(());
+                });
+
+            tokio::select! {
+                result = server => result?,
+                _ = async {
+                    let _ = shutdown_done_rx.await;
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                } => {
+                    info!("Streaming connections still open — forcing shutdown");
+                }
+            }
             info!("pulpod shut down cleanly");
         }
     }

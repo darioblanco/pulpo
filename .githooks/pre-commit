@@ -8,8 +8,8 @@ cd web && npx prettier --check . && cd ..
 echo "==> Pre-commit: running clippy..."
 cargo clippy --workspace --all-targets -- -D warnings
 
-echo "==> Pre-commit: running ESLint + svelte-check..."
-cd web && npx eslint . && npx svelte-check --tsconfig ./tsconfig.json && cd ..
+echo "==> Pre-commit: running ESLint + TypeScript check..."
+cd web && npx eslint . && npx tsc --noEmit && cd ..
 
 echo "==> Pre-commit: running tests..."
 cargo test --workspace

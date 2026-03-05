@@ -4,12 +4,12 @@ Agent session orchestrator — manages coding agents across Tailscale-connected 
 
 ## Architecture
 
-Rust workspace with three crates + a Svelte web UI:
+Rust workspace with three crates + a React web UI:
 
 - `crates/pulpod/` — Daemon binary (`pulpod`). Axum HTTP server, tmux backend, SQLite store.
 - `crates/pulpo-cli/` — CLI binary (`pulpo`). Thin client that talks to `pulpod`'s REST API.
 - `crates/pulpo-common/` — Shared types (Session, Provider, NodeInfo, API request/response types).
-- `web/` — Svelte 5 + SvelteKit + Tailwind CSS v4 + Konsta UI v5. Static SPA built with `adapter-static`, embedded into the `pulpod` binary via `rust-embed` for distribution.
+- `web/` — React 19 + Vite + Tailwind CSS v4 + shadcn/ui. Static SPA embedded into the `pulpod` binary via `rust-embed` for distribution.
 
 See `SPEC.md` for the full architecture spec, session lifecycle, API design, and phase roadmap.
 
@@ -40,7 +40,7 @@ make all
 ### Linting
 
 - **Rust**: `clippy` with strict settings — `deny(warnings)`, `warn(pedantic, nursery)`, `forbid(unsafe_code)`. Configured in workspace `Cargo.toml` under `[workspace.lints]`.
-- **Web**: `eslint` with TypeScript and Svelte plugins (config in `web/eslint.config.js`), plus `svelte-check` for type checking.
+- **Web**: `eslint` with TypeScript and React plugins (config in `web/eslint.config.js`), plus `tsc --noEmit` for type checking.
 - Run `make lint` to lint everything.
 
 ### Testing — Test-Driven Development (TDD)
@@ -99,7 +99,7 @@ Git hooks live in `.githooks/` and are activated via `git config core.hooksPath 
 
 1. `cargo fmt --check` + `prettier --check`
 2. `cargo clippy -- -D warnings`
-3. `eslint` + `svelte-check`
+3. `eslint` + `tsc --noEmit`
 4. `cargo test` + `vitest run`
 5. `cargo llvm-cov --fail-under-lines 100` (100% line coverage gate)
 
@@ -196,7 +196,7 @@ describe('api', () => {
 | `make all` | Format + lint + test (what pre-commit runs) |
 | `make fmt` | Format all code (Rust + web) |
 | `make fmt-check` | Check formatting without modifying |
-| `make lint` | Run all linters (clippy + eslint + svelte-check) |
+| `make lint` | Run all linters (clippy + eslint + tsc) |
 | `make test` | Run all tests (Rust + web) |
 | `make test-web-watch` | Run web tests in watch mode |
 | `make coverage` | Run Rust tests with 100% coverage check |
@@ -305,30 +305,36 @@ pulpo/
 │       ├── guard.rs              # GuardConfig, GuardPreset types
 │       ├── event.rs              # SessionEvent for SSE + notifications
 │       └── api.rs                # API request/response types
-└── web/                          # Svelte 5 + SvelteKit + Tailwind v4 + Konsta UI
+└── web/                          # React 19 + Vite + Tailwind v4 + shadcn/ui
     ├── src/
-    │   ├── app.css              # Tailwind imports + dark theme @theme vars
-    │   ├── app.html             # HTML template (class="dark", viewport-fit=cover)
-    │   ├── routes/               # SvelteKit pages
-    │   │   ├── +layout.svelte   # Konsta App wrapper (theme="ios", dark)
-    │   │   ├── +layout.ts       # ssr=false, prerender=true
-    │   │   ├── +page.svelte     # Dashboard (Page, Navbar, Fab)
-    │   │   ├── connect/
-    │   │   │   └── +page.svelte # Connection screen (mobile remote client)
-    │   │   ├── history/
-    │   │   │   └── +page.svelte # Session history
-    │   │   └── settings/
-    │   │       └── +page.svelte # Settings page
-    │   └── lib/
-    │       ├── api.ts            # API client (dynamic base URL)
-    │       ├── connection.ts     # Connection helpers (testConnection, discoverPeers)
-    │       ├── notifications.ts  # Notification helpers
-    │       ├── stores/
-    │       │   ├── connection.svelte.ts  # Connection store (baseUrl, saved connections)
-    │       │   └── notifications.svelte.ts
-    │       └── components/       # Svelte components (Konsta UI + Tailwind)
+    │   ├── index.css             # Tailwind imports + dark theme CSS vars
+    │   ├── main.tsx              # Entry point
+    │   ├── App.tsx               # React Router setup
+    │   ├── api/
+    │   │   ├── types.ts          # Shared TypeScript interfaces
+    │   │   ├── client.ts         # API fetch functions (20+)
+    │   │   └── connection.ts     # testConnection, discoverPeers
+    │   ├── hooks/
+    │   │   ├── use-connection.tsx # Connection context (baseUrl, token, saved)
+    │   │   └── use-sse.tsx       # SSE event stream + session state
+    │   ├── lib/
+    │   │   ├── utils.ts          # cn() helper, formatDuration
+    │   │   └── notifications.ts  # Desktop notification helpers
+    │   ├── components/
+    │   │   ├── ui/               # shadcn generated components
+    │   │   ├── layout/           # Sidebar, header, app shell
+    │   │   ├── dashboard/        # Status summary, node/session cards, new session
+    │   │   ├── session/          # Chat view, terminal view (xterm.js)
+    │   │   ├── history/          # Session filter, session list
+    │   │   ├── settings/         # Node, guard, peer settings
+    │   │   └── connect/          # Connect form, saved connections
+    │   └── pages/
+    │       ├── dashboard.tsx     # Real-time session dashboard
+    │       ├── history.tsx       # Session history with search/filter
+    │       ├── settings.tsx      # Node, guards, peers config
+    │       └── connect.tsx       # Connection screen (standalone)
     ├── eslint.config.js
     ├── .prettierrc
     ├── vite.config.ts            # Vite config + Tailwind plugin + API proxy
-    └── vitest.config.ts          # Vitest config + Tailwind plugin
+    └── vitest.config.ts          # Vitest config
 ```

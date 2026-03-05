@@ -1,10 +1,10 @@
 # Pulpo Web UI
 
-Svelte 5 + SvelteKit + Tailwind CSS v4 + Konsta UI v5 single-page application for the Pulpo dashboard.
+React 19 + Vite + Tailwind CSS v4 + shadcn/ui single-page application for the Pulpo dashboard.
 
 ## How It's Deployed
 
-The web UI is built as a static SPA (`adapter-static`) and embedded into the `pulpod` binary via `rust-embed`. When you run `pulpod`, the dashboard is served at `http://localhost:7433/`.
+The web UI is built as a static SPA and embedded into the `pulpod` binary via `rust-embed`. When you run `pulpod`, the dashboard is served at `http://localhost:7433/`.
 
 ## Development
 
@@ -20,7 +20,7 @@ Open `http://localhost:5173` in your browser. Hot-reload is enabled.
 ## Testing
 
 ```bash
-npm test          # vitest + jsdom, runs all *.test.ts files
+npm test          # vitest + jsdom, runs all *.test.ts(x) files
 ```
 
 ## Building
@@ -35,21 +35,30 @@ The `build/` output is consumed by `make build` in the repo root, which embeds i
 
 ```
 src/
-├── app.css                    # Tailwind imports + dark theme vars
-├── app.html                   # HTML template
-├── routes/                    # SvelteKit pages
-│   ├── +layout.svelte         # Konsta App wrapper (iOS theme, dark)
-│   ├── +layout.ts             # ssr=false, prerender=true
-│   ├── +page.svelte           # Dashboard (sessions, nodes, FAB)
-│   ├── connect/+page.svelte   # Connection screen (mobile remote)
-│   ├── history/+page.svelte   # Session history with search/filter
-│   └── settings/+page.svelte  # Settings (node, guards, peers)
-└── lib/
-    ├── api.ts                 # API client (dynamic base URL)
-    ├── connection.ts          # Connection helpers
-    ├── notifications.ts       # Notification helpers
-    ├── stores/                # Svelte 5 runes-based stores
-    │   ├── connection.svelte.ts
-    │   └── notifications.svelte.ts
-    └── components/            # Reusable Svelte components (Konsta UI + Tailwind)
+├── index.css                          # Tailwind imports + dark theme CSS vars
+├── main.tsx                           # Entry point
+├── App.tsx                            # React Router setup
+├── api/
+│   ├── types.ts                       # Shared TypeScript interfaces
+│   ├── client.ts                      # API fetch functions (20+)
+│   └── connection.ts                  # testConnection, discoverPeers
+├── hooks/
+│   ├── use-connection.tsx             # Connection context (baseUrl, token, saved)
+│   └── use-sse.tsx                    # SSE event stream + session state
+├── lib/
+│   ├── utils.ts                       # cn() helper, formatDuration
+│   └── notifications.ts              # Desktop notification helpers
+├── components/
+│   ├── ui/                            # shadcn generated components
+│   ├── layout/                        # Sidebar, header, app shell
+│   ├── dashboard/                     # Status summary, node/session cards, new session
+│   ├── session/                       # Chat view, terminal view (xterm.js)
+│   ├── history/                       # Session filter, session list
+│   ├── settings/                      # Node, guard, peer settings
+│   └── connect/                       # Connect form, saved connections
+└── pages/
+    ├── dashboard.tsx                  # Real-time session dashboard
+    ├── history.tsx                    # Session history with search/filter
+    ├── settings.tsx                   # Node, guards, peers config
+    └── connect.tsx                    # Connection screen (standalone)
 ```

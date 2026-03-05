@@ -622,8 +622,8 @@ Tauri 2 builds native iOS `.ipa` and Android `.apk` from the same Svelte + Rust 
 
 - ✅ Tauri iOS build + TestFlight distribution
 - ✅ Tauri Android build + Play Store distribution
-- ✅ Token authentication + bind modes (local/lan)
-- ✅ mDNS peer discovery (`_pulpo._tcp.local.`) — activates in `lan` bind mode
+- ✅ Token authentication + bind modes (local/public/container)
+- ✅ mDNS peer discovery (`_pulpo._tcp.local.`) — activates in `public` bind mode
 - ✅ QR code pairing for mobile clients
 - ⬜ Tailscale auto-discovery — planned
 - ⬜ Push notifications via APNs (iOS) and FCM (Android) — not planned (polling + Notification API sufficient)
@@ -655,7 +655,7 @@ name = "mac-mini"       # Display name (default: hostname)
 port = 7433             # API port (default: 7433)
 
 [auth]
-bind = "local"          # "local" (127.0.0.1) or "lan" (0.0.0.0)
+bind = "local"          # "local" (127.0.0.1), "public" (0.0.0.0 + auth), or "container" (0.0.0.0, no auth)
 # token is auto-generated on first run
 
 [guards]
@@ -694,17 +694,41 @@ events = ["running", "completed", "dead"]   # optional filter; omit for all even
 
 ## Security Model
 
-- **Network**: `pulpod` binds to `127.0.0.1` by default (`local` mode). In `lan`
+- **Network**: `pulpod` binds to `127.0.0.1` by default (`local` mode). In `public`
   mode, it binds to `0.0.0.0` and requires bearer token authentication on all
-  `/api/v1/*` requests. Tailscale encryption is recommended for multi-node setups.
-- **Auth**: In `local` mode, network isolation is the auth layer. In `lan` mode,
+  `/api/v1/*` requests. In `container` mode, it also binds to `0.0.0.0` but skips
+  auth (trusts container network isolation). Tailscale encryption is recommended
+  for multi-node setups.
+- **Auth**: In `local` mode, network isolation is the auth layer. In `public` mode,
   a base64url token is auto-generated on first run and required in every request.
-  Retrieve it locally via `GET /api/v1/auth/token`.
+  Retrieve it locally via `GET /api/v1/auth/token`. In `container` mode, auth is
+  disabled — the container runtime provides isolation.
 - **Agents**: agents run as your user (same as running Claude Code directly).
   Guard presets control environment variable sanitization and agent permissions.
 - **No secrets in the API**: the API never exposes API keys. Keys are in the
   environment or config files on each node. The daemon passes them through to
   the agent process.
+
+### Remote Access via Tailscale
+
+The recommended way to access `pulpod` from other machines is `tailscale serve`.
+This keeps pulpod bound to localhost (the secure default) while exposing it over
+your Tailnet with Tailscale's encryption and identity:
+
+```bash
+# On the machine running pulpod (bind=local, the default):
+tailscale serve --bg 7433
+
+# From any device on your tailnet:
+open http://hostname.tail12345.ts.net/
+```
+
+This gives you HTTPS + auth via Tailscale with zero config changes to pulpod.
+No need to switch to `public` bind mode or manage tokens — Tailscale handles it.
+
+Use `public` bind mode only when you need direct LAN access without Tailscale
+(e.g., devices not on the tailnet). Use `container` bind mode for Docker/Podman
+deployments where the container runtime provides network isolation.
 
 ---
 

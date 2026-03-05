@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   detectStatusChanges,
+  formatStatusLabel,
+  processSessionChanges,
   requestNotificationPermission,
   showDesktopNotification,
   type StatusChange,
 } from './notifications';
-import type { Session } from '$lib/api';
+import type { Session } from '@/api/types';
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -132,6 +134,89 @@ describe('detectStatusChanges', () => {
     const changes = detectStatusChanges([], []);
 
     expect(changes).toHaveLength(0);
+  });
+});
+
+describe('formatStatusLabel', () => {
+  it('returns completed label', () => {
+    expect(
+      formatStatusLabel({
+        sessionId: '1',
+        sessionName: 'my-api',
+        from: 'running',
+        to: 'completed',
+      }),
+    ).toBe('my-api completed');
+  });
+
+  it('returns died label', () => {
+    expect(
+      formatStatusLabel({ sessionId: '1', sessionName: 'my-api', from: 'running', to: 'dead' }),
+    ).toBe('my-api died');
+  });
+
+  it('returns resumed label for other transitions', () => {
+    expect(
+      formatStatusLabel({ sessionId: '1', sessionName: 'my-api', from: 'stale', to: 'running' }),
+    ).toBe('my-api resumed');
+  });
+});
+
+describe('processSessionChanges', () => {
+  it('does nothing on first call (empty previousSessions)', () => {
+    const toast = vi.fn();
+    const notify = vi.fn();
+    const current = [makeSession({ id: '1', status: 'running' })];
+
+    const result = processSessionChanges([], current, toast, notify);
+
+    expect(toast).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+    expect(result).toEqual(current);
+  });
+
+  it('triggers toast and notification on status change', () => {
+    const toast = vi.fn();
+    const notify = vi.fn();
+    const prev = [makeSession({ id: '1', status: 'running' })];
+    const current = [makeSession({ id: '1', status: 'completed' })];
+
+    processSessionChanges(prev, current, toast, notify);
+
+    expect(toast).toHaveBeenCalledWith('my-api completed');
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionName: 'my-api', to: 'completed' }),
+    );
+  });
+
+  it('triggers died label for dead sessions', () => {
+    const toast = vi.fn();
+    const notify = vi.fn();
+    const prev = [makeSession({ id: '1', status: 'running' })];
+    const current = [makeSession({ id: '1', status: 'dead' })];
+
+    processSessionChanges(prev, current, toast, notify);
+
+    expect(toast).toHaveBeenCalledWith('my-api died');
+  });
+
+  it('triggers resumed label for stale to running', () => {
+    const toast = vi.fn();
+    const notify = vi.fn();
+    const prev = [makeSession({ id: '1', status: 'stale' })];
+    const current = [makeSession({ id: '1', status: 'running' })];
+
+    processSessionChanges(prev, current, toast, notify);
+
+    expect(toast).toHaveBeenCalledWith('my-api resumed');
+  });
+
+  it('returns copy of current sessions', () => {
+    const current = [makeSession({ id: '1' })];
+    const result = processSessionChanges([], current, vi.fn(), vi.fn());
+
+    expect(result).toEqual(current);
+    expect(result).not.toBe(current);
   });
 });
 

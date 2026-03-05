@@ -850,12 +850,12 @@ output_format = "stream-json"
     fn test_auth_config_clone() {
         let auth = AuthConfig {
             token: "test-token".into(),
-            bind: pulpo_common::auth::BindMode::Lan,
+            bind: pulpo_common::auth::BindMode::Public,
         };
         #[allow(clippy::redundant_clone)]
         let cloned = auth.clone();
         assert_eq!(cloned.token, "test-token");
-        assert_eq!(cloned.bind, pulpo_common::auth::BindMode::Lan);
+        assert_eq!(cloned.bind, pulpo_common::auth::BindMode::Public);
     }
 
     #[test]
@@ -916,7 +916,7 @@ output_format = "stream-json"
             },
             auth: AuthConfig {
                 token: "existing-token".into(),
-                bind: pulpo_common::auth::BindMode::Lan,
+                bind: pulpo_common::auth::BindMode::Public,
             },
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
@@ -961,14 +961,14 @@ port = 7433
 
 [auth]
 token = "my-secret-token"
-bind = "lan"
+bind = "public"
 "#
         )
         .unwrap();
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
         assert_eq!(config.auth.token, "my-secret-token");
-        assert_eq!(config.auth.bind, pulpo_common::auth::BindMode::Lan);
+        assert_eq!(config.auth.bind, pulpo_common::auth::BindMode::Public);
     }
 
     #[test]
@@ -983,7 +983,7 @@ bind = "lan"
             },
             auth: AuthConfig {
                 token: "roundtrip-token".into(),
-                bind: pulpo_common::auth::BindMode::Lan,
+                bind: pulpo_common::auth::BindMode::Public,
             },
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
@@ -994,7 +994,7 @@ bind = "lan"
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
         assert_eq!(loaded.auth.token, "roundtrip-token");
-        assert_eq!(loaded.auth.bind, pulpo_common::auth::BindMode::Lan);
+        assert_eq!(loaded.auth.bind, pulpo_common::auth::BindMode::Public);
     }
 
     #[test]

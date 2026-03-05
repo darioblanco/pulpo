@@ -1,33 +1,32 @@
 import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
-import { svelte } from '@sveltejs/vite-plugin-svelte';
+import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  plugins: [tailwindcss(), svelte({ hot: false })],
+  plugins: [tailwindcss(), react()],
   resolve: {
     alias: {
-      $lib: path.resolve(__dirname, 'src/lib'),
-      '$app/navigation': path.resolve(__dirname, 'src/lib/__mocks__/app-navigation.ts'),
-      '$app/state': path.resolve(__dirname, 'src/lib/__mocks__/app-state.ts'),
-      '@tauri-apps/api/core': path.resolve(__dirname, 'src/lib/__mocks__/tauri-api-core.ts'),
+      '@': path.resolve(__dirname, './src'),
     },
-    conditions: ['browser'],
   },
   test: {
     environment: 'jsdom',
-    include: ['src/**/*.{test,spec}.{js,ts}'],
+    include: ['src/**/*.{test,spec}.{js,ts,tsx}'],
+    setupFiles: ['src/test-setup.ts'],
     coverage: {
       provider: 'v8',
-      include: ['src/**/*.{ts,svelte}'],
+      include: ['src/**/*.{ts,tsx}'],
       exclude: [
-        'src/**/*.{test,spec}.{js,ts}',
+        'src/**/*.{test,spec}.{js,ts,tsx}',
         'src/**/*.d.ts',
-        'src/app.css',
-        'src/lib/index.ts',
-        'src/lib/__mocks__/**',
-        'src/routes/+layout.svelte',
-        'src/routes/+layout.ts',
+        'src/index.css',
+        'src/main.tsx',
+        'src/test-setup.ts',
+        'src/vite-env.d.ts',
+        'src/components/ui/**',
+        'src/hooks/use-mobile.ts',
+        'src/api/types.ts',
       ],
       thresholds: {
         lines: 100,

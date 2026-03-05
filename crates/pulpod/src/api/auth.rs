@@ -33,7 +33,7 @@ const fn is_loopback(addr: &SocketAddr) -> bool {
     addr.ip().is_loopback()
 }
 
-/// Auth middleware: enforces Bearer token when `bind = "lan"`.
+/// Auth middleware: enforces Bearer token when `bind = "public"`.
 ///
 /// Exempt paths:
 /// - `GET /api/v1/health` — monitoring, peer probing
@@ -49,8 +49,8 @@ pub async fn require_auth(
     let expected_token = config.auth.token.clone();
     drop(config);
 
-    // Local bind → no auth needed (network isolation is the guard)
-    if bind_mode == BindMode::Local {
+    // Local/container bind → no auth needed (network isolation is the guard)
+    if matches!(bind_mode, BindMode::Local | BindMode::Container) {
         return next.run(req).await;
     }
 
@@ -89,7 +89,7 @@ pub async fn require_auth(
 /// `GET /api/v1/auth/token` — returns the auth token.
 ///
 /// The auth middleware already exempts `/api/v1/auth/*` for loopback clients
-/// when `bind = "lan"`, so this endpoint is effectively localhost-only.
+/// when `bind = "public"`, so this endpoint is effectively localhost-only.
 pub async fn get_token(State(state): State<Arc<AppState>>) -> Json<AuthTokenResponse> {
     let config = state.config.read().await;
     let token = config.auth.token.clone();
@@ -330,8 +330,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_middleware_lan_health_exempt() {
-        let state = make_state(BindMode::Lan, "tok").await;
+    async fn test_middleware_container_bind_skips_auth() {
+        let state = make_state(BindMode::Container, "tok").await;
+        let req = Request::builder()
+            .uri("/api/v1/sessions")
+            .body(Body::empty())
+            .unwrap();
+        let resp = call_middleware(state, req, None).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_middleware_public_health_exempt() {
+        let state = make_state(BindMode::Public, "tok").await;
         let req = Request::builder()
             .uri("/api/v1/health")
             .body(Body::empty())
@@ -341,8 +352,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_middleware_lan_auth_path_loopback() {
-        let state = make_state(BindMode::Lan, "tok").await;
+    async fn test_middleware_public_auth_path_loopback() {
+        let state = make_state(BindMode::Public, "tok").await;
         let req = Request::builder()
             .uri("/api/v1/auth/token")
             .body(Body::empty())
@@ -353,8 +364,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_middleware_lan_auth_path_remote_denied() {
-        let state = make_state(BindMode::Lan, "tok").await;
+    async fn test_middleware_public_auth_path_remote_denied() {
+        let state = make_state(BindMode::Public, "tok").await;
         let req = Request::builder()
             .uri("/api/v1/auth/token")
             .body(Body::empty())
@@ -366,8 +377,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_middleware_lan_non_api_exempt() {
-        let state = make_state(BindMode::Lan, "tok").await;
+    async fn test_middleware_public_non_api_exempt() {
+        let state = make_state(BindMode::Public, "tok").await;
         let req = Request::builder()
             .uri("/index.html")
             .body(Body::empty())
@@ -377,8 +388,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_middleware_lan_api_no_token() {
-        let state = make_state(BindMode::Lan, "tok").await;
+    async fn test_middleware_public_api_no_token() {
+        let state = make_state(BindMode::Public, "tok").await;
         let req = Request::builder()
             .uri("/api/v1/sessions")
             .body(Body::empty())
@@ -388,8 +399,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_middleware_lan_api_correct_header() {
-        let state = make_state(BindMode::Lan, "my-secret").await;
+    async fn test_middleware_public_api_correct_header() {
+        let state = make_state(BindMode::Public, "my-secret").await;
         let req = Request::builder()
             .uri("/api/v1/sessions")
             .header("authorization", "Bearer my-secret")
@@ -400,8 +411,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_middleware_lan_api_correct_query_param() {
-        let state = make_state(BindMode::Lan, "qs-token").await;
+    async fn test_middleware_public_api_correct_query_param() {
+        let state = make_state(BindMode::Public, "qs-token").await;
         let req = Request::builder()
             .uri("/api/v1/sessions?token=qs-token")
             .body(Body::empty())
@@ -411,8 +422,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_middleware_lan_api_wrong_token() {
-        let state = make_state(BindMode::Lan, "correct").await;
+    async fn test_middleware_public_api_wrong_token() {
+        let state = make_state(BindMode::Public, "correct").await;
         let req = Request::builder()
             .uri("/api/v1/sessions")
             .header("authorization", "Bearer wrong")

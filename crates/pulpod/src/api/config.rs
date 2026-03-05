@@ -447,13 +447,13 @@ mod tests {
             node_name: None,
             port: None,
             data_dir: None,
-            bind: Some(pulpo_common::auth::BindMode::Lan),
+            bind: Some(pulpo_common::auth::BindMode::Public),
             guard_preset: None,
 
             peers: None,
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.auth.bind, pulpo_common::auth::BindMode::Lan);
+        assert_eq!(resp.config.auth.bind, pulpo_common::auth::BindMode::Public);
         assert!(resp.restart_required);
     }
 

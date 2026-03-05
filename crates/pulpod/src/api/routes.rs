@@ -1105,7 +1105,7 @@ mod tests {
             },
             auth: crate::config::AuthConfig {
                 token: TEST_TOKEN.into(),
-                bind: pulpo_common::auth::BindMode::Lan,
+                bind: pulpo_common::auth::BindMode::Public,
             },
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
@@ -1250,7 +1250,7 @@ mod tests {
     #[tokio::test]
     async fn test_auth_static_file_exempt() {
         let server = authed_test_server().await;
-        // Non-API paths (static files) should be exempt from auth even with bind=lan
+        // Non-API paths (static files) should be exempt from auth even with bind=public
         let resp = server.get("/nonexistent.html").await;
         // Should NOT be 401 (the static file handler may return 200 for SPA fallback or 404)
         let status = resp.status_code();
@@ -1271,7 +1271,7 @@ mod tests {
             },
             auth: crate::config::AuthConfig {
                 token: TEST_TOKEN.into(),
-                bind: pulpo_common::auth::BindMode::Lan,
+                bind: pulpo_common::auth::BindMode::Public,
             },
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),

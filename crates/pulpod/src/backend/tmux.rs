@@ -1,8 +1,8 @@
 #[cfg(not(coverage))]
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use std::process::Command;
 #[cfg(not(coverage))]
-use std::process::Output;
+use std::process::{Output, Stdio};
 
 #[cfg(not(coverage))]
 use super::Backend;
@@ -148,34 +148,50 @@ impl TmuxBackend {
 }
 
 #[cfg(not(coverage))]
+/// Run a tmux command, capturing output and suppressing stderr from the daemon log.
+/// Returns an error with the tmux stderr message if the command exits non-zero.
+fn run_tmux(mut cmd: Command, context: &str) -> Result<Output> {
+    let output = cmd
+        .stderr(Stdio::piped())
+        .output()
+        .context(format!("Failed to spawn tmux for {context}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("{context}: {}", stderr.trim());
+    }
+    Ok(output)
+}
+
+#[cfg(not(coverage))]
 impl Backend for TmuxBackend {
     fn create_session(&self, name: &str, working_dir: &str, command: &str) -> Result<()> {
         let session_name = tmux_session_name(name);
-        build_create_command(&session_name, working_dir, command)
-            .status()
-            .context("Failed to create tmux session")?;
+        run_tmux(
+            build_create_command(&session_name, working_dir, command),
+            "create tmux session",
+        )?;
         Ok(())
     }
 
     fn kill_session(&self, name: &str) -> Result<()> {
         let session_name = tmux_session_name(name);
-        build_kill_command(&session_name)
-            .status()
-            .context("Failed to kill tmux session")?;
+        run_tmux(build_kill_command(&session_name), "kill tmux session")?;
         Ok(())
     }
 
     fn is_alive(&self, name: &str) -> Result<bool> {
         let session_name = tmux_session_name(name);
-        let status = build_has_session_command(&session_name)
-            .status()
+        let output = build_has_session_command(&session_name)
+            .stderr(Stdio::piped())
+            .output()
             .context("Failed to check tmux session")?;
-        Ok(status.success())
+        Ok(output.status.success())
     }
 
     fn capture_output(&self, name: &str, lines: usize) -> Result<String> {
         let session_name = tmux_session_name(name);
         let output: Output = build_capture_command(&session_name, lines)
+            .stderr(Stdio::piped())
             .output()
             .context("Failed to capture tmux pane")?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
@@ -183,17 +199,19 @@ impl Backend for TmuxBackend {
 
     fn send_input(&self, name: &str, text: &str) -> Result<()> {
         let session_name = tmux_session_name(name);
-        build_send_keys_command(&session_name, text)
-            .status()
-            .context("Failed to send input to tmux session")?;
+        run_tmux(
+            build_send_keys_command(&session_name, text),
+            "send input to tmux session",
+        )?;
         Ok(())
     }
 
     fn setup_logging(&self, name: &str, log_path: &str) -> Result<()> {
         let session_name = tmux_session_name(name);
-        build_pipe_pane_command(&session_name, log_path)
-            .status()
-            .context("Failed to setup pipe-pane logging")?;
+        run_tmux(
+            build_pipe_pane_command(&session_name, log_path),
+            "setup pipe-pane logging",
+        )?;
         Ok(())
     }
 }

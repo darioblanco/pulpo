@@ -58,7 +58,7 @@ lint-rust:
 
 lint-web:
 	cd web && npx eslint .
-	cd web && npx svelte-check --tsconfig ./tsconfig.json
+	cd web && npx tsc --noEmit
 
 # ─── Test ────────────────────────────────────────────────────────────────────
 
@@ -186,4 +186,4 @@ ci: fmt-check lint test coverage
 
 clean:
 	cargo clean
-	rm -rf web/build web/.svelte-kit web/node_modules .pulpo/data
+	rm -rf web/build web/node_modules .pulpo/data

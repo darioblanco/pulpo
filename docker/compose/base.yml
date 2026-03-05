@@ -12,7 +12,7 @@ services:
         required: false
     environment:
       # Override env-file defaults as needed.
-      PULPO_BIND: lan
+      PULPO_BIND: container
     volumes:
       - pulpo-data:/home/pulpo/.pulpo
     restart: unless-stopped
