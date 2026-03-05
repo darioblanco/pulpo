@@ -46,9 +46,9 @@ curl http://localhost:7433/api/v1/health
 Core Pulpo settings (read by `base/entrypoint.sh`):
 
 - `PULPO_NODE_NAME`
-- `PULPO_BIND` (`local` or `lan`)
+- `PULPO_BIND` (`local`, `public`, or `container`)
 - `PULPO_PORT`
-- `PULPO_TOKEN` (recommended when `PULPO_BIND=lan`)
+- `PULPO_TOKEN` (recommended when `PULPO_BIND=public`)
 - `PULPO_GUARD_PRESET`
 - `PULPO_MAX_TURNS` (optional)
 - `PULPO_MAX_BUDGET_USD` (optional)
@@ -77,7 +77,12 @@ The agents entrypoint logs which auth mode is detected at startup.
 
 - `GIT_AUTHOR_NAME`
 - `GIT_AUTHOR_EMAIL`
+- `GIT_HTTP_HOST` (default: `github.com`)
+- `GIT_HTTP_USERNAME`
+- `GIT_HTTP_TOKEN` (PAT/fine-grained token)
 - `GIT_SSH_PRIVATE_KEY_B64` (base64-encoded private key)
+
+HTTPS PAT and SSH can both be configured; use whichever your workflow prefers.
 
 ## Notes
 
