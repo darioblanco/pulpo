@@ -1,10 +1,10 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "3496c6c5811325f0448980699261aa4615b61afd",
   "packages": {
     ".": {
       "release-type": "rust",
       "component": "pulpo",
-      "initial-version": "0.0.1",
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true
     }
