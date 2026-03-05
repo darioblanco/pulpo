@@ -20,7 +20,7 @@ COPY contrib ./contrib
 # Inject prebuilt web assets so pulpod can embed them.
 COPY --from=web-build /src/web/build ./web/build
 
-RUN cargo build --release -p pulpod -p pulpo
+RUN cargo build --release -p pulpod -p pulpo-cli
 
 FROM debian:bookworm-slim AS runtime
 
