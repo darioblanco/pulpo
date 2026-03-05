@@ -5,6 +5,7 @@ import { StatusSummary } from '@/components/dashboard/status-summary';
 import { NodeCard } from '@/components/dashboard/node-card';
 import { NewSessionDialog } from '@/components/dashboard/new-session-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { getPeers, getRemoteSessions } from '@/api/client';
 import { useSSE } from '@/hooks/use-sse';
 import { useConnection } from '@/hooks/use-connection';
@@ -83,10 +84,12 @@ export function DashboardPage() {
     (s) => s.status === 'creating' || s.status === 'running' || s.status === 'stale',
   );
 
+  const hasMultipleNodes = peers.length > 0;
+
   return (
     <div data-testid="dashboard-page">
       <AppHeader title="Dashboard" />
-      <div className="space-y-6 p-4 sm:p-6">
+      <div className="space-y-4 p-4 sm:p-6">
         {error ? (
           <p className="text-center text-destructive">{error}</p>
         ) : !connected && !localNode ? (
@@ -101,27 +104,72 @@ export function DashboardPage() {
               <NewSessionDialog peers={peers} onCreated={handleSessionCreated} />
             </div>
 
-            {localNode && (
-              <NodeCard
-                name={localNode.name}
-                nodeInfo={localNode}
-                status="online"
-                sessions={activeSessions}
-                isLocal
-                onRefresh={fetchPeers}
-              />
-            )}
+            {hasMultipleNodes ? (
+              <Tabs defaultValue="local" data-testid="node-tabs">
+                <TabsList>
+                  <TabsTrigger value="local" data-testid="tab-local">
+                    <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-status-completed" />
+                    {localNode?.name ?? 'local'}
+                    <span className="ml-1.5 text-xs text-muted-foreground">
+                      ({activeSessions.length})
+                    </span>
+                  </TabsTrigger>
+                  {peers.map((peer) => (
+                    <TabsTrigger key={peer.name} value={peer.name} data-testid={`tab-${peer.name}`}>
+                      <span
+                        className={`mr-1.5 inline-block h-2 w-2 rounded-full ${
+                          peer.status === 'online'
+                            ? 'bg-status-completed'
+                            : peer.status === 'offline'
+                              ? 'bg-status-dead'
+                              : 'bg-muted-foreground'
+                        }`}
+                      />
+                      {peer.name}
+                      <span className="ml-1.5 text-xs text-muted-foreground">
+                        ({(peerSessions[peer.name] ?? []).length})
+                      </span>
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
 
-            {peers.map((peer) => (
-              <NodeCard
-                key={peer.name}
-                name={peer.name}
-                nodeInfo={peer.node_info}
-                status={peer.status}
-                sessions={peerSessions[peer.name] ?? []}
-                onRefresh={fetchPeers}
-              />
-            ))}
+                <TabsContent value="local">
+                  {localNode && (
+                    <NodeCard
+                      name={localNode.name}
+                      nodeInfo={localNode}
+                      status="online"
+                      sessions={activeSessions}
+                      isLocal
+                      onRefresh={fetchPeers}
+                    />
+                  )}
+                </TabsContent>
+
+                {peers.map((peer) => (
+                  <TabsContent key={peer.name} value={peer.name}>
+                    <NodeCard
+                      name={peer.name}
+                      nodeInfo={peer.node_info}
+                      status={peer.status}
+                      sessions={peerSessions[peer.name] ?? []}
+                      onRefresh={fetchPeers}
+                    />
+                  </TabsContent>
+                ))}
+              </Tabs>
+            ) : (
+              localNode && (
+                <NodeCard
+                  name={localNode.name}
+                  nodeInfo={localNode}
+                  status="online"
+                  sessions={activeSessions}
+                  isLocal
+                  onRefresh={fetchPeers}
+                />
+              )
+            )}
           </>
         )}
       </div>

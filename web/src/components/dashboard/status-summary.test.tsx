@@ -61,4 +61,12 @@ describe('StatusSummary', () => {
     render(<StatusSummary sessions={[]} />);
     expect(screen.getByTestId('status-summary')).toBeInTheDocument();
   });
+
+  it('renders status labels', () => {
+    render(<StatusSummary sessions={[]} />);
+    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(screen.getByText('stale')).toBeInTheDocument();
+    expect(screen.getByText('done')).toBeInTheDocument();
+    expect(screen.getByText('dead')).toBeInTheDocument();
+  });
 });

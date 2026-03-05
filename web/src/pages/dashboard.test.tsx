@@ -118,7 +118,15 @@ describe('DashboardPage', () => {
     });
   });
 
-  it('renders peer node cards', async () => {
+  it('does not show tabs for single node', async () => {
+    renderDashboard();
+    await waitFor(() => {
+      expect(screen.getByText('mac-studio')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('node-tabs')).not.toBeInTheDocument();
+  });
+
+  it('renders tabs when peers are present', async () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes('/peers')) {
         return {
@@ -172,7 +180,9 @@ describe('DashboardPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('remote-node')).toBeInTheDocument();
+      expect(screen.getByTestId('node-tabs')).toBeInTheDocument();
+      expect(screen.getByTestId('tab-local')).toBeInTheDocument();
+      expect(screen.getByTestId('tab-remote-node')).toBeInTheDocument();
     });
   });
 
@@ -223,8 +233,8 @@ describe('DashboardPage', () => {
     );
 
     await waitFor(() => {
-      // Peer card should still render despite session fetch failure
-      expect(screen.getByText('failing-peer')).toBeInTheDocument();
+      // Peer tab should still render despite session fetch failure
+      expect(screen.getByTestId('tab-failing-peer')).toBeInTheDocument();
     });
   });
 

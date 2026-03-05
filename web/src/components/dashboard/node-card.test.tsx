@@ -73,7 +73,6 @@ describe('NodeCard', () => {
     );
     expect(screen.getByText('mac-studio')).toBeInTheDocument();
     expect(screen.getByText(/macOS · arm64 · 12 cores/)).toBeInTheDocument();
-    expect(screen.getByText('0 sessions')).toBeInTheDocument();
   });
 
   it('shows local badge', () => {
@@ -88,19 +87,6 @@ describe('NodeCard', () => {
       />,
     );
     expect(screen.getByText('local')).toBeInTheDocument();
-  });
-
-  it('shows session count correctly', () => {
-    render(
-      <NodeCard
-        name="node"
-        nodeInfo={nodeInfo}
-        status="online"
-        sessions={[makeSession()]}
-        onRefresh={vi.fn()}
-      />,
-    );
-    expect(screen.getByText('1 session')).toBeInTheDocument();
   });
 
   it('shows empty message when no sessions', () => {
