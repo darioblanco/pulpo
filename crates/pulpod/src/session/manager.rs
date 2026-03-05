@@ -370,7 +370,7 @@ impl SessionManager {
                 session.output_format.as_deref(),
             );
             spawn_params.worktree = Some(session.name.clone());
-            spawn_params.conversation_id = session.conversation_id.clone();
+            spawn_params.conversation_id.clone_from(&session.conversation_id);
             let command = build_command(session.provider, session.mode, &spawn_params);
 
             self.backend
@@ -1108,7 +1108,7 @@ mod tests {
         assert_eq!(resumed.status, SessionStatus::Running);
 
         // Verify create_session was NOT called (tmux session already exists)
-        let calls = backend.calls.lock().unwrap();
+        let calls: Vec<_> = backend.calls.lock().unwrap().clone();
         assert!(
             !calls.iter().any(|c| c.starts_with("create:")),
             "should not recreate tmux session when alive; calls: {calls:?}"
@@ -1133,7 +1133,7 @@ mod tests {
         assert_eq!(resumed.status, SessionStatus::Running);
 
         // Verify create_session WAS called
-        let calls = backend.calls.lock().unwrap();
+        let calls: Vec<_> = backend.calls.lock().unwrap().clone();
         assert!(
             calls.iter().any(|c| c.starts_with("create:")),
             "should recreate tmux session when dead; calls: {calls:?}"

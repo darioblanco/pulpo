@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
 
             tokio::select! {
                 result = server => result?,
-                _ = async {
+                () = async {
                     let _ = shutdown_done_rx.await;
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                 } => {
