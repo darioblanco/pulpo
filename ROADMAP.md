@@ -1,144 +1,185 @@
 # Pulpo Roadmap
 
-Project sequencing and strategic direction. Not a changelog — a living document of what's shipped, what's next, and why.
+Strategic direction for Pulpo as an open-source control plane for coding agents.
 
 ## Mission
 
-Infrastructure layer for autonomous coding agents. Pulpo manages **where and how agents run** — daemon, API, multi-node, persistence, observability — while staying provider-agnostic and out of the way of agent frameworks.
+Pulpo is infrastructure for agent runtime operations on your own machines.
 
-## Shipped
+It is not trying to be the best coding agent. It is the layer that makes fast-moving agents (Claude Code, Codex, and others) reliable, observable, and controllable across nodes.
 
-### Phase 1-3: Core Platform
+## Market Reality (2026)
 
-- Single-node daemon (`pulpod`) with REST API and tmux backend
-- CLI client (`pulpo`) for all session operations
-- Embedded web UI (Svelte 5 + Konsta UI, served by pulpod)
-- SQLite persistence — sessions survive daemon restarts and reboots
-- Live terminal streaming (WebSocket + xterm.js)
-- Session resume after reboot (STALE → RUNNING)
-- Multi-node peer config with aggregated dashboard
-- Remote session spawning from any node's UI
-- Output capture via `tmux capture-pane`
+Agent capabilities are commoditizing quickly:
 
-### Phase 4: Guard System + Multi-Provider
+- Claude Code is a full-featured terminal/IDE/web workflow with MCP and multi-agent patterns.
+- Codex CLI is a local coding agent in terminal form.
+- GitHub Copilot now includes coding-agent workflows tied to issues/PRs.
+- OpenHands offers CLI, local GUI, cloud, and enterprise deployment paths.
+- Aider remains a strong terminal-first pair-programming tool.
+- Continue is pushing source-controlled agent checks in CI.
+- SWE-agent is focused on benchmarked issue-to-fix automation.
 
-- Guard presets (standard/strict/unrestricted) with per-provider flags
-- Claude Code and OpenAI Codex providers
-- Autonomous mode (fire-and-forget spawning)
+Implication: Pulpo should not compete on core agent intelligence or IDE UX. It should win on runtime operations for self-hosted, multi-node agent execution.
 
-### Phase 5: Web UI + API Surface
+## Is Pulpo Helpful? Is It Unique?
 
-- Konsta UI migration (iOS-native look, responsive phone/tablet/desktop)
-- Config API (`GET/PUT /api/v1/config`) with hot-reload
-- Settings view (Node, Guards, Peers tabs)
-- Session history with search/filter/sort
-- Output download endpoint
-- In-app toast + desktop Notification API
-- Peer management API and UI (add/remove/status)
+### Helpful when
 
-### Phase 6: Auth + Discovery
+Pulpo is high-value if you:
 
-- Token authentication for network-accessible deployments
-- QR code pairing for mobile clients
-- mDNS discovery (`_pulpo._tcp.local.`) — auto-detects peers in `public` bind mode
-- Connection management (saved connections, base URL routing)
-- Bind mode rename: `lan` → `public` (clearer risk signal) + `container` mode (0.0.0.0 without auth)
+- run agents on multiple machines,
+- need sessions to survive daemon restarts/reboots,
+- want intervention and recovery semantics you can audit,
+- need a unified API/CLI/web surface independent of provider churn.
 
-### Phase 7: Voice Commands (experimental)
+### Not especially helpful when
 
-- iOS Siri Shortcuts integration
-- Android App Actions via Google Assistant
+Pulpo is lower-value if you:
 
-### Phase 8: Control Plane + Discord
+- use one laptop and one agent surface,
+- only need pair-programming inside an IDE,
+- do not need operational controls or history beyond local agent tooling.
 
-- Flexible session model (model, allowed_tools, system_prompt, metadata)
-- Persona config (`[personas.name]` in config.toml, `GET /api/v1/personas`)
-- SSE event stream (`GET /api/v1/events`, broadcast channel)
-- MCP server (session management as MCP tools for agent-to-agent orchestration)
-- Discord webhook notifications (`[notifications.discord]` config)
-- Discord bot (`contrib/discord-bot/`) — slash commands + SSE listener
+### Unique wedge
 
-### Core Cleanup (post-Phase 8)
+Pulpo's defensible wedge is: **agent runtime control plane for trusted self-hosted environments**.
 
-- Deleted dead code (state machine, output placeholder)
-- Removed detection events subsystem (watchdog acts directly, no storage overhead)
-- Removed watchdog auto-recovery (users prefer explicit `pulpo resume`)
-- Simplified guard system (preset-only config, free functions instead of trait)
-- Deduplicated stale detection, removed dead SSE client code
-- Replaced peer health polling with lazy on-demand probing (60s TTL cache)
-- Replaced internal scheduling engine (~3,400 lines) with crontab wrapper (~150 lines)
-- Workdir and provider binary validation before spawning (clear errors instead of silent tmux death)
-- Web UI surfaces API error messages in session creation form
+Not unique: prompting UX, code-gen quality, chat interfaces.
+Unique: cross-node session lifecycle, watchdog interventions, stale/resume semantics, provider-agnostic operational API.
 
-### Web UI: SSE + Visual Redesign
+## Product Thesis
 
-Dashboard overhaul — real-time SSE updates, brand-system visual refresh, full form coverage.
+Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team infrastructure:
 
-**Shipped:**
-- SSE event store with auto-reconnect (replaces 5s polling, exponential backoff)
-- KPI summary tiles (Running/Idle/Done/Dead counts) at top of dashboard
-- Session cards: status-colored left borders, duration, waiting-for-input quick-send row
-- NodeCard: brand-styled cards with seafoam/red status dots
-- Persona dropdown in NewSessionForm (fetches from `GET /api/v1/personas`, pre-fills fields)
-- Advanced options section (model, max_turns, max_budget_usd, output_format) in form
-- 2-column responsive grid layout for form fields (mobile-first)
-- Brand palette (navy/blue/aqua/seafoam) with Space Grotesk/Inter/JetBrains Mono fonts
-- Responsive heights: ChatView `max-h-[60vh]`, Terminal `h-[40vh] min-h-[200px]`
+- predictable lifecycle,
+- explicit failure states,
+- policy and budget guardrails,
+- audit-friendly event streams,
+- provider adapter portability.
 
-## Next Steps
+## Shipped (Current Baseline)
 
-### Config: Full UI Coverage
+- `pulpod` daemon + REST API + embedded web UI
+- `pulpo` CLI
+- SQLite-backed session persistence
+- Session lifecycle: `creating`, `running`, `completed`, `dead`, `stale`
+- Resume flow after stale detection
+- Watchdog interventions (memory + idle)
+- Guard presets (`standard`, `strict`, `unrestricted`)
+- Claude Code + Codex provider support
+- Multi-node support (manual peers + mDNS in `public` mode)
+- SSE events (`/api/v1/events`)
+- MCP server mode (`pulpod mcp`)
+- Scheduling via crontab wrapper
+- Discord integration in `contrib/`
 
-Several config sections are TOML-only with no API endpoint or UI. Users shouldn't have to SSH in and edit files for basic settings.
+## Refactored Roadmap
 
-**Expose watchdog settings**
-- Add `GET/PUT /api/v1/watchdog` endpoint (memory threshold, idle timeout, idle action)
-- Add Watchdog tab to Settings page
+## Phase A (Next 1-2 releases): Double down on control-plane fundamentals
 
-**Expose notification settings**
-- Add `GET/PUT /api/v1/notifications` endpoint (Discord webhook URL, event filters)
-- Add Notifications tab to Settings page
+### 1. Config surface parity (highest priority)
 
-**Complete guard defaults in API**
-- Extend `UpdateConfigRequest` to include max_turns, max_budget_usd, output_format (already in TOML config, just not exposed via API)
+- Expose watchdog settings via API/UI (`GET/PUT /api/v1/watchdog`)
+- Expose notifications settings via API/UI (`GET/PUT /api/v1/notifications`)
+- Expose missing guard defaults in API (`max_turns`, `max_budget_usd`, `output_format`)
+- Expose bind mode controls in settings (with explicit restart_required semantics)
 
-**Bind mode in Settings**
-- Add Local/Public/Container toggle to Node section (flags restart_required like port does)
+Why: reduce SSH/TOML edits and make operational policy manageable from one surface.
 
-### Discord Bot (contrib): Multi-Node and Production Readiness
+### 2. Reliability and auditability hardening
 
-The contrib bot works for single-node control but is not yet a full control-plane interface.
+- Standardize intervention reason taxonomy (machine-readable codes + human text)
+- Add event replay/export endpoint for postmortems (bounded window)
+- Tighten stale/dead edge-case tests across daemon restart and failed kills
 
-**Multi-node control**
-- Add node registry support (`node_name -> base_url + token`)
-- Add `/nodes` command and `node` option on existing commands
-- Add per-node default/fallback routing in config
+Why: reliability semantics are Pulpo's core moat.
 
-**Schedule feature parity**
-- Add `/schedule` command group (`create`, `list`, `get`, `run`, `pause`, `resume`, `history`)
-- Add schedule execution rendering in embeds
+### 3. Provider adapter stability layer
 
-**SSE parity**
-- Handle both `session` and `schedule` events from `/api/v1/events`
-- Route schedule events to the same channel mapping strategy as session events
+- Add adapter contract tests to detect CLI flag/behavior drift
+- Publish provider compatibility matrix in docs (last verified versions)
+- Add safer degradation paths when provider binaries/auth are invalid
 
-**Reliability and ops**
-- Distinguish reconnect vs hard-error logs for SSE
-- Add event dedupe/rate limiting to avoid flood during state storms
-- Add command-level integration tests (mock Discord interactions + mocked pulpod API)
+Why: provider churn is guaranteed; Pulpo should absorb it.
 
-**Distribution**
-- Add first-class Docker packaging for the bot (compose profile + env contract)
-- Document production deployment on a dedicated control node
+## Phase B (Following 2-4 releases): Fleet operations for serious usage
 
-## Not Planned
+### 4. Multi-node operations primitives
 
-- **Docker/bubblewrap sandboxing** — guard presets handle the security layer; container overhead isn't justified for the target use case
-- **Multi-user / team features** — single-user tool, your Tailnet is your trust boundary
+- Node labels/tags (e.g., `high-mem`, `gpu`, `cheap`)
+- Scheduling constraints for spawn (`--node-label`, fallback behavior)
+- Node drain/cordon semantics (stop new sessions, preserve running)
+
+Why: this separates Pulpo from single-machine wrappers.
+
+### 5. Policy as configuration (without platform bloat)
+
+- Per-persona policy bundles (guard + budget + tool allowlists + runtime limits)
+- Global policy defaults with local override visibility
+- Policy dry-run endpoint to explain effective settings before spawn
+
+Why: predictable governance without becoming an enterprise platform.
+
+### 6. SLO-oriented observability
+
+- Runtime metrics endpoint (session starts, failure rate, intervention rate, resume success)
+- Basic dashboard trend views (24h/7d)
+- Health checks that include dependency readiness (tmux/provider availability)
+
+Why: proves operational value and prevents silent drift.
+
+## Phase C (Longer-term): Optional collaboration layer
+
+### 7. Team-friendly mode (re-evaluate based on demand)
+
+- Scoped multi-user auth and ownership only if demanded by real users
+- Keep single-user default unchanged
+
+Why: only pursue if it strengthens control-plane adoption, not as a default direction.
+
+### 8. Deployment ergonomics
+
+- One-command upgrade/migration path for self-hosted nodes
+- Official Docker deployment profiles for daemon-first production use
+
+Why: improve operational lifecycle without changing product identity.
+
+## De-prioritized / Removed From Active Roadmap
+
+- Voice-command surfaces as a core product track
+- Broad chat-platform feature expansion beyond control-plane needs
+- Competing directly with IDE-native agent UX
+- Building a monolithic all-in-one agent framework
+
+These may exist as contrib experiments, but they are not core sequencing drivers.
+
+## Success Criteria (to validate the thesis)
+
+Pulpo is succeeding if we can show:
+
+- Resume success rate after restart/reboot is consistently high
+- Low false-positive watchdog kills and clear intervention explanations
+- Time-to-recover from agent/node failure is materially reduced
+- Users run mixed providers through one operational surface
+- Multi-node usage increases vs single-node-only usage
+
+If these metrics do not improve, the roadmap should be reconsidered.
 
 ## Architectural Principles
 
-- Infrastructure/runtime layer, not an agent framework
-- Provider-agnostic: adapters for fast-moving AI CLI tools
-- Single-node-first, multi-node-ready
-- Zero-config defaults, full customization via config.toml
+- Infrastructure/runtime layer, not agent intelligence layer
+- Provider-agnostic adapters over provider lock-in
+- Reliability before feature breadth
+- Explicit, auditable failure semantics
+- Zero-config local start, progressive operational depth
+
+## Sources informing this refactor
+
+- OpenAI Codex CLI repo/docs: https://github.com/openai/codex
+- Anthropic Claude Code docs: https://docs.anthropic.com/en/docs/claude-code/overview
+- GitHub Copilot agents docs: https://docs.github.com/en/copilot/how-tos/use-copilot-agents
+- OpenHands docs/repo: https://docs.all-hands.dev/ and https://github.com/All-Hands-AI/OpenHands
+- Aider docs/repo: https://aider.chat/docs/ and https://github.com/Aider-AI/aider
+- Continue repo/docs: https://github.com/continuedev/continue
+- SWE-agent repo: https://github.com/SWE-agent/SWE-agent
