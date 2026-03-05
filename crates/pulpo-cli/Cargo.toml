@@ -3,7 +3,6 @@ name = "pulpo-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
 repository.workspace = true
 homepage.workspace = true
 description = "Pulpo CLI — manage agent sessions from the terminal"
@@ -20,7 +19,7 @@ name = "pulpo"
 path = "src/main.rs"
 
 [dependencies]
-pulpo-common = { path = "../pulpo-common" }
+pulpo-common = { path = "../pulpo-common", version = "0.1.0" }
 tokio.workspace = true
 reqwest.workspace = true
 clap.workspace = true
