@@ -9,7 +9,7 @@ RUN cd web && npm ci
 COPY web ./web
 RUN cd web && npm run build
 
-FROM rust:1.85-bookworm AS rust-build
+FROM rust:1.88-bookworm AS rust-build
 WORKDIR /src
 
 COPY Cargo.toml Cargo.lock ./
