@@ -3,16 +3,55 @@ name: CI
 on:
   push:
     branches: [main]
+    paths:
+      - 'crates/**'
+      - 'web/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rustfmt.toml'
+      - 'clippy.toml'
+      - '.github/workflows/ci.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'crates/**'
+      - 'web/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rustfmt.toml'
+      - 'clippy.toml'
+      - '.github/workflows/ci.yml'
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
 
 jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rustfmt.toml'
+              - 'clippy.toml'
+            web:
+              - 'web/**'
+
   web:
     name: Web (build + lint + test)
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,8 +72,31 @@ jobs:
           path: web/build/
           retention-days: 1
 
+  # Build web for Rust jobs even when web source didn't change
+  # (Rust embed needs web/build/ to exist)
+  web-build-only:
+    name: Web build (for Rust)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.web != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: cd web && npm ci && npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: web/build/
+          retention-days: 1
+
   fmt:
     name: Format
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +107,11 @@ jobs:
 
   clippy:
     name: Clippy
-    needs: web
+    needs: [changes, web, web-build-only]
+    if: |
+      always() &&
+      needs.changes.outputs.rust == 'true' &&
+      (needs.web.result == 'success' || needs.web-build-only.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +127,11 @@ jobs:
 
   test:
     name: Test
-    needs: web
+    needs: [changes, web, web-build-only]
+    if: |
+      always() &&
+      needs.changes.outputs.rust == 'true' &&
+      (needs.web.result == 'success' || needs.web-build-only.result == 'success')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -76,9 +146,13 @@ jobs:
 
   coverage:
     name: Coverage (100% lines)
-    needs: web
+    needs: [changes, web, web-build-only]
+    if: |
+      always() &&
+      needs.changes.outputs.rust == 'true' &&
+      (needs.web.result == 'success' || needs.web-build-only.result == 'success') &&
+      (github.event_name == 'push' || github.event_name == 'schedule')
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'schedule'
     env:
       # Override workspace RUSTFLAGS — coverage builds with cfg(coverage) make
       # main.rs-only code appear dead. Warnings are already caught by clippy.
