@@ -265,7 +265,7 @@ describe('createRemoteSession', () => {
 
 describe('killSession', () => {
   it('sends POST to /api/v1/sessions/:id/kill', async () => {
-    mockFetch.mockResolvedValue({});
+    mockFetch.mockResolvedValue({ ok: true });
 
     await killSession('abc');
 
@@ -273,6 +273,24 @@ describe('killSession', () => {
       method: 'POST',
       headers: {},
     });
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'session not found' }),
+    });
+
+    await expect(killSession('abc')).rejects.toThrow('session not found');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(killSession('abc')).rejects.toThrow('Failed to kill session');
   });
 });
 
@@ -346,7 +364,7 @@ describe('sendInput', () => {
 describe('resumeSession', () => {
   it('posts to /api/v1/sessions/:id/resume', async () => {
     const resumed = { id: 'abc', status: 'running' };
-    mockFetch.mockResolvedValue(jsonResponse(resumed));
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(resumed) });
 
     const result = await resumeSession('abc');
 
@@ -355,6 +373,24 @@ describe('resumeSession', () => {
       headers: {},
     });
     expect(result).toEqual(resumed);
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'session is not stale' }),
+    });
+
+    await expect(resumeSession('abc')).rejects.toThrow('session is not stale');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(resumeSession('abc')).rejects.toThrow('Failed to resume session');
   });
 });
 

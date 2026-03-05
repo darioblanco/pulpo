@@ -5,12 +5,16 @@ interface TerminalViewProps {
   sessionId: string;
 }
 
+const TERMINAL_FONT_FAMILY =
+  "'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Fira Code', monospace";
+
 export function TerminalView({ sessionId }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const terminalRef = useRef<import('ghostty-web').Terminal | null>(null);
   const fitAddonRef = useRef<import('ghostty-web').FitAddon | null>(null);
+  const receivedDataRef = useRef(false);
 
   useEffect(() => {
     let disposed = false;
@@ -24,7 +28,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
 
       const terminal = new Terminal({
         fontSize: 13,
-        fontFamily: 'var(--font-mono)',
+        fontFamily: TERMINAL_FONT_FAMILY,
         theme: {
           background: '#0a1628',
           foreground: '#e0e0e0',
@@ -48,11 +52,8 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         ws.binaryType = 'arraybuffer';
         wsRef.current = ws;
 
-        ws.onopen = () => {
-          terminal.writeln('\x1b[32mConnected to session.\x1b[0m');
-        };
-
         ws.onmessage = (event) => {
+          receivedDataRef.current = true;
           if (event.data instanceof ArrayBuffer) {
             terminal.write(new Uint8Array(event.data));
           } else {
@@ -61,7 +62,9 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
         };
 
         ws.onclose = () => {
-          terminal.writeln('\r\n\x1b[33mDisconnected from session.\x1b[0m');
+          if (!receivedDataRef.current && !disposed) {
+            terminal.writeln('\r\n\x1b[33mDisconnected from session.\x1b[0m');
+          }
         };
 
         ws.onerror = () => {

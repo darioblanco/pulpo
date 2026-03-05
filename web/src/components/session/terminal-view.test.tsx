@@ -150,15 +150,6 @@ describe('TerminalView', () => {
     expect(mockFitAddon.dispose).toHaveBeenCalled();
   });
 
-  it('handles WebSocket open event', async () => {
-    render(<TerminalView sessionId="sess-1" />);
-    await waitForInit();
-    fireResize(800, 400);
-
-    MockWebSocket.instances[0].onopen?.();
-    expect(mockTerminal.writeln).toHaveBeenCalledWith(expect.stringContaining('Connected'));
-  });
-
   it('handles WebSocket text message', async () => {
     render(<TerminalView sessionId="sess-1" />);
     await waitForInit();
@@ -178,13 +169,24 @@ describe('TerminalView', () => {
     expect(mockTerminal.write).toHaveBeenCalledWith(expect.any(Uint8Array));
   });
 
-  it('handles WebSocket close event', async () => {
+  it('shows disconnect message on close without data', async () => {
     render(<TerminalView sessionId="sess-1" />);
     await waitForInit();
     fireResize(800, 400);
 
     MockWebSocket.instances[0].onclose?.();
     expect(mockTerminal.writeln).toHaveBeenCalledWith(expect.stringContaining('Disconnected'));
+  });
+
+  it('does not show disconnect message on close after receiving data', async () => {
+    render(<TerminalView sessionId="sess-1" />);
+    await waitForInit();
+    fireResize(800, 400);
+
+    MockWebSocket.instances[0].onmessage?.({ data: 'hello' });
+    mockTerminal.writeln.mockClear();
+    MockWebSocket.instances[0].onclose?.();
+    expect(mockTerminal.writeln).not.toHaveBeenCalled();
   });
 
   it('handles WebSocket error event', async () => {

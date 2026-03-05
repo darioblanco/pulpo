@@ -1,10 +1,10 @@
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { killSession, resumeSession, getInterventionEvents } from '@/api/client';
 import type { Session, InterventionEvent } from '@/api/types';
-import { ChatView } from '@/components/session/chat-view';
+import { OutputView } from '@/components/session/output-view';
 import { TerminalView } from '@/components/session/terminal-view';
 
 const statusColors: Record<string, string> = {
@@ -26,13 +26,21 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
   const [interventionsExpanded, setInterventionsExpanded] = useState(false);
 
   async function handleKill() {
-    await killSession(session.id);
-    onRefresh();
+    try {
+      await killSession(session.id);
+      onRefresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to kill session');
+    }
   }
 
   async function handleResume() {
-    await resumeSession(session.id);
-    onRefresh();
+    try {
+      await resumeSession(session.id);
+      onRefresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to resume session');
+    }
   }
 
   async function toggleInterventions() {
@@ -94,25 +102,14 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
             <span>{new Date(session.created_at).toLocaleString()}</span>
           </div>
 
-          {session.status === 'running' ? (
-            <Tabs defaultValue="chat" className="my-2 min-w-0">
-              <TabsList className="w-full">
-                <TabsTrigger value="chat" className="flex-1">
-                  Chat
-                </TabsTrigger>
-                <TabsTrigger value="terminal" className="flex-1">
-                  Terminal
-                </TabsTrigger>
-              </TabsList>
-              <TabsContent value="chat" className="min-w-0 overflow-hidden">
-                <ChatView sessionId={session.id} sessionStatus={session.status} />
-              </TabsContent>
-              <TabsContent value="terminal" className="min-w-0 overflow-hidden">
-                <TerminalView sessionId={session.id} />
-              </TabsContent>
-            </Tabs>
-          ) : (
-            <ChatView sessionId={session.id} sessionStatus={session.status} />
+          {session.status === 'running' && (
+            <TerminalView sessionId={session.id} />
+          )}
+
+          {(session.status === 'stale' ||
+            session.status === 'completed' ||
+            session.status === 'dead') && (
+            <OutputView sessionId={session.id} sessionStatus={session.status} />
           )}
 
           {session.status === 'dead' && session.intervention_reason && (

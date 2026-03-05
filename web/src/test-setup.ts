@@ -20,7 +20,7 @@ Object.defineProperty(window, 'matchMedia', {
   }),
 });
 
-// jsdom doesn't implement scrollIntoView — stub for chat-view tests
+// jsdom doesn't implement scrollIntoView — stub for output-view tests
 Element.prototype.scrollIntoView = () => {};
 
 // jsdom doesn't implement pointer capture — stub for Radix Select tests

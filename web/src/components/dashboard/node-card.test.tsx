@@ -15,8 +15,8 @@ vi.mock('@/api/client', () => ({
   setApiConfig: vi.fn(),
 }));
 
-vi.mock('@/components/session/chat-view', () => ({
-  ChatView: () => <div data-testid="mock-chat-view" />,
+vi.mock('@/components/session/output-view', () => ({
+  OutputView: () => <div data-testid="mock-output-view" />,
 }));
 
 vi.mock('@/components/session/terminal-view', () => ({

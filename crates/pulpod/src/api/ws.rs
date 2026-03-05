@@ -68,29 +68,39 @@ async fn handle_stream(socket: axum::extract::ws::WebSocket, tmux_name: &str) {
     #[cfg(not(coverage))]
     {
         use crate::session::pty_bridge;
-        use tracing::debug;
-        match pty_bridge::spawn_attach(tmux_name, 80, 24) {
-            Ok((pty, mut child)) => {
-                let (pty_read, pty_write) = tokio::io::split(pty);
+        use tracing::{debug, warn};
+        match pty_bridge::spawn_attach(tmux_name) {
+            Ok(mut child) => {
+                let Some(stdout) = child.stdout.take() else {
+                    warn!("No stdout pipe for {tmux_name}");
+                    return;
+                };
+                let Some(stdin) = child.stdin.take() else {
+                    warn!("No stdin pipe for {tmux_name}");
+                    return;
+                };
+                info!("PTY bridge started for {tmux_name}");
                 let (ws_sender, ws_receiver) = socket.split();
                 let name_owned = tmux_name.to_owned();
-                let _ = pty_bridge::run_bridge(
-                    pty_read,
-                    pty_write,
+                let result = pty_bridge::run_bridge(
+                    stdout,
+                    stdin,
                     ws_sender,
                     ws_receiver,
                     move |cols, rows| {
                         debug!("Resize {name_owned}: {cols}x{rows}");
-                        // PTY resize would happen here with the pty handle
-                        // but we've moved it — for now, log only
                         Ok(())
                     },
                 )
                 .await;
+                if let Err(e) = &result {
+                    warn!("PTY bridge error for {tmux_name}: {e}");
+                }
+                info!("PTY bridge ended for {tmux_name}");
                 let _ = child.kill().await;
             }
             Err(e) => {
-                debug!("Failed to spawn PTY for {tmux_name}: {e}");
+                warn!("Failed to spawn PTY for {tmux_name}: {e:#}");
             }
         }
     }

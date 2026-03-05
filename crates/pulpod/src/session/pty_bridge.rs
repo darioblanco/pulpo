@@ -4,20 +4,46 @@ use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn};
 
-/// Spawn a PTY running `tmux attach-session -t {tmux_name}` and return the
-/// Pty handle + child process.
+/// Spawn `tmux attach-session` inside a PTY and return the child process.
+///
+/// Uses the system `script` command to allocate a PTY (avoids `pty_process`
+/// portability issues on macOS Sonoma where `posix_openpt` can fail with
+/// `ENOTTY`). `script -q /dev/null` creates an internal PTY, runs the
+/// command inside it, and relays I/O through piped stdin/stdout.
+///
+/// We remove `TMUX` from the environment so attachment works even when
+/// `pulpod` itself runs inside tmux, and set `TERM=xterm-256color`.
 #[cfg(not(coverage))]
-pub fn spawn_attach(
-    tmux_name: &str,
-    cols: u16,
-    rows: u16,
-) -> Result<(pty_process::Pty, tokio::process::Child)> {
-    let pty = pty_process::Pty::new()?;
-    pty.resize(pty_process::Size::new(rows, cols))?;
-    let mut cmd = pty_process::Command::new("tmux");
-    cmd.args(["attach-session", "-t", tmux_name]);
-    let child = cmd.spawn(&pty.pts()?)?;
-    Ok((pty, child))
+pub fn spawn_attach(tmux_name: &str) -> Result<tokio::process::Child> {
+    use anyhow::Context;
+
+    let mut cmd = tokio::process::Command::new("script");
+
+    #[cfg(target_os = "macos")]
+    cmd.args([
+        "-q",
+        "/dev/null",
+        "tmux",
+        "attach-session",
+        "-t",
+        tmux_name,
+    ]);
+
+    #[cfg(not(target_os = "macos"))]
+    cmd.args([
+        "-q",
+        "-c",
+        &format!("tmux attach-session -t {tmux_name}"),
+        "/dev/null",
+    ]);
+
+    cmd.env_remove("TMUX");
+    cmd.env("TERM", "xterm-256color");
+    cmd.stdin(std::process::Stdio::piped());
+    cmd.stdout(std::process::Stdio::piped());
+    cmd.stderr(std::process::Stdio::null());
+
+    cmd.spawn().context("spawn script+tmux attach")
 }
 
 /// Drive the bridge: read from PTY → send to WebSocket, read from WebSocket → write to PTY.

@@ -1,9 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { toast } from 'sonner';
 import { SessionCard } from './session-card';
 import * as api from '@/api/client';
 import type { Session, GuardConfig } from '@/api/types';
+
+vi.mock('sonner', () => ({
+  toast: { error: vi.fn() },
+}));
 
 vi.mock('@/api/client', () => ({
   killSession: vi.fn(),
@@ -17,10 +21,10 @@ vi.mock('@/api/client', () => ({
   setApiConfig: vi.fn(),
 }));
 
-// Mock ChatView and TerminalView to avoid complex dependencies
-vi.mock('@/components/session/chat-view', () => ({
-  ChatView: ({ sessionId }: { sessionId: string }) => (
-    <div data-testid="mock-chat-view">ChatView:{sessionId}</div>
+// Mock OutputView and TerminalView to avoid complex dependencies
+vi.mock('@/components/session/output-view', () => ({
+  OutputView: ({ sessionId }: { sessionId: string }) => (
+    <div data-testid="mock-output-view">OutputView:{sessionId}</div>
   ),
 }));
 
@@ -117,27 +121,32 @@ describe('SessionCard', () => {
     expect(screen.queryByText('Kill Session')).not.toBeInTheDocument();
   });
 
-  it('shows ChatView for non-running expanded session', () => {
+  it('shows TerminalView for running session', () => {
+    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    clickHeader();
+    expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('mock-output-view')).not.toBeInTheDocument();
+  });
+
+  it('shows OutputView for completed session', () => {
     render(<SessionCard session={makeSession({ status: 'completed' })} onRefresh={vi.fn()} />);
     clickHeader();
-    expect(screen.getByTestId('mock-chat-view')).toBeInTheDocument();
-    expect(screen.queryByText('Chat')).not.toBeInTheDocument();
+    expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
   });
 
-  it('shows Chat/Terminal tabs for running sessions', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+  it('shows OutputView for dead session', () => {
+    render(<SessionCard session={makeSession({ status: 'dead' })} onRefresh={vi.fn()} />);
     clickHeader();
-    expect(screen.getByText('Chat')).toBeInTheDocument();
-    expect(screen.getByText('Terminal')).toBeInTheDocument();
-    expect(screen.getByTestId('mock-chat-view')).toBeInTheDocument();
+    expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
   });
 
-  it('switches to terminal tab', async () => {
-    const user = userEvent.setup();
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+  it('shows OutputView for stale session', () => {
+    render(<SessionCard session={makeSession({ status: 'stale' })} onRefresh={vi.fn()} />);
     clickHeader();
-    await user.click(screen.getByText('Terminal'));
-    expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
+    expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
   });
 
   it('calls killSession on Kill button click', async () => {
@@ -236,5 +245,29 @@ describe('SessionCard', () => {
     const header = screen.getByTestId('session-header');
     fireEvent.keyDown(header, { key: 'Enter' });
     expect(screen.getByText('Kill Session')).toBeInTheDocument();
+  });
+
+  it('shows toast on kill error', async () => {
+    mockKillSession.mockRejectedValue(new Error('Kill failed'));
+    const onRefresh = vi.fn();
+    render(<SessionCard session={makeSession()} onRefresh={onRefresh} />);
+    clickHeader();
+    fireEvent.click(screen.getByText('Kill Session'));
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Kill failed');
+    });
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it('shows toast on resume error', async () => {
+    mockResumeSession.mockRejectedValue(new Error('Resume failed'));
+    const onRefresh = vi.fn();
+    render(<SessionCard session={makeSession({ status: 'stale' })} onRefresh={onRefresh} />);
+    clickHeader();
+    fireEvent.click(screen.getByText('Resume'));
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Resume failed');
+    });
+    expect(onRefresh).not.toHaveBeenCalled();
   });
 });

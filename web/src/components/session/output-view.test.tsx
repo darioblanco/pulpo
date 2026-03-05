@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { ChatView } from './chat-view';
+import { OutputView } from './output-view';
 import * as api from '@/api/client';
 
 vi.mock('@/api/client', () => ({
@@ -19,16 +19,16 @@ beforeEach(() => {
   mockSendInput.mockReset();
 });
 
-describe('ChatView', () => {
-  it('renders chat container', () => {
+describe('OutputView', () => {
+  it('renders output container', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<ChatView sessionId="sess-1" sessionStatus="completed" />);
-    expect(screen.getByTestId('chat-view')).toBeInTheDocument();
+    render(<OutputView sessionId="sess-1" sessionStatus="completed" />);
+    expect(screen.getByTestId('output-view')).toBeInTheDocument();
   });
 
   it('fetches and displays output', async () => {
     mockGetSessionOutput.mockResolvedValue({ output: 'Hello from agent' });
-    render(<ChatView sessionId="sess-1" sessionStatus="completed" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="completed" />);
     await waitFor(() => {
       expect(screen.getByText('Hello from agent')).toBeInTheDocument();
     });
@@ -36,46 +36,64 @@ describe('ChatView', () => {
 
   it('strips ANSI codes from output', async () => {
     mockGetSessionOutput.mockResolvedValue({ output: '\x1B[32mGreen text\x1B[0m' });
-    render(<ChatView sessionId="sess-1" sessionStatus="completed" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="completed" />);
     await waitFor(() => {
       expect(screen.getByText('Green text')).toBeInTheDocument();
     });
   });
 
+  it('shows "No output yet" when output is empty', () => {
+    mockGetSessionOutput.mockResolvedValue({ output: '' });
+    render(<OutputView sessionId="sess-1" sessionStatus="completed" />);
+    expect(screen.getByText('No output yet')).toBeInTheDocument();
+  });
+
   it('shows input field for running sessions', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<ChatView sessionId="sess-1" sessionStatus="running" />);
-    expect(screen.getByTestId('chat-input')).toBeInTheDocument();
+    render(<OutputView sessionId="sess-1" sessionStatus="running" />);
+    expect(screen.getByTestId('output-input')).toBeInTheDocument();
     expect(screen.getByText('Send')).toBeInTheDocument();
   });
 
-  it('hides input field for non-running sessions', () => {
+  it('shows input field for stale sessions', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<ChatView sessionId="sess-1" sessionStatus="completed" />);
-    expect(screen.queryByTestId('chat-input')).not.toBeInTheDocument();
+    render(<OutputView sessionId="sess-1" sessionStatus="stale" />);
+    expect(screen.getByTestId('output-input')).toBeInTheDocument();
+    expect(screen.getByText('Send')).toBeInTheDocument();
+  });
+
+  it('hides input field for completed sessions', () => {
+    mockGetSessionOutput.mockResolvedValue({ output: '' });
+    render(<OutputView sessionId="sess-1" sessionStatus="completed" />);
+    expect(screen.queryByTestId('output-input')).not.toBeInTheDocument();
+  });
+
+  it('hides input field for dead sessions', () => {
+    mockGetSessionOutput.mockResolvedValue({ output: '' });
+    render(<OutputView sessionId="sess-1" sessionStatus="dead" />);
+    expect(screen.queryByTestId('output-input')).not.toBeInTheDocument();
   });
 
   it('sends input on button click', async () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
     mockSendInput.mockResolvedValue(undefined);
-    render(<ChatView sessionId="sess-1" sessionStatus="running" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="running" />);
 
-    const input = screen.getByTestId('chat-input');
+    const input = screen.getByTestId('output-input');
     fireEvent.change(input, { target: { value: 'Hello' } });
     fireEvent.click(screen.getByText('Send'));
 
     await waitFor(() => {
       expect(mockSendInput).toHaveBeenCalledWith('sess-1', 'Hello\n');
     });
-    expect(screen.getByText('Hello')).toBeInTheDocument();
   });
 
   it('sends input on Enter key', async () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
     mockSendInput.mockResolvedValue(undefined);
-    render(<ChatView sessionId="sess-1" sessionStatus="running" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="running" />);
 
-    const input = screen.getByTestId('chat-input');
+    const input = screen.getByTestId('output-input');
     fireEvent.change(input, { target: { value: 'Test' } });
     fireEvent.keyDown(input, { key: 'Enter' });
 
@@ -86,13 +104,13 @@ describe('ChatView', () => {
 
   it('does not send empty input', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<ChatView sessionId="sess-1" sessionStatus="running" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="running" />);
 
     fireEvent.click(screen.getByText('Send'));
     expect(mockSendInput).not.toHaveBeenCalled();
   });
 
-  it('appends to existing agent message on subsequent fetches', async () => {
+  it('updates output on subsequent fetches', async () => {
     let callCount = 0;
     mockGetSessionOutput.mockImplementation(async () => {
       callCount++;
@@ -100,14 +118,12 @@ describe('ChatView', () => {
       return { output: 'Part 1Part 2' };
     });
 
-    // Use running status to trigger 2s polling interval
-    render(<ChatView sessionId="sess-1" sessionStatus="running" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="running" />);
 
     await waitFor(() => {
       expect(screen.getByText('Part 1')).toBeInTheDocument();
     });
 
-    // Wait for the interval to fire (2s + buffer)
     await waitFor(
       () => {
         expect(screen.getByText('Part 1Part 2')).toBeInTheDocument();
@@ -116,12 +132,33 @@ describe('ChatView', () => {
     );
   });
 
+  it('polls output for stale sessions', async () => {
+    let callCount = 0;
+    mockGetSessionOutput.mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) return { output: 'Initial' };
+      return { output: 'Updated' };
+    });
+
+    render(<OutputView sessionId="sess-1" sessionStatus="stale" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Initial')).toBeInTheDocument();
+    });
+
+    await waitFor(
+      () => {
+        expect(screen.getByText('Updated')).toBeInTheDocument();
+      },
+      { timeout: 4000 },
+    );
+  });
+
   it('handles fetch errors silently', async () => {
     mockGetSessionOutput.mockRejectedValue(new Error('Network error'));
-    render(<ChatView sessionId="sess-1" sessionStatus="completed" />);
-    // Should not throw
+    render(<OutputView sessionId="sess-1" sessionStatus="completed" />);
     await waitFor(() => {
-      expect(screen.getByTestId('chat-view')).toBeInTheDocument();
+      expect(screen.getByTestId('output-view')).toBeInTheDocument();
     });
   });
 });

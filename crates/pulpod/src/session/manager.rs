@@ -351,26 +351,31 @@ impl SessionManager {
             bail!("session is not stale (status: {})", session.status);
         }
 
-        let guards = session
-            .guard_config
-            .clone()
-            .unwrap_or_else(|| self.default_guard.clone());
-        let mut spawn_params = build_spawn_params(
-            &session.prompt,
-            &guards,
-            session.allowed_tools.as_deref(),
-            session.model.as_deref(),
-            session.system_prompt.as_deref(),
-            session.max_turns,
-            session.max_budget_usd,
-            session.output_format.as_deref(),
-        );
-        spawn_params.worktree = Some(session.name.clone());
-        spawn_params.conversation_id = session.conversation_id.clone();
-        let command = build_command(session.provider, session.mode, &spawn_params);
+        // If the tmux session is still alive, just re-mark it as running.
+        // Only recreate the session if the tmux process is gone.
+        let alive = self.backend.is_alive(&session.name)?;
+        if !alive {
+            let guards = session
+                .guard_config
+                .clone()
+                .unwrap_or_else(|| self.default_guard.clone());
+            let mut spawn_params = build_spawn_params(
+                &session.prompt,
+                &guards,
+                session.allowed_tools.as_deref(),
+                session.model.as_deref(),
+                session.system_prompt.as_deref(),
+                session.max_turns,
+                session.max_budget_usd,
+                session.output_format.as_deref(),
+            );
+            spawn_params.worktree = Some(session.name.clone());
+            spawn_params.conversation_id = session.conversation_id.clone();
+            let command = build_command(session.provider, session.mode, &spawn_params);
 
-        self.backend
-            .create_session(&session.name, &session.workdir, &command)?;
+            self.backend
+                .create_session(&session.name, &session.workdir, &command)?;
+        }
 
         let session_id = session.id.to_string();
         self.store
@@ -1096,10 +1101,43 @@ mod tests {
             .unwrap();
         assert_eq!(fetched.status, SessionStatus::Stale);
 
-        // Now resume it — need to set alive back to true
+        // Now resume it — tmux session is still alive, so it should skip create_session
         *backend.alive.lock().unwrap() = true;
+        backend.calls.lock().unwrap().clear();
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
         assert_eq!(resumed.status, SessionStatus::Running);
+
+        // Verify create_session was NOT called (tmux session already exists)
+        let calls = backend.calls.lock().unwrap();
+        assert!(
+            !calls.iter().any(|c| c.starts_with("create:")),
+            "should not recreate tmux session when alive; calls: {calls:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resume_stale_session_recreates_when_tmux_dead() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr.create_session(make_req("test")).await.unwrap();
+
+        // get_session marks it Stale since is_alive returns false
+        let _ = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Resume while tmux session is dead — should recreate
+        backend.calls.lock().unwrap().clear();
+        let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Running);
+
+        // Verify create_session WAS called
+        let calls = backend.calls.lock().unwrap();
+        assert!(
+            calls.iter().any(|c| c.starts_with("create:")),
+            "should recreate tmux session when dead; calls: {calls:?}"
+        );
     }
 
     #[tokio::test]

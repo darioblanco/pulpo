@@ -125,7 +125,11 @@ export async function createRemoteSession(
 }
 
 export async function killSession(id: string): Promise<void> {
-  await authFetch(`${resolveBaseUrl()}/sessions/${id}/kill`, { method: 'POST' });
+  const res = await authFetch(`${resolveBaseUrl()}/sessions/${id}/kill`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to kill session');
+  }
 }
 
 export async function deleteSession(id: string): Promise<void> {
@@ -150,6 +154,10 @@ export async function sendInput(id: string, text: string): Promise<void> {
 
 export async function resumeSession(id: string): Promise<{ id: string; status: string }> {
   const res = await authFetch(`${resolveBaseUrl()}/sessions/${id}/resume`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to resume session');
+  }
   return res.json();
 }
 

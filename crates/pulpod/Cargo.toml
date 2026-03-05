@@ -39,7 +39,6 @@ thiserror.workspace = true
 anyhow.workspace = true
 rust-embed.workspace = true
 mime_guess.workspace = true
-pty-process.workspace = true
 futures.workspace = true
 tokio-stream.workspace = true
 hostname.workspace = true
