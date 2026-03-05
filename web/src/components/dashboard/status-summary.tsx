@@ -5,15 +5,16 @@ interface StatusSummaryProps {
 }
 
 export function StatusSummary({ sessions }: StatusSummaryProps) {
-  const running = sessions.filter(
-    (s) => s.status === 'running' || s.status === 'creating',
-  ).length;
+  const running = sessions.filter((s) => s.status === 'running' || s.status === 'creating').length;
   const stale = sessions.filter((s) => s.status === 'stale').length;
   const completed = sessions.filter((s) => s.status === 'completed').length;
   const dead = sessions.filter((s) => s.status === 'dead').length;
 
   return (
-    <div data-testid="status-summary" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+    <div
+      data-testid="status-summary"
+      className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm"
+    >
       <StatusDot color="bg-status-running" label="running" count={running} testId="count-running" />
       <StatusDot color="bg-status-stale" label="stale" count={stale} testId="count-stale" />
       <StatusDot

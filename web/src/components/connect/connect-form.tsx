@@ -73,7 +73,10 @@ export function ConnectForm({ onConnect, initialToken = '' }: ConnectFormProps) 
         <div className="mb-1 flex items-center justify-between">
           <Label htmlFor="connect-url">Node URL</Label>
           {nodeStatus !== 'unknown' && (
-            <span data-testid="node-status" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span
+              data-testid="node-status"
+              className="flex items-center gap-1.5 text-xs text-muted-foreground"
+            >
               <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
               {label}
             </span>

@@ -102,9 +102,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
             <span>{new Date(session.created_at).toLocaleString()}</span>
           </div>
 
-          {session.status === 'running' && (
-            <TerminalView sessionId={session.id} />
-          )}
+          {session.status === 'running' && <TerminalView sessionId={session.id} />}
 
           {(session.status === 'stale' ||
             session.status === 'completed' ||

@@ -20,14 +20,7 @@ pub fn spawn_attach(tmux_name: &str) -> Result<tokio::process::Child> {
     let mut cmd = tokio::process::Command::new("script");
 
     #[cfg(target_os = "macos")]
-    cmd.args([
-        "-q",
-        "/dev/null",
-        "tmux",
-        "attach-session",
-        "-t",
-        tmux_name,
-    ]);
+    cmd.args(["-q", "/dev/null", "tmux", "attach-session", "-t", tmux_name]);
 
     #[cfg(not(target_os = "macos"))]
     cmd.args([

@@ -5,8 +5,7 @@ interface TerminalViewProps {
   sessionId: string;
 }
 
-const TERMINAL_FONT_FAMILY =
-  "'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Fira Code', monospace";
+const TERMINAL_FONT_FAMILY = "'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Fira Code', monospace";
 
 export function TerminalView({ sessionId }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);

@@ -21,11 +21,10 @@ async fn main() -> anyhow::Result<()> {
             // After the shutdown signal fires, give in-flight streaming
             // connections (SSE, WebSocket) 3 seconds to close before forcing exit.
             let (shutdown_done_tx, shutdown_done_rx) = tokio::sync::oneshot::channel::<()>();
-            let server = axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    shutdown_signal(shutdown_handle).await;
-                    let _ = shutdown_done_tx.send(());
-                });
+            let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+                shutdown_signal(shutdown_handle).await;
+                let _ = shutdown_done_tx.send(());
+            });
 
             tokio::select! {
                 result = server => result?,
