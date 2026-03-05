@@ -4,7 +4,7 @@
     ".": {
       "release-type": "rust",
       "component": "pulpo",
-      "initial-version": "0.1.0",
+      "initial-version": "0.0.1",
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true
     }
