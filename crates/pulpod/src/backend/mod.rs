@@ -5,6 +5,12 @@ use anyhow::Result;
 /// Backend trait — abstracts tmux (direct) vs Docker+tmux.
 #[allow(dead_code)]
 pub trait Backend: Send + Sync {
+    /// Check that the provider binary is available.
+    /// Default is no-op (for mocks). Real backends override this.
+    fn check_provider(&self, _provider: &str) -> Result<()> {
+        Ok(())
+    }
+
     /// Create a new terminal session running the given command.
     fn create_session(&self, name: &str, working_dir: &str, command: &str) -> Result<()>;
 

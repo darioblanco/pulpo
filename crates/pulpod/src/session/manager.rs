@@ -95,7 +95,7 @@ impl SessionManager {
         validate_workdir(&req.workdir)?;
         let id = Uuid::new_v4();
         let provider = req.provider.unwrap_or(Provider::Claude);
-        crate::backend::tmux::check_provider_binary(&provider.to_string())?;
+        self.backend.check_provider(&provider.to_string())?;
         let mode = req.mode.unwrap_or_default();
         let guards = resolve_guard_config(&req, &self.default_guard);
         let name = req.name.unwrap_or_else(|| derive_name(&req.workdir));
@@ -370,7 +370,9 @@ impl SessionManager {
                 session.output_format.as_deref(),
             );
             spawn_params.worktree = Some(session.name.clone());
-            spawn_params.conversation_id.clone_from(&session.conversation_id);
+            spawn_params
+                .conversation_id
+                .clone_from(&session.conversation_id);
             let command = build_command(session.provider, session.mode, &spawn_params);
 
             self.backend

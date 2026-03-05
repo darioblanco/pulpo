@@ -164,6 +164,10 @@ fn run_tmux(mut cmd: Command, context: &str) -> Result<Output> {
 
 #[cfg(not(coverage))]
 impl Backend for TmuxBackend {
+    fn check_provider(&self, provider: &str) -> Result<()> {
+        check_provider_binary(provider)
+    }
+
     fn create_session(&self, name: &str, working_dir: &str, command: &str) -> Result<()> {
         let session_name = tmux_session_name(name);
         run_tmux(
