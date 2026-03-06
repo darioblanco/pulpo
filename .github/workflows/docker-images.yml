@@ -2,18 +2,8 @@ name: Docker Images
 
 on:
   push:
-    branches: [main]
     tags:
       - 'v*.*.*'
-    paths:
-      - 'docker/**'
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'web/**'
-      - '.dockerignore'
-      - 'contrib/discord-bot/**'
-      - '.github/workflows/docker-images.yml'
   workflow_dispatch:
 
 permissions:
@@ -52,10 +42,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pulpo-base
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=sha-{{sha}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Build and push pulpo-base
         id: build_base
@@ -97,10 +86,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pulpo-agents
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=sha-{{sha}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Build and push pulpo-agents
         uses: docker/build-push-action@v6
@@ -142,10 +130,9 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pulpo-discord-bot
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=sha-{{sha}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
 
       - name: Build and push pulpo-discord-bot
         uses: docker/build-push-action@v6

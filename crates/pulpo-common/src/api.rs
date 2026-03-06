@@ -114,7 +114,7 @@ pub struct UpdateConfigResponse {
     pub restart_required: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AddPeerRequest {
     pub name: String,
     pub address: String,
@@ -672,6 +672,29 @@ mod tests {
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("test"));
+    }
+
+    #[test]
+    fn test_add_peer_request_serialize() {
+        let req = AddPeerRequest {
+            name: "node".into(),
+            address: "10.0.0.1:7433".into(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"name\":\"node\""));
+        assert!(json.contains("\"address\":\"10.0.0.1:7433\""));
+    }
+
+    #[test]
+    fn test_add_peer_request_roundtrip() {
+        let req = AddPeerRequest {
+            name: "roundtrip".into(),
+            address: "h:1".into(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: AddPeerRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.name, "roundtrip");
+        assert_eq!(parsed.address, "h:1");
     }
 
     #[test]

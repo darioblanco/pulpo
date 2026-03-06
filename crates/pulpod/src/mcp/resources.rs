@@ -233,6 +233,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            discovery: crate::config::DiscoveryConfig::default(),
         }
     }
 

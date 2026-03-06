@@ -138,6 +138,65 @@ system_prompt = "You are a senior reviewer focused on correctness and security."
 
 See [SPEC.md](SPEC.md#configuration) for all supported config sections.
 
+## Peer Discovery
+
+Pulpo nodes find each other automatically using one of three discovery methods, configured via `[discovery]` in `config.toml`.
+
+### mDNS (default)
+
+Zero-config discovery on the local network. Works when `bind = "public"`.
+
+```toml
+[auth]
+bind = "public"
+
+[discovery]
+method = "mdns"
+```
+
+Nodes broadcast themselves via `_pulpo._tcp.local.` and automatically discover peers on the same LAN. No additional configuration needed.
+
+### Tailscale
+
+Discovers peers across your Tailscale network by querying the local Tailscale API. Requires `tailscale` CLI to be installed and connected.
+
+```toml
+[discovery]
+method = "tailscale"
+tag = "pulpo"          # optional: only discover nodes with this ACL tag
+interval_secs = 30     # how often to scan (default: 30)
+```
+
+Tag filtering uses Tailscale ACL tags (e.g., `tag:pulpo`). If `tag` is omitted, all online nodes in the tailnet are probed. Tailscale handles encryption and NAT traversal — no port forwarding needed.
+
+### Seed
+
+Bootstrap from a single known peer, then discover its peers transitively.
+
+```toml
+[discovery]
+method = "seed"
+seed = "10.0.0.5:7433"  # address of a known pulpo node
+interval_secs = 30
+```
+
+The node fetches the seed's peer list via `GET /api/v1/peers` and announces itself back. Works on any network (Tailscale, WireGuard, plain internet). You only need to configure one seed address — the rest is discovered automatically.
+
+### Manual peers
+
+You can always add peers manually alongside any discovery method:
+
+```toml
+[peers]
+mac = "10.0.0.1:7433"
+
+[peers.linux]
+address = "10.0.0.2:7433"
+token = "secret"        # optional: auth token for this peer
+```
+
+Manual peers are never overwritten by automatic discovery.
+
 ## Docker
 
 Pulpo includes Docker scaffolding and CI-built images for:

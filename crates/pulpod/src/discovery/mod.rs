@@ -1,4 +1,6 @@
 pub mod mdns;
+pub mod seed;
+pub mod tailscale;
 
 /// mDNS service type for Pulpo daemon discovery.
 pub const SERVICE_TYPE: &str = "_pulpo._tcp.local.";

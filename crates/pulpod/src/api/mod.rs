@@ -134,6 +134,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            discovery: crate::config::DiscoveryConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -165,6 +166,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            discovery: crate::config::DiscoveryConfig::default(),
         };
         let config_path = tmpdir.path().join("config.toml");
         let backend = Arc::new(StubBackend);
@@ -216,6 +218,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            discovery: crate::config::DiscoveryConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(

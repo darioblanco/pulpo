@@ -291,9 +291,11 @@ pulpo/
 │   │   ├── mcp/                  # MCP server
 │   │   │   ├── mod.rs            # MCP tool handlers
 │   │   │   └── resources.rs      # MCP resource definitions
-│   │   └── discovery/            # mDNS service discovery
+│   │   └── discovery/            # Peer discovery (mDNS, Tailscale, seed)
 │   │       ├── mod.rs            # ServiceRegistration types + constants
-│   │       └── mdns.rs           # mDNS register, browse, shutdown
+│   │       ├── mdns.rs           # mDNS register, browse, shutdown
+│   │       ├── tailscale.rs      # Tailscale API peer discovery
+│   │       └── seed.rs           # Seed-based gossip peer discovery
 │   ├── pulpo-cli/src/
 │   │   ├── main.rs               # Thin entry point (cfg(coverage) excluded)
 │   │   └── lib.rs                # CLI logic: Cli, Commands, execute

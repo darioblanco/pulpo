@@ -150,6 +150,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 personas: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                discovery: crate::config::DiscoveryConfig::default(),
             },
             manager,
             peer_registry,
@@ -184,6 +185,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 personas: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                discovery: crate::config::DiscoveryConfig::default(),
             },
             config_path,
             manager,
@@ -433,6 +435,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            discovery: crate::config::DiscoveryConfig::default(),
         };
         let resp = config_to_response(&config);
         assert_eq!(resp.node.name, "test");
@@ -526,6 +529,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 personas: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                discovery: crate::config::DiscoveryConfig::default(),
             },
             std::path::PathBuf::from("/dev/null/impossible/config.toml"),
             manager,
