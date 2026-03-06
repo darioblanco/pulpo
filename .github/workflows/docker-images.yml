@@ -27,8 +27,6 @@ jobs:
   build-base:
     name: Build & Push pulpo-base
     runs-on: ubuntu-latest
-    outputs:
-      base_sha_image: ${{ steps.vars.outputs.base_sha_image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -69,11 +67,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Export base sha image
-        id: vars
-        run: |
-          echo "base_sha_image=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pulpo-base:sha-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-
   build-agents:
     name: Build & Push pulpo-agents
     runs-on: ubuntu-latest
@@ -112,7 +105,7 @@ jobs:
           context: .
           file: docker/agents/Dockerfile
           build-args: |
-            BASE_IMAGE=${{ needs.build-base.outputs.base_sha_image }}
+            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pulpo-base:sha-${{ github.sha }}
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta_agents.outputs.tags }}
