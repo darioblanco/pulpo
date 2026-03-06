@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.5](https://github.com/darioblanco/pulpo/compare/v0.0.4...v0.0.5) (2026-03-06)
+
+
+### Bug Fixes
+
+* **release:** escape HOMEBREW_PREFIX in formula environment_variables ([ec89605](https://github.com/darioblanco/pulpo/commit/ec89605d524440f269561be7bb7155d7c5438855))
+
 ## [0.0.4](https://github.com/darioblanco/pulpo/compare/v0.0.3...v0.0.4) (2026-03-06)
 
 
