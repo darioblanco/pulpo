@@ -354,6 +354,7 @@ jobs:
             git add "Formula/${filename}"
             git commit -m "${name} ${version}"
           done
+          git push
 
       - name: Sync pulpo meta formula
         run: |
@@ -429,7 +430,7 @@ jobs:
           formula << "  end\n\n"
           formula << "  test do\n"
           formula << "    assert_match version.to_s, shell_output(\"#{bin}/pulpod --version\")\n"
-          formula << "    assert_match version.to_s, shell_output(\"#{Formula[\\\"pulpo-cli\\\"].opt_bin}/pulpo --version\")\n"
+          formula << "    assert_match version.to_s, shell_output((Formula[\\\"pulpo-cli\\\"].opt_bin/\\\"pulpo\\\").to_s + \\\" --version\\\")\n"
           formula << "  end\n\n"
           formula << "  def caveats\n"
           formula << "    <<~EOS\n"

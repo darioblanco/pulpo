@@ -4,7 +4,6 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "component": "pulpo",
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true,
       "extra-files": [
