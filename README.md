@@ -2,9 +2,11 @@
 
 [![CI](https://github.com/darioblanco/pulpo/actions/workflows/ci.yml/badge.svg)](https://github.com/darioblanco/pulpo/actions/workflows/ci.yml)
 [![Docker Images](https://github.com/darioblanco/pulpo/actions/workflows/docker-images.yml/badge.svg)](https://github.com/darioblanco/pulpo/actions/workflows/docker-images.yml)
-[![Release](https://github.com/darioblanco/pulpo/actions/workflows/release.yml/badge.svg)](https://github.com/darioblanco/pulpo/actions/workflows/release.yml)
 [![Latest Release](https://img.shields.io/github/v/release/darioblanco/pulpo?display_name=tag)](https://github.com/darioblanco/pulpo/releases)
+[![Release Date](https://img.shields.io/github/release-date/darioblanco/pulpo)](https://github.com/darioblanco/pulpo/releases)
+[![Docker Hub: pulpo-base](https://img.shields.io/docker/pulls/darioblanco/pulpo-base)](https://hub.docker.com/r/darioblanco/pulpo-base)
 [![Docker Hub: pulpo-agents](https://img.shields.io/docker/pulls/darioblanco/pulpo-agents)](https://hub.docker.com/r/darioblanco/pulpo-agents)
+[![Docker Hub: pulpo-discord-bot](https://img.shields.io/docker/pulls/darioblanco/pulpo-discord-bot)](https://hub.docker.com/r/darioblanco/pulpo-discord-bot)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/darioblanco/pulpo#license)
 
 > **⚠️ Experimental** — Pulpo is in early development. APIs, config format, and behavior may change between releases. Feedback and contributions are welcome.
