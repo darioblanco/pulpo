@@ -7,6 +7,8 @@
 [![Docker Hub: pulpo-agents](https://img.shields.io/docker/pulls/darioblanco/pulpo-agents)](https://hub.docker.com/r/darioblanco/pulpo-agents)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/darioblanco/pulpo#license)
 
+> **⚠️ Experimental** — Pulpo is in early development. APIs, config format, and behavior may change between releases. Feedback and contributions are welcome.
+
 Self-hosted control plane for coding agents on your own machines.
 
 Pulpo runs as a daemon (`pulpod`) with a CLI (`pulpo`) and embedded web UI. It manages agent sessions (Claude Code, Codex) over `tmux`, persists lifecycle state in SQLite, and supports recovery after restarts/reboots.
