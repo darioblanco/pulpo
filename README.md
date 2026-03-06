@@ -44,7 +44,7 @@ Pulpo runs as a daemon (`pulpod`) with a CLI (`pulpo`) and embedded web UI. It m
 macOS (Homebrew):
 
 ```bash
-brew install darioblanco/tap/pulpo tmux
+brew install darioblanco/tap/pulpo
 ```
 
 From source (Rust 1.82+, Node.js 22+, tmux 3.2+):
