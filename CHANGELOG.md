@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.6](https://github.com/darioblanco/pulpo/compare/v0.0.5...v0.0.6) (2026-03-06)
+
+
+### Bug Fixes
+
+* **release:** skip verify on pulpod crate publish ([ff62a00](https://github.com/darioblanco/pulpo/commit/ff62a00633e46fa5f50c372c54eba455af9f523c))
+* **release:** use single-quoted strings for Homebrew DSL in formula generator ([2ff1ce2](https://github.com/darioblanco/pulpo/commit/2ff1ce2faeac7d78e4f72901c65d06abb3297dd8))
+
 ## [0.0.5](https://github.com/darioblanco/pulpo/compare/v0.0.4...v0.0.5) (2026-03-06)
 
 
