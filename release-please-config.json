@@ -3,10 +3,27 @@
   "bootstrap-sha": "3496c6c5811325f0448980699261aa4615b61afd",
   "packages": {
     ".": {
-      "release-type": "rust",
+      "release-type": "simple",
       "component": "pulpo",
       "bump-minor-pre-major": true,
-      "bump-patch-for-minor-pre-major": true
+      "bump-patch-for-minor-pre-major": true,
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/pulpod/Cargo.toml",
+          "jsonpath": "$.dependencies.pulpo-common.version"
+        },
+        {
+          "type": "toml",
+          "path": "crates/pulpo-cli/Cargo.toml",
+          "jsonpath": "$.dependencies.pulpo-common.version"
+        }
+      ]
     }
   }
 }
