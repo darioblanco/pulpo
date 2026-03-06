@@ -30,6 +30,9 @@ struct CoverageBackend;
 
 #[cfg(coverage)]
 impl backend::Backend for CoverageBackend {
+    fn session_id(&self, name: &str) -> String {
+        format!("pulpo-{name}")
+    }
     fn create_session(&self, _: &str, _: &str, _: &str) -> anyhow::Result<()> {
         Ok(())
     }
@@ -47,6 +50,9 @@ impl backend::Backend for CoverageBackend {
     }
     fn setup_logging(&self, _: &str, _: &str) -> anyhow::Result<()> {
         Ok(())
+    }
+    fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
+        anyhow::bail!("not supported in coverage")
     }
 }
 
@@ -141,13 +147,13 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     store.migrate().await?;
 
     #[cfg(not(coverage))]
-    {
-        let version = backend::tmux::check_tmux_version()?;
-        info!("Using {version}");
-    }
+    let backend: Arc<dyn backend::Backend> = Arc::new(TmuxBackend::new());
 
     #[cfg(not(coverage))]
-    let backend: Arc<dyn backend::Backend> = Arc::new(TmuxBackend::new());
+    {
+        let version = backend.check_version()?;
+        info!("Using {version}");
+    }
 
     #[cfg(coverage)]
     let backend: Arc<dyn backend::Backend> = Arc::new(CoverageBackend);

@@ -48,40 +48,48 @@ pub async fn stream(
         ));
     }
 
-    let tmux_name = resolve_tmux_name(&session);
+    let backend_id = resolve_backend_id(&session, &state.session_manager);
 
-    info!("WebSocket stream requested for session {id} (tmux: {tmux_name})");
+    info!("WebSocket stream requested for session {id} (backend: {backend_id})");
 
+    let backend = state.session_manager.backend();
     Ok(ws.on_upgrade(move |socket| async move {
-        handle_stream(socket, &tmux_name).await;
+        handle_stream(socket, &backend_id, &backend).await;
     }))
 }
 
-fn resolve_tmux_name(session: &pulpo_common::session::Session) -> String {
+fn resolve_backend_id(
+    session: &pulpo_common::session::Session,
+    manager: &crate::session::manager::SessionManager,
+) -> String {
     session
-        .tmux_session
+        .backend_session_id
         .clone()
-        .unwrap_or_else(|| format!("pulpo-{}", session.name))
+        .unwrap_or_else(|| manager.backend().session_id(&session.name))
 }
 
-async fn handle_stream(socket: axum::extract::ws::WebSocket, tmux_name: &str) {
+async fn handle_stream(
+    socket: axum::extract::ws::WebSocket,
+    session_id: &str,
+    backend: &Arc<dyn crate::backend::Backend>,
+) {
     #[cfg(not(coverage))]
     {
         use crate::session::pty_bridge;
         use tracing::{debug, warn};
-        match pty_bridge::spawn_attach(tmux_name) {
+        match backend.spawn_attach(session_id) {
             Ok(mut child) => {
                 let Some(stdout) = child.stdout.take() else {
-                    warn!("No stdout pipe for {tmux_name}");
+                    warn!("No stdout pipe for {session_id}");
                     return;
                 };
                 let Some(stdin) = child.stdin.take() else {
-                    warn!("No stdin pipe for {tmux_name}");
+                    warn!("No stdin pipe for {session_id}");
                     return;
                 };
-                info!("PTY bridge started for {tmux_name}");
+                info!("PTY bridge started for {session_id}");
                 let (ws_sender, ws_receiver) = socket.split();
-                let name_owned = tmux_name.to_owned();
+                let name_owned = session_id.to_owned();
                 let result = pty_bridge::run_bridge(
                     stdout,
                     stdin,
@@ -94,13 +102,13 @@ async fn handle_stream(socket: axum::extract::ws::WebSocket, tmux_name: &str) {
                 )
                 .await;
                 if let Err(e) = &result {
-                    warn!("PTY bridge error for {tmux_name}: {e}");
+                    warn!("PTY bridge error for {session_id}: {e}");
                 }
-                info!("PTY bridge ended for {tmux_name}");
+                info!("PTY bridge ended for {session_id}");
                 let _ = child.kill().await;
             }
             Err(e) => {
-                warn!("Failed to spawn PTY for {tmux_name}: {e:#}");
+                warn!("Failed to spawn PTY for {session_id}: {e:#}");
             }
         }
     }
@@ -118,10 +126,10 @@ async fn handle_stream(socket: axum::extract::ws::WebSocket, tmux_name: &str) {
                 Message::Text(text) => Message::Text(format!("echo:{text}").into()),
                 _ => break, // Close, Ping, Pong
             };
-            // Ignore send errors — loop will exit when ws_receiver returns None
             let _ = ws_sender.send(response).await;
         }
-        let _ = tmux_name;
+        let _ = session_id;
+        let _ = backend;
     }
 }
 
@@ -142,6 +150,9 @@ mod tests {
     struct StubBackend;
 
     impl Backend for StubBackend {
+        fn session_id(&self, name: &str) -> String {
+            name.to_owned()
+        }
         fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
@@ -160,11 +171,17 @@ mod tests {
         fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
+        fn spawn_attach(&self, _: &str) -> Result<tokio::process::Child> {
+            anyhow::bail!("not supported in stub")
+        }
     }
 
     struct DeadBackend;
 
     impl Backend for DeadBackend {
+        fn session_id(&self, name: &str) -> String {
+            name.to_owned()
+        }
         fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
@@ -182,6 +199,9 @@ mod tests {
         }
         fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
             Ok(())
+        }
+        fn spawn_attach(&self, _: &str) -> Result<tokio::process::Child> {
+            anyhow::bail!("not supported in dead stub")
         }
     }
 
@@ -284,9 +304,10 @@ mod tests {
         assert!(b.setup_logging("n", "p").is_ok());
     }
 
-    #[test]
-    fn test_resolve_tmux_name_with_explicit() {
+    #[tokio::test]
+    async fn test_resolve_backend_id_with_explicit() {
         use pulpo_common::session::*;
+        let state = test_state_with_backend(Arc::new(StubBackend)).await;
         let session = Session {
             id: uuid::Uuid::new_v4(),
             name: "my-session".into(),
@@ -297,7 +318,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("custom-tmux".into()),
+            backend_session_id: Some("custom-backend-id".into()),
 
             output_snapshot: None,
             guard_config: None,
@@ -317,12 +338,16 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
-        assert_eq!(super::resolve_tmux_name(&session), "custom-tmux");
+        assert_eq!(
+            super::resolve_backend_id(&session, &state.session_manager),
+            "custom-backend-id"
+        );
     }
 
-    #[test]
-    fn test_resolve_tmux_name_fallback() {
+    #[tokio::test]
+    async fn test_resolve_backend_id_fallback() {
         use pulpo_common::session::*;
+        let state = test_state_with_backend(Arc::new(StubBackend)).await;
         let session = Session {
             id: uuid::Uuid::new_v4(),
             name: "my-session".into(),
@@ -333,7 +358,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: None,
+            backend_session_id: None,
 
             output_snapshot: None,
             guard_config: None,
@@ -353,6 +378,10 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
-        assert_eq!(super::resolve_tmux_name(&session), "pulpo-my-session");
+        // StubBackend.session_id returns just the name
+        assert_eq!(
+            super::resolve_backend_id(&session, &state.session_manager),
+            "my-session"
+        );
     }
 }

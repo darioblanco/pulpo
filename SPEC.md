@@ -163,7 +163,7 @@ Stored in `~/.pulpo/state.db` (SQLite):
 | `conversation_id` | Claude Code conversation ID (from ~/.claude/)           |
 | `status`          | `creating`, `running`, `completed`, `dead`, `stale`     |
 | `exit_code`       | Process exit code (null if still running)               |
-| `tmux_session`    | tmux session name                                       |
+| `backend_session_id`    | Backend-specific session identifier                     |
 | `output_snapshot` | Last N lines of terminal output                         |
 | `created_at`      | Timestamp                                               |
 | `updated_at`      | Timestamp                                               |
@@ -369,7 +369,7 @@ is used as defaults; explicit fields override persona values.
 ```
 
 The full `Session` object includes additional nullable fields: `conversation_id`,
-`exit_code`, `tmux_session`, `allowed_tools`, `system_prompt`, `metadata`,
+`exit_code`, `backend_session_id`, `allowed_tools`, `system_prompt`, `metadata`,
 `intervention_reason`, `intervention_at`, `last_output_at`, `idle_since`.
 
 ### Node

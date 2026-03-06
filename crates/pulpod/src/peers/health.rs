@@ -443,7 +443,7 @@ mod tests {
                 mode: pulpo_common::session::SessionMode::Interactive,
                 conversation_id: None,
                 exit_code: None,
-                tmux_session: None,
+                backend_session_id: None,
 
                 output_snapshot: None,
                 guard_config: None,
@@ -473,7 +473,7 @@ mod tests {
                 mode: pulpo_common::session::SessionMode::Interactive,
                 conversation_id: None,
                 exit_code: None,
-                tmux_session: None,
+                backend_session_id: None,
 
                 output_snapshot: None,
                 guard_config: None,

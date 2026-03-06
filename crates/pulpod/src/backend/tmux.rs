@@ -164,6 +164,14 @@ fn run_tmux(mut cmd: Command, context: &str) -> Result<Output> {
 
 #[cfg(not(coverage))]
 impl Backend for TmuxBackend {
+    fn session_id(&self, name: &str) -> String {
+        tmux_session_name(name)
+    }
+
+    fn check_version(&self) -> Result<String> {
+        check_tmux_version()
+    }
+
     fn check_provider(&self, provider: &str) -> Result<()> {
         check_provider_binary(provider)
     }
@@ -217,6 +225,37 @@ impl Backend for TmuxBackend {
             "setup pipe-pane logging",
         )?;
         Ok(())
+    }
+
+    fn spawn_attach(&self, name: &str) -> Result<tokio::process::Child> {
+        let session_name = tmux_session_name(name);
+        let mut cmd = tokio::process::Command::new("script");
+
+        #[cfg(target_os = "macos")]
+        cmd.args([
+            "-q",
+            "/dev/null",
+            "tmux",
+            "attach-session",
+            "-t",
+            &session_name,
+        ]);
+
+        #[cfg(not(target_os = "macos"))]
+        cmd.args([
+            "-q",
+            "-c",
+            &format!("tmux attach-session -t {session_name}"),
+            "/dev/null",
+        ]);
+
+        cmd.env_remove("TMUX");
+        cmd.env("TERM", "xterm-256color");
+        cmd.stdin(std::process::Stdio::piped());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::null());
+
+        cmd.spawn().context("spawn script+tmux attach")
     }
 }
 

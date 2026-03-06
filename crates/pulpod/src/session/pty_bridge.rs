@@ -4,41 +4,6 @@ use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn};
 
-/// Spawn `tmux attach-session` inside a PTY and return the child process.
-///
-/// Uses the system `script` command to allocate a PTY (avoids `pty_process`
-/// portability issues on macOS Sonoma where `posix_openpt` can fail with
-/// `ENOTTY`). `script -q /dev/null` creates an internal PTY, runs the
-/// command inside it, and relays I/O through piped stdin/stdout.
-///
-/// We remove `TMUX` from the environment so attachment works even when
-/// `pulpod` itself runs inside tmux, and set `TERM=xterm-256color`.
-#[cfg(not(coverage))]
-pub fn spawn_attach(tmux_name: &str) -> Result<tokio::process::Child> {
-    use anyhow::Context;
-
-    let mut cmd = tokio::process::Command::new("script");
-
-    #[cfg(target_os = "macos")]
-    cmd.args(["-q", "/dev/null", "tmux", "attach-session", "-t", tmux_name]);
-
-    #[cfg(not(target_os = "macos"))]
-    cmd.args([
-        "-q",
-        "-c",
-        &format!("tmux attach-session -t {tmux_name}"),
-        "/dev/null",
-    ]);
-
-    cmd.env_remove("TMUX");
-    cmd.env("TERM", "xterm-256color");
-    cmd.stdin(std::process::Stdio::piped());
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::null());
-
-    cmd.spawn().context("spawn script+tmux attach")
-}
-
 /// Drive the bridge: read from PTY → send to WebSocket, read from WebSocket → write to PTY.
 /// Handles binary data (terminal I/O) and text messages (resize control).
 /// Returns when either side disconnects.

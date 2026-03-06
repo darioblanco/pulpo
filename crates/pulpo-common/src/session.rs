@@ -115,7 +115,7 @@ pub struct Session {
     pub mode: SessionMode,
     pub conversation_id: Option<String>,
     pub exit_code: Option<i32>,
-    pub tmux_session: Option<String>,
+    pub backend_session_id: Option<String>,
     pub output_snapshot: Option<String>,
     pub guard_config: Option<GuardConfig>,
     pub model: Option<String>,
@@ -151,7 +151,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: Some("conv-123".into()),
             exit_code: None,
-            tmux_session: Some("pulpo-test".into()),
+            backend_session_id: Some("pulpo-test".into()),
 
             output_snapshot: Some("some output".into()),
             guard_config: None,
@@ -411,7 +411,7 @@ mod tests {
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,
-            tmux_session: None,
+            backend_session_id: None,
 
             output_snapshot: None,
             guard_config: None,
@@ -479,7 +479,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: None,
+            backend_session_id: None,
 
             output_snapshot: None,
             guard_config: None,
@@ -515,7 +515,7 @@ mod tests {
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: Some(0),
-            tmux_session: None,
+            backend_session_id: None,
 
             output_snapshot: None,
             guard_config: None,
@@ -555,7 +555,7 @@ mod tests {
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,
-            tmux_session: None,
+            backend_session_id: None,
             output_snapshot: None,
             guard_config: None,
             model: Some("opus".into()),

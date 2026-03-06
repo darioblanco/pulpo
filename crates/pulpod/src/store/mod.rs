@@ -48,7 +48,7 @@ impl Store {
                 mode TEXT NOT NULL DEFAULT 'interactive',
                 conversation_id TEXT,
                 exit_code INTEGER,
-                tmux_session TEXT,
+                backend_session_id TEXT,
                 output_snapshot TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -188,6 +188,18 @@ impl Store {
                 .await?;
         }
 
+        // Idempotent migration: rename tmux_session → backend_session_id
+        let has_tmux_session: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'tmux_session'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_tmux_session > 0 {
+            sqlx::query("ALTER TABLE sessions RENAME COLUMN tmux_session TO backend_session_id")
+                .execute(&self.pool)
+                .await?;
+        }
+
         Ok(())
     }
 
@@ -214,7 +226,7 @@ impl Store {
         let max_turns_i32 = session.max_turns.map(|n| n as i32);
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
-                conversation_id, exit_code, tmux_session,
+                conversation_id, exit_code, backend_session_id,
                 output_snapshot, guard_config,
                 model, allowed_tools, system_prompt, metadata, persona,
                 max_turns, max_budget_usd, output_format,
@@ -231,7 +243,7 @@ impl Store {
         .bind(session.mode.to_string())
         .bind(&session.conversation_id)
         .bind(session.exit_code)
-        .bind(&session.tmux_session)
+        .bind(&session.backend_session_id)
         .bind(&session.output_snapshot)
         .bind(&guard_json)
         .bind(&session.model)
@@ -499,7 +511,7 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
             .map_err(|e| anyhow::anyhow!(e))?,
         conversation_id: row.get("conversation_id"),
         exit_code: row.get("exit_code"),
-        tmux_session: row.get("tmux_session"),
+        backend_session_id: row.get("backend_session_id"),
         output_snapshot: row.get("output_snapshot"),
         guard_config,
         model: row.get("model"),
@@ -560,7 +572,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: Some("conv-123".into()),
             exit_code: None,
-            tmux_session: Some(format!("pulpo-{name}")),
+            backend_session_id: Some(format!("pulpo-{name}")),
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -655,7 +667,10 @@ mod tests {
         assert_eq!(fetched.mode, SessionMode::Interactive);
         assert_eq!(fetched.conversation_id, Some("conv-123".into()));
         assert_eq!(fetched.exit_code, None);
-        assert_eq!(fetched.tmux_session, Some("pulpo-test-roundtrip".into()));
+        assert_eq!(
+            fetched.backend_session_id,
+            Some("pulpo-test-roundtrip".into())
+        );
     }
 
     #[tokio::test]
@@ -782,7 +797,7 @@ mod tests {
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,
-            tmux_session: None,
+            backend_session_id: None,
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -813,7 +828,7 @@ mod tests {
         assert_eq!(fetched.mode, SessionMode::Autonomous);
         assert!(fetched.conversation_id.is_none());
         assert!(fetched.exit_code.is_none());
-        assert!(fetched.tmux_session.is_none());
+        assert!(fetched.backend_session_id.is_none());
         assert!(fetched.output_snapshot.is_none());
     }
 
@@ -1793,7 +1808,7 @@ mod tests {
                 mode TEXT NOT NULL DEFAULT 'interactive',
                 conversation_id TEXT,
                 exit_code INTEGER,
-                tmux_session TEXT,
+                backend_session_id TEXT,
                 output_snapshot TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL

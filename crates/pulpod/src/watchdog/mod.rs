@@ -128,13 +128,8 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
     }
 
     for session in &running {
-        let tmux_name = session
-            .tmux_session
-            .as_deref()
-            .map_or_else(|| format!("pulpo-{}", session.name), ToOwned::to_owned);
-
         // Capture output before killing
-        match backend.capture_output(&tmux_name, 500) {
+        match backend.capture_output(&session.name, 500) {
             Ok(output) => {
                 if let Err(e) = store
                     .update_session_output_snapshot(&session.id.to_string(), &output)
@@ -157,7 +152,7 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
         }
 
         // Kill the session — only mark dead if kill succeeds
-        if let Err(e) = backend.kill_session(&tmux_name) {
+        if let Err(e) = backend.kill_session(&session.name) {
             warn!(
                 session_id = %session.id,
                 session_name = %session.name,
@@ -255,13 +250,8 @@ async fn check_session_idle(
     now: chrono::DateTime<chrono::Utc>,
     timeout: chrono::Duration,
 ) {
-    let tmux_name = session
-        .tmux_session
-        .as_deref()
-        .map_or_else(|| format!("pulpo-{}", session.name), ToOwned::to_owned);
-
     // Capture current output to track activity
-    let current_output = match backend.capture_output(&tmux_name, 500) {
+    let current_output = match backend.capture_output(&session.name, 500) {
         Ok(o) => o,
         Err(e) => {
             debug!(
@@ -314,7 +304,7 @@ async fn check_session_idle(
             store,
             idle_config,
             session,
-            &tmux_name,
+            &session.name,
             now,
             timeout,
         )
@@ -346,7 +336,7 @@ async fn handle_idle_session(
     store: &Store,
     idle_config: &IdleConfig,
     session: &pulpo_common::session::Session,
-    tmux_name: &str,
+    session_name: &str,
     now: chrono::DateTime<chrono::Utc>,
     timeout: chrono::Duration,
 ) {
@@ -380,7 +370,7 @@ async fn handle_idle_session(
         IdleAction::Kill => {
             let reason = format!("Idle for {minutes} minutes");
 
-            if let Err(e) = backend.kill_session(tmux_name) {
+            if let Err(e) = backend.kill_session(session_name) {
                 warn!(
                     "Idle check: failed to kill idle session {}: {e}",
                     session.name
@@ -504,6 +494,12 @@ mod tests {
     }
 
     impl Backend for MockBackend {
+        fn session_id(&self, name: &str) -> String {
+            name.to_owned()
+        }
+        fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
+            anyhow::bail!("not supported in mock")
+        }
         fn create_session(&self, name: &str, _: &str, command: &str) -> Result<()> {
             self.create_calls.lock().unwrap().push(name.into());
             self.create_commands.lock().unwrap().push(command.into());
@@ -556,7 +552,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some(format!("pulpo-{name}")),
+            backend_session_id: Some(format!("pulpo-{name}")),
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -588,7 +584,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some(format!("pulpo-{name}")),
+            backend_session_id: Some(format!("pulpo-{name}")),
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -777,7 +773,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"pulpo-oom-session".to_owned())
+                .contains(&"oom-session".to_owned())
         );
 
         // Session should be dead with intervention reason
@@ -914,7 +910,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"pulpo-cap-fail".to_owned())
+                .contains(&"cap-fail".to_owned())
         );
 
         let fetched = store
@@ -982,11 +978,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_watchdog_session_without_tmux_name() {
+    async fn test_watchdog_session_without_backend_session_id() {
         let backend = Arc::new(MockBackend::new());
         let store = test_store().await;
 
-        // Create session without explicit tmux_session
+        // Create session without explicit backend_session_id
         let session = Session {
             id: uuid::Uuid::new_v4(),
             name: "no-tmux".into(),
@@ -997,7 +993,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: None,
+            backend_session_id: None,
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -1054,13 +1050,13 @@ mod tests {
         shutdown_tx.send(true).unwrap();
         handle.await.unwrap();
 
-        // Should use fallback tmux name
+        // Should use the session name (backend handles the mapping internally)
         assert!(
             backend
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"pulpo-no-tmux".to_owned())
+                .contains(&"no-tmux".to_owned())
         );
     }
 
@@ -1194,7 +1190,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"pulpo-snap-err".to_owned())
+                .contains(&"snap-err".to_owned())
         );
     }
 
@@ -1226,7 +1222,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"pulpo-rec-err".to_owned())
+                .contains(&"rec-err".to_owned())
         );
     }
 
@@ -1316,7 +1312,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-idle-session".into()),
+            backend_session_id: Some("pulpo-idle-session".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1374,7 +1370,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-kill-idle".into()),
+            backend_session_id: Some("pulpo-kill-idle".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1420,7 +1416,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"pulpo-kill-idle".to_owned())
+                .contains(&"kill-idle".to_owned())
         );
     }
 
@@ -1440,7 +1436,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-active-again".into()),
+            backend_session_id: Some("pulpo-active-again".into()),
             output_snapshot: Some("old output".into()), // different from "test output"
             guard_config: None,
             model: None,
@@ -1496,7 +1492,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: Some(0),
-            tmux_session: None,
+            backend_session_id: None,
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -1571,7 +1567,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-recent-session".into()),
+            backend_session_id: Some("pulpo-recent-session".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1627,7 +1623,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-already-idle".into()),
+            backend_session_id: Some("pulpo-already-idle".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1682,7 +1678,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-kill-fail-idle".into()),
+            backend_session_id: Some("pulpo-kill-fail-idle".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1759,7 +1755,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-no-output-ts".into()),
+            backend_session_id: Some("pulpo-no-output-ts".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1838,7 +1834,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-loop-idle".into()),
+            backend_session_id: Some("pulpo-loop-idle".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1912,7 +1908,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-clear-fail".into()),
+            backend_session_id: Some("pulpo-clear-fail".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1956,7 +1952,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-not-idle".into()),
+            backend_session_id: Some("pulpo-not-idle".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1995,7 +1991,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-alert-fail".into()),
+            backend_session_id: Some("pulpo-alert-fail".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -2036,7 +2032,7 @@ mod tests {
             &store,
             &idle_config,
             &session,
-            "pulpo-alert-fail",
+            "alert-fail",
             now,
             timeout,
         )
@@ -2058,7 +2054,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-kill-record-fail".into()),
+            backend_session_id: Some("pulpo-kill-record-fail".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -2099,7 +2095,7 @@ mod tests {
             &store,
             &idle_config,
             &session,
-            "pulpo-kill-record-fail",
+            "kill-record-fail",
             now,
             timeout,
         )
@@ -2107,11 +2103,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_session_idle_no_tmux_session() {
+    async fn test_check_session_idle_without_backend_session_id() {
         let backend = Arc::new(MockBackend::new());
         let store = test_store().await;
 
-        // Session with tmux_session = None (falls back to "pulpo-{name}")
+        // Session with backend_session_id = None (falls back to "pulpo-{name}")
         let session = Session {
             id: uuid::Uuid::new_v4(),
             name: "no-tmux".into(),
@@ -2122,7 +2118,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: None,
+            backend_session_id: None,
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -2152,7 +2148,7 @@ mod tests {
         let timeout = chrono::Duration::seconds(600);
         let dyn_backend: Arc<dyn Backend> = backend;
 
-        // Should use "pulpo-no-tmux" as tmux name
+        // Should use session.name for backend calls
         check_session_idle(&dyn_backend, &store, &idle_config, &session, now, timeout).await;
 
         let fetched = store

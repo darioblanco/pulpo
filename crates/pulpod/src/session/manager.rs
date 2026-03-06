@@ -72,6 +72,10 @@ impl SessionManager {
         &self.personas
     }
 
+    pub fn backend(&self) -> Arc<dyn Backend> {
+        self.backend.clone()
+    }
+
     fn emit_event(&self, session: &Session, previous_status: Option<SessionStatus>) {
         if let Some(tx) = &self.event_tx {
             let event = SessionEvent {
@@ -123,7 +127,7 @@ impl SessionManager {
             mode,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some(format!("pulpo-{name}")),
+            backend_session_id: Some(self.backend.session_id(&name)),
             output_snapshot: None,
             guard_config: Some(guards),
             model: req.model,
@@ -314,7 +318,7 @@ impl SessionManager {
             _ => {}
         }
 
-        // Best-effort cleanup of any lingering tmux session
+        // Best-effort cleanup of any lingering backend session
         let _ = self.backend.kill_session(&session.name);
 
         self.store.delete_session(&session.id.to_string()).await?;
@@ -351,8 +355,8 @@ impl SessionManager {
             bail!("session is not stale (status: {})", session.status);
         }
 
-        // If the tmux session is still alive, just re-mark it as running.
-        // Only recreate the session if the tmux process is gone.
+        // If the backend session is still alive, just re-mark it as running.
+        // Only recreate the session if the backend process is gone.
         let alive = self.backend.is_alive(&session.name)?;
         if !alive {
             let guards = session
@@ -498,7 +502,7 @@ mod tests {
         }
 
         fn with_create_error(self) -> Self {
-            *self.create_result.lock().unwrap() = Err(anyhow!("tmux not found"));
+            *self.create_result.lock().unwrap() = Err(anyhow!("backend not found"));
             self
         }
 
@@ -514,6 +518,12 @@ mod tests {
     }
 
     impl Backend for MockBackend {
+        fn session_id(&self, name: &str) -> String {
+            name.to_owned()
+        }
+        fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
+            anyhow::bail!("not supported in mock")
+        }
         fn create_session(&self, name: &str, working_dir: &str, command: &str) -> Result<()> {
             self.calls
                 .lock()
@@ -561,6 +571,12 @@ mod tests {
 
     struct FailCapture;
     impl Backend for FailCapture {
+        fn session_id(&self, name: &str) -> String {
+            name.to_owned()
+        }
+        fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
+            anyhow::bail!("not supported in mock")
+        }
         fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
@@ -630,7 +646,8 @@ mod tests {
         assert_eq!(session.status, SessionStatus::Running);
         assert_eq!(session.workdir, "/tmp");
         assert_eq!(session.prompt, "Fix the bug");
-        assert_eq!(session.tmux_session, Some("pulpo-tmp".into()));
+        // MockBackend.session_id() returns just the name
+        assert_eq!(session.backend_session_id, Some("tmp".into()));
 
         let calls = backend.calls.lock().unwrap();
         // Interactive Claude: create session with prompt as positional arg, then setup logging
@@ -1103,22 +1120,22 @@ mod tests {
             .unwrap();
         assert_eq!(fetched.status, SessionStatus::Stale);
 
-        // Now resume it — tmux session is still alive, so it should skip create_session
+        // Now resume it — backend session is still alive, so it should skip create_session
         *backend.alive.lock().unwrap() = true;
         backend.calls.lock().unwrap().clear();
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
         assert_eq!(resumed.status, SessionStatus::Running);
 
-        // Verify create_session was NOT called (tmux session already exists)
+        // Verify create_session was NOT called (backend session already exists)
         let calls: Vec<_> = backend.calls.lock().unwrap().clone();
         assert!(
             !calls.iter().any(|c| c.starts_with("create:")),
-            "should not recreate tmux session when alive; calls: {calls:?}"
+            "should not recreate backend session when alive; calls: {calls:?}"
         );
     }
 
     #[tokio::test]
-    async fn test_resume_stale_session_recreates_when_tmux_dead() {
+    async fn test_resume_stale_session_recreates_when_backend_dead() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
         let session = mgr.create_session(make_req("test")).await.unwrap();
 
@@ -1129,7 +1146,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // Resume while tmux session is dead — should recreate
+        // Resume while backend session is dead — should recreate
         backend.calls.lock().unwrap().clear();
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
         assert_eq!(resumed.status, SessionStatus::Running);
@@ -1138,7 +1155,7 @@ mod tests {
         let calls: Vec<_> = backend.calls.lock().unwrap().clone();
         assert!(
             calls.iter().any(|c| c.starts_with("create:")),
-            "should recreate tmux session when dead; calls: {calls:?}"
+            "should recreate backend session when dead; calls: {calls:?}"
         );
     }
 
@@ -1197,7 +1214,7 @@ mod tests {
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,
-            tmux_session: Some("pulpo-legacy".into()),
+            backend_session_id: Some("pulpo-legacy".into()),
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -1238,7 +1255,7 @@ mod tests {
         let _ = mgr.get_session(&id).await.unwrap();
 
         // Make create_session fail for resume
-        *backend_ref.create_result.lock().unwrap() = Err(anyhow!("tmux not found"));
+        *backend_ref.create_result.lock().unwrap() = Err(anyhow!("backend not found"));
         let result = mgr.resume_session(&id).await;
         assert!(result.is_err());
     }
@@ -2038,7 +2055,7 @@ mod tests {
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,
-            tmux_session: None,
+            backend_session_id: None,
             output_snapshot: Some("output".into()),
             guard_config: None,
             model: None,
@@ -2081,7 +2098,7 @@ mod tests {
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,
-            tmux_session: None,
+            backend_session_id: None,
             output_snapshot: None,
             guard_config: None,
             model: None,

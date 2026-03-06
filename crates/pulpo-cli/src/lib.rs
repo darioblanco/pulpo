@@ -25,7 +25,7 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum Commands {
-    /// Attach to a session's tmux terminal
+    /// Attach to a session's terminal
     #[command(alias = "a")]
     Attach {
         /// Session name or ID
@@ -306,7 +306,8 @@ fn open_browser(_url: &str) -> Result<()> {
     Ok(())
 }
 
-/// Build the command to attach to a tmux session.
+/// Build the command to attach to a session's terminal.
+/// Currently uses tmux directly — the CLI is always local to the backend.
 #[cfg_attr(coverage, allow(dead_code))]
 fn build_attach_command(name: &str) -> std::process::Command {
     let mut cmd = std::process::Command::new("tmux");
@@ -314,17 +315,17 @@ fn build_attach_command(name: &str) -> std::process::Command {
     cmd
 }
 
-/// Attach to a session's tmux terminal.
+/// Attach to a session's terminal.
 #[cfg(not(any(test, coverage)))]
 fn attach_session(name: &str) -> Result<()> {
     let status = build_attach_command(name).status()?;
     if !status.success() {
-        anyhow::bail!("tmux exited with {status}");
+        anyhow::bail!("attach failed with {status}");
     }
     Ok(())
 }
 
-/// Stub for test and coverage builds — avoids spawning tmux during tests.
+/// Stub for test and coverage builds — avoids spawning real terminals during tests.
 #[cfg(any(test, coverage))]
 #[allow(clippy::unnecessary_wraps, clippy::missing_const_for_fn)]
 fn attach_session(_name: &str) -> Result<()> {
@@ -476,7 +477,7 @@ async fn fetch_session_status(
 
 /// Compute the new trailing lines that differ from the previous output.
 ///
-/// The output endpoint returns the last N lines from the tmux pane. As new lines
+/// The output endpoint returns the last N lines from the terminal pane. As new lines
 /// appear, old lines at the top scroll off. We find the overlap between the end
 /// of `prev` and the beginning-to-middle of `new`, then return only the truly new
 /// trailing lines.
@@ -1223,7 +1224,7 @@ mod tests {
     }
 
     /// A valid Session JSON for test responses.
-    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","provider":"claude","prompt":"Fix bug","status":"running","mode":"interactive","conversation_id":null,"exit_code":null,"tmux_session":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","provider":"claude","prompt":"Fix bug","status":"running","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
 
     /// Start a lightweight test HTTP server and return its address.
     async fn start_test_server() -> String {
@@ -1804,7 +1805,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: None,
+            backend_session_id: None,
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -1847,7 +1848,7 @@ mod tests {
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,
-            tmux_session: None,
+            backend_session_id: None,
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -1886,7 +1887,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            tmux_session: None,
+            backend_session_id: None,
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -2586,7 +2587,7 @@ mod tests {
                         let n = count.fetch_add(1, Ordering::SeqCst);
                         let status = if n < 2 { "running" } else { "completed" };
                         format!(
-                            r#"{{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"{status}","mode":"interactive","conversation_id":null,"exit_code":null,"tmux_session":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#
+                            r#"{{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"{status}","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#
                         )
                     }
                 }),
@@ -2672,7 +2673,7 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"dead","mode":"interactive","conversation_id":null,"exit_code":null,"tmux_session":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"dead","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 
@@ -2708,7 +2709,7 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"stale","mode":"interactive","conversation_id":null,"exit_code":null,"tmux_session":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"stale","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 
