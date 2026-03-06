@@ -27,6 +27,8 @@ jobs:
   build-base:
     name: Build & Push pulpo-base
     runs-on: ubuntu-latest
+    outputs:
+      base_digest: ${{ steps.build_base.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,6 +58,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and push pulpo-base
+        id: build_base
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -105,7 +108,7 @@ jobs:
           context: .
           file: docker/agents/Dockerfile
           build-args: |
-            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pulpo-base:sha-${{ github.sha }}
+            BASE_IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pulpo-base@${{ needs.build-base.outputs.base_digest }}
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta_agents.outputs.tags }}
