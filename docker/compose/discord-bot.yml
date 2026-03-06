@@ -1,0 +1,34 @@
+services:
+  pulpo-base:
+    build:
+      context: ../..
+      dockerfile: docker/base/Dockerfile
+    image: pulpo-base:dev
+    container_name: pulpo-base
+    ports:
+      - "7433:7433"
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      PULPO_BIND: container
+    volumes:
+      - pulpo-data:/home/pulpo/.pulpo
+    restart: unless-stopped
+
+  discord-bot:
+    build:
+      context: ../../contrib/discord-bot
+    image: pulpo-discord-bot:dev
+    container_name: pulpo-discord-bot
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      PULPOD_URL: http://pulpo-base:7433
+    depends_on:
+      - pulpo-base
+    restart: unless-stopped
+
+volumes:
+  pulpo-data:
