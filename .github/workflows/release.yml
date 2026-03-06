@@ -427,6 +427,7 @@ jobs:
           formula << "    log_path var/\"log/pulpo.log\"\n"
           formula << "    error_log_path var/\"log/pulpo.log\"\n"
           formula << "    working_dir HOMEBREW_PREFIX\n"
+          formula << "    environment_variables PATH: \"#{HOMEBREW_PREFIX}/bin:#{HOMEBREW_PREFIX}/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin\"\n"
           formula << "  end\n\n"
           formula << "  test do\n"
           formula << "    assert_match version.to_s, shell_output(\"#{bin}/pulpod --version\")\n"
