@@ -284,8 +284,7 @@ mod tests {
     fn test_filter_peers_excludes_offline() {
         let status = parse_status(sample_status_json()).unwrap();
         let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT);
-        let names: Vec<&str> = peers.iter().map(|p| p.name.as_str()).collect();
-        assert!(!names.contains(&"offline-node"));
+        assert!(!peers.iter().any(|p| p.name == "offline-node"));
     }
 
     #[test]
