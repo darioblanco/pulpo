@@ -353,4 +353,105 @@ jobs:
             git add "Formula/${filename}"
             git commit -m "${name} ${version}"
           done
+
+      - name: Sync pulpo meta formula
+        run: |
+          ruby <<'RUBY'
+          pulpod_formula = File.read("Formula/pulpod.rb")
+
+          version = pulpod_formula[/^\s*version\s+"([^"]+)"/, 1]
+          abort("Could not read pulpod version from Formula/pulpod.rb") unless version
+
+          artifact_pairs = pulpod_formula.scan(/^\s*url\s+"([^"]+)"\s*$\n^\s*sha256\s+"([^"]+)"\s*$/m)
+          abort("Could not read pulpod artifact urls from Formula/pulpod.rb") if artifact_pairs.empty?
+
+          by_triple = {}
+          artifact_pairs.each do |url, sha|
+            triple = url[%r{pulpod-([A-Za-z0-9_-]+)\.tar\.xz$}, 1]
+            next unless triple
+            by_triple[triple] = { url: url, sha: sha }
+          end
+
+          mac_arm = by_triple["aarch64-apple-darwin"]
+          mac_x86 = by_triple["x86_64-apple-darwin"]
+          linux_x86 = by_triple["x86_64-unknown-linux-gnu"]
+          linux_arm = by_triple["aarch64-unknown-linux-gnu"]
+
+          formula = +""
+          formula << "class Pulpo < Formula\n"
+          formula << "  desc \"Pulpo daemon + CLI for managing agent sessions\"\n"
+          formula << "  homepage \"https://github.com/darioblanco/pulpo\"\n"
+          formula << "  version \"#{version}\"\n"
+          formula << "  license any_of: [\"MIT\", \"Apache-2.0\"]\n\n"
+
+          formula << "  if OS.mac?\n"
+          if mac_arm
+            formula << "    if Hardware::CPU.arm?\n"
+            formula << "      url \"#{mac_arm[:url]}\"\n"
+            formula << "      sha256 \"#{mac_arm[:sha]}\"\n"
+            formula << "    end\n"
+          end
+          if mac_x86
+            formula << "    if Hardware::CPU.intel?\n"
+            formula << "      url \"#{mac_x86[:url]}\"\n"
+            formula << "      sha256 \"#{mac_x86[:sha]}\"\n"
+            formula << "    end\n"
+          end
+          formula << "  end\n\n"
+
+          formula << "  if OS.linux?\n"
+          if linux_x86
+            formula << "    if Hardware::CPU.intel?\n"
+            formula << "      url \"#{linux_x86[:url]}\"\n"
+            formula << "      sha256 \"#{linux_x86[:sha]}\"\n"
+            formula << "    end\n"
+          end
+          if linux_arm
+            formula << "    if Hardware::CPU.arm?\n"
+            formula << "      url \"#{linux_arm[:url]}\"\n"
+            formula << "      sha256 \"#{linux_arm[:sha]}\"\n"
+            formula << "    end\n"
+          end
+          formula << "  end\n\n"
+
+          formula << "  depends_on \"pulpo-cli\"\n"
+          formula << "  depends_on \"tmux\"\n\n"
+          formula << "  def install\n"
+          formula << "    bin.install \"pulpod\"\n"
+          formula << "  end\n\n"
+          formula << "  service do\n"
+          formula << "    run [opt_bin/\"pulpod\"]\n"
+          formula << "    keep_alive true\n"
+          formula << "    log_path var/\"log/pulpo.log\"\n"
+          formula << "    error_log_path var/\"log/pulpo.log\"\n"
+          formula << "    working_dir HOMEBREW_PREFIX\n"
+          formula << "  end\n\n"
+          formula << "  test do\n"
+          formula << "    assert_match version.to_s, shell_output(\"#{bin}/pulpod --version\")\n"
+          formula << "    assert_match version.to_s, shell_output(\"#{Formula[\\\"pulpo-cli\\\"].opt_bin}/pulpo --version\")\n"
+          formula << "  end\n\n"
+          formula << "  def caveats\n"
+          formula << "    <<~EOS\n"
+          formula << "      pulpo requires at least one coding agent provider to be installed and authenticated.\n\n"
+          formula << "      Claude Code:\n"
+          formula << "        npm install -g @anthropic-ai/claude-code\n"
+          formula << "        claude login\n\n"
+          formula << "      OpenAI Codex:\n"
+          formula << "        npm install -g @openai/codex\n\n"
+          formula << "      Start daemon:\n"
+          formula << "        brew services start pulpo\n\n"
+          formula << "      Dashboard:\n"
+          formula << "        http://localhost:7433\n"
+          formula << "    EOS\n"
+          formula << "  end\n"
+          formula << "end\n"
+
+          File.write("Formula/pulpo.rb", formula)
+          RUBY
+
+          git add Formula/pulpo.rb
+          if ! git diff --cached --quiet; then
+            version="$(grep -E '^\s*version\s+\"' Formula/pulpo.rb | head -1 | sed -E 's/.*\"([^\"]+)\"/\1/')"
+            git commit -m "pulpo ${version}"
+          fi
           git push
