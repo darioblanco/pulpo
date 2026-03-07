@@ -6,7 +6,7 @@ export default defineUserConfig({
   lang: 'en-US',
   title: 'Pulpo Docs',
   description: 'Self-hosted control plane docs for coding agents',
-  base: '/',
+  base: '/pulpo/',
   theme: defaultTheme({
     logo: 'https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/favicon.svg',
     repo: 'darioblanco/pulpo',
