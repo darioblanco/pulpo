@@ -46,7 +46,7 @@ curl http://localhost:7433/api/v1/health
 Core Pulpo settings (read by `base/entrypoint.sh`):
 
 - `PULPO_NODE_NAME`
-- `PULPO_BIND` (`local`, `public`, or `container`)
+- `PULPO_BIND` (`local`, `tailscale`, `public`, or `container`)
 - `PULPO_PORT`
 - `PULPO_TOKEN` (recommended when `PULPO_BIND=public`)
 - `PULPO_GUARD_PRESET`
@@ -83,6 +83,25 @@ The agents entrypoint logs which auth mode is detected at startup.
 - `GIT_SSH_PRIVATE_KEY_B64` (base64-encoded private key)
 
 HTTPS PAT and SSH can both be configured; use whichever your workflow prefers.
+
+## Port mapping and Tailscale
+
+The image uses `bind = "container"` by default, which binds to `0.0.0.0` with **no auth** — it trusts the container network boundary.
+
+**If you run Tailscale on the host**, map the port to localhost only:
+
+```bash
+# Safe: only reachable from the host, then expose via Tailscale
+docker run -p 127.0.0.1:7433:7433 pulpo-agents
+tailscale serve --bg 7433
+
+# Unsafe: open to all network interfaces with no auth
+docker run -p 7433:7433 pulpo-agents
+```
+
+Mapping to `127.0.0.1` ensures only local processes (and `tailscale serve`) can reach pulpod. Without it, the port is open on all host interfaces — anyone on the network can access it unauthenticated.
+
+**Alternative**: run Tailscale as a sidecar inside Docker Compose and use `PULPO_BIND=tailscale`. The container becomes a first-class Tailscale node with no port mapping needed.
 
 ## Notes
 
