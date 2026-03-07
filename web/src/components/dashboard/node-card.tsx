@@ -48,7 +48,7 @@ export function NodeCard({
             No active sessions on this node.
           </p>
         ) : (
-          <div className="space-y-2">
+          <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
             {sessions.map((session) => (
               <SessionCard key={session.id} session={session} onRefresh={onRefresh} />
             ))}

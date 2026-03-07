@@ -115,9 +115,9 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
     <div
       data-testid="terminal-view"
       ref={containerRef}
-      className="my-2 w-full min-w-0 overflow-hidden rounded-lg border border-border bg-background"
+      className="h-[clamp(160px,30vh,380px)] min-h-[100px] max-h-[80vh] w-full min-w-0 resize-y overflow-hidden bg-[#0a1628]"
     >
-      <div ref={hostRef} className="h-[clamp(220px,45vh,560px)] w-full min-w-0 overflow-hidden" />
+      <div ref={hostRef} className="h-full w-full min-w-0 overflow-hidden" />
     </div>
   );
 }

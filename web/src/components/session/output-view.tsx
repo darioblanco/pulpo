@@ -53,7 +53,7 @@ export function OutputView({ sessionId, sessionStatus }: OutputViewProps) {
 
   return (
     <div data-testid="output-view">
-      <div className="overflow-hidden rounded-lg border border-border bg-[#0a1628]">
+      <div className="overflow-hidden bg-[#0a1628]">
         <ScrollArea className="max-h-[400px]" ref={scrollRef}>
           <pre className="break-all p-3 font-mono text-xs leading-relaxed text-[#e0e0e0] whitespace-pre-wrap">
             {output || <span className="text-muted-foreground italic">No output yet</span>}

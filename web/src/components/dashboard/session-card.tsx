@@ -1,19 +1,21 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { killSession, resumeSession, getInterventionEvents } from '@/api/client';
 import type { Session, InterventionEvent } from '@/api/types';
 import { OutputView } from '@/components/session/output-view';
 import { TerminalView } from '@/components/session/terminal-view';
-
-const statusColors: Record<string, string> = {
-  running: 'bg-status-running',
-  creating: 'bg-status-idle',
-  completed: 'bg-status-completed',
-  dead: 'bg-status-dead',
-  stale: 'bg-status-stale',
-};
 
 interface SessionCardProps {
   session: Session;
@@ -24,6 +26,9 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [interventionEvents, setInterventionEvents] = useState<InterventionEvent[]>([]);
   const [interventionsExpanded, setInterventionsExpanded] = useState(false);
+
+  const canKill = session.status === 'running' || session.status === 'stale';
+  const canResume = session.status === 'stale';
 
   async function handleKill() {
     try {
@@ -52,31 +57,86 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
   }
 
   return (
-    <div className="mb-2 overflow-clip rounded-lg border border-border bg-card">
+    <div className="overflow-clip rounded-lg border border-[#1e2d3d]">
+      {/* Terminal title bar */}
       <div
         data-testid="session-header"
-        role="button"
-        tabIndex={0}
-        onClick={() => setExpanded(!expanded)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') setExpanded(!expanded);
-        }}
-        className="cursor-pointer px-4 py-3"
+        className="flex items-center gap-2 bg-[#0d1f33] px-3 py-1.5"
       >
-        <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-          <span
-            className={`h-2 w-2 shrink-0 rounded-full ${statusColors[session.status] ?? 'bg-muted'}`}
+        {/* Traffic lights */}
+        <div className="flex items-center gap-1.5">
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <button
+                data-testid="btn-kill"
+                type="button"
+                title={canKill ? 'Kill session' : 'Session not running'}
+                disabled={!canKill}
+                className={`h-3 w-3 rounded-full ${canKill ? 'bg-[#ff5f57] hover:brightness-110 cursor-pointer' : 'bg-[#ff5f57]/30'}`}
+              />
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Kill session "{session.name}"?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will terminate the session and stop the running agent. This action cannot be
+                  undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  data-testid="btn-kill-confirm"
+                  onClick={handleKill}
+                  className="bg-destructive text-white hover:bg-destructive/90"
+                >
+                  Kill Session
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <button
+            data-testid="btn-resume"
+            type="button"
+            title={canResume ? 'Resume session' : ''}
+            disabled={!canResume}
+            onClick={handleResume}
+            className={`h-3 w-3 rounded-full ${canResume ? 'bg-[#febc2e] hover:brightness-110 cursor-pointer' : 'bg-[#febc2e]/30'}`}
           />
-          <strong className="min-w-0 truncate">{session.name}</strong>
-          <span className="text-xs uppercase text-muted-foreground">{session.provider}</span>
-          <Badge variant="outline" className="text-[0.625rem] uppercase">
+          <button
+            data-testid="btn-expand"
+            type="button"
+            title={expanded ? 'Collapse' : 'Expand'}
+            onClick={() => setExpanded(!expanded)}
+            className="h-3 w-3 cursor-pointer rounded-full bg-[#28c840] hover:brightness-110"
+          />
+        </div>
+
+        {/* Session info — clickable to expand */}
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => setExpanded(!expanded)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') setExpanded(!expanded);
+          }}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-x-2 overflow-hidden"
+        >
+          <strong className="shrink-0 font-mono text-xs text-[#c0d0e0]">{session.name}</strong>
+          <span className="hidden text-[0.6rem] uppercase text-[#5a7a9a] sm:inline">
+            {session.provider}
+          </span>
+          <Badge
+            variant="outline"
+            className="hidden border-[#1e2d3d] text-[0.55rem] uppercase text-[#5a7a9a] sm:inline-flex"
+          >
             {session.mode}
           </Badge>
           {session.guard_config && (
             <Badge
               data-testid="guard-badge"
               variant="outline"
-              className="text-[0.625rem] uppercase"
+              className="hidden border-[#1e2d3d] text-[0.55rem] uppercase text-[#5a7a9a] sm:inline-flex"
             >
               {session.guard_config.preset}
             </Badge>
@@ -85,23 +145,48 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
             <Badge
               data-testid="intervention-badge"
               variant="destructive"
-              className="text-[0.625rem] uppercase"
+              className="text-[0.55rem] uppercase"
             >
               intervened
             </Badge>
           )}
-          <span className="ml-auto text-xs text-muted-foreground">{session.status}</span>
+
+          {/* Right side: metadata + status */}
+          <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[0.6rem] text-[#5a7a9a]">
+            {session.persona && (
+              <span data-testid="session-persona" className="hidden lg:inline">
+                {session.persona}
+              </span>
+            )}
+            {session.model && (
+              <span data-testid="session-model" className="hidden lg:inline">
+                {session.model}
+              </span>
+            )}
+            <span data-testid="session-workdir" className="hidden md:inline">
+              {session.workdir.split('/').pop() || session.workdir}
+            </span>
+            <span className="text-[#7a9aba]">{session.status}</span>
+          </span>
         </div>
-        <p className="truncate text-sm text-muted-foreground">{session.prompt}</p>
       </div>
 
-      {expanded && (
-        <div className="border-t border-border px-4 pb-3">
-          <div className="flex justify-between py-2 text-xs text-muted-foreground">
-            <span>{session.workdir}</span>
-            <span>{new Date(session.created_at).toLocaleString()}</span>
-          </div>
+      {/* Subtitle: prompt — always visible */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setExpanded(!expanded)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') setExpanded(!expanded);
+        }}
+        className="cursor-pointer border-t border-[#1e2d3d] bg-[#0d1f33]/60 px-3 py-1"
+      >
+        <p className="truncate font-mono text-xs text-[#5a7a9a]">{session.prompt}</p>
+      </div>
 
+      {/* Expanded body */}
+      {expanded && (
+        <div className="bg-[#0a1628]">
           {session.status === 'running' && <TerminalView sessionId={session.id} />}
 
           {(session.status === 'stale' ||
@@ -111,7 +196,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
           )}
 
           {session.status === 'dead' && session.intervention_reason && (
-            <div className="mt-2 rounded-md border border-destructive/30 p-3">
+            <div className="mx-3 mb-2 rounded-md border border-destructive/30 p-3">
               <p className="mb-1 text-sm font-medium text-destructive">
                 Intervention: {session.intervention_reason}
               </p>
@@ -141,29 +226,6 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
               )}
             </div>
           )}
-
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {session.status === 'running' && (
-              <Button variant="outline" size="sm" className="text-destructive" onClick={handleKill}>
-                Kill Session
-              </Button>
-            )}
-            {session.status === 'stale' && (
-              <>
-                <Button size="sm" onClick={handleResume}>
-                  Resume
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-destructive"
-                  onClick={handleKill}
-                >
-                  Kill Session
-                </Button>
-              </>
-            )}
-          </div>
         </div>
       )}
     </div>

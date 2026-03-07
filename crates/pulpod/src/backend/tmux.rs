@@ -57,6 +57,13 @@ fn build_capture_command(session_name: &str, lines: usize) -> Command {
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
+fn build_set_mouse_command(session_name: &str) -> Command {
+    let mut cmd = Command::new("tmux");
+    cmd.args(["set-option", "-t", session_name, "mouse", "on"]);
+    cmd
+}
+
+#[cfg_attr(coverage, allow(dead_code))]
 fn build_send_keys_command(session_name: &str, text: &str) -> Command {
     let mut cmd = Command::new("tmux");
     cmd.args(["send-keys", "-t", session_name, text, "Enter"]);
@@ -180,6 +187,11 @@ impl Backend for TmuxBackend {
         run_tmux(
             build_create_command(backend_id, working_dir, command),
             "create tmux session",
+        )?;
+        // Enable mouse mode so scrollback works via the web terminal
+        run_tmux(
+            build_set_mouse_command(backend_id),
+            "enable tmux mouse mode",
         )?;
         Ok(())
     }
@@ -316,6 +328,14 @@ mod tests {
         // Should handle overflow gracefully
         let start_str = args[5].to_str().unwrap();
         assert!(start_str.starts_with('-'));
+    }
+
+    #[test]
+    fn test_build_set_mouse_command() {
+        let cmd = build_set_mouse_command("pulpo-test");
+        assert_eq!(cmd.get_program(), "tmux");
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(args, vec!["set-option", "-t", "pulpo-test", "mouse", "on"]);
     }
 
     #[test]
