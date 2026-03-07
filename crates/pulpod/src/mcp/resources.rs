@@ -232,6 +232,7 @@ mod tests {
                 name: "test-node".into(),
                 port: 7433,
                 data_dir: "/tmp/test".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -239,7 +240,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            discovery: crate::config::DiscoveryConfig::default(),
         }
     }
 

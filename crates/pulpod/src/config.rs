@@ -23,8 +23,6 @@ pub struct Config {
     pub personas: HashMap<String, PersonaConfig>,
     #[serde(default)]
     pub notifications: NotificationsConfig,
-    #[serde(default)]
-    pub discovery: DiscoveryConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -47,61 +45,6 @@ pub struct PersonaConfig {
     pub max_budget_usd: Option<f64>,
     #[serde(default)]
     pub output_format: Option<String>,
-}
-
-/// Discovery method for finding peers on the network.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DiscoveryMethod {
-    /// mDNS/DNS-SD on the local network (default). Only active in `public` bind mode.
-    #[default]
-    Mdns,
-    /// Discover peers via the Tailscale local API, filtered by ACL tag.
-    Tailscale,
-    /// Bootstrap from a single seed peer, then gossip peer lists.
-    Seed,
-}
-
-impl std::fmt::Display for DiscoveryMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Mdns => write!(f, "mdns"),
-            Self::Tailscale => write!(f, "tailscale"),
-            Self::Seed => write!(f, "seed"),
-        }
-    }
-}
-
-/// Discovery configuration for automatic peer finding.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct DiscoveryConfig {
-    /// Which discovery method to use.
-    #[serde(default)]
-    pub method: DiscoveryMethod,
-    /// Tailscale ACL tag to filter peers (e.g. `"pulpo"`). Only used with `tailscale` method.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tag: Option<String>,
-    /// Seed peer address (`host:port`). Only used with `seed` method.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<String>,
-    /// Scan interval in seconds for tailscale/seed discovery. Defaults to 30.
-    #[serde(default = "default_discovery_interval_secs")]
-    pub interval_secs: u64,
-}
-
-impl Default for DiscoveryConfig {
-    fn default() -> Self {
-        Self {
-            method: DiscoveryMethod::default(),
-            tag: None,
-            seed: None,
-            interval_secs: default_discovery_interval_secs(),
-        }
-    }
-}
-
-const fn default_discovery_interval_secs() -> u64 {
-    30
 }
 
 /// Notification configuration (webhooks for status updates).
@@ -127,11 +70,9 @@ pub struct DiscordWebhookConfig {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AuthConfig {
     /// Bearer token for API authentication (auto-generated on first run).
+    /// Only used in `public` bind mode.
     #[serde(default)]
     pub token: String,
-    /// How the daemon binds to the network.
-    #[serde(default)]
-    pub bind: BindMode,
 }
 
 /// Generate a cryptographically random 256-bit token as a base64url string (44 chars).
@@ -270,6 +211,36 @@ pub struct NodeConfig {
     pub port: u16,
     #[serde(default = "default_data_dir")]
     pub data_dir: String,
+    /// How the daemon binds to the network. Determines discovery method and auth requirements.
+    #[serde(default)]
+    pub bind: BindMode,
+    /// Tailscale ACL tag to filter peers (e.g. `"pulpo"`). Only used with `tailscale` bind mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+    /// Seed peer address (`host:port`). Only used with `public` bind mode for seed discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<String>,
+    /// Scan interval in seconds for peer discovery (tailscale/seed). Defaults to 30.
+    #[serde(default = "default_discovery_interval_secs")]
+    pub discovery_interval_secs: u64,
+}
+
+impl Default for NodeConfig {
+    fn default() -> Self {
+        Self {
+            name: default_name(),
+            port: default_port(),
+            data_dir: default_data_dir(),
+            bind: BindMode::default(),
+            tag: None,
+            seed: None,
+            discovery_interval_secs: default_discovery_interval_secs(),
+        }
+    }
+}
+
+const fn default_discovery_interval_secs() -> u64 {
+    30
 }
 
 fn default_name() -> String {
@@ -323,6 +294,10 @@ pub fn load(path: &str) -> Result<Config> {
                 name: default_name(),
                 port: default_port(),
                 data_dir: default_data_dir(),
+                bind: BindMode::default(),
+                tag: None,
+                seed: None,
+                discovery_interval_secs: default_discovery_interval_secs(),
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -330,7 +305,6 @@ pub fn load(path: &str) -> Result<Config> {
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         })
     }
 }
@@ -403,6 +377,7 @@ data_dir = "/tmp/pulpo-test"
                 name: "test".into(),
                 port: 7433,
                 data_dir: "~/test-pulpo".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -410,7 +385,6 @@ data_dir = "/tmp/pulpo-test"
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         let expanded = config.data_dir();
         assert!(
@@ -427,6 +401,7 @@ data_dir = "/tmp/pulpo-test"
                 name: "test".into(),
                 port: 7433,
                 data_dir: "/absolute/path".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -434,7 +409,6 @@ data_dir = "/tmp/pulpo-test"
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         assert_eq!(config.data_dir(), "/absolute/path");
     }
@@ -559,6 +533,7 @@ name = "test"
                 name: "test".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers,
@@ -566,7 +541,6 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         let debug = format!("{config:?}");
         assert!(debug.contains("node-a"));
@@ -685,6 +659,7 @@ output_format = "stream-json"
                 name: "saved".into(),
                 port: 8080,
                 data_dir: "/tmp/data".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -692,7 +667,6 @@ output_format = "stream-json"
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -712,6 +686,7 @@ output_format = "stream-json"
                 name: "roundtrip".into(),
                 port: 9000,
                 data_dir: "/tmp/rt".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers,
@@ -724,7 +699,6 @@ output_format = "stream-json"
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -749,6 +723,7 @@ output_format = "stream-json"
                 name: "nested".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -756,7 +731,6 @@ output_format = "stream-json"
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -771,6 +745,7 @@ output_format = "stream-json"
                     name: "test".into(),
                     port: 7433,
                     data_dir: "/tmp".into(),
+                    ..NodeConfig::default()
                 },
                 auth: AuthConfig::default(),
                 peers: HashMap::new(),
@@ -778,7 +753,6 @@ output_format = "stream-json"
                 watchdog: WatchdogConfig::default(),
                 personas: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                discovery: DiscoveryConfig::default(),
             },
             Path::new("/dev/null/impossible/config.toml"),
         );
@@ -795,6 +769,7 @@ output_format = "stream-json"
                     name: "test".into(),
                     port: 7433,
                     data_dir: "/tmp".into(),
+                    ..NodeConfig::default()
                 },
                 auth: AuthConfig::default(),
                 peers: HashMap::new(),
@@ -802,7 +777,6 @@ output_format = "stream-json"
                 watchdog: WatchdogConfig::default(),
                 personas: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                discovery: DiscoveryConfig::default(),
             },
             Path::new(""),
         );
@@ -823,6 +797,7 @@ output_format = "stream-json"
                     name: "test".into(),
                     port: 7433,
                     data_dir: "/tmp".into(),
+                    ..NodeConfig::default()
                 },
                 auth: AuthConfig::default(),
                 peers: HashMap::new(),
@@ -830,7 +805,6 @@ output_format = "stream-json"
                 watchdog: WatchdogConfig::default(),
                 personas: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                discovery: DiscoveryConfig::default(),
             },
             &dir_target,
         );
@@ -846,6 +820,7 @@ output_format = "stream-json"
                 name: "clone-test".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -853,7 +828,6 @@ output_format = "stream-json"
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         #[allow(clippy::redundant_clone)]
         let cloned = config.clone();
@@ -866,6 +840,7 @@ output_format = "stream-json"
             name: "test".into(),
             port: 7433,
             data_dir: "/tmp".into(),
+            ..NodeConfig::default()
         };
         #[allow(clippy::redundant_clone)]
         let cloned = nc.clone();
@@ -887,6 +862,7 @@ output_format = "stream-json"
                 name: "ser".into(),
                 port: 1234,
                 data_dir: "/d".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -894,7 +870,6 @@ output_format = "stream-json"
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("ser"));
@@ -905,7 +880,6 @@ output_format = "stream-json"
     fn test_auth_config_default() {
         let auth = AuthConfig::default();
         assert!(auth.token.is_empty());
-        assert_eq!(auth.bind, pulpo_common::auth::BindMode::Local);
     }
 
     #[test]
@@ -919,12 +893,10 @@ output_format = "stream-json"
     fn test_auth_config_clone() {
         let auth = AuthConfig {
             token: "test-token".into(),
-            bind: pulpo_common::auth::BindMode::Public,
         };
         #[allow(clippy::redundant_clone)]
         let cloned = auth.clone();
         assert_eq!(cloned.token, "test-token");
-        assert_eq!(cloned.bind, pulpo_common::auth::BindMode::Public);
     }
 
     #[test]
@@ -960,6 +932,7 @@ output_format = "stream-json"
                 name: "test".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -967,7 +940,6 @@ output_format = "stream-json"
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         assert!(config.auth.token.is_empty());
         let generated = ensure_auth_token(&mut config);
@@ -983,17 +955,16 @@ output_format = "stream-json"
                 name: "test".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig {
                 token: "existing-token".into(),
-                bind: pulpo_common::auth::BindMode::Public,
             },
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         let generated = ensure_auth_token(&mut config);
         assert!(!generated);
@@ -1017,7 +988,6 @@ port = 7433
         assert_eq!(config.node.name, "old-config");
         // Auth should default
         assert!(config.auth.token.is_empty());
-        assert_eq!(config.auth.bind, pulpo_common::auth::BindMode::Local);
     }
 
     #[test]
@@ -1029,17 +999,17 @@ port = 7433
 [node]
 name = "authed"
 port = 7433
+bind = "public"
 
 [auth]
 token = "my-secret-token"
-bind = "public"
 "#
         )
         .unwrap();
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
         assert_eq!(config.auth.token, "my-secret-token");
-        assert_eq!(config.auth.bind, pulpo_common::auth::BindMode::Public);
+        assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Public);
     }
 
     #[test]
@@ -1051,29 +1021,29 @@ bind = "public"
                 name: "auth-rt".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
+                bind: pulpo_common::auth::BindMode::Public,
+                ..NodeConfig::default()
             },
             auth: AuthConfig {
                 token: "roundtrip-token".into(),
-                bind: pulpo_common::auth::BindMode::Public,
             },
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
         assert_eq!(loaded.auth.token, "roundtrip-token");
-        assert_eq!(loaded.auth.bind, pulpo_common::auth::BindMode::Public);
+        assert_eq!(loaded.node.bind, pulpo_common::auth::BindMode::Public);
     }
 
     #[test]
     fn test_missing_config_has_default_auth() {
         let config = load("/nonexistent/auth/config.toml").unwrap();
         assert!(config.auth.token.is_empty());
-        assert_eq!(config.auth.bind, pulpo_common::auth::BindMode::Local);
+        assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Local);
     }
 
     #[test]
@@ -1122,6 +1092,7 @@ token = "peer-secret"
                 name: "rt".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers,
@@ -1129,7 +1100,6 @@ token = "peer-secret"
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1222,6 +1192,7 @@ breach_count = 5
                 name: "wd-rt".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -1236,7 +1207,6 @@ breach_count = 5
             },
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1433,6 +1403,7 @@ idle_action = "pause"
                 name: "idle-rt".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -1444,7 +1415,6 @@ idle_action = "pause"
             },
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1547,6 +1517,7 @@ model = "opus"
                 name: "test".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -1554,7 +1525,6 @@ model = "opus"
             watchdog: WatchdogConfig::default(),
             personas,
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1661,6 +1631,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
                 name: "test".into(),
                 port: 7433,
                 data_dir: "/tmp/test".into(),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -1673,7 +1644,6 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
                     events: vec!["dead".into()],
                 }),
             },
-            discovery: DiscoveryConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1713,104 +1683,21 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
         assert_eq!(format!("{config:?}"), format!("{cloned:?}"));
     }
 
-    // -- DiscoveryConfig / DiscoveryMethod tests --
+    // -- Node bind/discovery config tests --
 
     #[test]
-    fn test_discovery_method_default() {
-        assert_eq!(DiscoveryMethod::default(), DiscoveryMethod::Mdns);
+    fn test_node_config_default() {
+        let node = NodeConfig::default();
+        assert!(!node.name.is_empty());
+        assert_eq!(node.port, 7433);
+        assert_eq!(node.bind, pulpo_common::auth::BindMode::Local);
+        assert!(node.tag.is_none());
+        assert!(node.seed.is_none());
+        assert_eq!(node.discovery_interval_secs, 30);
     }
 
     #[test]
-    fn test_discovery_method_display() {
-        assert_eq!(DiscoveryMethod::Mdns.to_string(), "mdns");
-        assert_eq!(DiscoveryMethod::Tailscale.to_string(), "tailscale");
-        assert_eq!(DiscoveryMethod::Seed.to_string(), "seed");
-    }
-
-    #[test]
-    fn test_discovery_method_serialize() {
-        assert_eq!(
-            serde_json::to_string(&DiscoveryMethod::Mdns).unwrap(),
-            "\"mdns\""
-        );
-        assert_eq!(
-            serde_json::to_string(&DiscoveryMethod::Tailscale).unwrap(),
-            "\"tailscale\""
-        );
-        assert_eq!(
-            serde_json::to_string(&DiscoveryMethod::Seed).unwrap(),
-            "\"seed\""
-        );
-    }
-
-    #[test]
-    fn test_discovery_method_deserialize() {
-        assert_eq!(
-            serde_json::from_str::<DiscoveryMethod>("\"mdns\"").unwrap(),
-            DiscoveryMethod::Mdns
-        );
-        assert_eq!(
-            serde_json::from_str::<DiscoveryMethod>("\"tailscale\"").unwrap(),
-            DiscoveryMethod::Tailscale
-        );
-        assert_eq!(
-            serde_json::from_str::<DiscoveryMethod>("\"seed\"").unwrap(),
-            DiscoveryMethod::Seed
-        );
-    }
-
-    #[test]
-    fn test_discovery_method_invalid_deserialize() {
-        assert!(serde_json::from_str::<DiscoveryMethod>("\"invalid\"").is_err());
-    }
-
-    #[test]
-    fn test_discovery_method_debug() {
-        assert_eq!(format!("{:?}", DiscoveryMethod::Mdns), "Mdns");
-        assert_eq!(format!("{:?}", DiscoveryMethod::Tailscale), "Tailscale");
-        assert_eq!(format!("{:?}", DiscoveryMethod::Seed), "Seed");
-    }
-
-    #[test]
-    fn test_discovery_method_clone_and_copy() {
-        let m = DiscoveryMethod::Tailscale;
-        let m2 = m;
-        #[allow(clippy::clone_on_copy)]
-        let m3 = m.clone();
-        assert_eq!(m, m2);
-        assert_eq!(m, m3);
-    }
-
-    #[test]
-    fn test_discovery_method_eq() {
-        assert_eq!(DiscoveryMethod::Mdns, DiscoveryMethod::Mdns);
-        assert_ne!(DiscoveryMethod::Mdns, DiscoveryMethod::Tailscale);
-        assert_ne!(DiscoveryMethod::Tailscale, DiscoveryMethod::Seed);
-    }
-
-    #[test]
-    fn test_discovery_config_default() {
-        let config = DiscoveryConfig::default();
-        assert_eq!(config.method, DiscoveryMethod::Mdns);
-        assert!(config.tag.is_none());
-        assert!(config.seed.is_none());
-        assert_eq!(config.interval_secs, 30);
-    }
-
-    #[test]
-    fn test_discovery_config_debug_clone() {
-        let config = DiscoveryConfig {
-            method: DiscoveryMethod::Tailscale,
-            tag: Some("pulpo".into()),
-            seed: None,
-            interval_secs: 60,
-        };
-        let cloned = config.clone();
-        assert_eq!(format!("{config:?}"), format!("{cloned:?}"));
-    }
-
-    #[test]
-    fn test_load_config_with_discovery_mdns() {
+    fn test_load_config_with_tailscale_bind() {
         let tmpdir = tempfile::tempdir().unwrap();
         let path = tmpdir.path().join("config.toml");
         std::fs::write(
@@ -1818,41 +1705,20 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
             r#"
 [node]
 name = "test"
-
-[discovery]
-method = "mdns"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.discovery.method, DiscoveryMethod::Mdns);
-    }
-
-    #[test]
-    fn test_load_config_with_discovery_tailscale() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-
-[discovery]
-method = "tailscale"
+bind = "tailscale"
 tag = "pulpo"
-interval_secs = 60
+discovery_interval_secs = 60
 "#,
         )
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.discovery.method, DiscoveryMethod::Tailscale);
-        assert_eq!(config.discovery.tag, Some("pulpo".into()));
-        assert_eq!(config.discovery.interval_secs, 60);
+        assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Tailscale);
+        assert_eq!(config.node.tag, Some("pulpo".into()));
+        assert_eq!(config.node.discovery_interval_secs, 60);
     }
 
     #[test]
-    fn test_load_config_with_discovery_seed() {
+    fn test_load_config_with_public_seed() {
         let tmpdir = tempfile::tempdir().unwrap();
         let path = tmpdir.path().join("config.toml");
         std::fs::write(
@@ -1860,20 +1726,18 @@ interval_secs = 60
             r#"
 [node]
 name = "test"
-
-[discovery]
-method = "seed"
+bind = "public"
 seed = "10.0.0.5:7433"
 "#,
         )
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.discovery.method, DiscoveryMethod::Seed);
-        assert_eq!(config.discovery.seed, Some("10.0.0.5:7433".into()));
+        assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Public);
+        assert_eq!(config.node.seed, Some("10.0.0.5:7433".into()));
     }
 
     #[test]
-    fn test_load_config_without_discovery_backward_compat() {
+    fn test_load_config_without_bind_defaults_to_local() {
         let tmpdir = tempfile::tempdir().unwrap();
         let path = tmpdir.path().join("config.toml");
         std::fs::write(
@@ -1885,13 +1749,13 @@ name = "test"
         )
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.discovery.method, DiscoveryMethod::Mdns);
-        assert!(config.discovery.tag.is_none());
-        assert!(config.discovery.seed.is_none());
+        assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Local);
+        assert!(config.node.tag.is_none());
+        assert!(config.node.seed.is_none());
     }
 
     #[test]
-    fn test_save_and_load_config_with_discovery() {
+    fn test_save_and_load_config_with_tailscale() {
         let tmpdir = tempfile::tempdir().unwrap();
         let path = tmpdir.path().join("config.toml");
         let config = Config {
@@ -1899,6 +1763,9 @@ name = "test"
                 name: "test".into(),
                 port: 7433,
                 data_dir: "/tmp/test".into(),
+                bind: pulpo_common::auth::BindMode::Tailscale,
+                tag: Some("my-tag".into()),
+                ..NodeConfig::default()
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -1906,50 +1773,27 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            discovery: DiscoveryConfig {
-                method: DiscoveryMethod::Tailscale,
-                tag: Some("my-tag".into()),
-                seed: None,
-                interval_secs: 45,
-            },
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(loaded.discovery.method, DiscoveryMethod::Tailscale);
-        assert_eq!(loaded.discovery.tag, Some("my-tag".into()));
-        assert_eq!(loaded.discovery.interval_secs, 45);
+        assert_eq!(loaded.node.bind, pulpo_common::auth::BindMode::Tailscale);
+        assert_eq!(loaded.node.tag, Some("my-tag".into()));
     }
 
     #[test]
-    fn test_discovery_config_toml_serialization() {
-        let config = DiscoveryConfig {
-            method: DiscoveryMethod::Seed,
+    fn test_node_config_tag_skip_serializing_if_none() {
+        let config = NodeConfig {
+            name: "test".into(),
+            port: 7433,
+            data_dir: "/tmp".into(),
+            bind: pulpo_common::auth::BindMode::Public,
             tag: None,
             seed: Some("10.0.0.1:7433".into()),
-            interval_secs: 30,
+            discovery_interval_secs: 30,
         };
         let toml_str = toml::to_string(&config).unwrap();
-        assert!(toml_str.contains("method = \"seed\""));
         assert!(toml_str.contains("seed = \"10.0.0.1:7433\""));
         // tag should be skipped (None + skip_serializing_if)
         assert!(!toml_str.contains("tag"));
-    }
-
-    #[test]
-    fn test_discovery_method_toml_roundtrip() {
-        #[derive(Serialize, Deserialize)]
-        struct Wrap {
-            method: DiscoveryMethod,
-        }
-        for method in [
-            DiscoveryMethod::Mdns,
-            DiscoveryMethod::Tailscale,
-            DiscoveryMethod::Seed,
-        ] {
-            let w = Wrap { method };
-            let toml_str = toml::to_string(&w).unwrap();
-            let parsed: Wrap = toml::from_str(&toml_str).unwrap();
-            assert_eq!(parsed.method, method);
-        }
     }
 }

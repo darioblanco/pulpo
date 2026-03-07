@@ -1,7 +1,9 @@
 use std::net::IpAddr;
 
 use anyhow::{Context, Result};
-use mdns_sd::{ServiceDaemon, ServiceInfo};
+#[cfg(not(coverage))]
+use mdns_sd::ServiceDaemon;
+use mdns_sd::ServiceInfo;
 
 use super::{SERVICE_TYPE, ServiceRegistration};
 

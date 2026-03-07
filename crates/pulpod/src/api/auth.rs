@@ -45,12 +45,15 @@ pub async fn require_auth(
     next: Next,
 ) -> Response {
     let config = state.config.read().await;
-    let bind_mode = config.auth.bind;
+    let bind_mode = config.node.bind;
     let expected_token = config.auth.token.clone();
     drop(config);
 
-    // Local/container bind → no auth needed (network isolation is the guard)
-    if matches!(bind_mode, BindMode::Local | BindMode::Container) {
+    // Local/container/tailscale bind → no auth needed (network isolation is the guard)
+    if matches!(
+        bind_mode,
+        BindMode::Local | BindMode::Container | BindMode::Tailscale
+    ) {
         return next.run(req).await;
     }
 
@@ -278,17 +281,17 @@ mod tests {
                 name: "test".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
+                bind,
+                ..NodeConfig::default()
             },
             auth: AuthConfig {
                 token: token.into(),
-                bind,
             },
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            discovery: crate::config::DiscoveryConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(

@@ -214,14 +214,47 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         }
     }
 
-    let bind_mode = config.auth.bind;
+    let bind_mode = config.node.bind;
 
-    // Start peer discovery based on configured method
+    // Start peer discovery based on bind mode
     #[cfg(not(coverage))]
-    match config.discovery.method {
-        config::DiscoveryMethod::Mdns => {
-            // mDNS only works in public bind mode (needs network access)
-            if bind_mode == pulpo_common::auth::BindMode::Public {
+    match bind_mode {
+        pulpo_common::auth::BindMode::Tailscale => {
+            let ts_registry = peer_registry.clone();
+            let own_name = config.node.name.clone();
+            let ts_tag = config.node.tag.clone();
+            let ts_interval = std::time::Duration::from_secs(config.node.discovery_interval_secs);
+            let (ts_shutdown_tx, ts_shutdown_rx) = watch::channel(false);
+            tokio::spawn(discovery::tailscale::run_tailscale_discovery(
+                ts_registry,
+                own_name,
+                ts_tag,
+                ts_interval,
+                ts_shutdown_rx,
+            ));
+            shutdown_handle.add_sender(ts_shutdown_tx);
+            info!("Tailscale discovery enabled");
+        }
+        pulpo_common::auth::BindMode::Public => {
+            if let Some(seed_address) = config.node.seed.clone() {
+                // Seed discovery (explicit seed peer)
+                let seed_registry = peer_registry.clone();
+                let own_name = config.node.name.clone();
+                let seed_interval =
+                    std::time::Duration::from_secs(config.node.discovery_interval_secs);
+                let (seed_shutdown_tx, seed_shutdown_rx) = watch::channel(false);
+                tokio::spawn(discovery::seed::run_seed_discovery(
+                    seed_registry,
+                    own_name,
+                    port,
+                    seed_address,
+                    seed_interval,
+                    seed_shutdown_rx,
+                ));
+                shutdown_handle.add_sender(seed_shutdown_tx);
+                info!("Seed discovery enabled");
+            } else {
+                // mDNS discovery (default for public)
                 let reg = discovery::ServiceRegistration {
                     node_name: config.node.name.clone(),
                     port,
@@ -246,44 +279,8 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                 shutdown_handle.add_sender(browser_shutdown_tx);
             }
         }
-        config::DiscoveryMethod::Tailscale => {
-            let ts_registry = peer_registry.clone();
-            let own_name = config.node.name.clone();
-            let ts_tag = config.discovery.tag.clone();
-            let ts_interval = std::time::Duration::from_secs(config.discovery.interval_secs);
-            let (ts_shutdown_tx, ts_shutdown_rx) = watch::channel(false);
-            tokio::spawn(discovery::tailscale::run_tailscale_discovery(
-                ts_registry,
-                own_name,
-                ts_tag,
-                ts_interval,
-                ts_shutdown_rx,
-            ));
-            shutdown_handle.add_sender(ts_shutdown_tx);
-            info!("Tailscale discovery enabled");
-        }
-        config::DiscoveryMethod::Seed => {
-            if let Some(seed_address) = config.discovery.seed.clone() {
-                let seed_registry = peer_registry.clone();
-                let own_name = config.node.name.clone();
-                let seed_interval = std::time::Duration::from_secs(config.discovery.interval_secs);
-                let (seed_shutdown_tx, seed_shutdown_rx) = watch::channel(false);
-                tokio::spawn(discovery::seed::run_seed_discovery(
-                    seed_registry,
-                    own_name,
-                    port,
-                    seed_address,
-                    seed_interval,
-                    seed_shutdown_rx,
-                ));
-                shutdown_handle.add_sender(seed_shutdown_tx);
-                info!("Seed discovery enabled");
-            } else {
-                tracing::warn!(
-                    "Seed discovery configured but no seed address provided — discovery disabled"
-                );
-            }
-        }
+        // Local and Container: no discovery
+        pulpo_common::auth::BindMode::Local | pulpo_common::auth::BindMode::Container => {}
     }
 
     // Start Discord notification loop if configured
@@ -303,9 +300,12 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let state = api::AppState::with_event_tx(config, config_path, manager, peer_registry, event_tx);
     let app = api::router(state);
 
-    let bind_ip = match bind_mode {
-        pulpo_common::auth::BindMode::Local => "127.0.0.1",
-        pulpo_common::auth::BindMode::Public | pulpo_common::auth::BindMode::Container => "0.0.0.0",
+    let bind_ip: String = match bind_mode {
+        pulpo_common::auth::BindMode::Local => "127.0.0.1".into(),
+        pulpo_common::auth::BindMode::Public | pulpo_common::auth::BindMode::Container => {
+            "0.0.0.0".into()
+        }
+        pulpo_common::auth::BindMode::Tailscale => resolve_tailscale_ip()?,
     };
     let addr = format!("{bind_ip}:{port}");
     info!("pulpod v{} starting", env!("CARGO_PKG_VERSION"));
@@ -313,6 +313,36 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     info!("Listening on {addr} (bind={bind_mode})");
 
     Ok((app, addr, shutdown_handle))
+}
+
+/// Resolve the Tailscale IPv4 address for binding.
+/// Excluded from coverage because it requires a real Tailscale installation.
+#[cfg(not(coverage))]
+fn resolve_tailscale_ip() -> Result<String> {
+    let output = std::process::Command::new("tailscale")
+        .args(["ip", "-4"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run `tailscale ip -4`: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("tailscale ip -4 failed: {stderr}");
+    }
+    let ip = String::from_utf8(output.stdout)?
+        .trim()
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_owned();
+    if ip.is_empty() {
+        anyhow::bail!("tailscale ip -4 returned no address — is Tailscale running?");
+    }
+    Ok(ip)
+}
+
+/// Stub for coverage builds where Tailscale is not available.
+#[cfg(coverage)]
+fn resolve_tailscale_ip() -> Result<String> {
+    Ok("100.64.0.1".into())
 }
 
 /// Build the MCP server from config — same init as `build_app` but returns `PulpoMcp`
@@ -653,10 +683,10 @@ events = ["completed", "dead"]
 name = "test"
 port = 0
 data_dir = "{}"
+bind = "public"
 
 [auth]
 token = "existing-token-value"
-bind = "public"
 "#,
                 data_dir.display()
             ),
@@ -689,8 +719,6 @@ bind = "public"
 name = "test"
 port = 0
 data_dir = "{}"
-
-[auth]
 bind = "container"
 "#,
                 data_dir.display()
@@ -708,7 +736,7 @@ bind = "container"
     }
 
     #[tokio::test]
-    async fn test_build_app_discovery_tailscale() {
+    async fn test_build_app_bind_tailscale() {
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
         let data_dir = tmpdir.path().join("data");
@@ -720,11 +748,9 @@ bind = "container"
 name = "test"
 port = 0
 data_dir = "{}"
-
-[discovery]
-method = "tailscale"
+bind = "tailscale"
 tag = "pulpo"
-interval_secs = 60
+discovery_interval_secs = 60
 "#,
                 data_dir.display()
             ),
@@ -737,12 +763,13 @@ interval_secs = 60
             command: None,
         };
         let (_app, addr, handle) = build_app(&cli).await.unwrap();
-        assert_eq!(addr, "127.0.0.1:0");
+        // Tailscale bind resolves to the Tailscale IP (coverage stub returns 100.64.0.1)
+        assert!(addr.ends_with(":0"));
         handle.shutdown();
     }
 
     #[tokio::test]
-    async fn test_build_app_discovery_seed() {
+    async fn test_build_app_bind_public_with_seed() {
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
         let data_dir = tmpdir.path().join("data");
@@ -754,9 +781,7 @@ interval_secs = 60
 name = "test"
 port = 0
 data_dir = "{}"
-
-[discovery]
-method = "seed"
+bind = "public"
 seed = "10.0.0.5:7433"
 "#,
                 data_dir.display()
@@ -770,12 +795,12 @@ seed = "10.0.0.5:7433"
             command: None,
         };
         let (_app, addr, handle) = build_app(&cli).await.unwrap();
-        assert_eq!(addr, "127.0.0.1:0");
+        assert_eq!(addr, "0.0.0.0:0");
         handle.shutdown();
     }
 
     #[tokio::test]
-    async fn test_build_app_discovery_seed_no_address() {
+    async fn test_build_app_bind_public_mdns() {
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
         let data_dir = tmpdir.path().join("data");
@@ -787,9 +812,7 @@ seed = "10.0.0.5:7433"
 name = "test"
 port = 0
 data_dir = "{}"
-
-[discovery]
-method = "seed"
+bind = "public"
 "#,
                 data_dir.display()
             ),
@@ -801,9 +824,8 @@ method = "seed"
             port: Some(0),
             command: None,
         };
-        // Should still start successfully (just warns about missing seed)
         let (_app, addr, handle) = build_app(&cli).await.unwrap();
-        assert_eq!(addr, "127.0.0.1:0");
+        assert_eq!(addr, "0.0.0.0:0");
         handle.shutdown();
     }
 }

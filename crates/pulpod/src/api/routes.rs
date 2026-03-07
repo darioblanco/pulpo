@@ -123,6 +123,7 @@ mod tests {
                 name: "test-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
@@ -130,7 +131,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            discovery: crate::config::DiscoveryConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -190,6 +190,7 @@ mod tests {
                 name: "test-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
@@ -197,7 +198,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             personas: personas.clone(),
             notifications: crate::config::NotificationsConfig::default(),
-            discovery: crate::config::DiscoveryConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -740,6 +740,7 @@ mod tests {
                 name: "test-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
@@ -747,7 +748,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            discovery: crate::config::DiscoveryConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -879,6 +879,7 @@ mod tests {
                 name: "test-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
@@ -886,7 +887,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            discovery: crate::config::DiscoveryConfig::default(),
         };
         let backend = Arc::new(FailIsAliveBackend);
         let manager = SessionManager::new(
@@ -1118,17 +1118,17 @@ mod tests {
                 name: "auth-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
+                bind: pulpo_common::auth::BindMode::Public,
+                ..NodeConfig::default()
             },
             auth: crate::config::AuthConfig {
                 token: TEST_TOKEN.into(),
-                bind: pulpo_common::auth::BindMode::Public,
             },
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            discovery: crate::config::DiscoveryConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -1285,17 +1285,17 @@ mod tests {
                 name: "auth-tcp".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
+                bind: pulpo_common::auth::BindMode::Public,
+                ..NodeConfig::default()
             },
             auth: crate::config::AuthConfig {
                 token: TEST_TOKEN.into(),
-                bind: pulpo_common::auth::BindMode::Public,
             },
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            discovery: crate::config::DiscoveryConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -1392,6 +1392,7 @@ mod tests {
                 name: "test-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
@@ -1399,7 +1400,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            discovery: crate::config::DiscoveryConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(

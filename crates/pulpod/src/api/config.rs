@@ -23,10 +23,9 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
             name: config.node.name.clone(),
             port: config.node.port,
             data_dir: config.node.data_dir.clone(),
+            bind: config.node.bind,
         },
-        auth: AuthConfigResponse {
-            bind: config.auth.bind,
-        },
+        auth: AuthConfigResponse {},
         peers: config.peers.clone(),
         guards: GuardDefaultConfigResponse {
             preset: config.guards.preset,
@@ -49,7 +48,7 @@ pub async fn update_config(
 ) -> Result<Json<UpdateConfigResponse>, ApiError> {
     let mut config = state.config.write().await;
     let original_port = config.node.port;
-    let original_bind = config.auth.bind;
+    let original_bind = config.node.bind;
 
     if let Some(name) = &req.node_name {
         config.node.name.clone_from(name);
@@ -61,7 +60,7 @@ pub async fn update_config(
         config.node.data_dir.clone_from(data_dir);
     }
     if let Some(bind) = req.bind {
-        config.auth.bind = bind;
+        config.node.bind = bind;
     }
     if let Some(preset) = req.guard_preset {
         config.guards.preset = preset;
@@ -70,7 +69,7 @@ pub async fn update_config(
         config.peers = peers;
     }
 
-    let restart_required = config.node.port != original_port || config.auth.bind != original_bind;
+    let restart_required = config.node.port != original_port || config.node.bind != original_bind;
 
     // Save to disk if config_path is set
     if !state.config_path.as_os_str().is_empty() {
@@ -149,6 +148,7 @@ mod tests {
                     name: "test-node".into(),
                     port: 7433,
                     data_dir: tmpdir.path().to_str().unwrap().into(),
+                    ..NodeConfig::default()
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
@@ -156,7 +156,6 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 personas: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                discovery: crate::config::DiscoveryConfig::default(),
             },
             manager,
             peer_registry,
@@ -184,6 +183,7 @@ mod tests {
                     name: "test-node".into(),
                     port: 7433,
                     data_dir: tmpdir.path().to_str().unwrap().into(),
+                    ..NodeConfig::default()
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
@@ -191,7 +191,6 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 personas: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                discovery: crate::config::DiscoveryConfig::default(),
             },
             config_path,
             manager,
@@ -434,6 +433,7 @@ mod tests {
                 name: "test".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
+                ..NodeConfig::default()
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
@@ -441,12 +441,11 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             personas: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            discovery: crate::config::DiscoveryConfig::default(),
         };
         let resp = config_to_response(&config);
         assert_eq!(resp.node.name, "test");
         assert_eq!(resp.node.port, 7433);
-        assert_eq!(resp.auth.bind, pulpo_common::auth::BindMode::Local);
+        assert_eq!(resp.node.bind, pulpo_common::auth::BindMode::Local);
     }
 
     #[tokio::test]
@@ -458,11 +457,10 @@ mod tests {
             data_dir: None,
             bind: Some(pulpo_common::auth::BindMode::Public),
             guard_preset: None,
-
             peers: None,
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.auth.bind, pulpo_common::auth::BindMode::Public);
+        assert_eq!(resp.config.node.bind, pulpo_common::auth::BindMode::Public);
         assert!(resp.restart_required);
     }
 
@@ -475,7 +473,6 @@ mod tests {
             data_dir: None,
             bind: Some(pulpo_common::auth::BindMode::Local),
             guard_preset: None,
-
             peers: None,
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -483,10 +480,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_config_returns_auth() {
+    async fn test_get_config_returns_bind() {
         let state = test_state().await;
         let Json(resp) = get_config(State(state)).await.unwrap();
-        assert_eq!(resp.auth.bind, pulpo_common::auth::BindMode::Local);
+        assert_eq!(resp.node.bind, pulpo_common::auth::BindMode::Local);
     }
 
     #[test]
@@ -528,6 +525,7 @@ mod tests {
                     name: "test".into(),
                     port: 7433,
                     data_dir: tmpdir.path().to_str().unwrap().into(),
+                    ..NodeConfig::default()
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
@@ -535,7 +533,6 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 personas: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                discovery: crate::config::DiscoveryConfig::default(),
             },
             std::path::PathBuf::from("/dev/null/impossible/config.toml"),
             manager,

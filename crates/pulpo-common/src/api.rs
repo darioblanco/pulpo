@@ -71,9 +71,7 @@ pub struct ConfigResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AuthConfigResponse {
-    pub bind: BindMode,
-}
+pub struct AuthConfigResponse {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AuthTokenResponse {
@@ -91,6 +89,7 @@ pub struct NodeConfigResponse {
     pub name: String,
     pub port: u16,
     pub data_dir: String,
+    pub bind: BindMode,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -148,10 +147,9 @@ mod tests {
                 name: "test".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
-            },
-            auth: AuthConfigResponse {
                 bind: BindMode::Local,
             },
+            auth: AuthConfigResponse {},
             peers: HashMap::new(),
             guards: GuardDefaultConfigResponse {
                 preset: GuardPreset::Standard,
@@ -164,11 +162,11 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d"},"auth":{"bind":"local"},"peers":{},"guards":{"preset":"strict"}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local"},"auth":{},"peers":{},"guards":{"preset":"strict"}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
-        assert_eq!(resp.auth.bind, BindMode::Local);
+        assert_eq!(resp.node.bind, BindMode::Local);
         assert_eq!(resp.guards.preset, GuardPreset::Strict);
     }
 
@@ -179,10 +177,9 @@ mod tests {
                 name: "debug".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
-            },
-            auth: AuthConfigResponse {
                 bind: BindMode::Local,
             },
+            auth: AuthConfigResponse {},
             peers: HashMap::new(),
             guards: GuardDefaultConfigResponse {
                 preset: GuardPreset::Standard,
@@ -198,6 +195,7 @@ mod tests {
             name: "test".into(),
             port: 7433,
             data_dir: "/tmp".into(),
+            bind: BindMode::Local,
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("test"));
@@ -254,10 +252,9 @@ mod tests {
                     name: "test".into(),
                     port: 7433,
                     data_dir: "/tmp".into(),
-                },
-                auth: AuthConfigResponse {
                     bind: BindMode::Local,
                 },
+                auth: AuthConfigResponse {},
                 peers: HashMap::new(),
                 guards: GuardDefaultConfigResponse {
                     preset: GuardPreset::Standard,
@@ -277,10 +274,9 @@ mod tests {
                     name: "test".into(),
                     port: 7433,
                     data_dir: "/tmp".into(),
-                },
-                auth: AuthConfigResponse {
                     bind: BindMode::Local,
                 },
+                auth: AuthConfigResponse {},
                 peers: HashMap::new(),
                 guards: GuardDefaultConfigResponse {
                     preset: GuardPreset::Standard,
@@ -301,10 +297,9 @@ mod tests {
                 name: "n".into(),
                 port: 7433,
                 data_dir: "/d".into(),
-            },
-            auth: AuthConfigResponse {
                 bind: BindMode::Local,
             },
+            auth: AuthConfigResponse {},
             peers,
             guards: GuardDefaultConfigResponse {
                 preset: GuardPreset::Standard,
@@ -791,69 +786,34 @@ mod tests {
 
     #[test]
     fn test_auth_config_response_serialize() {
-        let resp = AuthConfigResponse {
-            bind: BindMode::Local,
-        };
+        let resp = AuthConfigResponse {};
         let json = serde_json::to_string(&resp).unwrap();
-        assert_eq!(json, r#"{"bind":"local"}"#);
-    }
-
-    #[test]
-    fn test_auth_config_response_serialize_public() {
-        let resp = AuthConfigResponse {
-            bind: BindMode::Public,
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert_eq!(json, r#"{"bind":"public"}"#);
-    }
-
-    #[test]
-    fn test_auth_config_response_serialize_container() {
-        let resp = AuthConfigResponse {
-            bind: BindMode::Container,
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert_eq!(json, r#"{"bind":"container"}"#);
+        assert_eq!(json, "{}");
     }
 
     #[test]
     fn test_auth_config_response_deserialize() {
-        let json = r#"{"bind":"local"}"#;
-        let resp: AuthConfigResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.bind, BindMode::Local);
-    }
-
-    #[test]
-    fn test_auth_config_response_deserialize_public() {
-        let json = r#"{"bind":"public"}"#;
-        let resp: AuthConfigResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.bind, BindMode::Public);
-    }
-
-    #[test]
-    fn test_auth_config_response_deserialize_container() {
-        let json = r#"{"bind":"container"}"#;
-        let resp: AuthConfigResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.bind, BindMode::Container);
-    }
-
-    #[test]
-    fn test_auth_config_response_roundtrip() {
-        let original = AuthConfigResponse {
-            bind: BindMode::Public,
-        };
-        let json = serde_json::to_string(&original).unwrap();
-        let deserialized: AuthConfigResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.bind, BindMode::Public);
+        let json = "{}";
+        let _resp: AuthConfigResponse = serde_json::from_str(json).unwrap();
     }
 
     #[test]
     fn test_auth_config_response_debug() {
-        let resp = AuthConfigResponse {
-            bind: BindMode::Local,
-        };
+        let resp = AuthConfigResponse {};
         let debug = format!("{resp:?}");
-        assert!(debug.contains("Local"));
+        assert!(debug.contains("AuthConfigResponse"));
+    }
+
+    #[test]
+    fn test_node_config_response_bind() {
+        let resp = NodeConfigResponse {
+            name: "test".into(),
+            port: 7433,
+            data_dir: "/tmp".into(),
+            bind: BindMode::Tailscale,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"bind\":\"tailscale\""));
     }
 
     #[test]

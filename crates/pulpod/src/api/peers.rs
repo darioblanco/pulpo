@@ -164,6 +164,7 @@ mod tests {
                     name: "local-node".into(),
                     port: 7433,
                     data_dir: tmpdir.path().to_str().unwrap().into(),
+                    ..NodeConfig::default()
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: peers_config,
@@ -171,7 +172,6 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 personas: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                discovery: crate::config::DiscoveryConfig::default(),
             },
             manager,
             peer_registry,
