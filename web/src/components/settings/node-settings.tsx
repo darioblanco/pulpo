@@ -13,7 +13,8 @@ const bindModes = ['local', 'tailscale', 'public', 'container'] as const;
 
 const bindDescriptions: Record<string, string> = {
   local: 'Binds to 127.0.0.1. Only reachable from this machine. No discovery, no auth.',
-  tailscale: 'Binds to the Tailscale IP. Peers discovered via Tailscale API.',
+  tailscale:
+    'Binds locally and serves HTTPS via tailscale serve. Peers discovered via Tailscale API.',
   public: 'Binds to 0.0.0.0. Requires auth token. Peers via mDNS or seed.',
   container: 'Binds to 0.0.0.0. Trusts container network isolation (no auth).',
 };

@@ -131,9 +131,11 @@ export interface NotificationsConfigResponse {
   webhooks: WebhookEndpointConfigResponse[];
 }
 
+export type PeerEntry = string | { address: string; token?: string };
+
 export interface ConfigResponse {
   node: NodeConfigResponse;
-  peers: Record<string, string>;
+  peers: Record<string, PeerEntry>;
   guards: GuardDefaultConfigResponse;
   watchdog: WatchdogConfigResponse;
   notifications: NotificationsConfigResponse;
@@ -162,7 +164,7 @@ export interface UpdateConfigRequest {
   discord_events?: string[];
   webhooks?: WebhookEndpointUpdateRequest[];
   personas?: Record<string, PersonaConfig>;
-  peers?: Record<string, string>;
+  peers?: Record<string, PeerEntry>;
 }
 
 export interface UpdateConfigResponse {
