@@ -26,14 +26,14 @@ pub struct Cli {
 #[allow(clippy::large_enum_variant)]
 pub enum Commands {
     /// Attach to a session's terminal
-    #[command(alias = "a")]
+    #[command(visible_alias = "a")]
     Attach {
         /// Session name or ID
         name: String,
     },
 
     /// Send input to a session
-    #[command(alias = "i")]
+    #[command(visible_alias = "i")]
     Input {
         /// Session name or ID
         name: String,
@@ -42,7 +42,7 @@ pub enum Commands {
     },
 
     /// Spawn a new agent session
-    #[command(alias = "s")]
+    #[command(visible_alias = "s")]
     Spawn {
         /// Working directory
         #[arg(long)]
@@ -97,11 +97,11 @@ pub enum Commands {
     },
 
     /// List all sessions
-    #[command(alias = "ls")]
+    #[command(visible_alias = "ls")]
     List,
 
     /// Show session logs/output
-    #[command(alias = "l")]
+    #[command(visible_alias = "l")]
     Logs {
         /// Session name or ID
         name: String,
@@ -116,32 +116,32 @@ pub enum Commands {
     },
 
     /// Kill a session
-    #[command(alias = "k")]
+    #[command(visible_alias = "k")]
     Kill {
         /// Session name or ID
         name: String,
     },
 
     /// Permanently remove a session from history
-    #[command(alias = "rm")]
+    #[command(visible_alias = "rm")]
     Delete {
         /// Session name or ID
         name: String,
     },
 
     /// Resume a stale session
-    #[command(alias = "r")]
+    #[command(visible_alias = "r")]
     Resume {
         /// Session name or ID
         name: String,
     },
 
     /// List all known nodes
-    #[command(alias = "n")]
+    #[command(visible_alias = "n")]
     Nodes,
 
     /// Show intervention history for a session
-    #[command(alias = "iv")]
+    #[command(visible_alias = "iv")]
     Interventions {
         /// Session name or ID
         name: String,
@@ -151,7 +151,7 @@ pub enum Commands {
     Ui,
 
     /// Manage scheduled agent runs via crontab
-    #[command(alias = "sched")]
+    #[command(visible_alias = "sched")]
     Schedule {
         #[command(subcommand)]
         action: ScheduleAction,
