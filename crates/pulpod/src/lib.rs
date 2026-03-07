@@ -62,6 +62,8 @@ pub struct ShutdownHandle {
     /// mDNS registration kept alive until shutdown (behind cfg so coverage builds compile).
     #[cfg(not(coverage))]
     mdns_registration: Option<discovery::mdns::MdnsRegistration>,
+    /// Whether `tailscale serve` was started and needs cleanup on shutdown.
+    tailscale_serve_active: bool,
 }
 
 impl ShutdownHandle {
@@ -70,6 +72,7 @@ impl ShutdownHandle {
             senders: Vec::new(),
             #[cfg(not(coverage))]
             mdns_registration: None,
+            tailscale_serve_active: false,
         }
     }
 
@@ -82,10 +85,13 @@ impl ShutdownHandle {
         self.mdns_registration = Some(reg);
     }
 
-    /// Signal all background loops to shut down.
+    /// Signal all background loops to shut down and clean up resources.
     pub fn shutdown(&self) {
         for tx in &self.senders {
             let _ = tx.send(true);
+        }
+        if self.tailscale_serve_active {
+            tailscale_serve_cleanup();
         }
     }
 }
@@ -313,48 +319,128 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let app = api::router(state);
 
     let bind_ip: String = match bind_mode {
-        pulpo_common::auth::BindMode::Local => "127.0.0.1".into(),
+        pulpo_common::auth::BindMode::Local | pulpo_common::auth::BindMode::Tailscale => {
+            "127.0.0.1".into()
+        }
         pulpo_common::auth::BindMode::Public | pulpo_common::auth::BindMode::Container => {
             "0.0.0.0".into()
         }
-        pulpo_common::auth::BindMode::Tailscale => resolve_tailscale_ip()?,
     };
+
+    // Set up tailscale serve for HTTPS access over tailnet
+    if bind_mode == pulpo_common::auth::BindMode::Tailscale {
+        tailscale_serve_start(port)?;
+        shutdown_handle.tailscale_serve_active = true;
+    }
+
     let addr = format!("{bind_ip}:{port}");
     info!("pulpod v{} starting", env!("CARGO_PKG_VERSION"));
-    info!("Dashboard: http://localhost:{port}");
+    if bind_mode == pulpo_common::auth::BindMode::Tailscale {
+        let ts_name = resolve_tailscale_name().unwrap_or_else(|_| "your-machine".into());
+        info!("Dashboard: https://{ts_name}");
+    } else {
+        info!("Dashboard: http://localhost:{port}");
+    }
     info!("Listening on {addr} (bind={bind_mode})");
 
     Ok((app, addr, shutdown_handle))
 }
 
-/// Resolve the Tailscale IPv4 address for binding.
-/// Excluded from coverage because it requires a real Tailscale installation.
+/// Start `tailscale serve` to proxy the local port over HTTPS on the tailnet.
+///
+/// Cleans up any stale serve rules first (e.g., from a previous crash), then
+/// registers `https / http://127.0.0.1:{port}` so the dashboard is available at
+/// `https://<machine-name>.<tailnet>.ts.net`.
 #[cfg(not(coverage))]
-fn resolve_tailscale_ip() -> Result<String> {
+fn tailscale_serve_start(port: u16) -> Result<()> {
+    // Clean up stale rules from a previous crash
+    let _ = std::process::Command::new("tailscale")
+        .args(["serve", "--https=443", "off"])
+        .output();
+
     let output = std::process::Command::new("tailscale")
-        .args(["ip", "-4"])
+        .args([
+            "serve",
+            "--bg",
+            "--https=443",
+            &format!("http://127.0.0.1:{port}"),
+        ])
         .output()
-        .map_err(|e| anyhow::anyhow!("Failed to run `tailscale ip -4`: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("Failed to run `tailscale serve`: {e}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("tailscale ip -4 failed: {stderr}");
+        anyhow::bail!("tailscale serve failed: {stderr}");
     }
-    let ip = String::from_utf8(output.stdout)?
-        .trim()
-        .lines()
-        .next()
-        .unwrap_or("")
-        .to_owned();
-    if ip.is_empty() {
-        anyhow::bail!("tailscale ip -4 returned no address — is Tailscale running?");
-    }
-    Ok(ip)
+    info!("tailscale serve started (proxying port {port} over HTTPS)");
+    Ok(())
 }
 
-/// Stub for coverage builds where Tailscale is not available.
+/// Stub for coverage builds.
 #[cfg(coverage)]
-fn resolve_tailscale_ip() -> Result<String> {
-    Ok("100.64.0.1".into())
+fn tailscale_serve_start(_port: u16) -> Result<()> {
+    Ok(())
+}
+
+/// Clean up `tailscale serve` on shutdown, logging any errors.
+#[cfg(not(coverage))]
+fn tailscale_serve_cleanup() {
+    if let Err(e) = tailscale_serve_stop() {
+        tracing::warn!("Failed to stop tailscale serve: {e}");
+    }
+}
+
+/// Stub for coverage builds.
+#[cfg(coverage)]
+fn tailscale_serve_cleanup() {}
+
+/// Stop `tailscale serve` and remove the HTTPS proxy rule.
+#[cfg(not(coverage))]
+fn tailscale_serve_stop() -> Result<()> {
+    let output = std::process::Command::new("tailscale")
+        .args(["serve", "--https=443", "off"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run `tailscale serve off`: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("tailscale serve off failed: {stderr}");
+    }
+    tracing::info!("tailscale serve stopped");
+    Ok(())
+}
+
+/// Stub for coverage builds.
+#[cfg(coverage)]
+#[cfg_attr(coverage, allow(dead_code))]
+fn tailscale_serve_stop() -> Result<()> {
+    Ok(())
+}
+
+/// Resolve the Tailscale HTTPS hostname (e.g., `raven.tailnet-name.ts.net`).
+#[cfg(not(coverage))]
+fn resolve_tailscale_name() -> Result<String> {
+    let output = std::process::Command::new("tailscale")
+        .args(["status", "--json"])
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to run `tailscale status`: {e}"))?;
+    if !output.status.success() {
+        anyhow::bail!("tailscale status failed");
+    }
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let dns_name = json["Self"]["DNSName"]
+        .as_str()
+        .unwrap_or("")
+        .trim_end_matches('.')
+        .to_owned();
+    if dns_name.is_empty() {
+        anyhow::bail!("Could not resolve Tailscale DNS name");
+    }
+    Ok(dns_name)
+}
+
+/// Stub for coverage builds.
+#[cfg(coverage)]
+fn resolve_tailscale_name() -> Result<String> {
+    Ok("test-node.tailnet.ts.net".into())
 }
 
 /// Build the MCP server from config — same init as `build_app` but returns `PulpoMcp`
@@ -776,8 +862,9 @@ discovery_interval_secs = 60
             command: None,
         };
         let (_app, addr, handle) = build_app(&cli).await.unwrap();
-        // Tailscale bind resolves to the Tailscale IP (coverage stub returns 100.64.0.1)
-        assert!(addr.ends_with(":0"));
+        // Tailscale bind uses 127.0.0.1 (tailscale serve proxies over HTTPS)
+        assert_eq!(addr, "127.0.0.1:0");
+        assert!(handle.tailscale_serve_active);
         handle.shutdown();
     }
 
@@ -840,6 +927,27 @@ bind = "public"
         let (_app, addr, handle) = build_app(&cli).await.unwrap();
         assert_eq!(addr, "0.0.0.0:0");
         handle.shutdown();
+    }
+
+    #[test]
+    fn test_shutdown_handle_tailscale_serve_cleanup() {
+        let mut handle = ShutdownHandle::new();
+        assert!(!handle.tailscale_serve_active);
+        handle.tailscale_serve_active = true;
+        // Should not panic — coverage stub is a no-op
+        handle.shutdown();
+    }
+
+    #[cfg(coverage)]
+    #[test]
+    fn test_tailscale_serve_stubs() {
+        assert!(tailscale_serve_start(7433).is_ok());
+        assert!(tailscale_serve_stop().is_ok());
+        tailscale_serve_cleanup();
+        assert_eq!(
+            resolve_tailscale_name().unwrap(),
+            "test-node.tailnet.ts.net"
+        );
     }
 
     #[cfg(coverage)]

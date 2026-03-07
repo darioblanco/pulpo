@@ -696,9 +696,12 @@ events = ["running", "completed", "dead"]   # optional filter; omit for all even
 
 - **Network**: `pulpod` binds to `127.0.0.1` by default (`local` mode). In `public`
   mode, it binds to `0.0.0.0` and requires bearer token authentication on all
-  `/api/v1/*` requests. In `tailscale` mode, it binds to the Tailscale interface IP
-  and skips auth (delegated to WireGuard). In `container` mode, it binds to `0.0.0.0`
-  but skips auth (trusts container network isolation).
+  `/api/v1/*` requests. In `tailscale` mode, it binds to `127.0.0.1` and automatically
+  runs `tailscale serve` to proxy the dashboard over HTTPS on the tailnet — accessible
+  at `https://<machine-name>.<tailnet>.ts.net`. Auth is delegated to Tailscale
+  (WireGuard). The serve rule is cleaned up on shutdown and stale rules from crashes
+  are cleared on startup. In `container` mode, it binds to `0.0.0.0` but skips auth
+  (trusts container network isolation).
 - **Auth**: In `local` and `tailscale` modes, network isolation is the auth layer.
   In `public` mode, a base64url token is auto-generated on first run and required
   in every request. Retrieve it locally via `GET /api/v1/auth/token`. In `container`
@@ -711,9 +714,10 @@ events = ["running", "completed", "dead"]   # optional filter; omit for all even
 
 ### Remote Access via Tailscale
 
-The recommended way to run multi-node pulpo is `bind = "tailscale"`. This binds
-directly to the Tailscale interface IP, enables automatic peer discovery via the
-Tailscale API, and skips auth (WireGuard provides encryption and identity):
+The recommended way to run multi-node pulpo is `bind = "tailscale"`. This
+automatically runs `tailscale serve` to proxy pulpod over HTTPS on your tailnet,
+enables automatic peer discovery via the Tailscale API, and skips token auth
+(WireGuard provides encryption and identity):
 
 ```toml
 [node]
@@ -721,12 +725,10 @@ name = "mac-mini"
 bind = "tailscale"
 ```
 
-Alternatively, you can keep `bind = "local"` (the default) and use `tailscale serve`
-to expose pulpod over your Tailnet:
-
-```bash
-tailscale serve --bg 7433
-```
+On startup, pulpod runs `tailscale serve --bg --https=443 http://127.0.0.1:{port}`
+and logs the HTTPS URL (e.g., `https://mac-mini.tailnet-name.ts.net`). On shutdown
+(or Ctrl+C), it runs `tailscale serve off` to clean up. Stale serve rules from a
+previous crash are also cleared on startup.
 
 Use `public` bind mode only when you need direct LAN access without Tailscale
 (e.g., devices not on the tailnet). Use `container` bind mode for Docker/Podman

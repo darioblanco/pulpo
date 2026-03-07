@@ -144,7 +144,7 @@ Pulpo nodes find each other automatically. The discovery method is derived from 
 
 ### Tailscale (recommended)
 
-Discovers peers across your Tailscale network. Binds to the Tailscale interface IP, skips auth (delegated to WireGuard), and queries the local Tailscale API for peers.
+Discovers peers across your Tailscale network and serves the dashboard over HTTPS via `tailscale serve`. Accessible at `https://<machine-name>.<tailnet>.ts.net` from any device on your tailnet — no port forwarding, tokens, or manual setup needed.
 
 ```toml
 [node]
@@ -153,7 +153,7 @@ bind = "tailscale"
 tag = "pulpo"          # optional: only discover nodes with this ACL tag
 ```
 
-Tag filtering uses Tailscale ACL tags (e.g., `tag:pulpo`). If `tag` is omitted, all online nodes in the tailnet are probed. Tailscale handles encryption, auth, and NAT traversal — no port forwarding or tokens needed.
+On startup, pulpod automatically runs `tailscale serve` to proxy the local port over HTTPS on port 443. On shutdown, the serve rule is cleaned up. Stale rules from crashes are cleared on next startup. Tag filtering uses Tailscale ACL tags (e.g., `tag:pulpo`). If `tag` is omitted, all online nodes in the tailnet are probed.
 
 ### mDNS
 
