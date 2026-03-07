@@ -282,7 +282,7 @@ impl PulpoMcp {
         path: &str,
     ) -> Result<T> {
         let (address, token) = self.peer_address(node).await?;
-        let url = format!("http://{address}{path}");
+        let url = format!("{}{path}", crate::peers::health::base_url(&address));
         let client = reqwest::Client::new();
         let mut req = client.get(&url);
         if let Some(tok) = &token {
@@ -299,7 +299,7 @@ impl PulpoMcp {
         body: &B,
     ) -> Result<T> {
         let (address, token) = self.peer_address(node).await?;
-        let url = format!("http://{address}{path}");
+        let url = format!("{}{path}", crate::peers::health::base_url(&address));
         let client = reqwest::Client::new();
         let mut req = client.post(&url).json(body);
         if let Some(tok) = &token {
@@ -311,7 +311,7 @@ impl PulpoMcp {
 
     async fn remote_delete(&self, node: &str, path: &str) -> Result<()> {
         let (address, token) = self.peer_address(node).await?;
-        let url = format!("http://{address}{path}");
+        let url = format!("{}{path}", crate::peers::health::base_url(&address));
         let client = reqwest::Client::new();
         let mut req = client.delete(&url);
         if let Some(tok) = &token {
@@ -330,6 +330,41 @@ impl PulpoMcp {
             cpus: num_cpus::get(),
             memory_mb: crate::api::node::get_memory_mb(),
             gpu: None,
+        }
+    }
+
+    /// Fetch session output, either locally or from a remote node.
+    async fn fetch_output(
+        &self,
+        session_id: &str,
+        node: Option<&str>,
+        output_lines: usize,
+    ) -> String {
+        if self.is_local(node) {
+            // Local: we need the session to resolve the backend ID
+            if let Ok(Some(session)) = self.session_manager.get_session(session_id).await {
+                self.session_manager.capture_output(
+                    session_id,
+                    &self.session_manager.resolve_backend_id(&session),
+                    output_lines,
+                )
+            } else {
+                String::new()
+            }
+        } else {
+            let n = node.unwrap_or_default();
+            let path = format!("/api/v1/sessions/{session_id}/output?lines={output_lines}");
+            self.remote_get::<serde_json::Value>(n, &path)
+                .await
+                .map_or_else(
+                    |_| String::new(),
+                    |val| {
+                        val.get("output")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_owned()
+                    },
+                )
         }
     }
 
@@ -362,28 +397,12 @@ impl PulpoMcp {
                         SessionStatus::Completed | SessionStatus::Dead | SessionStatus::Stale
                     );
                     if is_terminal {
-                        let output = if self.is_local(node) {
-                            self.session_manager.capture_output(
-                                session_id,
-                                &self.session_manager.resolve_backend_id(&session),
-                                output_lines,
-                            )
-                        } else {
-                            String::new()
-                        };
+                        let output = self.fetch_output(session_id, node, output_lines).await;
                         return Ok((session, output, false));
                     }
 
                     if tokio::time::Instant::now() >= deadline {
-                        let output = if self.is_local(node) {
-                            self.session_manager.capture_output(
-                                session_id,
-                                &self.session_manager.resolve_backend_id(&session),
-                                output_lines,
-                            )
-                        } else {
-                            String::new()
-                        };
+                        let output = self.fetch_output(session_id, node, output_lines).await;
                         return Ok((session, output, true));
                     }
                 }

@@ -44,7 +44,16 @@ pub fn parse_status(json: &str) -> anyhow::Result<TailscaleStatus> {
 
 /// Filter peers by tag. If `tag` is `None`, all online peers are returned.
 /// The tag is matched as `"tag:<value>"` in the node's tags list.
-pub fn filter_peers(status: &TailscaleStatus, tag: Option<&str>, port: u16) -> Vec<TailscalePeer> {
+///
+/// When `use_dns` is true (Tailscale bind mode), addresses use HTTPS DNS names
+/// (e.g., `https://linux-server.tailnet.ts.net`) since `tailscale serve` proxies
+/// over HTTPS on port 443. Otherwise, addresses use `{ip}:{port}`.
+pub fn filter_peers(
+    status: &TailscaleStatus,
+    tag: Option<&str>,
+    port: u16,
+    use_dns: bool,
+) -> Vec<TailscalePeer> {
     let own_hostname = &status.self_node.host_name;
 
     status
@@ -65,10 +74,19 @@ pub fn filter_peers(status: &TailscaleStatus, tag: Option<&str>, port: u16) -> V
             })
         })
         .filter_map(|node| {
-            let ip = node.tailscale_i_ps.first()?;
+            let address = if use_dns {
+                let dns = node.dns_name.trim_end_matches('.');
+                if dns.is_empty() {
+                    return None;
+                }
+                format!("https://{dns}")
+            } else {
+                let ip = node.tailscale_i_ps.first()?;
+                format!("{ip}:{port}")
+            };
             Some(TailscalePeer {
                 name: node.host_name.clone(),
-                address: format!("{ip}:{port}"),
+                address,
             })
         })
         .collect()
@@ -113,7 +131,7 @@ pub async fn run_tailscale_discovery(
         .await
         {
             Ok(Ok(status)) => {
-                let peers = filter_peers(&status, tag.as_deref(), DEFAULT_PULPO_PORT);
+                let peers = filter_peers(&status, tag.as_deref(), DEFAULT_PULPO_PORT, true);
                 for peer in &peers {
                     if peer.name == own_name {
                         continue;
@@ -263,7 +281,7 @@ mod tests {
     #[test]
     fn test_filter_peers_by_tag() {
         let status = parse_status(sample_status_json()).unwrap();
-        let peers = filter_peers(&status, Some("pulpo"), DEFAULT_PULPO_PORT);
+        let peers = filter_peers(&status, Some("pulpo"), DEFAULT_PULPO_PORT, false);
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].name, "linux-server");
         assert_eq!(peers[0].address, "100.64.0.2:7433");
@@ -272,7 +290,7 @@ mod tests {
     #[test]
     fn test_filter_peers_no_tag_filter() {
         let status = parse_status(sample_status_json()).unwrap();
-        let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT);
+        let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT, false);
         // Should include all online peers (linux-server + win-pc), excluding offline
         assert_eq!(peers.len(), 2);
         let names: Vec<&str> = peers.iter().map(|p| p.name.as_str()).collect();
@@ -283,7 +301,7 @@ mod tests {
     #[test]
     fn test_filter_peers_excludes_offline() {
         let status = parse_status(sample_status_json()).unwrap();
-        let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT);
+        let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT, false);
         assert!(!peers.iter().any(|p| p.name == "offline-node"));
     }
 
@@ -307,21 +325,21 @@ mod tests {
             }
         }"#;
         let status = parse_status(json).unwrap();
-        let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT);
+        let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT, false);
         assert!(peers.is_empty());
     }
 
     #[test]
     fn test_filter_peers_no_matching_tag() {
         let status = parse_status(sample_status_json()).unwrap();
-        let peers = filter_peers(&status, Some("nonexistent"), DEFAULT_PULPO_PORT);
+        let peers = filter_peers(&status, Some("nonexistent"), DEFAULT_PULPO_PORT, false);
         assert!(peers.is_empty());
     }
 
     #[test]
     fn test_filter_peers_custom_port() {
         let status = parse_status(sample_status_json()).unwrap();
-        let peers = filter_peers(&status, Some("pulpo"), 9000);
+        let peers = filter_peers(&status, Some("pulpo"), 9000, false);
         assert_eq!(peers[0].address, "100.64.0.2:9000");
     }
 
@@ -344,8 +362,99 @@ mod tests {
             }
         }"#;
         let status = parse_status(json).unwrap();
-        let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT);
+        let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT, false);
         assert!(peers.is_empty());
+    }
+
+    #[test]
+    fn test_filter_peers_dns_mode() {
+        let status = parse_status(sample_status_json()).unwrap();
+        let peers = filter_peers(&status, Some("pulpo"), DEFAULT_PULPO_PORT, true);
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].name, "linux-server");
+        assert_eq!(peers[0].address, "https://linux-server.tailnet-abc.ts.net");
+    }
+
+    #[test]
+    fn test_filter_peers_dns_mode_no_tag() {
+        let status = parse_status(sample_status_json()).unwrap();
+        let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT, true);
+        assert_eq!(peers.len(), 2);
+        let addrs: Vec<&str> = peers.iter().map(|p| p.address.as_str()).collect();
+        assert!(addrs.contains(&"https://linux-server.tailnet-abc.ts.net"));
+        assert!(addrs.contains(&"https://win-pc.tailnet-abc.ts.net"));
+    }
+
+    #[test]
+    fn test_filter_peers_dns_mode_empty_dns_name() {
+        let json = r#"{
+            "Self": {
+                "HostName": "self",
+                "DNSName": "self.ts.net.",
+                "TailscaleIPs": ["100.64.0.1"],
+                "Online": true
+            },
+            "Peer": {
+                "nodekey:empty-dns": {
+                    "HostName": "no-dns",
+                    "DNSName": "",
+                    "TailscaleIPs": ["100.64.0.2"],
+                    "Online": true
+                }
+            }
+        }"#;
+        let status = parse_status(json).unwrap();
+        let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT, true);
+        assert!(peers.is_empty());
+    }
+
+    #[test]
+    fn test_filter_peers_dns_mode_strips_trailing_dot() {
+        let json = r#"{
+            "Self": {
+                "HostName": "self",
+                "DNSName": "self.ts.net.",
+                "TailscaleIPs": ["100.64.0.1"],
+                "Online": true
+            },
+            "Peer": {
+                "nodekey:dotted": {
+                    "HostName": "dotted-node",
+                    "DNSName": "dotted-node.tailnet.ts.net.",
+                    "TailscaleIPs": ["100.64.0.2"],
+                    "Online": true
+                }
+            }
+        }"#;
+        let status = parse_status(json).unwrap();
+        let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT, true);
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].address, "https://dotted-node.tailnet.ts.net");
+    }
+
+    #[test]
+    fn test_filter_peers_dns_mode_node_without_ips_still_works() {
+        // In DNS mode, IPs aren't needed — DNS name is sufficient
+        let json = r#"{
+            "Self": {
+                "HostName": "self",
+                "DNSName": "self.ts.net.",
+                "TailscaleIPs": ["100.64.0.1"],
+                "Online": true
+            },
+            "Peer": {
+                "nodekey:no-ip": {
+                    "HostName": "no-ip-node",
+                    "DNSName": "no-ip.tailnet.ts.net.",
+                    "TailscaleIPs": [],
+                    "Online": true
+                }
+            }
+        }"#;
+        let status = parse_status(json).unwrap();
+        let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT, true);
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].address, "https://no-ip.tailnet.ts.net");
     }
 
     #[test]

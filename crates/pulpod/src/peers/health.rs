@@ -11,6 +11,17 @@ use tracing::{debug, warn};
 
 use super::PeerRegistry;
 
+/// Build a base URL from a peer address. Addresses that already include a scheme
+/// (e.g., `https://machine.tailnet.ts.net`) are used as-is; bare `host:port`
+/// addresses get `http://` prepended.
+pub fn base_url(address: &str) -> String {
+    if address.starts_with("http://") || address.starts_with("https://") {
+        address.to_owned()
+    } else {
+        format!("http://{address}")
+    }
+}
+
 /// Result of probing a peer node.
 #[derive(Debug, Clone)]
 pub struct ProbeResult {
@@ -63,7 +74,7 @@ impl HttpPeerProber {
 
 impl PeerProber for HttpPeerProber {
     async fn probe(&self, address: &str, token: Option<&str>) -> Result<ProbeResult> {
-        let base = format!("http://{address}");
+        let base = base_url(address);
         let node_info: NodeInfo = self
             .authed_get(format!("{base}/api/v1/node"), token)
             .send()
@@ -758,5 +769,30 @@ mod tests {
         let cloned = result.clone();
         assert_eq!(cloned.session_count, result.session_count);
         assert_eq!(cloned.node_info.name, "clone-test");
+    }
+
+    // ---- base_url tests ----
+
+    #[test]
+    fn test_base_url_bare_host_port() {
+        assert_eq!(base_url("10.0.0.1:7433"), "http://10.0.0.1:7433");
+    }
+
+    #[test]
+    fn test_base_url_https_passthrough() {
+        assert_eq!(
+            base_url("https://machine.tailnet.ts.net"),
+            "https://machine.tailnet.ts.net"
+        );
+    }
+
+    #[test]
+    fn test_base_url_http_passthrough() {
+        assert_eq!(base_url("http://localhost:7433"), "http://localhost:7433");
+    }
+
+    #[test]
+    fn test_base_url_hostname_no_scheme() {
+        assert_eq!(base_url("myhost:8080"), "http://myhost:8080");
     }
 }
