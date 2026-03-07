@@ -53,8 +53,10 @@ pub async fn stream(
     info!("WebSocket stream requested for session {id} (backend: {backend_id})");
 
     let backend = state.session_manager.backend();
+    // Pass the raw session name — Backend::spawn_attach adds the prefix internally
+    let name = session.name;
     Ok(ws.on_upgrade(move |socket| async move {
-        handle_stream(socket, &backend_id, &backend).await;
+        handle_stream(socket, &name, &backend).await;
     }))
 }
 
