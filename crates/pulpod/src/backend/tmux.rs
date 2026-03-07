@@ -176,59 +176,52 @@ impl Backend for TmuxBackend {
         check_provider_binary(provider)
     }
 
-    fn create_session(&self, name: &str, working_dir: &str, command: &str) -> Result<()> {
-        let session_name = tmux_session_name(name);
+    fn create_session(&self, backend_id: &str, working_dir: &str, command: &str) -> Result<()> {
         run_tmux(
-            build_create_command(&session_name, working_dir, command),
+            build_create_command(backend_id, working_dir, command),
             "create tmux session",
         )?;
         Ok(())
     }
 
-    fn kill_session(&self, name: &str) -> Result<()> {
-        let session_name = tmux_session_name(name);
-        run_tmux(build_kill_command(&session_name), "kill tmux session")?;
+    fn kill_session(&self, backend_id: &str) -> Result<()> {
+        run_tmux(build_kill_command(backend_id), "kill tmux session")?;
         Ok(())
     }
 
-    fn is_alive(&self, name: &str) -> Result<bool> {
-        let session_name = tmux_session_name(name);
-        let output = build_has_session_command(&session_name)
+    fn is_alive(&self, backend_id: &str) -> Result<bool> {
+        let output = build_has_session_command(backend_id)
             .stderr(Stdio::piped())
             .output()
             .context("Failed to check tmux session")?;
         Ok(output.status.success())
     }
 
-    fn capture_output(&self, name: &str, lines: usize) -> Result<String> {
-        let session_name = tmux_session_name(name);
-        let output: Output = build_capture_command(&session_name, lines)
+    fn capture_output(&self, backend_id: &str, lines: usize) -> Result<String> {
+        let output: Output = build_capture_command(backend_id, lines)
             .stderr(Stdio::piped())
             .output()
             .context("Failed to capture tmux pane")?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
-    fn send_input(&self, name: &str, text: &str) -> Result<()> {
-        let session_name = tmux_session_name(name);
+    fn send_input(&self, backend_id: &str, text: &str) -> Result<()> {
         run_tmux(
-            build_send_keys_command(&session_name, text),
+            build_send_keys_command(backend_id, text),
             "send input to tmux session",
         )?;
         Ok(())
     }
 
-    fn setup_logging(&self, name: &str, log_path: &str) -> Result<()> {
-        let session_name = tmux_session_name(name);
+    fn setup_logging(&self, backend_id: &str, log_path: &str) -> Result<()> {
         run_tmux(
-            build_pipe_pane_command(&session_name, log_path),
+            build_pipe_pane_command(backend_id, log_path),
             "setup pipe-pane logging",
         )?;
         Ok(())
     }
 
-    fn spawn_attach(&self, name: &str) -> Result<tokio::process::Child> {
-        let session_name = tmux_session_name(name);
+    fn spawn_attach(&self, backend_id: &str) -> Result<tokio::process::Child> {
         let mut cmd = tokio::process::Command::new("script");
 
         #[cfg(target_os = "macos")]
@@ -238,14 +231,14 @@ impl Backend for TmuxBackend {
             "tmux",
             "attach-session",
             "-t",
-            &session_name,
+            backend_id,
         ]);
 
         #[cfg(not(target_os = "macos"))]
         cmd.args([
             "-q",
             "-c",
-            &format!("tmux attach-session -t {session_name}"),
+            &format!("tmux attach-session -t {backend_id}"),
             "/dev/null",
         ]);
 

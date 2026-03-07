@@ -7,8 +7,18 @@ use memory::{MemoryReader, MemorySnapshot};
 use pulpo_common::session::SessionStatus;
 use tracing::{debug, info, warn};
 
+use pulpo_common::session::Session;
+
 use crate::backend::Backend;
 use crate::store::Store;
+
+/// Resolve the backend session ID from a session, falling back to session name.
+fn resolve_backend_id(session: &Session, backend: &dyn Backend) -> String {
+    session
+        .backend_session_id
+        .clone()
+        .unwrap_or_else(|| backend.session_id(&session.name))
+}
 
 /// Action to take when a session is detected as idle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,8 +138,9 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
     }
 
     for session in &running {
+        let bid = resolve_backend_id(session, backend.as_ref());
         // Capture output before killing
-        match backend.capture_output(&session.name, 500) {
+        match backend.capture_output(&bid, 500) {
             Ok(output) => {
                 if let Err(e) = store
                     .update_session_output_snapshot(&session.id.to_string(), &output)
@@ -152,7 +163,7 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
         }
 
         // Kill the session — only mark dead if kill succeeds
-        if let Err(e) = backend.kill_session(&session.name) {
+        if let Err(e) = backend.kill_session(&bid) {
             warn!(
                 session_id = %session.id,
                 session_name = %session.name,
@@ -251,7 +262,8 @@ async fn check_session_idle(
     timeout: chrono::Duration,
 ) {
     // Capture current output to track activity
-    let current_output = match backend.capture_output(&session.name, 500) {
+    let bid = resolve_backend_id(session, backend.as_ref());
+    let current_output = match backend.capture_output(&bid, 500) {
         Ok(o) => o,
         Err(e) => {
             debug!(
@@ -299,16 +311,7 @@ async fn check_session_idle(
     if output_changed {
         handle_active_session(store, session).await;
     } else {
-        handle_idle_session(
-            backend,
-            store,
-            idle_config,
-            session,
-            &session.name,
-            now,
-            timeout,
-        )
-        .await;
+        handle_idle_session(backend, store, idle_config, session, &bid, now, timeout).await;
     }
 }
 
@@ -336,7 +339,7 @@ async fn handle_idle_session(
     store: &Store,
     idle_config: &IdleConfig,
     session: &pulpo_common::session::Session,
-    session_name: &str,
+    backend_id: &str,
     now: chrono::DateTime<chrono::Utc>,
     timeout: chrono::Duration,
 ) {
@@ -370,7 +373,7 @@ async fn handle_idle_session(
         IdleAction::Kill => {
             let reason = format!("Idle for {minutes} minutes");
 
-            if let Err(e) = backend.kill_session(session_name) {
+            if let Err(e) = backend.kill_session(backend_id) {
                 warn!(
                     "Idle check: failed to kill idle session {}: {e}",
                     session.name
@@ -767,7 +770,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"oom-session".to_owned())
+                .contains(&"pulpo-oom-session".to_owned())
         );
 
         // Session should be dead with intervention reason
@@ -904,7 +907,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"cap-fail".to_owned())
+                .contains(&"pulpo-cap-fail".to_owned())
         );
 
         let fetched = store
@@ -1184,7 +1187,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"snap-err".to_owned())
+                .contains(&"pulpo-snap-err".to_owned())
         );
     }
 
@@ -1216,7 +1219,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"rec-err".to_owned())
+                .contains(&"pulpo-rec-err".to_owned())
         );
     }
 
@@ -1410,7 +1413,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"kill-idle".to_owned())
+                .contains(&"pulpo-kill-idle".to_owned())
         );
     }
 

@@ -93,6 +93,16 @@ impl SessionManager {
         }
     }
 
+    /// Resolve the backend session ID for a session.
+    /// Uses the stored `backend_session_id` if available, otherwise computes it
+    /// from the session name (for legacy sessions created before this field existed).
+    pub fn resolve_backend_id(&self, session: &Session) -> String {
+        session
+            .backend_session_id
+            .clone()
+            .unwrap_or_else(|| self.backend.session_id(&session.name))
+    }
+
     pub async fn create_session(&self, req: CreateSessionRequest) -> Result<Session> {
         let mut req = self.resolve_persona(req)?;
         self.apply_guardrail_defaults(&mut req);
@@ -103,6 +113,7 @@ impl SessionManager {
         let mode = req.mode.unwrap_or_default();
         let guards = resolve_guard_config(&req, &self.default_guard);
         let name = req.name.unwrap_or_else(|| derive_name(&req.workdir));
+        let backend_id = self.backend.session_id(&name);
         let mut spawn_params = build_spawn_params(
             &req.prompt,
             &guards,
@@ -127,7 +138,7 @@ impl SessionManager {
             mode,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some(self.backend.session_id(&name)),
+            backend_session_id: Some(backend_id.clone()),
             output_snapshot: None,
             guard_config: Some(guards),
             model: req.model,
@@ -151,7 +162,7 @@ impl SessionManager {
 
         if let Err(e) = self
             .backend
-            .create_session(&name, &session.workdir, &command)
+            .create_session(&backend_id, &session.workdir, &command)
         {
             self.store
                 .update_session_status(&id.to_string(), SessionStatus::Dead)
@@ -167,7 +178,7 @@ impl SessionManager {
         let log_dir = format!("{}/logs", self.store.data_dir());
         let _ = std::fs::create_dir_all(&log_dir);
         let log_path = format!("{log_dir}/{id}.log");
-        let _ = self.backend.setup_logging(&name, &log_path);
+        let _ = self.backend.setup_logging(&backend_id, &log_path);
 
         // Return the session with updated status (avoids unnecessary re-fetch)
         let mut session = session;
@@ -268,7 +279,8 @@ impl SessionManager {
         if session.status != SessionStatus::Running {
             return Ok(false);
         }
-        let alive = self.backend.is_alive(&session.name)?;
+        let backend_id = self.resolve_backend_id(session);
+        let alive = self.backend.is_alive(&backend_id)?;
         if alive {
             return Ok(false);
         }
@@ -286,7 +298,8 @@ impl SessionManager {
             .await?
             .ok_or_else(|| anyhow!("session not found: {id}"))?;
 
-        if let Err(e) = self.backend.kill_session(&session.name) {
+        let backend_id = self.resolve_backend_id(&session);
+        if let Err(e) = self.backend.kill_session(&backend_id) {
             bail!("failed to kill session: {e}");
         }
 
@@ -319,15 +332,16 @@ impl SessionManager {
         }
 
         // Best-effort cleanup of any lingering backend session
-        let _ = self.backend.kill_session(&session.name);
+        let backend_id = self.resolve_backend_id(&session);
+        let _ = self.backend.kill_session(&backend_id);
 
         self.store.delete_session(&session.id.to_string()).await?;
         Ok(())
     }
 
-    pub fn capture_output(&self, id: &str, name: &str, lines: usize) -> String {
+    pub fn capture_output(&self, id: &str, backend_id: &str, lines: usize) -> String {
         self.backend
-            .capture_output(name, lines)
+            .capture_output(backend_id, lines)
             .unwrap_or_else(|_| self.read_log_tail(id, lines))
     }
 
@@ -339,9 +353,8 @@ impl SessionManager {
         tail.join("\n")
     }
 
-    pub fn send_input(&self, id: &str, name: &str, text: &str) -> Result<()> {
-        let _ = id;
-        self.backend.send_input(name, text)
+    pub fn send_input(&self, backend_id: &str, text: &str) -> Result<()> {
+        self.backend.send_input(backend_id, text)
     }
 
     pub async fn resume_session(&self, id: &str) -> Result<Session> {
@@ -357,7 +370,8 @@ impl SessionManager {
 
         // If the backend session is still alive, just re-mark it as running.
         // Only recreate the session if the backend process is gone.
-        let alive = self.backend.is_alive(&session.name)?;
+        let backend_id = self.resolve_backend_id(&session);
+        let alive = self.backend.is_alive(&backend_id)?;
         if !alive {
             let guards = session
                 .guard_config
@@ -380,7 +394,7 @@ impl SessionManager {
             let command = build_command(session.provider, session.mode, &spawn_params);
 
             self.backend
-                .create_session(&session.name, &session.workdir, &command)?;
+                .create_session(&backend_id, &session.workdir, &command)?;
         }
 
         let session_id = session.id.to_string();
@@ -1006,7 +1020,7 @@ mod tests {
     #[tokio::test]
     async fn test_send_input() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        mgr.send_input("some-id", "my-session", "hello").unwrap();
+        mgr.send_input("my-session", "hello").unwrap();
 
         let calls = backend.calls.lock().unwrap();
         assert!(

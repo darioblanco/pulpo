@@ -48,26 +48,14 @@ pub async fn stream(
         ));
     }
 
-    let backend_id = resolve_backend_id(&session, &state.session_manager);
+    let backend_id = state.session_manager.resolve_backend_id(&session);
 
     info!("WebSocket stream requested for session {id} (backend: {backend_id})");
 
     let backend = state.session_manager.backend();
-    // Pass the raw session name — Backend::spawn_attach adds the prefix internally
-    let name = session.name;
     Ok(ws.on_upgrade(move |socket| async move {
-        handle_stream(socket, &name, &backend).await;
+        handle_stream(socket, &backend_id, &backend).await;
     }))
-}
-
-fn resolve_backend_id(
-    session: &pulpo_common::session::Session,
-    manager: &crate::session::manager::SessionManager,
-) -> String {
-    session
-        .backend_session_id
-        .clone()
-        .unwrap_or_else(|| manager.backend().session_id(&session.name))
 }
 
 async fn handle_stream(
@@ -329,7 +317,7 @@ mod tests {
             updated_at: chrono::Utc::now(),
         };
         assert_eq!(
-            super::resolve_backend_id(&session, &state.session_manager),
+            state.session_manager.resolve_backend_id(&session),
             "custom-backend-id"
         );
     }
@@ -370,7 +358,7 @@ mod tests {
         };
         // StubBackend.session_id returns just the name
         assert_eq!(
-            super::resolve_backend_id(&session, &state.session_manager),
+            state.session_manager.resolve_backend_id(&session),
             "my-session"
         );
     }

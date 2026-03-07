@@ -365,7 +365,7 @@ impl PulpoMcp {
                         let output = if self.is_local(node) {
                             self.session_manager.capture_output(
                                 session_id,
-                                &session.name,
+                                &self.session_manager.resolve_backend_id(&session),
                                 output_lines,
                             )
                         } else {
@@ -378,7 +378,7 @@ impl PulpoMcp {
                         let output = if self.is_local(node) {
                             self.session_manager.capture_output(
                                 session_id,
-                                &session.name,
+                                &self.session_manager.resolve_backend_id(&session),
                                 output_lines,
                             )
                         } else {
@@ -651,10 +651,8 @@ impl PulpoMcp {
         if self.is_local(params.node.as_deref()) {
             match self.session_manager.get_session(&params.id).await {
                 Ok(Some(session)) => {
-                    match self
-                        .session_manager
-                        .send_input(&params.id, &session.name, &params.text)
-                    {
+                    let backend_id = self.session_manager.resolve_backend_id(&session);
+                    match self.session_manager.send_input(&backend_id, &params.text) {
                         Ok(()) => "Input sent".into(),
                         Err(e) => format!("Error: {e}"),
                     }

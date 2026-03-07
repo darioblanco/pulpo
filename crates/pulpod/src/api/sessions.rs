@@ -131,9 +131,10 @@ pub async fn output(
         })?;
 
     let lines = query.lines.unwrap_or(100);
+    let backend_id = state.session_manager.resolve_backend_id(&session);
     let output = state
         .session_manager
-        .capture_output(&id, &session.name, lines);
+        .capture_output(&id, &backend_id, lines);
 
     Ok(Json(serde_json::json!({ "output": output })))
 }
@@ -186,9 +187,10 @@ pub async fn download_output(
 
     let output =
         if session.status == SessionStatus::Running || session.status == SessionStatus::Stale {
+            let backend_id = state.session_manager.resolve_backend_id(&session);
             state
                 .session_manager
-                .capture_output(&id, &session.name, 10_000)
+                .capture_output(&id, &backend_id, 10_000)
         } else {
             session.output_snapshot.unwrap_or_default()
         };
@@ -251,9 +253,10 @@ pub async fn input(
             )
         })?;
 
+    let backend_id = state.session_manager.resolve_backend_id(&session);
     state
         .session_manager
-        .send_input(&id, &session.name, &req.text)
+        .send_input(&backend_id, &req.text)
         .map_err(|e| internal_error(&e.to_string()))?;
 
     Ok(StatusCode::NO_CONTENT)
