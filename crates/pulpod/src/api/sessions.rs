@@ -275,12 +275,6 @@ mod tests {
     struct StubBackend;
 
     impl Backend for StubBackend {
-        fn session_id(&self, name: &str) -> String {
-            name.to_owned()
-        }
-        fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
-            anyhow::bail!("not supported in mock")
-        }
         fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
@@ -543,12 +537,6 @@ mod tests {
     struct FailingBackend;
 
     impl Backend for FailingBackend {
-        fn session_id(&self, name: &str) -> String {
-            name.to_owned()
-        }
-        fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
-            anyhow::bail!("not supported in mock")
-        }
         fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
@@ -573,12 +561,6 @@ mod tests {
     struct FailCreateBackend;
 
     impl Backend for FailCreateBackend {
-        fn session_id(&self, name: &str) -> String {
-            name.to_owned()
-        }
-        fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
-            anyhow::bail!("not supported in mock")
-        }
         fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
             Err(anyhow::anyhow!("create failed"))
         }
@@ -603,12 +585,6 @@ mod tests {
     struct CaptureFailBackend;
 
     impl Backend for CaptureFailBackend {
-        fn session_id(&self, name: &str) -> String {
-            name.to_owned()
-        }
-        fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
-            anyhow::bail!("not supported in mock")
-        }
         fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
@@ -1272,12 +1248,6 @@ mod tests {
     struct StaleBackend;
 
     impl Backend for StaleBackend {
-        fn session_id(&self, name: &str) -> String {
-            name.to_owned()
-        }
-        fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
-            anyhow::bail!("not supported in mock")
-        }
         fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
@@ -1381,12 +1351,6 @@ mod tests {
     }
 
     impl Backend for ResumeFailBackend {
-        fn session_id(&self, name: &str) -> String {
-            name.to_owned()
-        }
-        fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
-            anyhow::bail!("not supported in mock")
-        }
         fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
             let mut created = self.created.lock().unwrap();
             if *created {

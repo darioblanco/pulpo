@@ -152,9 +152,6 @@ mod tests {
     struct StubBackend;
 
     impl Backend for StubBackend {
-        fn session_id(&self, name: &str) -> String {
-            name.to_owned()
-        }
         fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
@@ -173,17 +170,11 @@ mod tests {
         fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
-        fn spawn_attach(&self, _: &str) -> Result<tokio::process::Child> {
-            anyhow::bail!("not supported in stub")
-        }
     }
 
     struct DeadBackend;
 
     impl Backend for DeadBackend {
-        fn session_id(&self, name: &str) -> String {
-            name.to_owned()
-        }
         fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
@@ -201,9 +192,6 @@ mod tests {
         }
         fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
             Ok(())
-        }
-        fn spawn_attach(&self, _: &str) -> Result<tokio::process::Child> {
-            anyhow::bail!("not supported in dead stub")
         }
     }
 

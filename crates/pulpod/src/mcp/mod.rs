@@ -940,12 +940,6 @@ mod tests {
     }
 
     impl Backend for MockBackend {
-        fn session_id(&self, name: &str) -> String {
-            name.to_owned()
-        }
-        fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
-            anyhow::bail!("not supported in mock")
-        }
         fn create_session(&self, name: &str, working_dir: &str, command: &str) -> Result<()> {
             self.calls
                 .lock()
@@ -1937,12 +1931,6 @@ mod tests {
     struct SendInputErrorBackend;
 
     impl Backend for SendInputErrorBackend {
-        fn session_id(&self, name: &str) -> String {
-            name.to_owned()
-        }
-        fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
-            anyhow::bail!("not supported in mock")
-        }
         fn create_session(&self, _name: &str, _dir: &str, _cmd: &str) -> Result<()> {
             Ok(())
         }
@@ -3173,12 +3161,6 @@ mod tests {
         }
 
         impl Backend for BreakableBackend {
-            fn session_id(&self, name: &str) -> String {
-                name.to_owned()
-            }
-            fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
-                anyhow::bail!("not supported in mock")
-            }
             fn create_session(&self, _n: &str, _d: &str, _c: &str) -> Result<()> {
                 // After spawn, mark that we should break
                 self.break_after_spawn.store(true, Ordering::SeqCst);

@@ -7,7 +7,10 @@ use anyhow::Result;
 pub trait Backend: Send + Sync {
     /// Return the backend-specific session identifier for a given session name.
     /// For tmux this is `pulpo-{name}`; other backends may use different schemes.
-    fn session_id(&self, name: &str) -> String;
+    /// Default returns the name as-is (useful for test stubs).
+    fn session_id(&self, name: &str) -> String {
+        name.to_owned()
+    }
 
     /// Check the backend runtime version. Returns a human-readable version string.
     fn check_version(&self) -> Result<String> {
@@ -40,5 +43,72 @@ pub trait Backend: Send + Sync {
 
     /// Spawn a child process that attaches to the session's terminal for PTY bridging.
     /// Returns a tokio child process with piped stdin/stdout.
-    fn spawn_attach(&self, name: &str) -> Result<tokio::process::Child>;
+    /// Default implementation returns an error — only real backends (tmux) override this.
+    fn spawn_attach(&self, _name: &str) -> Result<tokio::process::Child> {
+        anyhow::bail!("spawn_attach not supported by this backend")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct MinimalBackend;
+
+    impl Backend for MinimalBackend {
+        fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn kill_session(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn is_alive(&self, _: &str) -> Result<bool> {
+            Ok(true)
+        }
+        fn capture_output(&self, _: &str, _: usize) -> Result<String> {
+            Ok(String::new())
+        }
+        fn send_input(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_default_session_id() {
+        let b = MinimalBackend;
+        assert_eq!(b.session_id("my-session"), "my-session");
+    }
+
+    #[test]
+    fn test_default_check_version() {
+        let b = MinimalBackend;
+        assert_eq!(b.check_version().unwrap(), "unknown");
+    }
+
+    #[test]
+    fn test_default_check_provider() {
+        let b = MinimalBackend;
+        assert!(b.check_provider("claude").is_ok());
+    }
+
+    #[test]
+    fn test_default_spawn_attach() {
+        let b = MinimalBackend;
+        let err = b.spawn_attach("x").unwrap_err();
+        assert!(err.to_string().contains("spawn_attach not supported"));
+    }
+
+    #[test]
+    fn test_minimal_backend_required_methods() {
+        let b = MinimalBackend;
+        assert!(b.create_session("s", "/tmp", "echo hi").is_ok());
+        assert!(b.kill_session("s").is_ok());
+        assert!(b.is_alive("s").unwrap());
+        assert_eq!(b.capture_output("s", 10).unwrap(), "");
+        assert!(b.send_input("s", "hello").is_ok());
+        assert!(b.setup_logging("s", "/tmp/log").is_ok());
+    }
 }

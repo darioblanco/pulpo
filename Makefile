@@ -78,7 +78,7 @@ test-web:
 coverage: coverage-rust coverage-web
 
 coverage-rust:
-	cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$$" --fail-under-lines 99
+	cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$$" --fail-under-lines 100
 
 coverage-web:
 	cd web && npx vitest run --coverage

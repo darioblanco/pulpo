@@ -16,6 +16,6 @@ cargo test --workspace
 cd web && npx vitest run --passWithNoTests && cd ..
 
 echo "==> Pre-commit: checking coverage (100% line coverage required)..."
-cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$" --fail-under-lines 99
+cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$" --fail-under-lines 100
 
 echo "==> All checks passed."

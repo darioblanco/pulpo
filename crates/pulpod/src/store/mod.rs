@@ -1844,6 +1844,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_migrate_renames_tmux_session_to_backend_session_id() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+
+        // Create legacy schema with tmux_session column (old name)
+        sqlx::query(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                workdir TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'creating',
+                mode TEXT NOT NULL DEFAULT 'interactive',
+                conversation_id TEXT,
+                exit_code INTEGER,
+                tmux_session TEXT,
+                output_snapshot TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+        // Insert a row using the old column name
+        sqlx::query(
+            "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode, tmux_session, created_at, updated_at)
+             VALUES ('test-id', 'test', '/tmp', 'claude', 'test', 'running', 'interactive', 'pulpo-test',
+                     '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
+        )
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+        // Run migration — should rename column
+        store.migrate().await.unwrap();
+
+        // Verify we can query the new column name
+        let backend_id: String =
+            sqlx::query_scalar("SELECT backend_session_id FROM sessions WHERE id = 'test-id'")
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(backend_id, "pulpo-test");
+
+        // Running migration again should be idempotent
+        store.migrate().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn test_migrate_closed_pool_error() {
         let store = test_store().await;
         store.pool().close().await;

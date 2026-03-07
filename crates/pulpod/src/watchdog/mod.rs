@@ -494,12 +494,6 @@ mod tests {
     }
 
     impl Backend for MockBackend {
-        fn session_id(&self, name: &str) -> String {
-            name.to_owned()
-        }
-        fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
-            anyhow::bail!("not supported in mock")
-        }
         fn create_session(&self, name: &str, _: &str, command: &str) -> Result<()> {
             self.create_calls.lock().unwrap().push(name.into());
             self.create_commands.lock().unwrap().push(command.into());

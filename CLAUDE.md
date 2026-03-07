@@ -51,7 +51,7 @@ This project follows **TDD**. Every feature and bug fix starts with a failing te
 2. **Run the test** — confirm it fails for the right reason.
 3. **Write the minimal implementation** to make the test pass.
 4. **Refactor** — clean up while keeping tests green.
-5. **Check coverage** — `make coverage` must pass (99% line coverage).
+5. **Check coverage** — `make coverage` must pass (100% line coverage).
 
 - **Rust**: `cargo test --workspace`. Tests live alongside source code in `#[cfg(test)] mod tests` blocks.
 - **Web**: `vitest` with jsdom environment. Test files use `*.test.ts` or `*.spec.ts` naming.
@@ -59,7 +59,7 @@ This project follows **TDD**. Every feature and bug fix starts with a failing te
 
 ### Coverage
 
-- **Target: 99% line coverage** for Rust code. Enforced in pre-commit hook and CI.
+- **Target: 100% line coverage** for Rust code. Enforced in pre-commit hook and CI.
 - Uses `cargo-llvm-cov`. Run `make coverage` to check (fails if under 100%).
 - Run `make coverage-html` for an HTML report at `target/llvm-cov/html/index.html`.
 - Every new function, branch, and error path must have a test. No exceptions.
@@ -87,7 +87,7 @@ fn main() {}
 3. **Dead code under coverage** — helpers that become unused when their callers are excluded use `#[cfg_attr(coverage, allow(dead_code))]` to suppress warnings.
 
 **Tiered enforcement:**
-- Local pre-commit: **99%** line coverage (matches CI; `cfg(not(coverage))` gated I/O prevents 100%)
+- Local pre-commit: **100%** line coverage (strict gate via `cargo-llvm-cov`)
 - CI (Linux): **99%** threshold (macOS-specific paths unreachable on Linux)
 - `main.rs` and `embed.rs` excluded via `cargo-llvm-cov` filename regex
 
@@ -101,7 +101,7 @@ Git hooks live in `.githooks/` and are activated via `git config core.hooksPath 
 2. `cargo clippy -- -D warnings`
 3. `eslint` + `tsc --noEmit`
 4. `cargo test` + `vitest run`
-5. `cargo llvm-cov --fail-under-lines 99` (99% line coverage gate)
+5. `cargo llvm-cov --fail-under-lines 100` (100% line coverage gate)
 
 **If the hook blocks your commit, fix the issue — do not bypass with `--no-verify`.**
 

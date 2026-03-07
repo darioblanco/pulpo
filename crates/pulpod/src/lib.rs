@@ -51,9 +51,6 @@ impl backend::Backend for CoverageBackend {
     fn setup_logging(&self, _: &str, _: &str) -> anyhow::Result<()> {
         Ok(())
     }
-    fn spawn_attach(&self, _: &str) -> anyhow::Result<tokio::process::Child> {
-        anyhow::bail!("not supported in coverage")
-    }
 }
 
 /// Holds shutdown senders for all background loops.
@@ -842,6 +839,48 @@ bind = "public"
         };
         let (_app, addr, handle) = build_app(&cli).await.unwrap();
         assert_eq!(addr, "0.0.0.0:0");
+        handle.shutdown();
+    }
+
+    #[cfg(coverage)]
+    #[test]
+    fn test_coverage_backend_session_id() {
+        use backend::Backend;
+        let b = CoverageBackend;
+        assert_eq!(b.session_id("my-session"), "pulpo-my-session");
+    }
+
+    #[tokio::test]
+    async fn test_build_app_with_webhooks() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let config_path = tmpdir.path().join("config.toml");
+        let data_dir = tmpdir.path().join("data");
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[node]
+name = "test"
+port = 0
+data_dir = "{}"
+
+[[notifications.webhooks]]
+name = "test-hook"
+url = "http://127.0.0.1:1/hook"
+events = ["dead"]
+"#,
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let cli = Cli {
+            config: config_path.to_str().unwrap().into(),
+            port: Some(0),
+            command: None,
+        };
+        let (_app, addr, handle) = build_app(&cli).await.unwrap();
+        assert_eq!(addr, "127.0.0.1:0");
         handle.shutdown();
     }
 }
