@@ -6,20 +6,19 @@ Default file:
 
 Top-level sections:
 
-- `[node]`
-- `[auth]`
-- `[watchdog]`
-- `[discovery]`
-- `[peers]`
-- `[personas.<name>]`
-- `[notifications.discord]`
+- `[node]` — name, port, data_dir, bind mode, tag, seed, discovery_interval_secs
+- `[auth]` — token (only used with `bind = "public"`)
+- `[watchdog]` — memory/idle intervention policy
+- `[peers]` — manual peer entries
+- `[personas.<name>]` — reusable spawn defaults
+- `[notifications.discord]` — webhook notifications
 
 Notes:
 
-- `watchdog` controls intervention behavior.
-- `discovery` controls how nodes find each other.
+- `bind` in `[node]` determines both network exposure and discovery method.
+- `[auth]` is only relevant for `bind = "public"`. Other modes skip auth.
 - `personas` provide reusable spawn defaults.
-- manual `peers` always coexist with dynamic discovery.
+- Manual `peers` always coexist with dynamic discovery.
 
 Source of truth for full semantics:
 

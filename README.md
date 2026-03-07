@@ -140,47 +140,53 @@ See [SPEC.md](SPEC.md#configuration) for all supported config sections.
 
 ## Peer Discovery
 
-Pulpo nodes find each other automatically using one of three discovery methods, configured via `[discovery]` in `config.toml`.
+Pulpo nodes find each other automatically. The discovery method is derived from the `bind` mode in `[node]` — no separate `[discovery]` section needed.
 
-### mDNS (default)
+### Tailscale (recommended)
 
-Zero-config discovery on the local network. Works when `bind = "public"`.
+Discovers peers across your Tailscale network. Binds to the Tailscale interface IP, skips auth (delegated to WireGuard), and queries the local Tailscale API for peers.
 
 ```toml
-[auth]
+[node]
+name = "mac-mini"
+bind = "tailscale"
+tag = "pulpo"          # optional: only discover nodes with this ACL tag
+```
+
+Tag filtering uses Tailscale ACL tags (e.g., `tag:pulpo`). If `tag` is omitted, all online nodes in the tailnet are probed. Tailscale handles encryption, auth, and NAT traversal — no port forwarding or tokens needed.
+
+### mDNS
+
+Zero-config discovery on the local network. Activates when `bind = "public"` and no `seed` is set.
+
+```toml
+[node]
 bind = "public"
 
-[discovery]
-method = "mdns"
+[auth]
+# token is auto-generated on first run
 ```
 
-Nodes broadcast themselves via `_pulpo._tcp.local.` and automatically discover peers on the same LAN. No additional configuration needed.
-
-### Tailscale
-
-Discovers peers across your Tailscale network by querying the local Tailscale API. Requires `tailscale` CLI to be installed and connected.
-
-```toml
-[discovery]
-method = "tailscale"
-tag = "pulpo"          # optional: only discover nodes with this ACL tag
-interval_secs = 30     # how often to scan (default: 30)
-```
-
-Tag filtering uses Tailscale ACL tags (e.g., `tag:pulpo`). If `tag` is omitted, all online nodes in the tailnet are probed. Tailscale handles encryption and NAT traversal — no port forwarding needed.
+Nodes broadcast themselves via `_pulpo._tcp.local.` and automatically discover peers on the same LAN.
 
 ### Seed
 
-Bootstrap from a single known peer, then discover its peers transitively.
+Bootstrap from a single known peer, then discover its peers transitively. Activates when `bind = "public"` and `seed` is set.
 
 ```toml
-[discovery]
-method = "seed"
-seed = "10.0.0.5:7433"  # address of a known pulpo node
-interval_secs = 30
+[node]
+bind = "public"
+seed = "10.0.0.5:7433"
+
+[auth]
+# token is auto-generated on first run
 ```
 
-The node fetches the seed's peer list via `GET /api/v1/peers` and announces itself back. Works on any network (Tailscale, WireGuard, plain internet). You only need to configure one seed address — the rest is discovered automatically.
+The node fetches the seed's peer list via `GET /api/v1/peers` and announces itself back. Works on any network.
+
+### Local / Container
+
+No discovery. `bind = "local"` (default) binds to `127.0.0.1`. `bind = "container"` binds to `0.0.0.0` without auth (trusts container network isolation).
 
 ### Manual peers
 

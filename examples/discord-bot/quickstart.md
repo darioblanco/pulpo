@@ -10,7 +10,7 @@ cp ../../examples/discord-bot/.env.example .env
 # edit .env with your values
 ```
 
-If pulpod uses `auth.bind = "public"`, set `PULPOD_TOKEN` in `.env`.
+If pulpod uses `bind = "public"` in `[node]`, set `PULPOD_TOKEN` in `.env`.
 
 ## 2. Install and start
 

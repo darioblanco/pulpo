@@ -1,41 +1,49 @@
 # Discovery Guide
 
-Pulpo supports three discovery methods via `[discovery]`.
+Pulpo derives the discovery method from the `bind` mode in `[node]`. No separate `[discovery]` section is needed.
 
-## mDNS (default)
+## Tailscale (recommended)
 
 ```toml
-[auth]
+[node]
+name = "mac-mini"
+bind = "tailscale"
+tag = "pulpo"              # optional: filter by ACL tag
+discovery_interval_secs = 30  # default: 30
+```
+
+Binds to the Tailscale interface IP, skips auth (delegated to WireGuard), and discovers peers via the local Tailscale API.
+
+## mDNS
+
+```toml
+[node]
 bind = "public"
 
-[discovery]
-method = "mdns"
+[auth]
+# token is auto-generated on first run
 ```
 
-Best for local networks.
-
-## Tailscale
-
-```toml
-[discovery]
-method = "tailscale"
-tag = "pulpo"
-interval_secs = 30
-```
-
-Best for tailnet-wide discovery.
+Zero-config LAN discovery. Activates when `bind = "public"` and no `seed` is set.
 
 ## Seed
 
 ```toml
-[discovery]
-method = "seed"
+[node]
+bind = "public"
 seed = "10.0.0.5:7433"
-interval_secs = 30
+discovery_interval_secs = 30
+
+[auth]
+# token is auto-generated on first run
 ```
 
-Best when one stable node can bootstrap the rest.
+Bootstraps from a known peer and discovers its peers transitively.
+
+## Local / Container
+
+No discovery. `bind = "local"` (default) binds to `127.0.0.1`. `bind = "container"` binds to `0.0.0.0` without auth.
 
 ## Manual peers
 
-You can always define peers directly in `[peers]`, regardless of discovery method.
+You can always define peers directly in `[peers]`, regardless of bind mode.

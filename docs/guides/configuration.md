@@ -19,10 +19,9 @@ system_prompt = "You are a senior reviewer focused on correctness and security."
 
 ## Important sections
 
-- `[node]`: node identity, bind mode, network settings
-- `[auth]`: token and bind behavior for non-localhost access
+- `[node]`: node identity, bind mode, discovery settings (`tag`, `seed`, `discovery_interval_secs`)
+- `[auth]`: token for `public` bind mode (auto-generated, not needed for `local`/`tailscale`/`container`)
 - `[watchdog]`: memory/idle intervention policy
-- `[discovery]`: `mdns`, `tailscale`, or `seed`
 - `[personas.*]`: reusable provider/model/guard presets
 - `[peers]`: manual peer entries
 
