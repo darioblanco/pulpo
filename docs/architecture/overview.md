@@ -22,4 +22,4 @@ Design intent:
 
 For deep architecture details, use:
 
-- [SPEC.md](../../SPEC.md)
+- [SPEC.md](https://github.com/darioblanco/pulpo/blob/main/SPEC.md)

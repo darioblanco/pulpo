@@ -16,4 +16,4 @@ Common endpoints:
 
 For payload-level behavior and lifecycle semantics, see:
 
-- [SPEC.md](../../SPEC.md)
+- [SPEC.md](https://github.com/darioblanco/pulpo/blob/main/SPEC.md)

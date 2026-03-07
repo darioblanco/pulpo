@@ -23,4 +23,4 @@ Notes:
 
 Source of truth for full semantics:
 
-- [SPEC.md](../../SPEC.md)
+- [SPEC.md](https://github.com/darioblanco/pulpo/blob/main/SPEC.md)
