@@ -81,17 +81,71 @@ export interface ListSessionsParams {
   order?: string;
 }
 
+export interface NodeConfigResponse {
+  name: string;
+  port: number;
+  data_dir: string;
+  bind: string;
+  tag: string | null;
+  seed: string | null;
+  discovery_interval_secs: number;
+}
+
+export interface GuardDefaultConfigResponse {
+  preset: string;
+  max_turns: number | null;
+  max_budget_usd: number | null;
+  output_format: string | null;
+}
+
+export interface WatchdogConfigResponse {
+  enabled: boolean;
+  memory_threshold: number;
+  check_interval_secs: number;
+  breach_count: number;
+  idle_timeout_secs: number;
+  idle_action: string;
+}
+
+export interface DiscordWebhookConfigResponse {
+  webhook_url: string;
+  events: string[];
+}
+
+export interface NotificationsConfigResponse {
+  discord: DiscordWebhookConfigResponse | null;
+}
+
 export interface ConfigResponse {
-  node: { name: string; port: number; data_dir: string };
+  node: NodeConfigResponse;
   peers: Record<string, string>;
-  guards: { preset: string };
+  guards: GuardDefaultConfigResponse;
+  watchdog: WatchdogConfigResponse;
+  notifications: NotificationsConfigResponse;
+  personas: Record<string, PersonaConfig>;
 }
 
 export interface UpdateConfigRequest {
   node_name?: string;
   port?: number;
   data_dir?: string;
+  bind?: string;
+  tag?: string;
+  seed?: string;
+  discovery_interval_secs?: number;
   guard_preset?: string;
+  guard_max_turns?: number;
+  guard_max_budget_usd?: number;
+  guard_output_format?: string;
+  watchdog_enabled?: boolean;
+  watchdog_memory_threshold?: number;
+  watchdog_check_interval_secs?: number;
+  watchdog_breach_count?: number;
+  watchdog_idle_timeout_secs?: number;
+  watchdog_idle_action?: string;
+  discord_webhook_url?: string;
+  discord_events?: string[];
+  personas?: Record<string, PersonaConfig>;
   peers?: Record<string, string>;
 }
 

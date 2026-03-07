@@ -68,6 +68,9 @@ pub struct ConfigResponse {
     pub auth: AuthConfigResponse,
     pub peers: HashMap<String, PeerEntry>,
     pub guards: GuardDefaultConfigResponse,
+    pub watchdog: WatchdogConfigResponse,
+    pub notifications: NotificationsConfigResponse,
+    pub personas: HashMap<String, PersonaConfigResponse>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -90,20 +93,81 @@ pub struct NodeConfigResponse {
     pub port: u16,
     pub data_dir: String,
     pub bind: BindMode,
+    pub tag: Option<String>,
+    pub seed: Option<String>,
+    pub discovery_interval_secs: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GuardDefaultConfigResponse {
     pub preset: GuardPreset,
+    pub max_turns: Option<u32>,
+    pub max_budget_usd: Option<f64>,
+    pub output_format: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WatchdogConfigResponse {
+    pub enabled: bool,
+    pub memory_threshold: u8,
+    pub check_interval_secs: u64,
+    pub breach_count: u32,
+    pub idle_timeout_secs: u64,
+    pub idle_action: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DiscordWebhookConfigResponse {
+    pub webhook_url: String,
+    pub events: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NotificationsConfigResponse {
+    pub discord: Option<DiscordWebhookConfigResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersonaConfigResponse {
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub mode: Option<String>,
+    pub guard_preset: Option<String>,
+    pub allowed_tools: Option<Vec<String>>,
+    pub system_prompt: Option<String>,
+    pub max_turns: Option<u32>,
+    pub max_budget_usd: Option<f64>,
+    pub output_format: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
 pub struct UpdateConfigRequest {
+    // Node settings
     pub node_name: Option<String>,
     pub port: Option<u16>,
     pub data_dir: Option<String>,
     pub bind: Option<BindMode>,
+    pub tag: Option<String>,
+    pub seed: Option<String>,
+    pub discovery_interval_secs: Option<u64>,
+    // Guard defaults
     pub guard_preset: Option<GuardPreset>,
+    pub guard_max_turns: Option<u32>,
+    pub guard_max_budget_usd: Option<f64>,
+    pub guard_output_format: Option<String>,
+    // Watchdog
+    pub watchdog_enabled: Option<bool>,
+    pub watchdog_memory_threshold: Option<u8>,
+    pub watchdog_check_interval_secs: Option<u64>,
+    pub watchdog_breach_count: Option<u32>,
+    pub watchdog_idle_timeout_secs: Option<u64>,
+    pub watchdog_idle_action: Option<String>,
+    // Notifications
+    pub discord_webhook_url: Option<String>,
+    pub discord_events: Option<Vec<String>>,
+    // Personas (full replace)
+    pub personas: Option<HashMap<String, PersonaConfigResponse>>,
+    // Peers
     pub peers: Option<HashMap<String, PeerEntry>>,
 }
 
@@ -140,6 +204,38 @@ pub struct ListSessionsQuery {
 mod tests {
     use super::*;
 
+    fn test_config_response() -> ConfigResponse {
+        ConfigResponse {
+            node: NodeConfigResponse {
+                name: "test".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                bind: BindMode::Local,
+                tag: None,
+                seed: None,
+                discovery_interval_secs: 30,
+            },
+            auth: AuthConfigResponse {},
+            peers: HashMap::new(),
+            guards: GuardDefaultConfigResponse {
+                preset: GuardPreset::Standard,
+                max_turns: None,
+                max_budget_usd: None,
+                output_format: None,
+            },
+            watchdog: WatchdogConfigResponse {
+                enabled: true,
+                memory_threshold: 90,
+                check_interval_secs: 10,
+                breach_count: 3,
+                idle_timeout_secs: 600,
+                idle_action: "alert".into(),
+            },
+            notifications: NotificationsConfigResponse { discord: None },
+            personas: HashMap::new(),
+        }
+    }
+
     #[test]
     fn test_config_response_serialize() {
         let resp = ConfigResponse {
@@ -148,12 +244,28 @@ mod tests {
                 port: 7433,
                 data_dir: "/tmp".into(),
                 bind: BindMode::Local,
+                tag: None,
+                seed: None,
+                discovery_interval_secs: 30,
             },
             auth: AuthConfigResponse {},
             peers: HashMap::new(),
             guards: GuardDefaultConfigResponse {
                 preset: GuardPreset::Standard,
+                max_turns: None,
+                max_budget_usd: None,
+                output_format: None,
             },
+            watchdog: WatchdogConfigResponse {
+                enabled: true,
+                memory_threshold: 90,
+                check_interval_secs: 10,
+                breach_count: 3,
+                idle_timeout_secs: 600,
+                idle_action: "alert".into(),
+            },
+            notifications: NotificationsConfigResponse { discord: None },
+            personas: HashMap::new(),
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"test\""));
@@ -162,12 +274,15 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local"},"auth":{},"peers":{},"guards":{"preset":"strict"}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"guards":{"preset":"strict","max_turns":null,"max_budget_usd":null,"output_format":null},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert"},"notifications":{"discord":null},"personas":{}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
         assert_eq!(resp.node.bind, BindMode::Local);
         assert_eq!(resp.guards.preset, GuardPreset::Strict);
+        assert!(resp.watchdog.enabled);
+        assert!(resp.notifications.discord.is_none());
+        assert!(resp.personas.is_empty());
     }
 
     #[test]
@@ -178,12 +293,28 @@ mod tests {
                 port: 7433,
                 data_dir: "/tmp".into(),
                 bind: BindMode::Local,
+                tag: None,
+                seed: None,
+                discovery_interval_secs: 30,
             },
             auth: AuthConfigResponse {},
             peers: HashMap::new(),
             guards: GuardDefaultConfigResponse {
                 preset: GuardPreset::Standard,
+                max_turns: None,
+                max_budget_usd: None,
+                output_format: None,
             },
+            watchdog: WatchdogConfigResponse {
+                enabled: true,
+                memory_threshold: 90,
+                check_interval_secs: 10,
+                breach_count: 3,
+                idle_timeout_secs: 600,
+                idle_action: "alert".into(),
+            },
+            notifications: NotificationsConfigResponse { discord: None },
+            personas: HashMap::new(),
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("debug"));
@@ -196,6 +327,9 @@ mod tests {
             port: 7433,
             data_dir: "/tmp".into(),
             bind: BindMode::Local,
+            tag: None,
+            seed: None,
+            discovery_interval_secs: 30,
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("test"));
@@ -205,6 +339,9 @@ mod tests {
     fn test_guard_default_config_response_debug() {
         let resp = GuardDefaultConfigResponse {
             preset: GuardPreset::Unrestricted,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("Unrestricted"));
@@ -234,11 +371,7 @@ mod tests {
     fn test_update_config_request_debug() {
         let req = UpdateConfigRequest {
             node_name: Some("test".into()),
-            port: None,
-            data_dir: None,
-            bind: None,
-            guard_preset: None,
-            peers: None,
+            ..Default::default()
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("test"));
@@ -247,19 +380,7 @@ mod tests {
     #[test]
     fn test_update_config_response_serialize() {
         let resp = UpdateConfigResponse {
-            config: ConfigResponse {
-                node: NodeConfigResponse {
-                    name: "test".into(),
-                    port: 7433,
-                    data_dir: "/tmp".into(),
-                    bind: BindMode::Local,
-                },
-                auth: AuthConfigResponse {},
-                peers: HashMap::new(),
-                guards: GuardDefaultConfigResponse {
-                    preset: GuardPreset::Standard,
-                },
-            },
+            config: test_config_response(),
             restart_required: true,
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -269,19 +390,7 @@ mod tests {
     #[test]
     fn test_update_config_response_debug() {
         let resp = UpdateConfigResponse {
-            config: ConfigResponse {
-                node: NodeConfigResponse {
-                    name: "test".into(),
-                    port: 7433,
-                    data_dir: "/tmp".into(),
-                    bind: BindMode::Local,
-                },
-                auth: AuthConfigResponse {},
-                peers: HashMap::new(),
-                guards: GuardDefaultConfigResponse {
-                    preset: GuardPreset::Standard,
-                },
-            },
+            config: test_config_response(),
             restart_required: false,
         };
         let debug = format!("{resp:?}");
@@ -298,12 +407,28 @@ mod tests {
                 port: 7433,
                 data_dir: "/d".into(),
                 bind: BindMode::Local,
+                tag: None,
+                seed: None,
+                discovery_interval_secs: 30,
             },
             auth: AuthConfigResponse {},
             peers,
             guards: GuardDefaultConfigResponse {
                 preset: GuardPreset::Standard,
+                max_turns: None,
+                max_budget_usd: None,
+                output_format: None,
             },
+            watchdog: WatchdogConfigResponse {
+                enabled: true,
+                memory_threshold: 90,
+                check_interval_secs: 10,
+                breach_count: 3,
+                idle_timeout_secs: 600,
+                idle_action: "alert".into(),
+            },
+            notifications: NotificationsConfigResponse { discord: None },
+            personas: HashMap::new(),
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("remote"));
@@ -811,6 +936,9 @@ mod tests {
             port: 7433,
             data_dir: "/tmp".into(),
             bind: BindMode::Tailscale,
+            tag: None,
+            seed: None,
+            discovery_interval_secs: 30,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"bind\":\"tailscale\""));

@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode};
 use pulpo_common::api::{
-    AuthConfigResponse, ConfigResponse, ErrorResponse, GuardDefaultConfigResponse,
-    NodeConfigResponse, UpdateConfigRequest, UpdateConfigResponse,
+    AuthConfigResponse, ConfigResponse, DiscordWebhookConfigResponse, ErrorResponse,
+    GuardDefaultConfigResponse, NodeConfigResponse, NotificationsConfigResponse,
+    PersonaConfigResponse, UpdateConfigRequest, UpdateConfigResponse, WatchdogConfigResponse,
 };
 
 type ApiError = (StatusCode, Json<ErrorResponse>);
@@ -24,12 +25,54 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
             port: config.node.port,
             data_dir: config.node.data_dir.clone(),
             bind: config.node.bind,
+            tag: config.node.tag.clone(),
+            seed: config.node.seed.clone(),
+            discovery_interval_secs: config.node.discovery_interval_secs,
         },
         auth: AuthConfigResponse {},
         peers: config.peers.clone(),
         guards: GuardDefaultConfigResponse {
             preset: config.guards.preset,
+            max_turns: config.guards.max_turns,
+            max_budget_usd: config.guards.max_budget_usd,
+            output_format: config.guards.output_format.clone(),
         },
+        watchdog: WatchdogConfigResponse {
+            enabled: config.watchdog.enabled,
+            memory_threshold: config.watchdog.memory_threshold,
+            check_interval_secs: config.watchdog.check_interval_secs,
+            breach_count: config.watchdog.breach_count,
+            idle_timeout_secs: config.watchdog.idle_timeout_secs,
+            idle_action: config.watchdog.idle_action.clone(),
+        },
+        notifications: NotificationsConfigResponse {
+            discord: config.notifications.discord.as_ref().map(|d| {
+                DiscordWebhookConfigResponse {
+                    webhook_url: d.webhook_url.clone(),
+                    events: d.events.clone(),
+                }
+            }),
+        },
+        personas: config
+            .personas
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    PersonaConfigResponse {
+                        provider: v.provider.clone(),
+                        model: v.model.clone(),
+                        mode: v.mode.clone(),
+                        guard_preset: v.guard_preset.clone(),
+                        allowed_tools: v.allowed_tools.clone(),
+                        system_prompt: v.system_prompt.clone(),
+                        max_turns: v.max_turns,
+                        max_budget_usd: v.max_budget_usd,
+                        output_format: v.output_format.clone(),
+                    },
+                )
+            })
+            .collect(),
     }
 }
 
@@ -42,14 +85,14 @@ pub async fn get_config(
     Ok(Json(response))
 }
 
-pub async fn update_config(
-    State(state): State<Arc<super::AppState>>,
-    Json(req): Json<UpdateConfigRequest>,
-) -> Result<Json<UpdateConfigResponse>, ApiError> {
-    let mut config = state.config.write().await;
+/// Apply an update request to the config, returning whether a restart is required.
+fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) -> bool {
     let original_port = config.node.port;
     let original_bind = config.node.bind;
+    let original_tag = config.node.tag.clone();
+    let original_seed = config.node.seed.clone();
 
+    // Node settings
     if let Some(name) = &req.node_name {
         config.node.name.clone_from(name);
     }
@@ -62,14 +105,108 @@ pub async fn update_config(
     if let Some(bind) = req.bind {
         config.node.bind = bind;
     }
+    if let Some(tag) = req.tag {
+        config.node.tag = if tag.is_empty() { None } else { Some(tag) };
+    }
+    if let Some(seed) = req.seed {
+        config.node.seed = if seed.is_empty() { None } else { Some(seed) };
+    }
+    if let Some(interval) = req.discovery_interval_secs {
+        config.node.discovery_interval_secs = interval;
+    }
+
+    // Guard defaults
     if let Some(preset) = req.guard_preset {
         config.guards.preset = preset;
     }
+    if let Some(turns) = req.guard_max_turns {
+        config.guards.max_turns = Some(turns);
+    }
+    if let Some(budget) = req.guard_max_budget_usd {
+        config.guards.max_budget_usd = Some(budget);
+    }
+    if let Some(fmt) = req.guard_output_format {
+        config.guards.output_format = if fmt.is_empty() { None } else { Some(fmt) };
+    }
+
+    // Watchdog
+    if let Some(enabled) = req.watchdog_enabled {
+        config.watchdog.enabled = enabled;
+    }
+    if let Some(threshold) = req.watchdog_memory_threshold {
+        config.watchdog.memory_threshold = threshold;
+    }
+    if let Some(interval) = req.watchdog_check_interval_secs {
+        config.watchdog.check_interval_secs = interval;
+    }
+    if let Some(count) = req.watchdog_breach_count {
+        config.watchdog.breach_count = count;
+    }
+    if let Some(timeout) = req.watchdog_idle_timeout_secs {
+        config.watchdog.idle_timeout_secs = timeout;
+    }
+    if let Some(action) = req.watchdog_idle_action {
+        config.watchdog.idle_action = action;
+    }
+
+    // Notifications
+    if let Some(url) = req.discord_webhook_url {
+        if url.is_empty() {
+            config.notifications.discord = None;
+        } else {
+            let events = req.discord_events.unwrap_or_default();
+            config.notifications.discord = Some(crate::config::DiscordWebhookConfig {
+                webhook_url: url,
+                events,
+            });
+        }
+    } else if let Some(events) = req.discord_events
+        && let Some(discord) = &mut config.notifications.discord
+    {
+        discord.events = events;
+    }
+
+    // Personas (full replace when provided)
+    if let Some(personas) = req.personas {
+        config.personas = personas
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k,
+                    crate::config::PersonaConfig {
+                        provider: v.provider,
+                        model: v.model,
+                        mode: v.mode,
+                        guard_preset: v.guard_preset,
+                        allowed_tools: v.allowed_tools,
+                        system_prompt: v.system_prompt,
+                        max_turns: v.max_turns,
+                        max_budget_usd: v.max_budget_usd,
+                        output_format: v.output_format,
+                    },
+                )
+            })
+            .collect();
+    }
+
+    // Peers
     if let Some(peers) = req.peers {
         config.peers = peers;
     }
 
-    let restart_required = config.node.port != original_port || config.node.bind != original_bind;
+    // Restart required for port, bind, tag, or seed changes (affects network/discovery loops)
+    config.node.port != original_port
+        || config.node.bind != original_bind
+        || config.node.tag != original_tag
+        || config.node.seed != original_seed
+}
+
+pub async fn update_config(
+    State(state): State<Arc<super::AppState>>,
+    Json(req): Json<UpdateConfigRequest>,
+) -> Result<Json<UpdateConfigResponse>, ApiError> {
+    let mut config = state.config.write().await;
+    let restart_required = apply_update(&mut config, req);
 
     // Save to disk if config_path is set
     if !state.config_path.as_os_str().is_empty() {
@@ -234,7 +371,7 @@ mod tests {
             bind: None,
             guard_preset: None,
 
-            peers: None,
+            ..Default::default()
         };
         let Json(resp) = update_config(State(state.clone()), Json(req))
             .await
@@ -257,7 +394,7 @@ mod tests {
             bind: None,
             guard_preset: None,
 
-            peers: None,
+            ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.config.node.port, 9999);
@@ -274,7 +411,7 @@ mod tests {
             bind: None,
             guard_preset: None,
 
-            peers: None,
+            ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert!(!resp.restart_required);
@@ -290,7 +427,7 @@ mod tests {
             bind: None,
             guard_preset: Some(pulpo_common::guard::GuardPreset::Strict),
 
-            peers: None,
+            ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert_eq!(
@@ -305,13 +442,8 @@ mod tests {
         let mut peers = HashMap::new();
         peers.insert("remote".into(), PeerEntry::Simple("10.0.0.1:7433".into()));
         let req = UpdateConfigRequest {
-            node_name: None,
-            port: None,
-            data_dir: None,
-            bind: None,
-            guard_preset: None,
-
             peers: Some(peers),
+            ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.config.peers.len(), 1);
@@ -331,7 +463,7 @@ mod tests {
             bind: None,
             guard_preset: None,
 
-            peers: None,
+            ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.config.node.data_dir, "/new/data/dir");
@@ -347,7 +479,7 @@ mod tests {
             bind: None,
             guard_preset: Some(pulpo_common::guard::GuardPreset::Unrestricted),
 
-            peers: None,
+            ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.config.node.name, "multi");
@@ -369,7 +501,7 @@ mod tests {
             bind: None,
             guard_preset: None,
 
-            peers: None,
+            ..Default::default()
         };
         let Json(resp) = update_config(State(state.clone()), Json(req))
             .await
@@ -391,7 +523,7 @@ mod tests {
             bind: None,
             guard_preset: Some(pulpo_common::guard::GuardPreset::Strict),
 
-            peers: None,
+            ..Default::default()
         };
         let _ = update_config(State(state.clone()), Json(req))
             .await
@@ -417,7 +549,7 @@ mod tests {
             bind: None,
             guard_preset: None,
 
-            peers: None,
+            ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         // Nothing changed
@@ -457,7 +589,7 @@ mod tests {
             data_dir: None,
             bind: Some(pulpo_common::auth::BindMode::Public),
             guard_preset: None,
-            peers: None,
+            ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.config.node.bind, pulpo_common::auth::BindMode::Public);
@@ -473,7 +605,7 @@ mod tests {
             data_dir: None,
             bind: Some(pulpo_common::auth::BindMode::Local),
             guard_preset: None,
-            peers: None,
+            ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert!(!resp.restart_required);
@@ -499,6 +631,324 @@ mod tests {
         let Json(resp) = get_config(State(state)).await.unwrap();
         let debug = format!("{resp:?}");
         assert!(debug.contains("test-node"));
+    }
+
+    #[tokio::test]
+    async fn test_update_config_tag_requires_restart() {
+        let state = test_state().await;
+        let req = UpdateConfigRequest {
+            tag: Some("gpu".into()),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.config.node.tag, Some("gpu".into()));
+        assert!(resp.restart_required);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_tag_empty_clears() {
+        let state = test_state().await;
+        // Set tag first
+        let req = UpdateConfigRequest {
+            tag: Some("gpu".into()),
+            ..Default::default()
+        };
+        let _ = update_config(State(state.clone()), Json(req)).await.unwrap();
+        // Clear it with empty string
+        let req = UpdateConfigRequest {
+            tag: Some(String::new()),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.config.node.tag, None);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_seed_requires_restart() {
+        let state = test_state().await;
+        let req = UpdateConfigRequest {
+            seed: Some("10.0.0.1:7433".into()),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.config.node.seed, Some("10.0.0.1:7433".into()));
+        assert!(resp.restart_required);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_seed_empty_clears() {
+        let state = test_state().await;
+        let req = UpdateConfigRequest {
+            seed: Some("10.0.0.1:7433".into()),
+            ..Default::default()
+        };
+        let _ = update_config(State(state.clone()), Json(req)).await.unwrap();
+        let req = UpdateConfigRequest {
+            seed: Some(String::new()),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.config.node.seed, None);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_discovery_interval() {
+        let state = test_state().await;
+        let req = UpdateConfigRequest {
+            discovery_interval_secs: Some(120),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.config.node.discovery_interval_secs, 120);
+        assert!(!resp.restart_required);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_guard_max_turns() {
+        let state = test_state().await;
+        let req = UpdateConfigRequest {
+            guard_max_turns: Some(50),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.config.guards.max_turns, Some(50));
+    }
+
+    #[tokio::test]
+    async fn test_update_config_guard_max_budget() {
+        let state = test_state().await;
+        let req = UpdateConfigRequest {
+            guard_max_budget_usd: Some(10.0),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.config.guards.max_budget_usd, Some(10.0));
+    }
+
+    #[tokio::test]
+    async fn test_update_config_guard_output_format() {
+        let state = test_state().await;
+        let req = UpdateConfigRequest {
+            guard_output_format: Some("json".into()),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.config.guards.output_format, Some("json".into()));
+    }
+
+    #[tokio::test]
+    async fn test_update_config_guard_output_format_empty_clears() {
+        let state = test_state().await;
+        let req = UpdateConfigRequest {
+            guard_output_format: Some("json".into()),
+            ..Default::default()
+        };
+        let _ = update_config(State(state.clone()), Json(req)).await.unwrap();
+        let req = UpdateConfigRequest {
+            guard_output_format: Some(String::new()),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.config.guards.output_format, None);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_watchdog() {
+        let state = test_state().await;
+        let req = UpdateConfigRequest {
+            watchdog_enabled: Some(false),
+            watchdog_memory_threshold: Some(90),
+            watchdog_check_interval_secs: Some(120),
+            watchdog_breach_count: Some(5),
+            watchdog_idle_timeout_secs: Some(600),
+            watchdog_idle_action: Some("kill".into()),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert!(!resp.config.watchdog.enabled);
+        assert_eq!(resp.config.watchdog.memory_threshold, 90);
+        assert_eq!(resp.config.watchdog.check_interval_secs, 120);
+        assert_eq!(resp.config.watchdog.breach_count, 5);
+        assert_eq!(resp.config.watchdog.idle_timeout_secs, 600);
+        assert_eq!(resp.config.watchdog.idle_action, "kill");
+        assert!(!resp.restart_required);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_discord_notifications() {
+        let state = test_state().await;
+        let req = UpdateConfigRequest {
+            discord_webhook_url: Some("https://discord.com/api/webhooks/test".into()),
+            discord_events: Some(vec!["session.created".into(), "session.completed".into()]),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        let discord = resp.config.notifications.discord.as_ref().unwrap();
+        assert_eq!(discord.webhook_url, "https://discord.com/api/webhooks/test");
+        assert_eq!(discord.events.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_discord_empty_url_clears() {
+        let state = test_state().await;
+        // Set discord first
+        let req = UpdateConfigRequest {
+            discord_webhook_url: Some("https://discord.com/api/webhooks/test".into()),
+            ..Default::default()
+        };
+        let _ = update_config(State(state.clone()), Json(req)).await.unwrap();
+        // Clear with empty URL
+        let req = UpdateConfigRequest {
+            discord_webhook_url: Some(String::new()),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert!(resp.config.notifications.discord.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_config_discord_events_only() {
+        let state = test_state().await;
+        // Set discord first
+        let req = UpdateConfigRequest {
+            discord_webhook_url: Some("https://discord.com/api/webhooks/test".into()),
+            discord_events: Some(vec!["session.created".into()]),
+            ..Default::default()
+        };
+        let _ = update_config(State(state.clone()), Json(req)).await.unwrap();
+        // Update events only (no webhook_url)
+        let req = UpdateConfigRequest {
+            discord_events: Some(vec!["session.completed".into()]),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        let discord = resp.config.notifications.discord.as_ref().unwrap();
+        assert_eq!(discord.events, vec!["session.completed"]);
+        // URL unchanged
+        assert_eq!(discord.webhook_url, "https://discord.com/api/webhooks/test");
+    }
+
+    #[tokio::test]
+    async fn test_update_config_discord_events_no_existing_discord() {
+        let state = test_state().await;
+        // Update events only with no existing discord config — should be ignored
+        let req = UpdateConfigRequest {
+            discord_events: Some(vec!["session.completed".into()]),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert!(resp.config.notifications.discord.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_config_personas() {
+        use pulpo_common::api::PersonaConfigResponse;
+        let state = test_state().await;
+        let mut personas = HashMap::new();
+        personas.insert(
+            "reviewer".into(),
+            PersonaConfigResponse {
+                provider: Some("claude".into()),
+                model: Some("opus".into()),
+                mode: Some("interactive".into()),
+                guard_preset: Some("strict".into()),
+                allowed_tools: Some(vec!["read".into()]),
+                system_prompt: Some("You are a reviewer.".into()),
+                max_turns: Some(10),
+                max_budget_usd: Some(5.0),
+                output_format: Some("json".into()),
+            },
+        );
+        let req = UpdateConfigRequest {
+            personas: Some(personas),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.config.personas.len(), 1);
+        let p = &resp.config.personas["reviewer"];
+        assert_eq!(p.provider, Some("claude".into()));
+        assert_eq!(p.model, Some("opus".into()));
+        assert_eq!(p.max_turns, Some(10));
+    }
+
+    #[test]
+    fn test_config_to_response_with_notifications_and_personas() {
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                tag: Some("gpu".into()),
+                seed: Some("10.0.0.1:7433".into()),
+                discovery_interval_secs: 120,
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: GuardDefaultConfig {
+                max_turns: Some(50),
+                max_budget_usd: Some(10.0),
+                output_format: Some("json".into()),
+                ..GuardDefaultConfig::default()
+            },
+            watchdog: crate::config::WatchdogConfig {
+                enabled: true,
+                memory_threshold: 85,
+                check_interval_secs: 30,
+                breach_count: 3,
+                idle_timeout_secs: 300,
+                idle_action: "pause".into(),
+            },
+            personas: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "coder".into(),
+                    crate::config::PersonaConfig {
+                        provider: Some("claude".into()),
+                        model: Some("sonnet".into()),
+                        mode: None,
+                        guard_preset: None,
+                        allowed_tools: None,
+                        system_prompt: None,
+                        max_turns: None,
+                        max_budget_usd: None,
+                        output_format: None,
+                    },
+                );
+                m
+            },
+            notifications: crate::config::NotificationsConfig {
+                discord: Some(crate::config::DiscordWebhookConfig {
+                    webhook_url: "https://discord.com/test".into(),
+                    events: vec!["session.created".into()],
+                }),
+            },
+        };
+        let resp = config_to_response(&config);
+        // Node fields
+        assert_eq!(resp.node.tag, Some("gpu".into()));
+        assert_eq!(resp.node.seed, Some("10.0.0.1:7433".into()));
+        assert_eq!(resp.node.discovery_interval_secs, 120);
+        // Guard fields
+        assert_eq!(resp.guards.max_turns, Some(50));
+        assert_eq!(resp.guards.max_budget_usd, Some(10.0));
+        assert_eq!(resp.guards.output_format, Some("json".into()));
+        // Watchdog
+        assert!(resp.watchdog.enabled);
+        assert_eq!(resp.watchdog.memory_threshold, 85);
+        assert_eq!(resp.watchdog.check_interval_secs, 30);
+        assert_eq!(resp.watchdog.breach_count, 3);
+        assert_eq!(resp.watchdog.idle_timeout_secs, 300);
+        assert_eq!(resp.watchdog.idle_action, "pause");
+        // Notifications
+        let discord = resp.notifications.discord.as_ref().unwrap();
+        assert_eq!(discord.webhook_url, "https://discord.com/test");
+        assert_eq!(discord.events, vec!["session.created"]);
+        // Personas
+        assert_eq!(resp.personas.len(), 1);
+        let p = &resp.personas["coder"];
+        assert_eq!(p.provider, Some("claude".into()));
+        assert_eq!(p.model, Some("sonnet".into()));
     }
 
     #[tokio::test]
@@ -547,7 +997,7 @@ mod tests {
             bind: None,
             guard_preset: None,
 
-            peers: None,
+            ..Default::default()
         };
         let result = update_config(State(state), Json(req)).await;
         assert!(result.is_err());

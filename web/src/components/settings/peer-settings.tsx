@@ -1,8 +1,9 @@
 import { useState } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { addPeer, removePeer } from '@/api/client';
+import { FormField } from './form-field';
 import type { PeerInfo } from '@/api/types';
 
 const statusDotColors: Record<string, string> = {
@@ -14,12 +15,16 @@ const statusDotColors: Record<string, string> = {
 interface PeerSettingsProps {
   peers: PeerInfo[];
   onUpdate: (peers: PeerInfo[]) => void;
+  bind: string;
 }
 
-export function PeerSettings({ peers, onUpdate }: PeerSettingsProps) {
+export function PeerSettings({ peers, onUpdate, bind }: PeerSettingsProps) {
   const [newName, setNewName] = useState('');
   const [newAddress, setNewAddress] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  const isLocal = bind === 'local';
+  const isTailscale = bind === 'tailscale';
 
   async function handleAdd() {
     if (!newName.trim() || !newAddress.trim()) return;
@@ -39,65 +44,85 @@ export function PeerSettings({ peers, onUpdate }: PeerSettingsProps) {
     onUpdate(peers.filter((p) => p.name !== name));
   }
 
-  return (
-    <div data-testid="peer-settings" className="space-y-4">
-      <h3 className="text-sm font-semibold">Peers</h3>
+  const description = isLocal
+    ? 'Peer discovery is disabled in local mode. Switch to tailscale, public, or container to connect nodes.'
+    : isTailscale
+      ? 'Peers are auto-discovered via the Tailscale API. You can also add manual entries.'
+      : 'Manually add peers or use a seed peer for auto-discovery.';
 
-      {peers.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No peers configured.</p>
-      ) : (
-        <div className="space-y-2">
-          {peers.map((peer) => (
-            <div
-              key={peer.name}
-              data-testid={`peer-${peer.name}`}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border px-3 py-2"
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                <span
-                  className={`h-2 w-2 shrink-0 rounded-full ${statusDotColors[peer.status] ?? 'bg-muted-foreground'}`}
-                />
-                <span className="font-medium">{peer.name}</span>
-                <span className="truncate text-xs text-muted-foreground">{peer.address}</span>
+  return (
+    <Card data-testid="peer-settings">
+      <CardHeader>
+        <CardTitle>Peers</CardTitle>
+        <CardDescription>{description}</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        {isLocal ? (
+          <p className="text-sm text-muted-foreground" data-testid="peers-disabled">
+            Change bind mode to enable networking.
+          </p>
+        ) : (
+          <>
+            {peers.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No peers configured.</p>
+            ) : (
+              <div className="grid gap-2">
+                {peers.map((peer) => (
+                  <div
+                    key={peer.name}
+                    data-testid={`peer-${peer.name}`}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border px-3 py-2"
+                  >
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span
+                        className={`h-2 w-2 shrink-0 rounded-full ${statusDotColors[peer.status] ?? 'bg-muted-foreground'}`}
+                      />
+                      <span className="text-sm font-medium">{peer.name}</span>
+                      <span className="truncate text-xs text-muted-foreground">{peer.address}</span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid={`remove-peer-${peer.name}`}
+                      onClick={() => handleRemove(peer.name)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                data-testid={`remove-peer-${peer.name}`}
-                onClick={() => handleRemove(peer.name)}
-              >
-                Remove
+            )}
+
+            {error && <p className="text-sm text-destructive">{error}</p>}
+
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <FormField label="Peer name" htmlFor="new-peer-name">
+                  <Input
+                    id="new-peer-name"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="remote-node"
+                  />
+                </FormField>
+              </div>
+              <div className="flex-1">
+                <FormField label="Peer address" htmlFor="new-peer-address">
+                  <Input
+                    id="new-peer-address"
+                    value={newAddress}
+                    onChange={(e) => setNewAddress(e.target.value)}
+                    placeholder="10.0.0.1:7433"
+                  />
+                </FormField>
+              </div>
+              <Button data-testid="add-peer-btn" size="sm" onClick={handleAdd}>
+                Add
               </Button>
             </div>
-          ))}
-        </div>
-      )}
-
-      {error && <p className="text-sm text-destructive">{error}</p>}
-
-      <div className="flex items-end gap-2">
-        <div className="flex-1">
-          <Label htmlFor="new-peer-name">Peer name</Label>
-          <Input
-            id="new-peer-name"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="remote-node"
-          />
-        </div>
-        <div className="flex-1">
-          <Label htmlFor="new-peer-address">Peer address</Label>
-          <Input
-            id="new-peer-address"
-            value={newAddress}
-            onChange={(e) => setNewAddress(e.target.value)}
-            placeholder="10.0.0.1:7433"
-          />
-        </div>
-        <Button data-testid="add-peer-btn" size="sm" onClick={handleAdd}>
-          Add
-        </Button>
-      </div>
-    </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

@@ -29,9 +29,34 @@ const mockUpdateConfig = vi.mocked(api.updateConfig);
 const mockGetPeers = vi.mocked(api.getPeers);
 
 const testConfig: ConfigResponse = {
-  node: { name: 'mac-studio', port: 7433, data_dir: '~/.pulpo/data' },
+  node: {
+    name: 'mac-studio',
+    port: 7433,
+    data_dir: '~/.pulpo/data',
+    bind: 'local',
+    tag: null,
+    seed: null,
+    discovery_interval_secs: 60,
+  },
   peers: {},
-  guards: { preset: 'standard' },
+  guards: {
+    preset: 'standard',
+    max_turns: null,
+    max_budget_usd: null,
+    output_format: null,
+  },
+  watchdog: {
+    enabled: true,
+    memory_threshold: 85,
+    check_interval_secs: 30,
+    breach_count: 3,
+    idle_timeout_secs: 300,
+    idle_action: 'pause',
+  },
+  notifications: {
+    discord: null,
+  },
+  personas: {},
 };
 
 const testNode = {
@@ -82,6 +107,90 @@ describe('SettingsPage', () => {
     });
   });
 
+  it('loads all settings sections', async () => {
+    mockGetConfig.mockResolvedValue(testConfig);
+    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('node-settings')).toBeInTheDocument();
+      expect(screen.getByTestId('guard-settings')).toBeInTheDocument();
+      expect(screen.getByTestId('watchdog-settings')).toBeInTheDocument();
+      expect(screen.getByTestId('notifications-settings')).toBeInTheDocument();
+      expect(screen.getByTestId('peer-settings')).toBeInTheDocument();
+    });
+  });
+
+  it('shows node-specific and global sections', async () => {
+    mockGetConfig.mockResolvedValue(testConfig);
+    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('section-node')).toBeInTheDocument();
+      expect(screen.getByTestId('section-global')).toBeInTheDocument();
+      expect(screen.getByText('This node')).toBeInTheDocument();
+      expect(screen.getByText('node-specific')).toBeInTheDocument();
+      expect(screen.getByText('Global')).toBeInTheDocument();
+      expect(screen.getByText('synced to all nodes')).toBeInTheDocument();
+    });
+  });
+
+  it('loads watchdog settings', async () => {
+    mockGetConfig.mockResolvedValue(testConfig);
+    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Memory threshold (%)')).toHaveValue(85);
+    });
+  });
+
+  it('loads discord notifications when present', async () => {
+    const configWithDiscord: ConfigResponse = {
+      ...testConfig,
+      notifications: {
+        discord: {
+          webhook_url: 'https://discord.com/api/webhooks/test',
+          events: ['session.created', 'session.completed'],
+        },
+      },
+    };
+    mockGetConfig.mockResolvedValue(configWithDiscord);
+    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Webhook URL')).toHaveValue(
+        'https://discord.com/api/webhooks/test',
+      );
+      expect(screen.getByLabelText('Events')).toHaveValue(
+        'session.created, session.completed',
+      );
+    });
+  });
+
+  it('loads guard defaults when present', async () => {
+    const configWithGuards: ConfigResponse = {
+      ...testConfig,
+      guards: {
+        preset: 'strict',
+        max_turns: 50,
+        max_budget_usd: 10.5,
+        output_format: 'json',
+      },
+    };
+    mockGetConfig.mockResolvedValue(configWithGuards);
+    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Max turns')).toHaveValue(50);
+      expect(screen.getByLabelText('Max budget (USD)')).toHaveValue(10.5);
+      expect(screen.getByLabelText('Output format')).toHaveValue('json');
+    });
+  });
+
   it('shows error on config load failure', async () => {
     mockGetConfig.mockRejectedValue(new Error('Network error'));
     renderSettings();
@@ -106,12 +215,17 @@ describe('SettingsPage', () => {
     fireEvent.click(screen.getByTestId('save-btn'));
 
     await waitFor(() => {
-      expect(mockUpdateConfig).toHaveBeenCalledWith({
-        node_name: 'mac-studio',
-        port: 7433,
-        data_dir: '~/.pulpo/data',
-        guard_preset: 'standard',
-      });
+      expect(mockUpdateConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          node_name: 'mac-studio',
+          port: 7433,
+          data_dir: '~/.pulpo/data',
+          bind: 'local',
+          guard_preset: 'standard',
+          watchdog_enabled: true,
+          watchdog_memory_threshold: 85,
+        }),
+      );
     });
   });
 
@@ -149,6 +263,78 @@ describe('SettingsPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Failed to save config')).toBeInTheDocument();
+    });
+  });
+
+  it('sends guard_max_turns when set', async () => {
+    const configWithTurns: ConfigResponse = {
+      ...testConfig,
+      guards: { ...testConfig.guards, max_turns: 25 },
+    };
+    mockGetConfig.mockResolvedValue(configWithTurns);
+    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
+    mockUpdateConfig.mockResolvedValue({
+      config: configWithTurns,
+      restart_required: false,
+    });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('save-btn')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('save-btn'));
+
+    await waitFor(() => {
+      expect(mockUpdateConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          guard_max_turns: 25,
+        }),
+      );
+    });
+  });
+
+  it('sends discord events when set', async () => {
+    const configWithDiscord: ConfigResponse = {
+      ...testConfig,
+      notifications: {
+        discord: {
+          webhook_url: 'https://discord.com/api/webhooks/test',
+          events: ['session.created'],
+        },
+      },
+    };
+    mockGetConfig.mockResolvedValue(configWithDiscord);
+    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
+    mockUpdateConfig.mockResolvedValue({
+      config: configWithDiscord,
+      restart_required: false,
+    });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('save-btn')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('save-btn'));
+
+    await waitFor(() => {
+      expect(mockUpdateConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          discord_webhook_url: 'https://discord.com/api/webhooks/test',
+          discord_events: ['session.created'],
+        }),
+      );
+    });
+  });
+
+  it('peers section shows disabled in local mode', async () => {
+    mockGetConfig.mockResolvedValue(testConfig);
+    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('peers-disabled')).toBeInTheDocument();
     });
   });
 });

@@ -2,21 +2,49 @@ import { useState, useEffect, useCallback } from 'react';
 import { AppHeader } from '@/components/layout/app-header';
 import { NodeSettings } from '@/components/settings/node-settings';
 import { GuardSettings } from '@/components/settings/guard-settings';
+import { WatchdogSettings } from '@/components/settings/watchdog-settings';
+import { NotificationsSettings } from '@/components/settings/notifications-settings';
 import { PeerSettings } from '@/components/settings/peer-settings';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getConfig, updateConfig, getPeers } from '@/api/client';
 import { toast } from 'sonner';
-import type { PeerInfo } from '@/api/types';
+import type { PeerInfo, UpdateConfigRequest } from '@/api/types';
 
 export function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Node
   const [nodeName, setNodeName] = useState('');
   const [port, setPort] = useState(7433);
   const [dataDir, setDataDir] = useState('');
+  const [bind, setBind] = useState('local');
+  const [tag, setTag] = useState('');
+  const [seed, setSeed] = useState('');
+  const [discoveryInterval, setDiscoveryInterval] = useState(60);
+
+  // Guards
   const [guardPreset, setGuardPreset] = useState('standard');
+  const [guardMaxTurns, setGuardMaxTurns] = useState('');
+  const [guardMaxBudget, setGuardMaxBudget] = useState('');
+  const [guardOutputFormat, setGuardOutputFormat] = useState('');
+
+  // Watchdog
+  const [watchdogEnabled, setWatchdogEnabled] = useState(true);
+  const [watchdogMemoryThreshold, setWatchdogMemoryThreshold] = useState(85);
+  const [watchdogCheckInterval, setWatchdogCheckInterval] = useState(30);
+  const [watchdogBreachCount, setWatchdogBreachCount] = useState(3);
+  const [watchdogIdleTimeout, setWatchdogIdleTimeout] = useState(300);
+  const [watchdogIdleAction, setWatchdogIdleAction] = useState('pause');
+
+  // Notifications
+  const [discordWebhookUrl, setDiscordWebhookUrl] = useState('');
+  const [discordEvents, setDiscordEvents] = useState('');
+
+  // Peers
   const [peers, setPeers] = useState<PeerInfo[]>([]);
 
   const loadConfig = useCallback(async () => {
@@ -26,7 +54,26 @@ export function SettingsPage() {
       setNodeName(config.node.name);
       setPort(config.node.port);
       setDataDir(config.node.data_dir);
+      setBind(config.node.bind);
+      setTag(config.node.tag ?? '');
+      setSeed(config.node.seed ?? '');
+      setDiscoveryInterval(config.node.discovery_interval_secs);
+
       setGuardPreset(config.guards.preset);
+      setGuardMaxTurns(config.guards.max_turns?.toString() ?? '');
+      setGuardMaxBudget(config.guards.max_budget_usd?.toString() ?? '');
+      setGuardOutputFormat(config.guards.output_format ?? '');
+
+      setWatchdogEnabled(config.watchdog.enabled);
+      setWatchdogMemoryThreshold(config.watchdog.memory_threshold);
+      setWatchdogCheckInterval(config.watchdog.check_interval_secs);
+      setWatchdogBreachCount(config.watchdog.breach_count);
+      setWatchdogIdleTimeout(config.watchdog.idle_timeout_secs);
+      setWatchdogIdleAction(config.watchdog.idle_action);
+
+      setDiscordWebhookUrl(config.notifications.discord?.webhook_url ?? '');
+      setDiscordEvents(config.notifications.discord?.events.join(', ') ?? '');
+
       const peersResp = await getPeers();
       setPeers(peersResp.peers);
       setError(null);
@@ -44,14 +91,41 @@ export function SettingsPage() {
   async function handleSave() {
     setSaving(true);
     try {
-      const result = await updateConfig({
+      const req: UpdateConfigRequest = {
         node_name: nodeName,
         port,
         data_dir: dataDir,
+        bind,
+        tag,
+        seed,
+        discovery_interval_secs: discoveryInterval,
         guard_preset: guardPreset,
-      });
+        guard_output_format: guardOutputFormat,
+        watchdog_enabled: watchdogEnabled,
+        watchdog_memory_threshold: watchdogMemoryThreshold,
+        watchdog_check_interval_secs: watchdogCheckInterval,
+        watchdog_breach_count: watchdogBreachCount,
+        watchdog_idle_timeout_secs: watchdogIdleTimeout,
+        watchdog_idle_action: watchdogIdleAction,
+        discord_webhook_url: discordWebhookUrl,
+      };
+
+      if (guardMaxTurns) {
+        req.guard_max_turns = parseInt(guardMaxTurns, 10);
+      }
+      if (guardMaxBudget) {
+        req.guard_max_budget_usd = parseFloat(guardMaxBudget);
+      }
+      if (discordEvents.trim()) {
+        req.discord_events = discordEvents
+          .split(',')
+          .map((e) => e.trim())
+          .filter(Boolean);
+      }
+
+      const result = await updateConfig(req);
       if (result.restart_required) {
-        toast('Saved. Restart pulpod for port change to take effect.');
+        toast('Saved. Restart pulpod for network changes to take effect.');
       } else {
         toast('Settings saved.');
       }
@@ -66,40 +140,107 @@ export function SettingsPage() {
   return (
     <div data-testid="settings-page">
       <AppHeader title="Settings" />
-      <div className="max-w-2xl space-y-6 sm:space-y-8 p-4 sm:p-6">
+      <div className="mx-auto max-w-2xl p-4 pb-12 sm:p-6">
         {loading ? (
           <div data-testid="loading-skeleton" className="space-y-4">
-            <Skeleton className="h-32 w-full" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-48 w-full rounded-xl" />
+            <Skeleton className="h-32 w-full rounded-xl" />
+            <Skeleton className="h-32 w-full rounded-xl" />
           </div>
         ) : error && !nodeName ? (
           <p className="text-center text-destructive">{error}</p>
         ) : (
           <>
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
 
-            <NodeSettings
-              name={nodeName}
-              onNameChange={setNodeName}
-              port={port}
-              onPortChange={setPort}
-              dataDir={dataDir}
-              onDataDirChange={setDataDir}
-            />
+            <div className="sticky top-0 z-10 -mx-4 mb-6 border-b border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:-mx-6 sm:px-6">
+              <Button
+                data-testid="save-btn"
+                className="w-full"
+                size="lg"
+                onClick={handleSave}
+                disabled={saving}
+              >
+                {saving ? 'Saving...' : 'Save settings'}
+              </Button>
+            </div>
 
-            <GuardSettings preset={guardPreset} onPresetChange={setGuardPreset} />
+            <div className="space-y-10">
+              {/* Node-specific settings */}
+              <section data-testid="section-node">
+                <div className="mb-4 flex items-center gap-2">
+                  <h2 className="text-lg font-semibold">This node</h2>
+                  <Badge variant="outline">node-specific</Badge>
+                </div>
+                <p className="mb-4 text-sm text-muted-foreground">
+                  These settings apply only to this node. Each node in your fleet has its own
+                  identity, network, and peer configuration.
+                </p>
+                <div className="space-y-6">
+                  <NodeSettings
+                    name={nodeName}
+                    onNameChange={setNodeName}
+                    port={port}
+                    onPortChange={setPort}
+                    dataDir={dataDir}
+                    onDataDirChange={setDataDir}
+                    bind={bind}
+                    onBindChange={setBind}
+                    tag={tag}
+                    onTagChange={setTag}
+                    seed={seed}
+                    onSeedChange={setSeed}
+                    discoveryInterval={discoveryInterval}
+                    onDiscoveryIntervalChange={setDiscoveryInterval}
+                  />
+                  <PeerSettings peers={peers} onUpdate={setPeers} bind={bind} />
+                </div>
+              </section>
 
-            <PeerSettings peers={peers} onUpdate={setPeers} />
-
-            <Button
-              data-testid="save-btn"
-              className="w-full"
-              onClick={handleSave}
-              disabled={saving}
-            >
-              {saving ? 'Saving...' : 'Save'}
-            </Button>
+              {/* Global settings */}
+              <section data-testid="section-global">
+                <div className="mb-4 flex items-center gap-2">
+                  <h2 className="text-lg font-semibold">Global</h2>
+                  <Badge variant="secondary">synced to all nodes</Badge>
+                </div>
+                <p className="mb-4 text-sm text-muted-foreground">
+                  These settings are shared across all nodes. Changes here will be propagated to
+                  every connected peer.
+                </p>
+                <div className="space-y-6">
+                  <GuardSettings
+                    preset={guardPreset}
+                    onPresetChange={setGuardPreset}
+                    maxTurns={guardMaxTurns}
+                    onMaxTurnsChange={setGuardMaxTurns}
+                    maxBudgetUsd={guardMaxBudget}
+                    onMaxBudgetUsdChange={setGuardMaxBudget}
+                    outputFormat={guardOutputFormat}
+                    onOutputFormatChange={setGuardOutputFormat}
+                  />
+                  <WatchdogSettings
+                    enabled={watchdogEnabled}
+                    onEnabledChange={setWatchdogEnabled}
+                    memoryThreshold={watchdogMemoryThreshold}
+                    onMemoryThresholdChange={setWatchdogMemoryThreshold}
+                    checkIntervalSecs={watchdogCheckInterval}
+                    onCheckIntervalSecsChange={setWatchdogCheckInterval}
+                    breachCount={watchdogBreachCount}
+                    onBreachCountChange={setWatchdogBreachCount}
+                    idleTimeoutSecs={watchdogIdleTimeout}
+                    onIdleTimeoutSecsChange={setWatchdogIdleTimeout}
+                    idleAction={watchdogIdleAction}
+                    onIdleActionChange={setWatchdogIdleAction}
+                  />
+                  <NotificationsSettings
+                    discordWebhookUrl={discordWebhookUrl}
+                    onDiscordWebhookUrlChange={setDiscordWebhookUrl}
+                    discordEvents={discordEvents}
+                    onDiscordEventsChange={setDiscordEvents}
+                  />
+                </div>
+              </section>
+            </div>
           </>
         )}
       </div>

@@ -38,15 +38,26 @@ const peers: PeerInfo[] = [
 ];
 
 describe('PeerSettings', () => {
-  it('renders peers', () => {
-    render(<PeerSettings peers={peers} onUpdate={vi.fn()} />);
+  it('renders peers in public mode', () => {
+    render(<PeerSettings peers={peers} onUpdate={vi.fn()} bind="public" />);
     expect(screen.getByTestId('peer-settings')).toBeInTheDocument();
     expect(screen.getByTestId('peer-node-a')).toBeInTheDocument();
     expect(screen.getByTestId('peer-node-b')).toBeInTheDocument();
   });
 
+  it('shows disabled message in local mode', () => {
+    render(<PeerSettings peers={[]} onUpdate={vi.fn()} bind="local" />);
+    expect(screen.getByTestId('peers-disabled')).toBeInTheDocument();
+    expect(screen.queryByTestId('add-peer-btn')).not.toBeInTheDocument();
+  });
+
+  it('shows tailscale description', () => {
+    render(<PeerSettings peers={[]} onUpdate={vi.fn()} bind="tailscale" />);
+    expect(screen.getByText(/auto-discovered via the Tailscale API/)).toBeInTheDocument();
+  });
+
   it('shows empty message when no peers', () => {
-    render(<PeerSettings peers={[]} onUpdate={vi.fn()} />);
+    render(<PeerSettings peers={[]} onUpdate={vi.fn()} bind="public" />);
     expect(screen.getByText('No peers configured.')).toBeInTheDocument();
   });
 
@@ -63,10 +74,12 @@ describe('PeerSettings', () => {
     ];
     mockAddPeer.mockResolvedValue({ local: null as never, peers: newPeers });
     const onUpdate = vi.fn();
-    render(<PeerSettings peers={peers} onUpdate={onUpdate} />);
+    render(<PeerSettings peers={peers} onUpdate={onUpdate} bind="public" />);
 
     fireEvent.change(screen.getByLabelText('Peer name'), { target: { value: 'node-c' } });
-    fireEvent.change(screen.getByLabelText('Peer address'), { target: { value: '10.0.0.3:7433' } });
+    fireEvent.change(screen.getByLabelText('Peer address'), {
+      target: { value: '10.0.0.3:7433' },
+    });
     fireEvent.click(screen.getByTestId('add-peer-btn'));
 
     await waitFor(() => {
@@ -76,14 +89,14 @@ describe('PeerSettings', () => {
   });
 
   it('does not add peer with empty fields', () => {
-    render(<PeerSettings peers={peers} onUpdate={vi.fn()} />);
+    render(<PeerSettings peers={peers} onUpdate={vi.fn()} bind="public" />);
     fireEvent.click(screen.getByTestId('add-peer-btn'));
     expect(mockAddPeer).not.toHaveBeenCalled();
   });
 
   it('shows error on add peer failure', async () => {
     mockAddPeer.mockRejectedValue(new Error('Connection refused'));
-    render(<PeerSettings peers={peers} onUpdate={vi.fn()} />);
+    render(<PeerSettings peers={peers} onUpdate={vi.fn()} bind="public" />);
 
     fireEvent.change(screen.getByLabelText('Peer name'), { target: { value: 'bad' } });
     fireEvent.change(screen.getByLabelText('Peer address'), { target: { value: 'bad:7433' } });
@@ -96,7 +109,7 @@ describe('PeerSettings', () => {
 
   it('shows generic error for non-Error failure', async () => {
     mockAddPeer.mockRejectedValue('string error');
-    render(<PeerSettings peers={peers} onUpdate={vi.fn()} />);
+    render(<PeerSettings peers={peers} onUpdate={vi.fn()} bind="public" />);
 
     fireEvent.change(screen.getByLabelText('Peer name'), { target: { value: 'bad' } });
     fireEvent.change(screen.getByLabelText('Peer address'), { target: { value: 'bad:7433' } });
@@ -110,7 +123,7 @@ describe('PeerSettings', () => {
   it('removes a peer', async () => {
     mockRemovePeer.mockResolvedValue(undefined);
     const onUpdate = vi.fn();
-    render(<PeerSettings peers={peers} onUpdate={onUpdate} />);
+    render(<PeerSettings peers={peers} onUpdate={onUpdate} bind="public" />);
     fireEvent.click(screen.getByTestId('remove-peer-node-a'));
 
     await waitFor(() => {
