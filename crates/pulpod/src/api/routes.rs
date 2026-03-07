@@ -376,15 +376,16 @@ mod tests {
         server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "by-name-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
             .await;
 
-        let resp = server.get("/api/v1/sessions/tmp").await;
+        let resp = server.get("/api/v1/sessions/by-name-test").await;
         resp.assert_status_ok();
         let body = resp.text();
-        assert!(body.contains("tmp"));
+        assert!(body.contains("by-name-test"));
     }
 
     #[tokio::test]
@@ -393,12 +394,13 @@ mod tests {
         server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "kill-name-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
             .await;
 
-        let resp = server.post("/api/v1/sessions/tmp/kill").await;
+        let resp = server.post("/api/v1/sessions/kill-name-test/kill").await;
         resp.assert_status(StatusCode::NO_CONTENT);
     }
 
@@ -408,15 +410,16 @@ mod tests {
         server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "del-name-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
             .await;
 
         // Kill first, then delete by name
-        server.post("/api/v1/sessions/tmp/kill").await;
+        server.post("/api/v1/sessions/del-name-test/kill").await;
 
-        let resp = server.delete("/api/v1/sessions/tmp").await;
+        let resp = server.delete("/api/v1/sessions/del-name-test").await;
         resp.assert_status(StatusCode::NO_CONTENT);
     }
 

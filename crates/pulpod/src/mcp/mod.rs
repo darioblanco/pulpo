@@ -1115,7 +1115,8 @@ mod tests {
             node: None,
         };
         let result = mcp.spawn_session(Parameters(params)).await;
-        assert!(result.contains("\"name\": \"tmp\""));
+        // Name is auto-generated when not provided
+        assert!(result.contains("\"name\":"));
         assert!(result.contains("running"));
     }
 

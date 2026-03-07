@@ -112,7 +112,18 @@ impl SessionManager {
         self.backend.check_provider(&provider.to_string())?;
         let mode = req.mode.unwrap_or_default();
         let guards = resolve_guard_config(&req, &self.default_guard);
-        let name = req.name.unwrap_or_else(|| derive_name(&req.workdir));
+        let name = if let Some(n) = req.name {
+            n
+        } else {
+            let existing: std::collections::HashSet<String> = self
+                .store
+                .list_sessions()
+                .await?
+                .into_iter()
+                .map(|s| s.name)
+                .collect();
+            super::names::generate_name(&|candidate| existing.contains(candidate))
+        };
         let backend_id = self.backend.session_id(&name);
         let mut spawn_params = build_spawn_params(
             &req.prompt,
@@ -425,14 +436,6 @@ fn validate_workdir(workdir: &str) -> Result<()> {
     Ok(())
 }
 
-fn derive_name(workdir: &str) -> String {
-    std::path::Path::new(workdir)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("session")
-        .to_owned()
-}
-
 fn resolve_guard_config(req: &CreateSessionRequest, default: &GuardConfig) -> GuardConfig {
     req.guard_config
         .clone()
@@ -642,20 +645,22 @@ mod tests {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
         let session = mgr.create_session(make_req("Fix the bug")).await.unwrap();
 
-        assert_eq!(session.name, "tmp");
+        // Name is auto-generated (adjective-noun) when not provided
+        assert_eq!(session.name.split('-').count(), 2);
         assert_eq!(session.provider, Provider::Claude);
         assert_eq!(session.mode, SessionMode::Interactive);
         assert_eq!(session.status, SessionStatus::Running);
         assert_eq!(session.workdir, "/tmp");
         assert_eq!(session.prompt, "Fix the bug");
         // MockBackend.session_id() returns just the name
-        assert_eq!(session.backend_session_id, Some("tmp".into()));
+        assert_eq!(session.backend_session_id, Some(session.name.clone()));
 
         let calls = backend.calls.lock().unwrap();
+        let name = &session.name;
         // Interactive Claude: create session with prompt as positional arg, then setup logging
-        assert!(calls[0].contains("create:tmp:/tmp:claude"));
+        assert!(calls[0].contains(&format!("create:{name}:/tmp:claude")));
         assert!(calls[0].contains("Fix the bug"));
-        assert!(calls[1].starts_with("setup_logging:tmp:"));
+        assert!(calls[1].starts_with(&format!("setup_logging:{name}:")));
         assert_eq!(calls.len(), 2);
         drop(calls);
     }
@@ -1074,18 +1079,6 @@ mod tests {
             .unwrap();
         let result = mgr.kill_session("test").await;
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_derive_name() {
-        assert_eq!(derive_name("/tmp/my-project"), "my-project");
-        assert_eq!(derive_name("/home/user/code/api"), "api");
-        assert_eq!(derive_name("repo"), "repo");
-    }
-
-    #[test]
-    fn test_derive_name_root() {
-        assert_eq!(derive_name("/"), "session");
     }
 
     #[test]
