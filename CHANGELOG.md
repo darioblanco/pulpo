@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.0.7](https://github.com/darioblanco/pulpo/compare/v0.0.6...v0.0.7) (2026-03-07)
+
+
+### Features
+
+* **cli:** show command shortcuts in help output ([bfb7432](https://github.com/darioblanco/pulpo/commit/bfb74324d505a4e38dd54efb602519418aca5dfb))
+* **config:** simplify Tailscale setup — derive discovery from bind mode ([93d289b](https://github.com/darioblanco/pulpo/commit/93d289b157a8b1985aeea486465df66d93edc781))
+* generic webhook notifications + settings UI improvements ([e678cef](https://github.com/darioblanco/pulpo/commit/e678cef9eefd66d65113a1e381002744509065cb))
+* **web:** settings UI overhaul — full config API, cards, node/global sections ([181f237](https://github.com/darioblanco/pulpo/commit/181f2376160f3606b48d1d8f1f16526431df2278))
+
+
+### Bug Fixes
+
+* clippy + prettier issues, align pre-commit coverage with CI ([4b07682](https://github.com/darioblanco/pulpo/commit/4b076825ceebb00f410fa52069ce7bfbbd210c4f))
+* **docker:** drop arm64 platform to avoid slow QEMU emulation ([eaf2dbf](https://github.com/darioblanco/pulpo/commit/eaf2dbfab40c61e9112c07df376c225dfd669fb8))
+* **docs:** add sass dependency and repair SPEC links ([dad72f5](https://github.com/darioblanco/pulpo/commit/dad72f5c9fb240fa34bc9238a1093f202f19d60e))
+* **docs:** set VuePress base path for /pulpo/ pages ([b78a321](https://github.com/darioblanco/pulpo/commit/b78a3217646ca6b26474ca002c7bdd1ea77e85b9))
+* gate tailscale bind test behind cfg(coverage) ([ab8e95e](https://github.com/darioblanco/pulpo/commit/ab8e95ee9df89a723d122a54ff34f68a728511a0))
+* restore 100% line coverage with Backend trait defaults ([6fa239b](https://github.com/darioblanco/pulpo/commit/6fa239bd977a513483f512da231725ca2e481fca))
+* **ws:** pass raw session name to spawn_attach, not prefixed backend ID ([5d643da](https://github.com/darioblanco/pulpo/commit/5d643daf9b79e0656fe2ac4e1396f8a69d6a0759))
+
 ## [0.0.6](https://github.com/darioblanco/pulpo/compare/v0.0.5...v0.0.6) (2026-03-06)
 
 
