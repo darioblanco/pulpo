@@ -307,18 +307,18 @@ fn open_browser(_url: &str) -> Result<()> {
 }
 
 /// Build the command to attach to a session's terminal.
-/// Currently uses tmux directly — the CLI is always local to the backend.
+/// Takes the backend session ID (e.g. `pulpo-my-session`) — the tmux session name.
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_attach_command(name: &str) -> std::process::Command {
+fn build_attach_command(backend_session_id: &str) -> std::process::Command {
     let mut cmd = std::process::Command::new("tmux");
-    cmd.args(["attach-session", "-t", &format!("pulpo-{name}")]);
+    cmd.args(["attach-session", "-t", backend_session_id]);
     cmd
 }
 
 /// Attach to a session's terminal.
 #[cfg(not(any(test, coverage)))]
-fn attach_session(name: &str) -> Result<()> {
-    let status = build_attach_command(name).status()?;
+fn attach_session(backend_session_id: &str) -> Result<()> {
+    let status = build_attach_command(backend_session_id).status()?;
     if !status.success() {
         anyhow::bail!("attach failed with {status}");
     }
@@ -328,7 +328,7 @@ fn attach_session(name: &str) -> Result<()> {
 /// Stub for test and coverage builds — avoids spawning real terminals during tests.
 #[cfg(any(test, coverage))]
 #[allow(clippy::unnecessary_wraps, clippy::missing_const_for_fn)]
-fn attach_session(_name: &str) -> Result<()> {
+fn attach_session(_backend_session_id: &str) -> Result<()> {
     Ok(())
 }
 
@@ -767,7 +767,21 @@ pub async fn execute(cli: &Cli) -> Result<String> {
 
     match &cli.command {
         Commands::Attach { name } => {
-            attach_session(name)?;
+            // Fetch session to get actual backend_session_id
+            let resp = authed_get(
+                &client,
+                format!("{url}/api/v1/sessions/{name}"),
+                token.as_deref(),
+            )
+            .send()
+            .await
+            .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let session: Session = serde_json::from_str(&text)?;
+            let backend_id = session
+                .backend_session_id
+                .unwrap_or_else(|| format!("pulpo-{name}"));
+            attach_session(&backend_id)?;
             Ok(format!("Detached from session {name}."))
         }
         Commands::Input { name, text } => {
@@ -1231,7 +1245,7 @@ mod tests {
         use axum::http::StatusCode;
         use axum::{
             Json, Router,
-            routing::{delete, get, post},
+            routing::{get, post},
         };
 
         let session_json = TEST_SESSION_JSON;
@@ -1245,7 +1259,8 @@ mod tests {
             )
             .route(
                 "/api/v1/sessions/{id}",
-                delete(|| async { StatusCode::NO_CONTENT }),
+                get(move || async move { session_json.to_owned() })
+                    .delete(|| async { StatusCode::NO_CONTENT }),
             )
             .route(
                 "/api/v1/sessions/{id}/kill",
@@ -2383,7 +2398,7 @@ mod tests {
 
     #[test]
     fn test_build_attach_command() {
-        let cmd = build_attach_command("my-session");
+        let cmd = build_attach_command("pulpo-my-session");
         assert_eq!(cmd.get_program(), "tmux");
         let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
         assert_eq!(args, vec!["attach-session", "-t", "pulpo-my-session"]);
@@ -2409,8 +2424,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_attach_success() {
+        let node = start_test_server().await;
         let cli = Cli {
-            node: "localhost:7433".into(),
+            node,
             token: None,
             command: Commands::Attach {
                 name: "test-session".into(),
@@ -2418,6 +2434,71 @@ mod tests {
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Detached from session test-session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_attach_with_backend_session_id() {
+        use axum::{Router, routing::get};
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"my-session","workdir":"/tmp","provider":"claude","prompt":"test","status":"running","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"pulpo-my-session","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}",
+            get(move || async move { session_json.to_owned() }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+
+        let cli = Cli {
+            node: format!("127.0.0.1:{}", addr.port()),
+            token: None,
+            command: Commands::Attach {
+                name: "my-session".into(),
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Detached from session my-session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_attach_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Commands::Attach {
+                name: "test-session".into(),
+            },
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_attach_error_response() {
+        use axum::{Router, http::StatusCode, routing::get};
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}",
+            get(|| async {
+                (
+                    StatusCode::NOT_FOUND,
+                    r#"{"error":"session not found"}"#.to_owned(),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+
+        let cli = Cli {
+            node: format!("127.0.0.1:{}", addr.port()),
+            token: None,
+            command: Commands::Attach {
+                name: "nonexistent".into(),
+            },
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("session not found"));
     }
 
     // -- Alias parse tests --
