@@ -750,6 +750,7 @@ bind = "container"
         assert_eq!(addr, "0.0.0.0:0");
     }
 
+    #[cfg(coverage)]
     #[tokio::test]
     async fn test_build_app_bind_tailscale() {
         let tmpdir = tempfile::tempdir().unwrap();
