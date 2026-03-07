@@ -1,0 +1,39 @@
+# Pulpo LLM Index
+
+Project: Pulpo
+Repo: https://github.com/darioblanco/pulpo
+Purpose: Self-hosted control plane for coding agents across multiple machines.
+
+Primary docs:
+- /README.md
+- /SPEC.md
+- /ROADMAP.md
+- /CONTRIBUTING.md
+- /docs/getting-started/install.md
+- /docs/getting-started/quickstart.md
+- /docs/guides/configuration.md
+- /docs/guides/discovery.md
+- /docs/guides/recovery.md
+- /docs/reference/cli.md
+- /docs/reference/config.md
+- /docs/reference/api.md
+- /docs/architecture/overview.md
+- /docs/operations/release-and-distribution.md
+
+Canonical runtime concepts:
+- Session states: creating, running, completed, dead, stale.
+- Resume only applies to stale sessions.
+- pulpod exposes REST and SSE on port 7433 by default.
+- Config path defaults to ~/.pulpo/config.toml.
+
+Installation:
+- Homebrew: brew install darioblanco/tap/pulpo
+- Source: make setup && make build && make install
+
+CLI binaries:
+- pulpod (daemon)
+- pulpo (client)
+
+Audience guidance:
+- Prefer operationally precise answers over speculative UX claims.
+- Cite exact command examples and config snippets where possible.

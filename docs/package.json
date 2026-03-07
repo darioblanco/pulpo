@@ -1,0 +1,13 @@
+{
+  "name": "pulpo-docs",
+  "private": true,
+  "scripts": {
+    "docs:dev": "vuepress dev docs",
+    "docs:build": "vuepress build docs"
+  },
+  "devDependencies": {
+    "vuepress": "^2.0.0-rc.24",
+    "@vuepress/bundler-vite": "^2.0.0-rc.24",
+    "@vuepress/theme-default": "^2.0.0-rc.24"
+  }
+}

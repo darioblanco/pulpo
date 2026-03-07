@@ -208,6 +208,7 @@ See [docker/README.md](docker/README.md) for local build/run and runtime env con
 
 ## Project Docs
 
+- [docs/](docs/README.md): VuePress docs site (install, guides, references)
 - [MISSION.md](MISSION.md): mission and non-goals
 - [SPEC.md](SPEC.md): architecture, lifecycle, API, recovery semantics
 - [ROADMAP.md](ROADMAP.md): shipped work and next steps
