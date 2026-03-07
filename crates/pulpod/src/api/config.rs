@@ -100,6 +100,7 @@ pub async fn get_config(
 }
 
 /// Apply an update request to the config, returning whether a restart is required.
+#[allow(clippy::too_many_lines)]
 fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) -> bool {
     let original_port = config.node.port;
     let original_bind = config.node.bind;

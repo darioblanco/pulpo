@@ -101,11 +101,7 @@ export function NodeSettings({
           />
         </FormField>
         <div className="grid items-start gap-6 sm:grid-cols-2">
-          <FormField
-            label="Bind mode"
-            htmlFor="node-bind"
-            description={bindDescriptions[bind]}
-          >
+          <FormField label="Bind mode" htmlFor="node-bind" description={bindDescriptions[bind]}>
             <Select value={bind} onValueChange={onBindChange}>
               <SelectTrigger data-testid="bind-mode-trigger" id="node-bind" className="w-full">
                 <SelectValue placeholder="Select bind mode" />

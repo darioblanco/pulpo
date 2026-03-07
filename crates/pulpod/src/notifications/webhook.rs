@@ -263,8 +263,9 @@ mod tests {
         let has_event = headers
             .iter()
             .any(|(k, v)| k == "x-pulpo-event" && v == "running");
-        assert!(has_event, "Missing X-Pulpo-Event header");
         let has_sig = headers.iter().any(|(k, _)| k == "x-pulpo-signature");
+        drop(headers);
+        assert!(has_event, "Missing X-Pulpo-Event header");
         assert!(!has_sig, "Should not have signature without secret");
     }
 
@@ -296,8 +297,9 @@ mod tests {
         let result = notifier.send(&test_event("running")).await;
         assert!(result.is_ok());
 
-        let headers = captured_headers.lock().await;
-        let sig = headers
+        let sig = captured_headers
+            .lock()
+            .await
             .iter()
             .find(|(k, _)| k == "x-pulpo-signature")
             .map(|(_, v)| v.clone());
