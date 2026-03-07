@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { getConfig, updateConfig, getPeers } from '@/api/client';
 import { toast } from 'sonner';
 import type { PeerInfo, UpdateConfigRequest } from '@/api/types';
+import type { WebhookFormData } from '@/components/settings/notifications-settings';
 
 export function SettingsPage() {
   const [loading, setLoading] = useState(true);
@@ -43,6 +44,7 @@ export function SettingsPage() {
   // Notifications
   const [discordWebhookUrl, setDiscordWebhookUrl] = useState('');
   const [discordEvents, setDiscordEvents] = useState('');
+  const [webhooks, setWebhooks] = useState<WebhookFormData[]>([]);
 
   // Peers
   const [peers, setPeers] = useState<PeerInfo[]>([]);
@@ -73,6 +75,7 @@ export function SettingsPage() {
 
       setDiscordWebhookUrl(config.notifications.discord?.webhook_url ?? '');
       setDiscordEvents(config.notifications.discord?.events.join(', ') ?? '');
+      setWebhooks((config.notifications.webhooks ?? []).map((w) => ({ ...w, secret: '' })));
 
       const peersResp = await getPeers();
       setPeers(peersResp.peers);
@@ -108,6 +111,14 @@ export function SettingsPage() {
         watchdog_idle_timeout_secs: watchdogIdleTimeout,
         watchdog_idle_action: watchdogIdleAction,
         discord_webhook_url: discordWebhookUrl,
+        webhooks: webhooks
+          .filter((w) => w.name.trim() && w.url.trim())
+          .map((w) => ({
+            name: w.name,
+            url: w.url,
+            events: w.events,
+            ...(w.secret ? { secret: w.secret } : {}),
+          })),
       };
 
       if (guardMaxTurns) {
@@ -174,7 +185,7 @@ export function SettingsPage() {
                 </div>
                 <p className="mb-4 text-sm text-muted-foreground">
                   These settings apply only to this node. Each node in your fleet has its own
-                  identity, network, and peer configuration.
+                  identity and network configuration.
                 </p>
                 <div className="space-y-6">
                   <NodeSettings
@@ -193,7 +204,6 @@ export function SettingsPage() {
                     discoveryInterval={discoveryInterval}
                     onDiscoveryIntervalChange={setDiscoveryInterval}
                   />
-                  <PeerSettings peers={peers} onUpdate={setPeers} bind={bind} />
                 </div>
               </section>
 
@@ -208,6 +218,7 @@ export function SettingsPage() {
                   every connected peer.
                 </p>
                 <div className="space-y-6">
+                  <PeerSettings peers={peers} onUpdate={setPeers} bind={bind} />
                   <GuardSettings
                     preset={guardPreset}
                     onPresetChange={setGuardPreset}
@@ -237,6 +248,8 @@ export function SettingsPage() {
                     onDiscordWebhookUrlChange={setDiscordWebhookUrl}
                     discordEvents={discordEvents}
                     onDiscordEventsChange={setDiscordEvents}
+                    webhooks={webhooks}
+                    onWebhooksChange={setWebhooks}
                   />
                 </div>
               </section>

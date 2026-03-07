@@ -297,6 +297,21 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         info!("Discord notifications enabled");
     }
 
+    // Start generic webhook notification loops
+    for webhook_config in &config.notifications.webhooks {
+        let notifier = notifications::webhook::WebhookNotifier::new(webhook_config.clone());
+        let webhook_rx = event_tx.subscribe();
+        let (webhook_shutdown_tx, webhook_shutdown_rx) = watch::channel(false);
+        let name = webhook_config.name.clone();
+        tokio::spawn(notifications::webhook::run_notification_loop(
+            notifier,
+            webhook_rx,
+            webhook_shutdown_rx,
+        ));
+        shutdown_handle.add_sender(webhook_shutdown_tx);
+        info!(webhook = %name, "Webhook notifications enabled");
+    }
+
     let state = api::AppState::with_event_tx(config, config_path, manager, peer_registry, event_tx);
     let app = api::router(state);
 

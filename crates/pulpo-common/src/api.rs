@@ -122,9 +122,18 @@ pub struct DiscordWebhookConfigResponse {
     pub events: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookEndpointConfigResponse {
+    pub name: String,
+    pub url: String,
+    pub events: Vec<String>,
+    pub has_secret: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NotificationsConfigResponse {
     pub discord: Option<DiscordWebhookConfigResponse>,
+    pub webhooks: Vec<WebhookEndpointConfigResponse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,6 +147,15 @@ pub struct PersonaConfigResponse {
     pub max_turns: Option<u32>,
     pub max_budget_usd: Option<f64>,
     pub output_format: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebhookEndpointUpdateRequest {
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub events: Vec<String>,
+    pub secret: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -162,9 +180,11 @@ pub struct UpdateConfigRequest {
     pub watchdog_breach_count: Option<u32>,
     pub watchdog_idle_timeout_secs: Option<u64>,
     pub watchdog_idle_action: Option<String>,
-    // Notifications
+    // Notifications — Discord
     pub discord_webhook_url: Option<String>,
     pub discord_events: Option<Vec<String>>,
+    // Notifications — Generic webhooks (full replace when provided)
+    pub webhooks: Option<Vec<WebhookEndpointUpdateRequest>>,
     // Personas (full replace)
     pub personas: Option<HashMap<String, PersonaConfigResponse>>,
     // Peers
@@ -231,7 +251,10 @@ mod tests {
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
             },
-            notifications: NotificationsConfigResponse { discord: None },
+            notifications: NotificationsConfigResponse {
+                discord: None,
+                webhooks: vec![],
+            },
             personas: HashMap::new(),
         }
     }
@@ -264,7 +287,10 @@ mod tests {
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
             },
-            notifications: NotificationsConfigResponse { discord: None },
+            notifications: NotificationsConfigResponse {
+                discord: None,
+                webhooks: vec![],
+            },
             personas: HashMap::new(),
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -274,7 +300,7 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"guards":{"preset":"strict","max_turns":null,"max_budget_usd":null,"output_format":null},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert"},"notifications":{"discord":null},"personas":{}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"guards":{"preset":"strict","max_turns":null,"max_budget_usd":null,"output_format":null},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert"},"notifications":{"discord":null,"webhooks":[]},"personas":{}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
@@ -313,7 +339,10 @@ mod tests {
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
             },
-            notifications: NotificationsConfigResponse { discord: None },
+            notifications: NotificationsConfigResponse {
+                discord: None,
+                webhooks: vec![],
+            },
             personas: HashMap::new(),
         };
         let debug = format!("{resp:?}");
@@ -427,7 +456,10 @@ mod tests {
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
             },
-            notifications: NotificationsConfigResponse { discord: None },
+            notifications: NotificationsConfigResponse {
+                discord: None,
+                webhooks: vec![],
+            },
             personas: HashMap::new(),
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -1019,5 +1051,105 @@ mod tests {
         let debug = format!("{resp:?}");
         assert!(debug.contains("debug.local"));
         assert!(debug.contains("dbg"));
+    }
+
+    #[test]
+    fn test_webhook_endpoint_config_response_serialize() {
+        let resp = WebhookEndpointConfigResponse {
+            name: "ci-hook".into(),
+            url: "https://example.com/hook".into(),
+            events: vec!["completed".into()],
+            has_secret: true,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"ci-hook\""));
+        assert!(json.contains("\"has_secret\":true"));
+    }
+
+    #[test]
+    fn test_webhook_endpoint_config_response_roundtrip() {
+        let original = WebhookEndpointConfigResponse {
+            name: "hook".into(),
+            url: "https://example.com".into(),
+            events: vec!["dead".into(), "running".into()],
+            has_secret: false,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: WebhookEndpointConfigResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.name, "hook");
+        assert_eq!(deserialized.events.len(), 2);
+        assert!(!deserialized.has_secret);
+    }
+
+    #[test]
+    fn test_webhook_endpoint_config_response_debug_clone() {
+        let resp = WebhookEndpointConfigResponse {
+            name: "test".into(),
+            url: "https://test.com".into(),
+            events: vec![],
+            has_secret: false,
+        };
+        #[allow(clippy::redundant_clone)]
+        let cloned = resp.clone();
+        let debug = format!("{cloned:?}");
+        assert!(debug.contains("test"));
+    }
+
+    #[test]
+    fn test_webhook_endpoint_update_request_deserialize() {
+        let json =
+            r#"{"name":"hook","url":"https://example.com","events":["dead"],"secret":"key"}"#;
+        let req: WebhookEndpointUpdateRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "hook");
+        assert_eq!(req.url, "https://example.com");
+        assert_eq!(req.events, vec!["dead"]);
+        assert_eq!(req.secret, Some("key".into()));
+    }
+
+    #[test]
+    fn test_webhook_endpoint_update_request_no_secret() {
+        let json = r#"{"name":"hook","url":"https://example.com"}"#;
+        let req: WebhookEndpointUpdateRequest = serde_json::from_str(json).unwrap();
+        assert!(req.secret.is_none());
+        assert!(req.events.is_empty());
+    }
+
+    #[test]
+    fn test_webhook_endpoint_update_request_debug_clone() {
+        let req = WebhookEndpointUpdateRequest {
+            name: "test".into(),
+            url: "https://test.com".into(),
+            events: vec![],
+            secret: None,
+        };
+        #[allow(clippy::redundant_clone)]
+        let cloned = req.clone();
+        let debug = format!("{cloned:?}");
+        assert!(debug.contains("test"));
+    }
+
+    #[test]
+    fn test_update_config_request_with_webhooks() {
+        let json =
+            r#"{"webhooks":[{"name":"hook","url":"https://a.com","events":[],"secret":null}]}"#;
+        let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
+        assert!(req.webhooks.is_some());
+        assert_eq!(req.webhooks.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_notifications_config_response_with_webhooks() {
+        let resp = NotificationsConfigResponse {
+            discord: None,
+            webhooks: vec![WebhookEndpointConfigResponse {
+                name: "hook".into(),
+                url: "https://example.com".into(),
+                events: vec![],
+                has_secret: false,
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"webhooks\""));
+        assert!(json.contains("\"hook\""));
     }
 }

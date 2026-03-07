@@ -112,8 +112,23 @@ export interface DiscordWebhookConfigResponse {
   events: string[];
 }
 
+export interface WebhookEndpointConfigResponse {
+  name: string;
+  url: string;
+  events: string[];
+  has_secret: boolean;
+}
+
+export interface WebhookEndpointUpdateRequest {
+  name: string;
+  url: string;
+  events: string[];
+  secret?: string | null;
+}
+
 export interface NotificationsConfigResponse {
   discord: DiscordWebhookConfigResponse | null;
+  webhooks: WebhookEndpointConfigResponse[];
 }
 
 export interface ConfigResponse {
@@ -145,6 +160,7 @@ export interface UpdateConfigRequest {
   watchdog_idle_action?: string;
   discord_webhook_url?: string;
   discord_events?: string[];
+  webhooks?: WebhookEndpointUpdateRequest[];
   personas?: Record<string, PersonaConfig>;
   peers?: Record<string, string>;
 }

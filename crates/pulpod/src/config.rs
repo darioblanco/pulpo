@@ -53,6 +53,9 @@ pub struct NotificationsConfig {
     /// Discord webhook notifications.
     #[serde(default)]
     pub discord: Option<DiscordWebhookConfig>,
+    /// Generic webhook endpoints.
+    #[serde(default)]
+    pub webhooks: Vec<WebhookEndpointConfig>,
 }
 
 /// Discord webhook configuration.
@@ -64,6 +67,23 @@ pub struct DiscordWebhookConfig {
     /// If empty/absent, all events are sent.
     #[serde(default)]
     pub events: Vec<String>,
+}
+
+/// Generic webhook endpoint configuration.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct WebhookEndpointConfig {
+    /// Human-readable name for this endpoint.
+    pub name: String,
+    /// URL to POST event payloads to.
+    pub url: String,
+    /// Optional event filter — only send for these statuses.
+    /// If empty/absent, all events are sent.
+    #[serde(default)]
+    pub events: Vec<String>,
+    /// Optional HMAC-SHA256 signing secret. When set, a `X-Pulpo-Signature`
+    /// header is included with each request.
+    #[serde(default)]
+    pub secret: Option<String>,
 }
 
 /// Authentication configuration.
@@ -1643,6 +1663,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
                     webhook_url: "https://discord.com/api/webhooks/789/xyz".into(),
                     events: vec!["dead".into()],
                 }),
+                webhooks: vec![],
             },
         };
         save(&config, &path).unwrap();
@@ -1668,6 +1689,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
                 webhook_url: "url".into(),
                 events: vec![],
             }),
+            webhooks: vec![],
         };
         let cloned = config.clone();
         assert_eq!(format!("{config:?}"), format!("{cloned:?}"));
@@ -1681,6 +1703,82 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
         };
         let cloned = config.clone();
         assert_eq!(format!("{config:?}"), format!("{cloned:?}"));
+    }
+
+    #[test]
+    fn test_notifications_config_default_webhooks_empty() {
+        let config = NotificationsConfig::default();
+        assert!(config.webhooks.is_empty());
+    }
+
+    #[test]
+    fn test_webhook_endpoint_config_debug_clone() {
+        let config = WebhookEndpointConfig {
+            name: "hook".into(),
+            url: "https://example.com".into(),
+            events: vec!["dead".into()],
+            secret: Some("key".into()),
+        };
+        let cloned = config.clone();
+        assert_eq!(format!("{config:?}"), format!("{cloned:?}"));
+    }
+
+    #[test]
+    fn test_webhook_endpoint_config_serde_roundtrip() {
+        let config = WebhookEndpointConfig {
+            name: "ci".into(),
+            url: "https://ci.example.com/hook".into(),
+            events: vec!["completed".into()],
+            secret: Some("s3cret".into()),
+        };
+        let toml_str = toml::to_string(&config).unwrap();
+        let parsed: WebhookEndpointConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.name, "ci");
+        assert_eq!(parsed.url, "https://ci.example.com/hook");
+        assert_eq!(parsed.events, vec!["completed"]);
+        assert_eq!(parsed.secret, Some("s3cret".into()));
+    }
+
+    #[test]
+    fn test_webhook_endpoint_config_no_secret() {
+        let toml_str = r#"
+name = "hook"
+url = "https://example.com"
+"#;
+        let parsed: WebhookEndpointConfig = toml::from_str(toml_str).unwrap();
+        assert!(parsed.secret.is_none());
+        assert!(parsed.events.is_empty());
+    }
+
+    #[test]
+    fn test_config_roundtrip_with_webhooks() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        let config = Config {
+            node: NodeConfig::default(),
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: GuardDefaultConfig::default(),
+            watchdog: WatchdogConfig::default(),
+            personas: HashMap::new(),
+            notifications: NotificationsConfig {
+                discord: None,
+                webhooks: vec![WebhookEndpointConfig {
+                    name: "test-hook".into(),
+                    url: "https://example.com/hook".into(),
+                    events: vec!["dead".into()],
+                    secret: Some("key".into()),
+                }],
+            },
+        };
+        save(&config, &path).unwrap();
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.notifications.webhooks.len(), 1);
+        let wh = &loaded.notifications.webhooks[0];
+        assert_eq!(wh.name, "test-hook");
+        assert_eq!(wh.url, "https://example.com/hook");
+        assert_eq!(wh.events, vec!["dead"]);
+        assert_eq!(wh.secret, Some("key".into()));
     }
 
     // -- Node bind/discovery config tests --

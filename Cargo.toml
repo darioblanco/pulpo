@@ -76,6 +76,9 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 # Crypto / encoding
 rand = "0.10"
 base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 
 # Service discovery
 mdns-sd = "0.18"

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ConnectionProvider } from '@/hooks/use-connection';
@@ -55,6 +55,7 @@ const testConfig: ConfigResponse = {
   },
   notifications: {
     discord: null,
+    webhooks: [],
   },
   personas: {},
 };
@@ -154,6 +155,7 @@ describe('SettingsPage', () => {
           webhook_url: 'https://discord.com/api/webhooks/test',
           events: ['session.created', 'session.completed'],
         },
+        webhooks: [],
       },
     };
     mockGetConfig.mockResolvedValue(configWithDiscord);
@@ -161,10 +163,17 @@ describe('SettingsPage', () => {
     renderSettings();
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Webhook URL')).toHaveValue(
+      expect(screen.getByTestId('tab-discord')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('tab-discord'));
+
+    await waitFor(() => {
+      const discordContent = screen.getByTestId('discord-content');
+      expect(within(discordContent).getByLabelText('Webhook URL')).toHaveValue(
         'https://discord.com/api/webhooks/test',
       );
-      expect(screen.getByLabelText('Events')).toHaveValue(
+      expect(within(discordContent).getByLabelText('Events')).toHaveValue(
         'session.created, session.completed',
       );
     });
@@ -302,6 +311,7 @@ describe('SettingsPage', () => {
           webhook_url: 'https://discord.com/api/webhooks/test',
           events: ['session.created'],
         },
+        webhooks: [],
       },
     };
     mockGetConfig.mockResolvedValue(configWithDiscord);

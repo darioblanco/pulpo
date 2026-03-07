@@ -5,6 +5,7 @@ use pulpo_common::api::{
     AuthConfigResponse, ConfigResponse, DiscordWebhookConfigResponse, ErrorResponse,
     GuardDefaultConfigResponse, NodeConfigResponse, NotificationsConfigResponse,
     PersonaConfigResponse, UpdateConfigRequest, UpdateConfigResponse, WatchdogConfigResponse,
+    WebhookEndpointConfigResponse,
 };
 
 type ApiError = (StatusCode, Json<ErrorResponse>);
@@ -46,12 +47,25 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
             idle_action: config.watchdog.idle_action.clone(),
         },
         notifications: NotificationsConfigResponse {
-            discord: config.notifications.discord.as_ref().map(|d| {
-                DiscordWebhookConfigResponse {
+            discord: config
+                .notifications
+                .discord
+                .as_ref()
+                .map(|d| DiscordWebhookConfigResponse {
                     webhook_url: d.webhook_url.clone(),
                     events: d.events.clone(),
-                }
-            }),
+                }),
+            webhooks: config
+                .notifications
+                .webhooks
+                .iter()
+                .map(|w| WebhookEndpointConfigResponse {
+                    name: w.name.clone(),
+                    url: w.url.clone(),
+                    events: w.events.clone(),
+                    has_secret: w.secret.is_some(),
+                })
+                .collect(),
         },
         personas: config
             .personas
@@ -164,6 +178,19 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
         && let Some(discord) = &mut config.notifications.discord
     {
         discord.events = events;
+    }
+
+    // Generic webhooks (full replace when provided)
+    if let Some(webhooks) = req.webhooks {
+        config.notifications.webhooks = webhooks
+            .into_iter()
+            .map(|w| crate::config::WebhookEndpointConfig {
+                name: w.name,
+                url: w.url,
+                events: w.events,
+                secret: w.secret,
+            })
+            .collect();
     }
 
     // Personas (full replace when provided)
@@ -653,7 +680,9 @@ mod tests {
             tag: Some("gpu".into()),
             ..Default::default()
         };
-        let _ = update_config(State(state.clone()), Json(req)).await.unwrap();
+        let _ = update_config(State(state.clone()), Json(req))
+            .await
+            .unwrap();
         // Clear it with empty string
         let req = UpdateConfigRequest {
             tag: Some(String::new()),
@@ -682,7 +711,9 @@ mod tests {
             seed: Some("10.0.0.1:7433".into()),
             ..Default::default()
         };
-        let _ = update_config(State(state.clone()), Json(req)).await.unwrap();
+        let _ = update_config(State(state.clone()), Json(req))
+            .await
+            .unwrap();
         let req = UpdateConfigRequest {
             seed: Some(String::new()),
             ..Default::default()
@@ -743,7 +774,9 @@ mod tests {
             guard_output_format: Some("json".into()),
             ..Default::default()
         };
-        let _ = update_config(State(state.clone()), Json(req)).await.unwrap();
+        let _ = update_config(State(state.clone()), Json(req))
+            .await
+            .unwrap();
         let req = UpdateConfigRequest {
             guard_output_format: Some(String::new()),
             ..Default::default()
@@ -796,7 +829,9 @@ mod tests {
             discord_webhook_url: Some("https://discord.com/api/webhooks/test".into()),
             ..Default::default()
         };
-        let _ = update_config(State(state.clone()), Json(req)).await.unwrap();
+        let _ = update_config(State(state.clone()), Json(req))
+            .await
+            .unwrap();
         // Clear with empty URL
         let req = UpdateConfigRequest {
             discord_webhook_url: Some(String::new()),
@@ -815,7 +850,9 @@ mod tests {
             discord_events: Some(vec!["session.created".into()]),
             ..Default::default()
         };
-        let _ = update_config(State(state.clone()), Json(req)).await.unwrap();
+        let _ = update_config(State(state.clone()), Json(req))
+            .await
+            .unwrap();
         // Update events only (no webhook_url)
         let req = UpdateConfigRequest {
             discord_events: Some(vec!["session.completed".into()]),
@@ -922,6 +959,7 @@ mod tests {
                     webhook_url: "https://discord.com/test".into(),
                     events: vec!["session.created".into()],
                 }),
+                webhooks: vec![],
             },
         };
         let resp = config_to_response(&config);
@@ -949,6 +987,139 @@ mod tests {
         let p = &resp.personas["coder"];
         assert_eq!(p.provider, Some("claude".into()));
         assert_eq!(p.model, Some("sonnet".into()));
+    }
+
+    #[test]
+    fn test_config_to_response_with_webhooks() {
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: GuardDefaultConfig::default(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            personas: HashMap::new(),
+            notifications: crate::config::NotificationsConfig {
+                discord: None,
+                webhooks: vec![
+                    crate::config::WebhookEndpointConfig {
+                        name: "ci-hook".into(),
+                        url: "https://example.com/hook".into(),
+                        events: vec!["completed".into(), "dead".into()],
+                        secret: Some("s3cret".into()),
+                    },
+                    crate::config::WebhookEndpointConfig {
+                        name: "logs-hook".into(),
+                        url: "https://logs.example.com".into(),
+                        events: vec![],
+                        secret: None,
+                    },
+                ],
+            },
+        };
+        let resp = config_to_response(&config);
+        assert_eq!(resp.notifications.webhooks.len(), 2);
+        let w0 = &resp.notifications.webhooks[0];
+        assert_eq!(w0.name, "ci-hook");
+        assert_eq!(w0.url, "https://example.com/hook");
+        assert_eq!(w0.events, vec!["completed", "dead"]);
+        assert!(w0.has_secret);
+        let w1 = &resp.notifications.webhooks[1];
+        assert_eq!(w1.name, "logs-hook");
+        assert!(!w1.has_secret);
+        assert!(w1.events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_update_config_webhooks() {
+        use pulpo_common::api::WebhookEndpointUpdateRequest;
+        let state = test_state().await;
+        let req = UpdateConfigRequest {
+            webhooks: Some(vec![WebhookEndpointUpdateRequest {
+                name: "my-hook".into(),
+                url: "https://example.com/webhook".into(),
+                events: vec!["running".into()],
+                secret: Some("key".into()),
+            }]),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.config.notifications.webhooks.len(), 1);
+        assert_eq!(resp.config.notifications.webhooks[0].name, "my-hook");
+        assert_eq!(
+            resp.config.notifications.webhooks[0].url,
+            "https://example.com/webhook"
+        );
+        assert!(resp.config.notifications.webhooks[0].has_secret);
+    }
+
+    #[tokio::test]
+    async fn test_update_config_webhooks_replaces_all() {
+        use pulpo_common::api::WebhookEndpointUpdateRequest;
+        let state = test_state().await;
+        // Set initial webhooks
+        let req = UpdateConfigRequest {
+            webhooks: Some(vec![
+                WebhookEndpointUpdateRequest {
+                    name: "hook-1".into(),
+                    url: "https://a.com".into(),
+                    events: vec![],
+                    secret: None,
+                },
+                WebhookEndpointUpdateRequest {
+                    name: "hook-2".into(),
+                    url: "https://b.com".into(),
+                    events: vec![],
+                    secret: None,
+                },
+            ]),
+            ..Default::default()
+        };
+        let _ = update_config(State(state.clone()), Json(req))
+            .await
+            .unwrap();
+        // Replace with single webhook
+        let req = UpdateConfigRequest {
+            webhooks: Some(vec![WebhookEndpointUpdateRequest {
+                name: "hook-3".into(),
+                url: "https://c.com".into(),
+                events: vec!["dead".into()],
+                secret: None,
+            }]),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.config.notifications.webhooks.len(), 1);
+        assert_eq!(resp.config.notifications.webhooks[0].name, "hook-3");
+    }
+
+    #[tokio::test]
+    async fn test_update_config_webhooks_empty_clears() {
+        use pulpo_common::api::WebhookEndpointUpdateRequest;
+        let state = test_state().await;
+        let req = UpdateConfigRequest {
+            webhooks: Some(vec![WebhookEndpointUpdateRequest {
+                name: "hook".into(),
+                url: "https://a.com".into(),
+                events: vec![],
+                secret: None,
+            }]),
+            ..Default::default()
+        };
+        let _ = update_config(State(state.clone()), Json(req))
+            .await
+            .unwrap();
+        // Clear
+        let req = UpdateConfigRequest {
+            webhooks: Some(vec![]),
+            ..Default::default()
+        };
+        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
+        assert!(resp.config.notifications.webhooks.is_empty());
     }
 
     #[tokio::test]

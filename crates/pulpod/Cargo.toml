@@ -50,6 +50,9 @@ mdns-sd.workspace = true
 rmcp.workspace = true
 schemars.workspace = true
 cron.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+hex.workspace = true
 
 [dev-dependencies]
 axum-test = "17"
