@@ -311,6 +311,7 @@ describe('SettingsPage', () => {
         reviewer: {
           description: 'Code reviewer',
           provider: 'claude',
+          model: null,
           mode: 'interactive',
           unrestricted: false,
           instructions: null,
@@ -334,6 +335,7 @@ describe('SettingsPage', () => {
         coder: {
           description: 'Coder ink',
           provider: 'claude',
+          model: null,
           mode: 'autonomous',
           unrestricted: false,
           instructions: null,

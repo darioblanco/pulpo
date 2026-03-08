@@ -144,6 +144,7 @@ pub struct NotificationsConfigResponse {
 pub struct InkConfigResponse {
     pub description: Option<String>,
     pub provider: Option<String>,
+    pub model: Option<String>,
     pub mode: Option<String>,
     pub unrestricted: Option<bool>,
     pub instructions: Option<String>,

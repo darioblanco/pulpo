@@ -233,6 +233,7 @@ describe('NewSessionDialog', () => {
         reviewer: {
           description: 'Code review',
           provider: 'claude',
+          model: null,
           mode: 'interactive',
           unrestricted: false,
           instructions: null,
@@ -253,6 +254,7 @@ describe('NewSessionDialog', () => {
         reviewer: {
           description: 'Code review',
           provider: 'claude',
+          model: null,
           mode: 'interactive',
           unrestricted: false,
           instructions: null,
@@ -285,6 +287,7 @@ describe('NewSessionDialog', () => {
         reviewer: {
           description: 'Code review',
           provider: 'codex',
+          model: null,
           mode: 'autonomous',
           unrestricted: false,
           instructions: null,
@@ -340,6 +343,7 @@ describe('NewSessionDialog', () => {
         reviewer: {
           description: 'Code review',
           provider: 'codex',
+          model: null,
           mode: 'autonomous',
           unrestricted: false,
           instructions: null,

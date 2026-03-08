@@ -214,6 +214,9 @@ impl SessionManager {
         if req.provider.is_none() {
             req.provider = ink.provider.as_ref().and_then(|p| p.parse().ok());
         }
+        if req.model.is_none() {
+            req.model.clone_from(&ink.model);
+        }
         if req.mode.is_none() {
             req.mode = ink.mode.as_ref().and_then(|m| m.parse().ok());
         }
@@ -1534,6 +1537,7 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: Some("claude".into()),
+                model: None,
                 mode: Some("autonomous".into()),
                 unrestricted: Some(false),
                 instructions: Some("Review code".into()),
@@ -1561,6 +1565,46 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_ink_applies_model() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "coder".into(),
+            crate::config::InkConfig {
+                description: None,
+                provider: Some("claude".into()),
+                model: Some("claude-sonnet-4-20250514".into()),
+                mode: None,
+                unrestricted: None,
+                instructions: None,
+            },
+        );
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: None,
+            store: unsafe_empty_store(),
+            default_guard: GuardConfig::default(),
+            inks,
+            event_tx: None,
+            node_name: String::new(),
+        };
+        let req = CreateSessionRequest {
+            ink: Some("coder".into()),
+            ..make_req("test")
+        };
+        let resolved = mgr.resolve_ink(req).unwrap();
+        assert_eq!(resolved.model, Some("claude-sonnet-4-20250514".into()));
+
+        // Explicit model in request wins over ink model
+        let req2 = CreateSessionRequest {
+            ink: Some("coder".into()),
+            model: Some("claude-opus-4-20250514".into()),
+            ..make_req("test2")
+        };
+        let resolved2 = mgr.resolve_ink(req2).unwrap();
+        assert_eq!(resolved2.model, Some("claude-opus-4-20250514".into()));
+    }
+
+    #[test]
     fn test_resolve_ink_instructions_prepend_for_non_claude() {
         let mut inks = HashMap::new();
         inks.insert(
@@ -1568,6 +1612,7 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: Some("codex".into()),
+                model: None,
                 mode: None,
                 unrestricted: None,
                 instructions: Some("You are an expert coder.".into()),
@@ -1601,6 +1646,7 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: Some("claude".into()),
+                model: None,
                 mode: Some("autonomous".into()),
                 unrestricted: Some(false),
                 instructions: Some("Review code".into()),
@@ -1644,6 +1690,7 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: None,
+                model: None,
                 mode: None,
                 unrestricted: Some(false),
                 instructions: None,
@@ -1676,6 +1723,7 @@ mod tests {
             crate::config::InkConfig {
                 description: Some("A safe agent".into()),
                 provider: Some("claude".into()),
+                model: None,
                 mode: None,
                 unrestricted: Some(false),
                 instructions: Some("Be careful".into()),
@@ -1709,6 +1757,7 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: Some("claude".into()),
+                model: None,
                 mode: None,
                 unrestricted: None,
                 instructions: Some("Ink instructions".into()),

@@ -73,6 +73,7 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
                     InkConfigResponse {
                         description: v.description.clone(),
                         provider: v.provider.clone(),
+                        model: v.model.clone(),
                         mode: v.mode.clone(),
                         unrestricted: v.unrestricted,
                         instructions: v.instructions.clone(),
@@ -188,6 +189,7 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
                     crate::config::InkConfig {
                         description: v.description,
                         provider: v.provider,
+                        model: v.model,
                         mode: v.mode,
                         unrestricted: v.unrestricted,
                         instructions: v.instructions,
@@ -779,6 +781,7 @@ mod tests {
             InkConfigResponse {
                 description: None,
                 provider: Some("claude".into()),
+                model: None,
                 mode: Some("interactive".into()),
                 unrestricted: Some(true),
                 instructions: Some("You are a reviewer.".into()),
@@ -825,6 +828,7 @@ mod tests {
                     crate::config::InkConfig {
                         description: None,
                         provider: Some("claude".into()),
+                        model: None,
                         mode: None,
                         unrestricted: None,
                         instructions: None,

@@ -111,6 +111,7 @@ mod tests {
             InkConfig {
                 description: None,
                 provider: Some("claude".into()),
+                model: None,
                 mode: Some("autonomous".into()),
                 unrestricted: Some(true),
                 instructions: Some("Review code".into()),
@@ -157,6 +158,7 @@ mod tests {
             InkConfig {
                 description: None,
                 provider: None,
+                model: None,
                 mode: None,
                 unrestricted: None,
                 instructions: None,

@@ -77,6 +77,7 @@ export interface KnowledgeResponse {
 export interface InkConfig {
   description: string | null;
   provider: string | null;
+  model: string | null;
   mode: string | null;
   unrestricted: boolean | null;
   instructions: string | null;

@@ -16,6 +16,7 @@ const mockUpdateRemoteConfig = vi.mocked(api.updateRemoteConfig);
 const emptyInk: InkConfig = {
   description: null,
   provider: null,
+  model: null,
   mode: null,
   unrestricted: null,
   instructions: null,
@@ -24,6 +25,7 @@ const emptyInk: InkConfig = {
 const reviewerInk: InkConfig = {
   description: 'Code review specialist',
   provider: 'claude',
+  model: null,
   mode: 'interactive',
   unrestricted: false,
   instructions: 'You are a code reviewer.',

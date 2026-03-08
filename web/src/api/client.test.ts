@@ -486,6 +486,7 @@ describe('updateRemoteConfig', () => {
         reviewer: {
           description: 'Test',
           provider: 'claude',
+          model: null,
           mode: null,
           unrestricted: null,
           instructions: null,

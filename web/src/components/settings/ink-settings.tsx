@@ -26,6 +26,7 @@ interface InkSettingsProps {
 const emptyInk: InkConfig = {
   description: null,
   provider: null,
+  model: null,
   mode: null,
   unrestricted: null,
   instructions: null,
@@ -137,7 +138,7 @@ export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps
                       />
                     </FormField>
 
-                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
                       <FormField label="Provider" htmlFor={`ink-provider-${name}`}>
                         <Select
                           value={ink.provider ?? ''}
@@ -153,6 +154,15 @@ export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps
                             <SelectItem value="open_code">OpenCode</SelectItem>
                           </SelectContent>
                         </Select>
+                      </FormField>
+
+                      <FormField label="Model" htmlFor={`ink-model-${name}`}>
+                        <Input
+                          id={`ink-model-${name}`}
+                          value={ink.model ?? ''}
+                          onChange={(e) => updateInk(name, 'model', e.target.value)}
+                          placeholder="Default"
+                        />
                       </FormField>
 
                       <FormField label="Mode" htmlFor={`ink-mode-${name}`}>

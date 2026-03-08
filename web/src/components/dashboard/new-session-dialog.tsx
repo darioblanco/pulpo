@@ -178,6 +178,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
                 <p className="text-xs text-muted-foreground" data-testid="ink-summary">
                   {[
                     activeInk.provider,
+                    activeInk.model,
                     activeInk.mode,
                     activeInk.unrestricted ? 'unrestricted' : null,
                     activeInk.instructions

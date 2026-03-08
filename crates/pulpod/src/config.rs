@@ -34,6 +34,8 @@ pub struct InkConfig {
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
     pub mode: Option<String>,
     #[serde(default)]
     pub unrestricted: Option<bool>,
@@ -293,6 +295,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                 "Code review — read-only analysis, strict guards, detailed feedback".to_owned(),
             ),
             provider: Some("claude".to_owned()),
+            model: None,
             mode: Some("interactive".to_owned()),
             unrestricted: Some(false),
             instructions: Some(
@@ -311,6 +314,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                     .to_owned(),
             ),
             provider: Some("claude".to_owned()),
+            model: None,
             mode: Some("autonomous".to_owned()),
             unrestricted: Some(false),
             instructions: Some(
@@ -329,6 +333,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                     .to_owned(),
             ),
             provider: None,
+            model: None,
             mode: Some("autonomous".to_owned()),
             unrestricted: Some(false),
             instructions: Some(
@@ -347,6 +352,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                     .to_owned(),
             ),
             provider: None,
+            model: None,
             mode: Some("autonomous".to_owned()),
             unrestricted: Some(false),
             instructions: Some(
@@ -366,6 +372,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                     .to_owned(),
             ),
             provider: None,
+            model: None,
             mode: Some("autonomous".to_owned()),
             unrestricted: Some(false),
             instructions: Some(
@@ -1588,6 +1595,7 @@ provider = "codex"
             InkConfig {
                 description: Some("Code reviewer".into()),
                 provider: Some("claude".into()),
+                model: None,
                 mode: Some("autonomous".into()),
                 unrestricted: Some(false),
                 instructions: Some("Review only.".into()),
@@ -1622,6 +1630,7 @@ provider = "codex"
         let p = InkConfig {
             description: None,
             provider: Some("claude".into()),
+            model: None,
             mode: None,
             unrestricted: None,
             instructions: None,
@@ -1998,6 +2007,7 @@ name = "test"
             InkConfig {
                 description: Some("My custom reviewer".to_owned()),
                 provider: Some("codex".to_owned()),
+                model: None,
                 mode: None,
                 unrestricted: None,
                 instructions: None,
@@ -2023,6 +2033,7 @@ name = "test"
             InkConfig {
                 description: Some("Custom ink".to_owned()),
                 provider: None,
+                model: None,
                 mode: None,
                 unrestricted: None,
                 instructions: None,
@@ -2072,6 +2083,7 @@ provider = "codex"
         let ink = InkConfig {
             description: Some("Test description".to_owned()),
             provider: Some("claude".to_owned()),
+            model: None,
             mode: None,
             unrestricted: None,
             instructions: None,

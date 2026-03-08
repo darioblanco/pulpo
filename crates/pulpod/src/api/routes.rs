@@ -174,6 +174,7 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: Some("claude".into()),
+                model: None,
                 mode: Some("autonomous".into()),
                 unrestricted: Some(true),
                 instructions: Some("Review code".into()),
