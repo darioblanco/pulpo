@@ -117,6 +117,7 @@ describe('SettingsPage', () => {
       expect(screen.getByTestId('node-settings')).toBeInTheDocument();
       expect(screen.getByTestId('guard-settings')).toBeInTheDocument();
       expect(screen.getByTestId('watchdog-settings')).toBeInTheDocument();
+      expect(screen.getByTestId('ink-settings')).toBeInTheDocument();
       expect(screen.getByTestId('notifications-settings')).toBeInTheDocument();
       expect(screen.getByTestId('peer-settings')).toBeInTheDocument();
     });
@@ -333,6 +334,80 @@ describe('SettingsPage', () => {
         expect.objectContaining({
           discord_webhook_url: 'https://discord.com/api/webhooks/test',
           discord_events: ['session.created'],
+        }),
+      );
+    });
+  });
+
+  it('loads and displays inks from config', async () => {
+    const configWithInks: ConfigResponse = {
+      ...testConfig,
+      inks: {
+        reviewer: {
+          description: 'Code reviewer',
+          provider: 'claude',
+          model: null,
+          mode: 'interactive',
+          guard_preset: 'strict',
+          allowed_tools: null,
+          system_prompt: null,
+          max_turns: 5,
+          max_budget_usd: null,
+          output_format: null,
+        },
+      },
+    };
+    mockGetConfig.mockResolvedValue(configWithInks);
+    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ink-settings')).toBeInTheDocument();
+      expect(screen.getByTestId('ink-reviewer')).toBeInTheDocument();
+    });
+  });
+
+  it('saves inks in config update', async () => {
+    const configWithInks: ConfigResponse = {
+      ...testConfig,
+      inks: {
+        coder: {
+          description: 'Coder ink',
+          provider: 'claude',
+          model: null,
+          mode: 'autonomous',
+          guard_preset: 'standard',
+          allowed_tools: null,
+          system_prompt: null,
+          max_turns: null,
+          max_budget_usd: null,
+          output_format: null,
+        },
+      },
+    };
+    mockGetConfig.mockResolvedValue(configWithInks);
+    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
+    mockUpdateConfig.mockResolvedValue({
+      config: configWithInks,
+      restart_required: false,
+    });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('save-btn')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('save-btn'));
+
+    await waitFor(() => {
+      expect(mockUpdateConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          inks: {
+            coder: expect.objectContaining({
+              description: 'Coder ink',
+              provider: 'claude',
+            }),
+          },
         }),
       );
     });

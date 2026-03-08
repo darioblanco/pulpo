@@ -3,6 +3,7 @@ import { AppHeader } from '@/components/layout/app-header';
 import { NodeSettings } from '@/components/settings/node-settings';
 import { GuardSettings } from '@/components/settings/guard-settings';
 import { WatchdogSettings } from '@/components/settings/watchdog-settings';
+import { InkSettings } from '@/components/settings/ink-settings';
 import { NotificationsSettings } from '@/components/settings/notifications-settings';
 import { PeerSettings } from '@/components/settings/peer-settings';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getConfig, updateConfig, getPeers } from '@/api/client';
 import { toast } from 'sonner';
-import type { PeerInfo, UpdateConfigRequest } from '@/api/types';
+import type { InkConfig, PeerInfo, UpdateConfigRequest } from '@/api/types';
 import type { WebhookFormData } from '@/components/settings/notifications-settings';
 
 export function SettingsPage() {
@@ -46,6 +47,9 @@ export function SettingsPage() {
   const [discordEvents, setDiscordEvents] = useState('');
   const [webhooks, setWebhooks] = useState<WebhookFormData[]>([]);
 
+  // Inks
+  const [inks, setInks] = useState<Record<string, InkConfig>>({});
+
   // Peers
   const [peers, setPeers] = useState<PeerInfo[]>([]);
 
@@ -76,6 +80,8 @@ export function SettingsPage() {
       setDiscordWebhookUrl(config.notifications.discord?.webhook_url ?? '');
       setDiscordEvents(config.notifications.discord?.events.join(', ') ?? '');
       setWebhooks((config.notifications.webhooks ?? []).map((w) => ({ ...w, secret: '' })));
+
+      setInks(config.inks ?? {});
 
       const peersResp = await getPeers();
       setPeers(peersResp.peers);
@@ -120,6 +126,10 @@ export function SettingsPage() {
             ...(w.secret ? { secret: w.secret } : {}),
           })),
       };
+
+      if (Object.keys(inks).length > 0) {
+        req.inks = inks;
+      }
 
       if (guardMaxTurns) {
         req.guard_max_turns = parseInt(guardMaxTurns, 10);
@@ -229,6 +239,7 @@ export function SettingsPage() {
                     outputFormat={guardOutputFormat}
                     onOutputFormatChange={setGuardOutputFormat}
                   />
+                  <InkSettings inks={inks} onInksChange={setInks} />
                   <WatchdogSettings
                     enabled={watchdogEnabled}
                     onEnabledChange={setWatchdogEnabled}

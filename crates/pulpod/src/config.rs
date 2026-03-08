@@ -299,6 +299,136 @@ pub fn save(config: &Config, path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Built-in example inks for common engineering workflows.
+/// User-defined inks with the same name override these defaults.
+#[allow(clippy::too_many_lines)]
+pub fn built_in_inks() -> HashMap<String, InkConfig> {
+    let mut inks = HashMap::new();
+    inks.insert(
+        "reviewer".to_owned(),
+        InkConfig {
+            description: Some(
+                "Code review — read-only analysis, strict guards, detailed feedback".to_owned(),
+            ),
+            provider: Some("claude".to_owned()),
+            model: None,
+            mode: Some("interactive".to_owned()),
+            guard_preset: Some("strict".to_owned()),
+            allowed_tools: None,
+            system_prompt: Some(
+                "You are a senior code reviewer. Analyze the code for bugs, security issues, \
+                 performance problems, and style violations. Provide actionable feedback with \
+                 specific line references. Do not make changes — only review and suggest."
+                    .to_owned(),
+            ),
+            max_turns: Some(5),
+            max_budget_usd: Some(1.0),
+            output_format: None,
+        },
+    );
+    inks.insert(
+        "coder".to_owned(),
+        InkConfig {
+            description: Some(
+                "Implementation — full tool access, standard guards, write production code"
+                    .to_owned(),
+            ),
+            provider: Some("claude".to_owned()),
+            model: None,
+            mode: Some("autonomous".to_owned()),
+            guard_preset: Some("standard".to_owned()),
+            allowed_tools: None,
+            system_prompt: Some(
+                "You are an expert software engineer. Implement the requested changes following \
+                 the project's conventions, patterns, and style. Write clean, tested, production-\
+                 ready code. Run tests to verify your changes work correctly."
+                    .to_owned(),
+            ),
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+        },
+    );
+    inks.insert(
+        "quick-fix".to_owned(),
+        InkConfig {
+            description: Some(
+                "Fast bug fixes — autonomous, focused, tight budget for small targeted changes"
+                    .to_owned(),
+            ),
+            provider: Some("claude".to_owned()),
+            model: None,
+            mode: Some("autonomous".to_owned()),
+            guard_preset: Some("standard".to_owned()),
+            allowed_tools: None,
+            system_prompt: Some(
+                "Fix the reported bug with minimal changes. Focus on the root cause, not \
+                 symptoms. Keep the diff small and targeted. Run existing tests to verify the fix \
+                 doesn't break anything."
+                    .to_owned(),
+            ),
+            max_turns: Some(10),
+            max_budget_usd: Some(2.0),
+            output_format: None,
+        },
+    );
+    inks.insert(
+        "tester".to_owned(),
+        InkConfig {
+            description: Some(
+                "Test writing — generate comprehensive tests for existing code, strict guards"
+                    .to_owned(),
+            ),
+            provider: Some("claude".to_owned()),
+            model: None,
+            mode: Some("autonomous".to_owned()),
+            guard_preset: Some("strict".to_owned()),
+            allowed_tools: None,
+            system_prompt: Some(
+                "You are a test engineer. Write comprehensive tests for the specified code. \
+                 Cover happy paths, edge cases, error conditions, and boundary values. Follow \
+                 the project's existing test patterns and conventions. Do not modify production \
+                 code — only add tests."
+                    .to_owned(),
+            ),
+            max_turns: Some(15),
+            max_budget_usd: Some(3.0),
+            output_format: None,
+        },
+    );
+    inks.insert(
+        "refactor".to_owned(),
+        InkConfig {
+            description: Some(
+                "Refactoring — restructure code without changing behavior, run tests after"
+                    .to_owned(),
+            ),
+            provider: Some("claude".to_owned()),
+            model: None,
+            mode: Some("autonomous".to_owned()),
+            guard_preset: Some("standard".to_owned()),
+            allowed_tools: None,
+            system_prompt: Some(
+                "Refactor the specified code to improve readability, maintainability, and \
+                 structure. Do not change external behavior. Run all tests after refactoring to \
+                 verify nothing is broken. Keep commits atomic and well-described."
+                    .to_owned(),
+            ),
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+        },
+    );
+    inks
+}
+
+/// Merge built-in inks with user-defined inks. User inks override built-ins by name.
+fn merge_built_in_inks(user_inks: HashMap<String, InkConfig>) -> HashMap<String, InkConfig> {
+    let mut merged = built_in_inks();
+    merged.extend(user_inks);
+    merged
+}
+
 pub fn load(path: &str) -> Result<Config> {
     let expanded = shellexpand::tilde(path);
     let path = std::path::Path::new(expanded.as_ref());
@@ -306,8 +436,9 @@ pub fn load(path: &str) -> Result<Config> {
     if path.exists() {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config from {}", path.display()))?;
-        let config: Config = toml::from_str(&content).context("Failed to parse config")?;
+        let mut config: Config = toml::from_str(&content).context("Failed to parse config")?;
         config.watchdog.validate()?;
+        config.inks = merge_built_in_inks(config.inks);
         Ok(config)
     } else {
         // Return defaults if no config file exists
@@ -325,7 +456,7 @@ pub fn load(path: &str) -> Result<Config> {
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
+            inks: built_in_inks(),
             notifications: NotificationsConfig::default(),
         })
     }
@@ -361,6 +492,12 @@ mod tests {
         let config = load("/nonexistent/path/config.toml").unwrap();
         assert_eq!(config.node.port, 7433);
         assert!(!config.node.name.is_empty());
+        // Built-in inks are included by default
+        assert!(config.inks.contains_key("reviewer"));
+        assert!(config.inks.contains_key("coder"));
+        assert!(config.inks.contains_key("quick-fix"));
+        assert!(config.inks.contains_key("tester"));
+        assert!(config.inks.contains_key("refactor"));
     }
 
     #[test]
@@ -1467,7 +1604,9 @@ data_dir = "/tmp"
         )
         .unwrap();
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(config.inks.is_empty());
+        // Built-in inks are always present even without [inks] section
+        assert_eq!(config.inks.len(), 5);
+        assert!(config.inks.contains_key("reviewer"));
     }
 
     #[test]
@@ -1496,7 +1635,9 @@ model = "opus"
         )
         .unwrap();
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.inks.len(), 2);
+        // 5 built-in inks + user overrides (reviewer and coder are overrides, so still 5)
+        assert_eq!(config.inks.len(), 5);
+        // User config overrides the built-in reviewer
         let reviewer = &config.inks["reviewer"];
         assert_eq!(reviewer.provider, Some("claude".into()));
         assert_eq!(reviewer.model, Some("sonnet".into()));
@@ -1511,6 +1652,7 @@ model = "opus"
             Some("You are a code reviewer.".into())
         );
         assert_eq!(reviewer.description, Some("Code review specialist".into()));
+        // User config overrides the built-in coder (partial — only model set)
         let coder = &config.inks["coder"];
         assert_eq!(coder.provider, None);
         assert_eq!(coder.model, Some("opus".into()));
@@ -1554,7 +1696,8 @@ model = "opus"
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(loaded.inks.len(), 1);
+        // 1 user ink + 4 other built-ins (reviewer is overridden)
+        assert_eq!(loaded.inks.len(), 5);
         let reviewer = &loaded.inks["reviewer"];
         assert_eq!(reviewer.model, Some("sonnet".into()));
         assert_eq!(reviewer.system_prompt, Some("Review only.".into()));
@@ -1901,5 +2044,148 @@ name = "test"
         assert!(toml_str.contains("seed = \"10.0.0.1:7433\""));
         // tag should be skipped (None + skip_serializing_if)
         assert!(!toml_str.contains("tag"));
+    }
+
+    #[test]
+    fn test_built_in_inks_contains_expected_keys() {
+        let inks = built_in_inks();
+        assert!(inks.contains_key("reviewer"));
+        assert!(inks.contains_key("coder"));
+        assert!(inks.contains_key("quick-fix"));
+        assert!(inks.contains_key("tester"));
+        assert!(inks.contains_key("refactor"));
+        assert_eq!(inks.len(), 5);
+    }
+
+    #[test]
+    fn test_built_in_inks_have_descriptions() {
+        let inks = built_in_inks();
+        for (name, ink) in &inks {
+            assert!(
+                ink.description.is_some(),
+                "Built-in ink '{name}' missing description"
+            );
+        }
+    }
+
+    #[test]
+    fn test_built_in_inks_have_system_prompts() {
+        let inks = built_in_inks();
+        for (name, ink) in &inks {
+            assert!(
+                ink.system_prompt.is_some(),
+                "Built-in ink '{name}' missing system_prompt"
+            );
+        }
+    }
+
+    #[test]
+    fn test_merge_built_in_inks_user_overrides() {
+        let mut user_inks = HashMap::new();
+        user_inks.insert(
+            "reviewer".to_owned(),
+            InkConfig {
+                description: Some("My custom reviewer".to_owned()),
+                provider: Some("codex".to_owned()),
+                model: None,
+                mode: None,
+                guard_preset: None,
+                allowed_tools: None,
+                system_prompt: None,
+                max_turns: None,
+                max_budget_usd: None,
+                output_format: None,
+            },
+        );
+        let merged = merge_built_in_inks(user_inks);
+        // User's reviewer overrides built-in
+        assert_eq!(
+            merged["reviewer"].description.as_deref(),
+            Some("My custom reviewer")
+        );
+        assert_eq!(merged["reviewer"].provider.as_deref(), Some("codex"));
+        // Other built-ins still present
+        assert!(merged.contains_key("coder"));
+        assert!(merged.contains_key("quick-fix"));
+    }
+
+    #[test]
+    fn test_merge_built_in_inks_user_adds_new() {
+        let mut user_inks = HashMap::new();
+        user_inks.insert(
+            "my-custom".to_owned(),
+            InkConfig {
+                description: Some("Custom ink".to_owned()),
+                provider: None,
+                model: None,
+                mode: None,
+                guard_preset: None,
+                allowed_tools: None,
+                system_prompt: None,
+                max_turns: None,
+                max_budget_usd: None,
+                output_format: None,
+            },
+        );
+        let merged = merge_built_in_inks(user_inks);
+        // User ink is added alongside built-ins
+        assert!(merged.contains_key("my-custom"));
+        assert!(merged.contains_key("reviewer"));
+        assert_eq!(merged.len(), 6);
+    }
+
+    #[test]
+    fn test_load_config_merges_built_in_inks() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "test-node"
+port = 7433
+data_dir = "/tmp/pulpo-test"
+
+[inks.reviewer]
+description = "Overridden reviewer"
+provider = "codex"
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        // User override wins
+        assert_eq!(
+            config.inks["reviewer"].description.as_deref(),
+            Some("Overridden reviewer")
+        );
+        assert_eq!(config.inks["reviewer"].provider.as_deref(), Some("codex"));
+        // Built-in inks still present
+        assert!(config.inks.contains_key("coder"));
+        assert!(config.inks.contains_key("quick-fix"));
+        assert!(config.inks.contains_key("tester"));
+        assert!(config.inks.contains_key("refactor"));
+    }
+
+    #[test]
+    fn test_ink_config_description_serialization() {
+        let ink = InkConfig {
+            description: Some("Test description".to_owned()),
+            provider: Some("claude".to_owned()),
+            model: None,
+            mode: None,
+            guard_preset: None,
+            allowed_tools: None,
+            system_prompt: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+        };
+        let toml_str = toml::to_string(&ink).unwrap();
+        assert!(toml_str.contains("description = \"Test description\""));
+        let deserialized: InkConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(
+            deserialized.description.as_deref(),
+            Some("Test description")
+        );
     }
 }

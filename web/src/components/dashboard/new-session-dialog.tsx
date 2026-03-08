@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,8 +18,8 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Plus } from 'lucide-react';
-import { createSession, createRemoteSession } from '@/api/client';
-import type { PeerInfo, Session } from '@/api/types';
+import { createSession, createRemoteSession, getInks } from '@/api/client';
+import type { InkConfig, PeerInfo, Session } from '@/api/types';
 
 interface NewSessionDialogProps {
   peers?: PeerInfo[];
@@ -35,10 +35,37 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
   const [mode, setMode] = useState('interactive');
   const [guardPreset, setGuardPreset] = useState('standard');
   const [targetNode, setTargetNode] = useState('local');
+  const [selectedInk, setSelectedInk] = useState('');
+  const [model, setModel] = useState('');
+  const [inks, setInks] = useState<Record<string, InkConfig>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const onlinePeers = peers.filter((p) => p.status === 'online');
+
+  useEffect(() => {
+    if (open) {
+      getInks()
+        .then((res) => setInks(res.inks))
+        .catch(() => {
+          /* inks are optional */
+        });
+    }
+  }, [open]);
+
+  function handleInkChange(inkName: string) {
+    setSelectedInk(inkName);
+    if (inkName === 'none' || !inkName) {
+      setSelectedInk('');
+      return;
+    }
+    const ink = inks[inkName];
+    if (!ink) return;
+    if (ink.provider) setProvider(ink.provider);
+    if (ink.mode) setMode(ink.mode);
+    if (ink.guard_preset) setGuardPreset(ink.guard_preset);
+    if (ink.model) setModel(ink.model);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -53,6 +80,8 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         provider,
         mode,
         guard_preset: guardPreset,
+        ...(selectedInk ? { ink: selectedInk } : {}),
+        ...(model.trim() ? { model: model.trim() } : {}),
       };
 
       let session: Session;
@@ -67,6 +96,8 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
       setName('');
       setRepoPath('');
       setPrompt('');
+      setSelectedInk('');
+      setModel('');
       setOpen(false);
       onCreated(session);
     } catch (e) {
@@ -75,6 +106,8 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
       setSubmitting(false);
     }
   }
+
+  const inkNames = Object.keys(inks).sort();
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -123,6 +156,38 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
               required
             />
           </div>
+
+          {inkNames.length > 0 && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="ink-select">Ink</Label>
+                <Select value={selectedInk || 'none'} onValueChange={handleInkChange}>
+                  <SelectTrigger id="ink-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {inkNames.map((inkName) => (
+                      <SelectItem key={inkName} value={inkName}>
+                        {inkName}
+                        {inks[inkName]?.description ? ` — ${inks[inkName].description}` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <Label htmlFor="model-override">Model</Label>
+                <Input
+                  id="model-override"
+                  placeholder="Default"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div>

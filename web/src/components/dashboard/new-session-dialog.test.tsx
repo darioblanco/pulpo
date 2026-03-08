@@ -8,6 +8,7 @@ import type { PeerInfo } from '@/api/types';
 vi.mock('@/api/client', () => ({
   createSession: vi.fn(),
   createRemoteSession: vi.fn(),
+  getInks: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
@@ -15,10 +16,37 @@ vi.mock('@/api/client', () => ({
 
 const mockCreateSession = vi.mocked(api.createSession);
 const mockCreateRemoteSession = vi.mocked(api.createRemoteSession);
+const mockGetInks = vi.mocked(api.getInks);
+
+const defaultSession = {
+  id: '1',
+  name: 'test',
+  provider: 'claude',
+  status: 'creating',
+  prompt: 'Fix',
+  mode: 'interactive',
+  workdir: '/repo',
+  guard_config: null,
+  model: null,
+  allowed_tools: null,
+  system_prompt: null,
+  metadata: null,
+  ink: null,
+  max_turns: null,
+  max_budget_usd: null,
+  output_format: null,
+  intervention_reason: null,
+  intervention_at: null,
+  last_output_at: null,
+  waiting_for_input: false,
+  created_at: '2025-01-01T00:00:00Z',
+};
 
 beforeEach(() => {
   mockCreateSession.mockReset();
   mockCreateRemoteSession.mockReset();
+  mockGetInks.mockReset();
+  mockGetInks.mockResolvedValue({ inks: {} });
 });
 
 async function openDialog() {
@@ -47,52 +75,8 @@ describe('NewSessionDialog', () => {
   });
 
   it('calls createSession for local target on submit', async () => {
-    mockCreateSession.mockResolvedValue({
-      id: '1',
-      name: 'test',
-      provider: 'claude',
-      status: 'creating',
-      prompt: 'Fix',
-      mode: 'interactive',
-      workdir: '/repo',
-      guard_config: null,
-      model: null,
-      allowed_tools: null,
-      system_prompt: null,
-      metadata: null,
-      ink: null,
-      max_turns: null,
-      max_budget_usd: null,
-      output_format: null,
-      intervention_reason: null,
-      intervention_at: null,
-      last_output_at: null,
-      waiting_for_input: false,
-      created_at: '2025-01-01T00:00:00Z',
-    });
-    const sessionResult = {
-      id: '1',
-      name: 'test',
-      provider: 'claude',
-      status: 'creating',
-      prompt: 'Fix the bug',
-      mode: 'interactive',
-      workdir: '/home/user/repo',
-      guard_config: null,
-      model: null,
-      allowed_tools: null,
-      system_prompt: null,
-      metadata: null,
-      ink: null,
-      max_turns: null,
-      max_budget_usd: null,
-      output_format: null,
-      intervention_reason: null,
-      intervention_at: null,
-      last_output_at: null,
-      waiting_for_input: false,
-      created_at: '2025-01-01T00:00:00Z',
-    };
+    mockCreateSession.mockResolvedValue({ ...defaultSession, prompt: 'Fix the bug' });
+    const sessionResult = { ...defaultSession, prompt: 'Fix the bug', workdir: '/home/user/repo' };
     mockCreateSession.mockResolvedValue(sessionResult);
     const onCreated = vi.fn();
     render(<NewSessionDialog onCreated={onCreated} />);
@@ -117,29 +101,7 @@ describe('NewSessionDialog', () => {
   });
 
   it('sends name when provided', async () => {
-    mockCreateSession.mockResolvedValue({
-      id: '1',
-      name: 'my-task',
-      provider: 'claude',
-      status: 'creating',
-      prompt: 'Fix',
-      mode: 'interactive',
-      workdir: '/repo',
-      guard_config: null,
-      model: null,
-      allowed_tools: null,
-      system_prompt: null,
-      metadata: null,
-      ink: null,
-      max_turns: null,
-      max_budget_usd: null,
-      output_format: null,
-      intervention_reason: null,
-      intervention_at: null,
-      last_output_at: null,
-      waiting_for_input: false,
-      created_at: '2025-01-01T00:00:00Z',
-    });
+    mockCreateSession.mockResolvedValue({ ...defaultSession, name: 'my-task' });
     render(<NewSessionDialog onCreated={vi.fn()} />);
     const user = await openDialog();
 
@@ -196,27 +158,9 @@ describe('NewSessionDialog', () => {
 
   it('calls createRemoteSession for remote target', async () => {
     mockCreateRemoteSession.mockResolvedValue({
+      ...defaultSession,
       id: '2',
       name: 'remote-test',
-      provider: 'claude',
-      status: 'creating',
-      prompt: 'Fix',
-      mode: 'interactive',
-      workdir: '/repo',
-      guard_config: null,
-      model: null,
-      allowed_tools: null,
-      system_prompt: null,
-      metadata: null,
-      ink: null,
-      max_turns: null,
-      max_budget_usd: null,
-      output_format: null,
-      intervention_reason: null,
-      intervention_at: null,
-      last_output_at: null,
-      waiting_for_input: false,
-      created_at: '2025-01-01T00:00:00Z',
     });
     const peers: PeerInfo[] = [
       {
@@ -287,5 +231,180 @@ describe('NewSessionDialog', () => {
       expect(screen.getAllByText('online-peer').length).toBeGreaterThan(0);
     });
     expect(screen.queryByText('offline-peer')).not.toBeInTheDocument();
+  });
+
+  it('fetches inks when dialog opens', async () => {
+    mockGetInks.mockResolvedValue({
+      inks: {
+        reviewer: {
+          description: 'Code review',
+          provider: 'claude',
+          model: null,
+          mode: 'interactive',
+          guard_preset: 'strict',
+          allowed_tools: null,
+          system_prompt: null,
+          max_turns: null,
+          max_budget_usd: null,
+          output_format: null,
+        },
+      },
+    });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    await openDialog();
+
+    await waitFor(() => {
+      expect(mockGetInks).toHaveBeenCalled();
+    });
+  });
+
+  it('shows ink selector when inks are available', async () => {
+    mockGetInks.mockResolvedValue({
+      inks: {
+        reviewer: {
+          description: 'Code review',
+          provider: 'claude',
+          model: null,
+          mode: 'interactive',
+          guard_preset: 'strict',
+          allowed_tools: null,
+          system_prompt: null,
+          max_turns: null,
+          max_budget_usd: null,
+          output_format: null,
+        },
+      },
+    });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    await openDialog();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Ink')).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('Model')).toBeInTheDocument();
+  });
+
+  it('does not show ink selector when no inks available', async () => {
+    mockGetInks.mockResolvedValue({ inks: {} });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    await openDialog();
+
+    // Wait for inks to load (empty)
+    await waitFor(() => {
+      expect(mockGetInks).toHaveBeenCalled();
+    });
+    expect(screen.queryByLabelText('Ink')).not.toBeInTheDocument();
+  });
+
+  it('auto-fills fields when ink is selected', async () => {
+    mockGetInks.mockResolvedValue({
+      inks: {
+        reviewer: {
+          description: 'Code review',
+          provider: 'codex',
+          model: 'gpt-4',
+          mode: 'autonomous',
+          guard_preset: 'strict',
+          allowed_tools: null,
+          system_prompt: null,
+          max_turns: null,
+          max_budget_usd: null,
+          output_format: null,
+        },
+      },
+    });
+    mockCreateSession.mockResolvedValue({
+      ...defaultSession,
+      ink: 'reviewer',
+      provider: 'codex',
+      model: 'gpt-4',
+    });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    // Wait for inks to load
+    await waitFor(() => {
+      expect(screen.getByLabelText('Ink')).toBeInTheDocument();
+    });
+
+    // Select the ink
+    const inkSelect = screen.getByRole('combobox', { name: 'Ink' });
+    await user.click(inkSelect);
+    await waitFor(() => {
+      expect(screen.getAllByText(/reviewer/).length).toBeGreaterThan(0);
+    });
+    const options = screen.getAllByText(/reviewer/);
+    const listboxOption = options.find((el) => el.closest('[role="option"]'));
+    if (listboxOption) await user.click(listboxOption);
+
+    // Fill required fields and submit
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+    await user.type(screen.getByLabelText('Prompt'), 'Review code');
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ink: 'reviewer',
+          model: 'gpt-4',
+          provider: 'codex',
+          mode: 'autonomous',
+          guard_preset: 'strict',
+        }),
+      );
+    });
+  });
+
+  it('sends model override in request', async () => {
+    mockGetInks.mockResolvedValue({
+      inks: {
+        coder: {
+          description: null,
+          provider: 'claude',
+          model: null,
+          mode: 'autonomous',
+          guard_preset: 'standard',
+          allowed_tools: null,
+          system_prompt: null,
+          max_turns: null,
+          max_budget_usd: null,
+          output_format: null,
+        },
+      },
+    });
+    mockCreateSession.mockResolvedValue({ ...defaultSession, model: 'opus' });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Model')).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByLabelText('Model'), 'opus');
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+    await user.type(screen.getByLabelText('Prompt'), 'Code it');
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'opus',
+        }),
+      );
+    });
+  });
+
+  it('handles getInks failure gracefully', async () => {
+    mockGetInks.mockRejectedValue(new Error('Network error'));
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    await openDialog();
+
+    // Dialog should still work without ink selector
+    expect(screen.getByText('Create New Session')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Ink')).not.toBeInTheDocument();
   });
 });
