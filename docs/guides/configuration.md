@@ -14,7 +14,7 @@ name = "mac-mini"
 provider = "claude"
 model = "sonnet"
 guard_preset = "strict"
-system_prompt = "You are a senior reviewer focused on correctness and security."
+instructions = "You are a senior reviewer focused on correctness and security."
 ```
 
 ## Important sections

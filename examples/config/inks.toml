@@ -12,21 +12,21 @@ max_budget_usd = 10.0
 [inks.reviewer]
 provider = "claude"
 model = "sonnet"
-mode = "autonomous"
+mode = "interactive"
 guard_preset = "strict"
-allowed_tools = ["Read", "Glob", "Grep"]
-system_prompt = "You are a code reviewer. Prioritize correctness and security."
+instructions = "You are a code reviewer. Prioritize correctness and security."
 description = "Read-only code reviewer with strict guards"
-max_turns = 20
-max_budget_usd = 3.0
 
 [inks.coder]
 provider = "claude"
 model = "opus"
 mode = "autonomous"
 guard_preset = "standard"
-allowed_tools = ["Read", "Write", "Edit", "Glob", "Grep", "Bash"]
-system_prompt = "Implement the task with tests and clear commit messages."
+instructions = "Implement the task with tests and clear commit messages."
 description = "Full-access coding agent with standard guards"
-max_turns = 80
-max_budget_usd = 15.0
+
+[inks.quick-fix]
+mode = "autonomous"
+guard_preset = "standard"
+instructions = "Fix the reported bug with minimal changes. Run tests to verify."
+description = "Fast bug fixes — any provider"

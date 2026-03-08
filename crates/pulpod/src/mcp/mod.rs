@@ -33,6 +33,8 @@ struct RemoteSpawnReq {
     prompt: String,
     mode: Option<SessionMode>,
     guard_preset: Option<GuardPreset>,
+    ink: Option<String>,
+    model: Option<String>,
 }
 
 // -- Tool parameter types --
@@ -51,6 +53,10 @@ pub struct SpawnSessionParams {
     pub guard_preset: Option<GuardPreset>,
     /// Custom session name. Auto-derived from `workdir` if omitted.
     pub name: Option<String>,
+    /// Ink preset from config (e.g. "reviewer", "coder").
+    pub ink: Option<String>,
+    /// Model override (e.g. "opus", "sonnet").
+    pub model: Option<String>,
     /// Target node name. If omitted, runs locally.
     pub node: Option<String>,
 }
@@ -463,6 +469,8 @@ impl PulpoMcp {
                 prompt,
                 mode,
                 guard_preset,
+                ink,
+                model,
             };
             self.remote_post::<Session, _>(n, "/api/v1/sessions", &body)
                 .await
@@ -524,11 +532,11 @@ impl PulpoMcp {
                 mode: params.mode,
                 guard_preset: params.guard_preset,
                 guard_config: None,
-                model: None,
+                model: params.model,
                 allowed_tools: None,
                 system_prompt: None,
                 metadata: None,
-                ink: None,
+                ink: params.ink,
                 max_turns: None,
                 max_budget_usd: None,
                 output_format: None,
@@ -546,6 +554,8 @@ impl PulpoMcp {
                 prompt: params.prompt,
                 mode: params.mode,
                 guard_preset: params.guard_preset,
+                ink: params.ink,
+                model: params.model,
             };
             self.remote_post::<Session, _>(node, "/api/v1/sessions", &body)
                 .await
@@ -1137,6 +1147,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -1155,6 +1167,8 @@ mod tests {
             mode: Some(SessionMode::Autonomous),
             guard_preset: Some(GuardPreset::Unrestricted),
             name: Some("custom-name".into()),
+            ink: None,
+            model: None,
             node: Some("test-node".into()), // matches local
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -1172,6 +1186,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: Some("unknown-node".into()),
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -1204,6 +1220,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1265,6 +1283,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1302,6 +1322,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1350,6 +1372,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1385,6 +1409,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1422,6 +1448,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1446,6 +1474,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1496,6 +1526,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1569,6 +1601,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1604,6 +1638,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1680,6 +1716,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let debug = format!("{params:?}");
@@ -2106,6 +2144,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -2314,6 +2354,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: Some("remote".into()),
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -2497,6 +2539,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: Some("remote".into()),
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -2558,6 +2602,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -3122,6 +3168,8 @@ mod tests {
                 mode: None,
                 guard_preset: None,
                 name: None,
+                ink: None,
+                model: None,
                 node: None,
             }))
             .await;
@@ -3156,6 +3204,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;

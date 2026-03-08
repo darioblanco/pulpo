@@ -27,11 +27,7 @@ const emptyInk: InkConfig = {
   model: null,
   mode: null,
   guard_preset: null,
-  allowed_tools: null,
-  system_prompt: null,
-  max_turns: null,
-  max_budget_usd: null,
-  output_format: null,
+  instructions: null,
 };
 
 export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps) {
@@ -86,8 +82,8 @@ export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps
       <CardHeader>
         <CardTitle>Inks</CardTitle>
         <CardDescription>
-          Named presets that auto-fill session parameters. Select an ink when creating a session to
-          apply its defaults. Built-in inks can be customized or removed.
+          Named roles that define what an agent does. Each ink sets a provider, mode, and
+          instructions that work across all providers. Select an ink when creating a session.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -141,12 +137,14 @@ export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps
                           value={ink.provider ?? ''}
                           onValueChange={(v) => updateInk(name, 'provider', v)}
                         >
-                          <SelectTrigger id={`ink-provider-${name}`}>
+                          <SelectTrigger id={`ink-provider-${name}`} className="w-full">
                             <SelectValue placeholder="Any" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="claude">Claude</SelectItem>
                             <SelectItem value="codex">Codex</SelectItem>
+                            <SelectItem value="gemini">Gemini</SelectItem>
+                            <SelectItem value="open_code">OpenCode</SelectItem>
                           </SelectContent>
                         </Select>
                       </FormField>
@@ -156,7 +154,7 @@ export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps
                           value={ink.mode ?? ''}
                           onValueChange={(v) => updateInk(name, 'mode', v)}
                         >
-                          <SelectTrigger id={`ink-mode-${name}`}>
+                          <SelectTrigger id={`ink-mode-${name}`} className="w-full">
                             <SelectValue placeholder="Any" />
                           </SelectTrigger>
                           <SelectContent>
@@ -171,7 +169,7 @@ export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps
                           value={ink.guard_preset ?? ''}
                           onValueChange={(v) => updateInk(name, 'guard_preset', v)}
                         >
-                          <SelectTrigger id={`ink-guard-${name}`}>
+                          <SelectTrigger id={`ink-guard-${name}`} className="w-full">
                             <SelectValue placeholder="Default" />
                           </SelectTrigger>
                           <SelectContent>
@@ -192,57 +190,13 @@ export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps
                       </FormField>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-                      <FormField label="Max turns" htmlFor={`ink-turns-${name}`}>
-                        <Input
-                          id={`ink-turns-${name}`}
-                          type="number"
-                          value={ink.max_turns ?? ''}
-                          onChange={(e) =>
-                            updateInk(
-                              name,
-                              'max_turns' as keyof InkConfig,
-                              e.target.value ? (Number(e.target.value) as unknown as string) : null,
-                            )
-                          }
-                          placeholder="No limit"
-                        />
-                      </FormField>
-
-                      <FormField label="Max budget (USD)" htmlFor={`ink-budget-${name}`}>
-                        <Input
-                          id={`ink-budget-${name}`}
-                          type="number"
-                          step="0.01"
-                          value={ink.max_budget_usd ?? ''}
-                          onChange={(e) =>
-                            updateInk(
-                              name,
-                              'max_budget_usd' as keyof InkConfig,
-                              e.target.value ? (Number(e.target.value) as unknown as string) : null,
-                            )
-                          }
-                          placeholder="No limit"
-                        />
-                      </FormField>
-
-                      <FormField label="Output format" htmlFor={`ink-format-${name}`}>
-                        <Input
-                          id={`ink-format-${name}`}
-                          value={ink.output_format ?? ''}
-                          onChange={(e) => updateInk(name, 'output_format', e.target.value)}
-                          placeholder="Default"
-                        />
-                      </FormField>
-                    </div>
-
-                    <FormField label="System prompt" htmlFor={`ink-prompt-${name}`}>
+                    <FormField label="Instructions" htmlFor={`ink-prompt-${name}`}>
                       <Textarea
                         id={`ink-prompt-${name}`}
                         rows={3}
-                        value={ink.system_prompt ?? ''}
-                        onChange={(e) => updateInk(name, 'system_prompt', e.target.value)}
-                        placeholder="Custom instructions for the agent"
+                        value={ink.instructions ?? ''}
+                        onChange={(e) => updateInk(name, 'instructions', e.target.value)}
+                        placeholder="Role instructions for the agent (universal across providers)"
                       />
                     </FormField>
 

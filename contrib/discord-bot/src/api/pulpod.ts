@@ -33,8 +33,7 @@ export interface InkConfig {
   model?: string;
   mode?: string;
   guard_preset?: string;
-  allowed_tools?: string[];
-  system_prompt?: string;
+  instructions?: string;
 }
 
 export interface SessionEvent {

@@ -239,11 +239,7 @@ describe('NewSessionDialog', () => {
           model: null,
           mode: 'interactive',
           guard_preset: 'strict',
-          allowed_tools: null,
-          system_prompt: null,
-          max_turns: null,
-          max_budget_usd: null,
-          output_format: null,
+          instructions: null,
         },
       },
     });
@@ -264,11 +260,7 @@ describe('NewSessionDialog', () => {
           model: null,
           mode: 'interactive',
           guard_preset: 'strict',
-          allowed_tools: null,
-          system_prompt: null,
-          max_turns: null,
-          max_budget_usd: null,
-          output_format: null,
+          instructions: null,
         },
       },
     });
@@ -278,7 +270,6 @@ describe('NewSessionDialog', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('Ink')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('Model')).toBeInTheDocument();
   });
 
   it('does not show ink selector when no inks available', async () => {
@@ -302,11 +293,7 @@ describe('NewSessionDialog', () => {
           model: 'gpt-4',
           mode: 'autonomous',
           guard_preset: 'strict',
-          allowed_tools: null,
-          system_prompt: null,
-          max_turns: null,
-          max_budget_usd: null,
-          output_format: null,
+          instructions: null,
         },
       },
     });
@@ -342,7 +329,6 @@ describe('NewSessionDialog', () => {
       expect(mockCreateSession).toHaveBeenCalledWith(
         expect.objectContaining({
           ink: 'reviewer',
-          model: 'gpt-4',
           provider: 'codex',
           mode: 'autonomous',
           guard_preset: 'strict',
@@ -351,44 +337,43 @@ describe('NewSessionDialog', () => {
     });
   });
 
-  it('sends model override in request', async () => {
+  it('shows ink summary when ink is selected', async () => {
     mockGetInks.mockResolvedValue({
       inks: {
-        coder: {
-          description: null,
-          provider: 'claude',
-          model: null,
+        reviewer: {
+          description: 'Code review',
+          provider: 'codex',
+          model: 'gpt-4',
           mode: 'autonomous',
-          guard_preset: 'standard',
-          allowed_tools: null,
-          system_prompt: null,
-          max_turns: null,
-          max_budget_usd: null,
-          output_format: null,
+          guard_preset: 'strict',
+          instructions: null,
         },
       },
     });
-    mockCreateSession.mockResolvedValue({ session: { ...defaultSession, model: 'opus' } });
     render(<NewSessionDialog onCreated={vi.fn()} />);
     const user = await openDialog();
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Model')).toBeInTheDocument();
+      expect(screen.getByLabelText('Ink')).toBeInTheDocument();
     });
 
-    await user.type(screen.getByLabelText('Model'), 'opus');
-    await user.type(screen.getByLabelText('Working directory'), '/repo');
-    await user.type(screen.getByLabelText('Prompt'), 'Code it');
-
-    const form = screen.getByLabelText('Working directory').closest('form')!;
-    fireEvent.submit(form);
+    // Select the ink
+    const inkSelect = screen.getByRole('combobox', { name: 'Ink' });
+    await user.click(inkSelect);
+    await waitFor(() => {
+      expect(screen.getAllByText(/reviewer/).length).toBeGreaterThan(0);
+    });
+    const options = screen.getAllByText(/reviewer/);
+    const listboxOption = options.find((el) => el.closest('[role="option"]'));
+    if (listboxOption) await user.click(listboxOption);
 
     await waitFor(() => {
-      expect(mockCreateSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          model: 'opus',
-        }),
-      );
+      const summary = screen.getByTestId('ink-summary');
+      expect(summary).toBeInTheDocument();
+      expect(summary.textContent).toContain('codex');
+      expect(summary.textContent).toContain('gpt-4');
+      expect(summary.textContent).toContain('autonomous');
+      expect(summary.textContent).toContain('guards: strict');
     });
   });
 

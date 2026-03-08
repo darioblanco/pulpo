@@ -301,6 +301,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         mcp.spawn_session(Parameters(params)).await;
@@ -331,6 +333,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(params)).await;
@@ -421,6 +425,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         mcp.spawn_session(Parameters(params)).await;
@@ -442,6 +448,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(params)).await;
@@ -471,6 +479,8 @@ mod tests {
             mode: None,
             guard_preset: None,
             name: None,
+            ink: None,
+            model: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(params)).await;

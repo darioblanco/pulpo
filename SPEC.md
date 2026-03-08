@@ -677,13 +677,13 @@ server = "hetzner:7433"
 provider = "claude"
 model = "sonnet"
 guard_preset = "strict"
-allowed_tools = ["Read", "Glob", "Grep"]
-system_prompt = "You are a code reviewer. Focus on correctness and security."
+instructions = "You are a code reviewer. Focus on correctness and security."
 
 [inks.coder]
 provider = "claude"
 mode = "autonomous"
 guard_preset = "standard"
+instructions = "Implement the task with tests and clear commit messages."
 
 [notifications.discord]
 webhook_url = "https://discord.com/api/webhooks/..."

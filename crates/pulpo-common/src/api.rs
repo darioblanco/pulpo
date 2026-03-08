@@ -151,11 +151,7 @@ pub struct InkConfigResponse {
     pub model: Option<String>,
     pub mode: Option<String>,
     pub guard_preset: Option<String>,
-    pub allowed_tools: Option<Vec<String>>,
-    pub system_prompt: Option<String>,
-    pub max_turns: Option<u32>,
-    pub max_budget_usd: Option<f64>,
-    pub output_format: Option<String>,
+    pub instructions: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -113,11 +113,7 @@ mod tests {
                 model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
                 guard_preset: Some("strict".into()),
-                allowed_tools: Some(vec!["Read".into(), "Glob".into()]),
-                system_prompt: Some("Review code".into()),
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                instructions: Some("Review code".into()),
             },
         );
         let manager = SessionManager::new(
@@ -150,7 +146,7 @@ mod tests {
         assert_eq!(response.inks.len(), 1);
         let reviewer = &response.inks["reviewer"];
         assert_eq!(reviewer.model, Some("sonnet".into()));
-        assert_eq!(reviewer.system_prompt, Some("Review code".into()));
+        assert_eq!(reviewer.instructions, Some("Review code".into()));
     }
 
     #[test]
@@ -164,11 +160,7 @@ mod tests {
                 model: Some("opus".into()),
                 mode: None,
                 guard_preset: None,
-                allowed_tools: None,
-                system_prompt: None,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                instructions: None,
             },
         );
         let resp = InksResponse { inks };

@@ -79,11 +79,7 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
                         model: v.model.clone(),
                         mode: v.mode.clone(),
                         guard_preset: v.guard_preset.clone(),
-                        allowed_tools: v.allowed_tools.clone(),
-                        system_prompt: v.system_prompt.clone(),
-                        max_turns: v.max_turns,
-                        max_budget_usd: v.max_budget_usd,
-                        output_format: v.output_format.clone(),
+                        instructions: v.instructions.clone(),
                     },
                 )
             })
@@ -208,11 +204,7 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
                         model: v.model,
                         mode: v.mode,
                         guard_preset: v.guard_preset,
-                        allowed_tools: v.allowed_tools,
-                        system_prompt: v.system_prompt,
-                        max_turns: v.max_turns,
-                        max_budget_usd: v.max_budget_usd,
-                        output_format: v.output_format,
+                        instructions: v.instructions,
                     },
                 )
             })
@@ -887,11 +879,7 @@ mod tests {
                 model: Some("opus".into()),
                 mode: Some("interactive".into()),
                 guard_preset: Some("strict".into()),
-                allowed_tools: Some(vec!["read".into()]),
-                system_prompt: Some("You are a reviewer.".into()),
-                max_turns: Some(10),
-                max_budget_usd: Some(5.0),
-                output_format: Some("json".into()),
+                instructions: Some("You are a reviewer.".into()),
             },
         );
         let req = UpdateConfigRequest {
@@ -903,7 +891,7 @@ mod tests {
         let p = &resp.config.inks["reviewer"];
         assert_eq!(p.provider, Some("claude".into()));
         assert_eq!(p.model, Some("opus".into()));
-        assert_eq!(p.max_turns, Some(10));
+        assert_eq!(p.instructions, Some("You are a reviewer.".into()));
     }
 
     #[test]
@@ -944,11 +932,7 @@ mod tests {
                         model: Some("sonnet".into()),
                         mode: None,
                         guard_preset: None,
-                        allowed_tools: None,
-                        system_prompt: None,
-                        max_turns: None,
-                        max_budget_usd: None,
-                        output_format: None,
+                        instructions: None,
                     },
                 );
                 m

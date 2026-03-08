@@ -37,7 +37,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
   const [guardPreset, setGuardPreset] = useState('standard');
   const [targetNode, setTargetNode] = useState('local');
   const [selectedInk, setSelectedInk] = useState('');
-  const [model, setModel] = useState('');
   const [inks, setInks] = useState<Record<string, InkConfig>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,7 +64,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
     if (ink.provider) setProvider(ink.provider);
     if (ink.mode) setMode(ink.mode);
     if (ink.guard_preset) setGuardPreset(ink.guard_preset);
-    if (ink.model) setModel(ink.model);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -82,7 +80,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         mode,
         guard_preset: guardPreset,
         ...(selectedInk ? { ink: selectedInk } : {}),
-        ...(model.trim() ? { model: model.trim() } : {}),
       };
 
       let resp;
@@ -98,7 +95,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
       setRepoPath('');
       setPrompt('');
       setSelectedInk('');
-      setModel('');
       setOpen(false);
       onCreated(resp.session);
     } catch (e) {
@@ -110,6 +106,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
 
   const inkNames = Object.keys(inks).sort();
   const caps = getProviderCapabilities(provider);
+  const activeInk = selectedInk ? inks[selectedInk] : null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -123,10 +120,10 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         <DialogHeader>
           <DialogTitle>Create New Session</DialogTitle>
         </DialogHeader>
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-3">
           {error && <p className="text-sm text-destructive">{error}</p>}
 
-          <div>
+          <div className="space-y-1.5">
             <Label htmlFor="session-name">Name</Label>
             <Input
               id="session-name"
@@ -136,7 +133,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
             />
           </div>
 
-          <div>
+          <div className="space-y-1.5">
             <Label htmlFor="repo-path">Working directory</Label>
             <Input
               id="repo-path"
@@ -147,7 +144,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
             />
           </div>
 
-          <div>
+          <div className="space-y-1.5">
             <Label htmlFor="prompt">Prompt</Label>
             <Textarea
               id="prompt"
@@ -160,57 +157,62 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
           </div>
 
           {inkNames.length > 0 && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label htmlFor="ink-select">Ink</Label>
-                <Select value={selectedInk || 'none'} onValueChange={handleInkChange}>
-                  <SelectTrigger id="ink-select">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">None</SelectItem>
-                    {inkNames.map((inkName) => (
-                      <SelectItem key={inkName} value={inkName}>
-                        {inkName}
-                        {inks[inkName]?.description ? ` — ${inks[inkName].description}` : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className={caps.model ? '' : 'opacity-50'}>
-                <Label htmlFor="model-override">Model</Label>
-                <Input
-                  id="model-override"
-                  placeholder={caps.model ? 'Default' : 'Not supported'}
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  disabled={!caps.model}
-                />
-              </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="ink-select">Ink</Label>
+              <Select value={selectedInk || 'none'} onValueChange={handleInkChange}>
+                <SelectTrigger id="ink-select" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {inkNames.map((inkName) => (
+                    <SelectItem key={inkName} value={inkName}>
+                      {inkName}
+                      {inks[inkName]?.description ? ` — ${inks[inkName].description}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {activeInk && (
+                <p className="text-xs text-muted-foreground" data-testid="ink-summary">
+                  {[
+                    activeInk.provider,
+                    activeInk.model,
+                    activeInk.mode,
+                    activeInk.guard_preset ? `guards: ${activeInk.guard_preset}` : null,
+                    activeInk.instructions
+                      ? activeInk.instructions.length > 60
+                        ? `${activeInk.instructions.slice(0, 60)}...`
+                        : activeInk.instructions
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </p>
+              )}
             </div>
           )}
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div>
+            <div className="space-y-1.5">
               <Label htmlFor="provider">Provider</Label>
               <Select value={provider} onValueChange={setProvider}>
-                <SelectTrigger id="provider">
+                <SelectTrigger id="provider" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="claude">Claude</SelectItem>
                   <SelectItem value="codex">Codex</SelectItem>
+                  <SelectItem value="gemini">Gemini</SelectItem>
                   <SelectItem value="open_code">OpenCode</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            <div>
+            <div className="space-y-1.5">
               <Label htmlFor="mode">Mode</Label>
               <Select value={mode} onValueChange={setMode}>
-                <SelectTrigger id="mode">
+                <SelectTrigger id="mode" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -220,14 +222,14 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
               </Select>
             </div>
 
-            <div className={caps.guard_preset ? '' : 'opacity-50'}>
+            <div className={`space-y-1.5 ${caps.guard_preset ? '' : 'opacity-50'}`}>
               <Label htmlFor="guard-preset">Guards</Label>
               <Select
                 value={guardPreset}
                 onValueChange={setGuardPreset}
                 disabled={!caps.guard_preset}
               >
-                <SelectTrigger id="guard-preset">
+                <SelectTrigger id="guard-preset" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -238,10 +240,10 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
               </Select>
             </div>
 
-            <div>
+            <div className="space-y-1.5">
               <Label htmlFor="target-node">Node</Label>
               <Select value={targetNode} onValueChange={setTargetNode}>
-                <SelectTrigger id="target-node">
+                <SelectTrigger id="target-node" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -256,7 +258,11 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
             </div>
           </div>
 
-          <Button type="submit" className="w-full" disabled={submitting || !repoPath || !prompt}>
+          <Button
+            type="submit"
+            className="w-full mt-1"
+            disabled={submitting || !repoPath || !prompt}
+          >
             {submitting ? 'Creating...' : 'Create Session'}
           </Button>
         </form>

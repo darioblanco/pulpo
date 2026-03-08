@@ -489,11 +489,7 @@ describe('updateRemoteConfig', () => {
           model: null,
           mode: null,
           guard_preset: null,
-          allowed_tools: null,
-          system_prompt: null,
-          max_turns: null,
-          max_budget_usd: null,
-          output_format: null,
+          instructions: null,
         },
       },
     };

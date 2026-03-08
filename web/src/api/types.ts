@@ -63,11 +63,7 @@ export interface InkConfig {
   model: string | null;
   mode: string | null;
   guard_preset: string | null;
-  allowed_tools: string[] | null;
-  system_prompt: string | null;
-  max_turns: number | null;
-  max_budget_usd: number | null;
-  output_format: string | null;
+  instructions: string | null;
 }
 
 export interface InksResponse {
@@ -237,6 +233,18 @@ export function getProviderCapabilities(provider: string): ProviderCapabilities 
         output_format: false,
         worktree: false,
         guard_preset: false,
+        resume: true,
+      };
+    case 'gemini':
+      return {
+        model: true,
+        system_prompt: false,
+        allowed_tools: false,
+        max_turns: false,
+        max_budget_usd: false,
+        output_format: true,
+        worktree: false,
+        guard_preset: true,
         resume: true,
       };
     case 'open_code':

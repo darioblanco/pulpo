@@ -173,11 +173,7 @@ mod tests {
                 model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
                 guard_preset: Some("strict".into()),
-                allowed_tools: Some(vec!["Read".into()]),
-                system_prompt: Some("Review code".into()),
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                instructions: Some("Review code".into()),
             },
         );
         let config = Config {

@@ -227,21 +227,24 @@ impl SessionManager {
         if req.guard_preset.is_none() && req.guard_config.is_none() {
             req.guard_preset = ink.guard_preset.as_ref().and_then(|g| g.parse().ok());
         }
-        if req.allowed_tools.is_none() {
-            req.allowed_tools.clone_from(&ink.allowed_tools);
+
+        // Instructions: provider-aware routing
+        if let Some(instructions) = &ink.instructions {
+            let provider = req
+                .provider
+                .or_else(|| ink.provider.as_ref().and_then(|p| p.parse().ok()))
+                .unwrap_or(Provider::Claude);
+            if crate::guard::provider_capabilities(provider).system_prompt {
+                // Native system prompt support (e.g. Claude)
+                if req.system_prompt.is_none() {
+                    req.system_prompt = Some(instructions.clone());
+                }
+            } else {
+                // Universal fallback: prepend to prompt
+                req.prompt = format!("{instructions}\n\n{}", req.prompt);
+            }
         }
-        if req.system_prompt.is_none() {
-            req.system_prompt.clone_from(&ink.system_prompt);
-        }
-        if req.max_turns.is_none() {
-            req.max_turns = ink.max_turns;
-        }
-        if req.max_budget_usd.is_none() {
-            req.max_budget_usd = ink.max_budget_usd;
-        }
-        if req.output_format.is_none() {
-            req.output_format.clone_from(&ink.output_format);
-        }
+
         Ok(req)
     }
 
@@ -1663,11 +1666,7 @@ mod tests {
                 model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
                 guard_preset: Some("strict".into()),
-                allowed_tools: Some(vec!["Read".into(), "Glob".into()]),
-                system_prompt: Some("Review code".into()),
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                instructions: Some("Review code".into()),
             },
         );
         let mgr = SessionManager {
@@ -1703,11 +1702,57 @@ mod tests {
         assert_eq!(resolved.model, Some("sonnet".into()));
         assert_eq!(resolved.mode, Some(SessionMode::Autonomous));
         assert_eq!(resolved.guard_preset, Some(GuardPreset::Strict));
-        assert_eq!(
-            resolved.allowed_tools,
-            Some(vec!["Read".into(), "Glob".into()])
-        );
+        // Claude supports system_prompt, so instructions → system_prompt
         assert_eq!(resolved.system_prompt, Some("Review code".into()));
+    }
+
+    #[test]
+    fn test_resolve_ink_instructions_prepend_for_non_claude() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "coder".into(),
+            crate::config::InkConfig {
+                description: None,
+                provider: Some("codex".into()),
+                model: None,
+                mode: None,
+                guard_preset: None,
+                instructions: Some("You are an expert coder.".into()),
+            },
+        );
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            store: unsafe_empty_store(),
+            default_guard: GuardConfig::default(),
+            default_max_turns: None,
+            default_max_budget_usd: None,
+            default_output_format: None,
+            inks,
+            event_tx: None,
+            node_name: String::new(),
+        };
+        let req = CreateSessionRequest {
+            name: None,
+            workdir: "/tmp".into(),
+            provider: None,
+            prompt: "Fix the bug".into(),
+            mode: None,
+            guard_preset: None,
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: Some("coder".into()),
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+        };
+        let resolved = mgr.resolve_ink(req).unwrap();
+        // Codex doesn't support system_prompt, so instructions are prepended to prompt
+        assert!(resolved.system_prompt.is_none());
+        assert_eq!(resolved.prompt, "You are an expert coder.\n\nFix the bug");
+        assert_eq!(resolved.provider, Some(Provider::Codex));
     }
 
     #[test]
@@ -1721,11 +1766,7 @@ mod tests {
                 model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
                 guard_preset: Some("strict".into()),
-                allowed_tools: Some(vec!["Read".into()]),
-                system_prompt: Some("Review code".into()),
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                instructions: Some("Review code".into()),
             },
         );
         let mgr = SessionManager {
@@ -1763,6 +1804,7 @@ mod tests {
         assert_eq!(resolved.mode, Some(SessionMode::Interactive));
         assert_eq!(resolved.guard_preset, Some(GuardPreset::Unrestricted));
         assert_eq!(resolved.allowed_tools, Some(vec!["Bash".into()]));
+        // Explicit system_prompt wins over ink instructions
         assert_eq!(resolved.system_prompt, Some("Explicit prompt".into()));
     }
 
@@ -1777,11 +1819,7 @@ mod tests {
                 model: None,
                 mode: None,
                 guard_preset: Some("strict".into()),
-                allowed_tools: None,
-                system_prompt: None,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                instructions: None,
             },
         );
         let mgr = SessionManager {
@@ -1824,16 +1862,12 @@ mod tests {
         inks.insert(
             "safe-agent".into(),
             crate::config::InkConfig {
-                description: None,
-                provider: None,
-                model: None,
+                description: Some("A safe agent".into()),
+                provider: Some("claude".into()),
+                model: Some("sonnet".into()),
                 mode: None,
-                guard_preset: None,
-                allowed_tools: None,
-                system_prompt: None,
-                max_turns: Some(10),
-                max_budget_usd: Some(5.0),
-                output_format: Some("json".into()),
+                guard_preset: Some("strict".into()),
+                instructions: Some("Be careful".into()),
             },
         );
         let mgr = SessionManager {
@@ -1865,9 +1899,11 @@ mod tests {
             output_format: None,
         };
         let resolved = mgr.resolve_ink(req).unwrap();
-        assert_eq!(resolved.max_turns, Some(10));
-        assert_eq!(resolved.max_budget_usd, Some(5.0));
-        assert_eq!(resolved.output_format, Some("json".into()));
+        assert_eq!(resolved.provider, Some(Provider::Claude));
+        assert_eq!(resolved.model, Some("sonnet".into()));
+        assert_eq!(resolved.guard_preset, Some(GuardPreset::Strict));
+        // Claude supports system_prompt, so instructions → system_prompt
+        assert_eq!(resolved.system_prompt, Some("Be careful".into()));
     }
 
     #[test]
@@ -1877,15 +1913,11 @@ mod tests {
             "safe-agent".into(),
             crate::config::InkConfig {
                 description: None,
-                provider: None,
-                model: None,
+                provider: Some("claude".into()),
+                model: Some("sonnet".into()),
                 mode: None,
                 guard_preset: None,
-                allowed_tools: None,
-                system_prompt: None,
-                max_turns: Some(10),
-                max_budget_usd: Some(5.0),
-                output_format: Some("json".into()),
+                instructions: Some("Ink instructions".into()),
             },
         );
         let mgr = SessionManager {
@@ -1917,10 +1949,15 @@ mod tests {
             output_format: Some("stream-json".into()),
         };
         let resolved = mgr.resolve_ink(req).unwrap();
-        // Explicit request values win over ink defaults
+        // Explicit request guardrail values pass through (ink doesn't set them)
         assert_eq!(resolved.max_turns, Some(3));
         assert_eq!(resolved.max_budget_usd, Some(1.0));
         assert_eq!(resolved.output_format, Some("stream-json".into()));
+        // Ink defaults applied for fields not set in request
+        assert_eq!(resolved.provider, Some(Provider::Claude));
+        assert_eq!(resolved.model, Some("sonnet".into()));
+        // Instructions → system_prompt (Claude provider)
+        assert_eq!(resolved.system_prompt, Some("Ink instructions".into()));
     }
 
     #[tokio::test]
@@ -1952,7 +1989,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_global_guardrail_defaults_overridden_by_ink() {
+    async fn test_global_guardrail_defaults_not_overridden_by_ink() {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -1966,11 +2003,7 @@ mod tests {
                 model: None,
                 mode: None,
                 guard_preset: None,
-                allowed_tools: None,
-                system_prompt: None,
-                max_turns: Some(10),
-                max_budget_usd: Some(2.0),
-                output_format: Some("json".into()),
+                instructions: None,
             },
         );
         let mgr = SessionManager::new(
@@ -1986,10 +2019,10 @@ mod tests {
             ..make_req("test")
         };
         let (session, _) = mgr.create_session(req).await.unwrap();
-        // Ink values win over global defaults
-        assert_eq!(session.max_turns, Some(10));
-        assert_eq!(session.max_budget_usd, Some(2.0));
-        assert_eq!(session.output_format, Some("json".into()));
+        // Ink no longer carries guardrail fields, so global defaults apply
+        assert_eq!(session.max_turns, Some(50));
+        assert_eq!(session.max_budget_usd, Some(10.0));
+        assert_eq!(session.output_format, Some("stream-json".into()));
     }
 
     #[tokio::test]

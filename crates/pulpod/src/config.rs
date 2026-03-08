@@ -37,16 +37,10 @@ pub struct InkConfig {
     pub mode: Option<String>,
     #[serde(default)]
     pub guard_preset: Option<String>,
-    #[serde(default)]
-    pub allowed_tools: Option<Vec<String>>,
-    #[serde(default)]
-    pub system_prompt: Option<String>,
-    #[serde(default)]
-    pub max_turns: Option<u32>,
-    #[serde(default)]
-    pub max_budget_usd: Option<f64>,
-    #[serde(default)]
-    pub output_format: Option<String>,
+    /// Role instructions — passed as system prompt for providers that support it,
+    /// or prepended to the prompt as a universal fallback.
+    #[serde(default, alias = "system_prompt")]
+    pub instructions: Option<String>,
 }
 
 /// Notification configuration (webhooks for status updates).
@@ -314,16 +308,12 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
             model: None,
             mode: Some("interactive".to_owned()),
             guard_preset: Some("strict".to_owned()),
-            allowed_tools: None,
-            system_prompt: Some(
+            instructions: Some(
                 "You are a senior code reviewer. Analyze the code for bugs, security issues, \
                  performance problems, and style violations. Provide actionable feedback with \
                  specific line references. Do not make changes — only review and suggest."
                     .to_owned(),
             ),
-            max_turns: Some(5),
-            max_budget_usd: Some(1.0),
-            output_format: None,
         },
     );
     inks.insert(
@@ -337,16 +327,12 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
             model: None,
             mode: Some("autonomous".to_owned()),
             guard_preset: Some("standard".to_owned()),
-            allowed_tools: None,
-            system_prompt: Some(
+            instructions: Some(
                 "You are an expert software engineer. Implement the requested changes following \
                  the project's conventions, patterns, and style. Write clean, tested, production-\
                  ready code. Run tests to verify your changes work correctly."
                     .to_owned(),
             ),
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
         },
     );
     inks.insert(
@@ -356,20 +342,16 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                 "Fast bug fixes — autonomous, focused, tight budget for small targeted changes"
                     .to_owned(),
             ),
-            provider: Some("claude".to_owned()),
+            provider: None,
             model: None,
             mode: Some("autonomous".to_owned()),
             guard_preset: Some("standard".to_owned()),
-            allowed_tools: None,
-            system_prompt: Some(
+            instructions: Some(
                 "Fix the reported bug with minimal changes. Focus on the root cause, not \
                  symptoms. Keep the diff small and targeted. Run existing tests to verify the fix \
                  doesn't break anything."
                     .to_owned(),
             ),
-            max_turns: Some(10),
-            max_budget_usd: Some(2.0),
-            output_format: None,
         },
     );
     inks.insert(
@@ -379,21 +361,17 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                 "Test writing — generate comprehensive tests for existing code, strict guards"
                     .to_owned(),
             ),
-            provider: Some("claude".to_owned()),
+            provider: None,
             model: None,
             mode: Some("autonomous".to_owned()),
             guard_preset: Some("strict".to_owned()),
-            allowed_tools: None,
-            system_prompt: Some(
+            instructions: Some(
                 "You are a test engineer. Write comprehensive tests for the specified code. \
                  Cover happy paths, edge cases, error conditions, and boundary values. Follow \
                  the project's existing test patterns and conventions. Do not modify production \
                  code — only add tests."
                     .to_owned(),
             ),
-            max_turns: Some(15),
-            max_budget_usd: Some(3.0),
-            output_format: None,
         },
     );
     inks.insert(
@@ -403,20 +381,16 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                 "Refactoring — restructure code without changing behavior, run tests after"
                     .to_owned(),
             ),
-            provider: Some("claude".to_owned()),
+            provider: None,
             model: None,
             mode: Some("autonomous".to_owned()),
             guard_preset: Some("standard".to_owned()),
-            allowed_tools: None,
-            system_prompt: Some(
+            instructions: Some(
                 "Refactor the specified code to improve readability, maintainability, and \
                  structure. Do not change external behavior. Run all tests after refactoring to \
                  verify nothing is broken. Keep commits atomic and well-described."
                     .to_owned(),
             ),
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
         },
     );
     inks
@@ -1644,11 +1618,7 @@ model = "opus"
         assert_eq!(reviewer.mode, Some("autonomous".into()));
         assert_eq!(reviewer.guard_preset, Some("strict".into()));
         assert_eq!(
-            reviewer.allowed_tools,
-            Some(vec!["Read".into(), "Glob".into(), "Grep".into()])
-        );
-        assert_eq!(
-            reviewer.system_prompt,
+            reviewer.instructions,
             Some("You are a code reviewer.".into())
         );
         assert_eq!(reviewer.description, Some("Code review specialist".into()));
@@ -1656,7 +1626,7 @@ model = "opus"
         let coder = &config.inks["coder"];
         assert_eq!(coder.provider, None);
         assert_eq!(coder.model, Some("opus".into()));
-        assert!(coder.allowed_tools.is_none());
+        assert!(coder.instructions.is_none());
         assert!(coder.description.is_none());
     }
 
@@ -1673,11 +1643,7 @@ model = "opus"
                 model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
                 guard_preset: Some("strict".into()),
-                allowed_tools: Some(vec!["Read".into()]),
-                system_prompt: Some("Review only.".into()),
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                instructions: Some("Review only.".into()),
             },
         );
         let config = Config {
@@ -1700,7 +1666,7 @@ model = "opus"
         assert_eq!(loaded.inks.len(), 5);
         let reviewer = &loaded.inks["reviewer"];
         assert_eq!(reviewer.model, Some("sonnet".into()));
-        assert_eq!(reviewer.system_prompt, Some("Review only.".into()));
+        assert_eq!(reviewer.instructions, Some("Review only.".into()));
         assert_eq!(reviewer.description, Some("Code reviewer".into()));
     }
 
@@ -1712,11 +1678,7 @@ model = "opus"
             model: None,
             mode: None,
             guard_preset: None,
-            allowed_tools: None,
-            system_prompt: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            instructions: None,
         };
         let cloned = p.clone();
         assert_eq!(format!("{p:?}"), format!("{cloned:?}"));
@@ -2073,8 +2035,8 @@ name = "test"
         let inks = built_in_inks();
         for (name, ink) in &inks {
             assert!(
-                ink.system_prompt.is_some(),
-                "Built-in ink '{name}' missing system_prompt"
+                ink.instructions.is_some(),
+                "Built-in ink '{name}' missing instructions"
             );
         }
     }
@@ -2090,11 +2052,7 @@ name = "test"
                 model: None,
                 mode: None,
                 guard_preset: None,
-                allowed_tools: None,
-                system_prompt: None,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                instructions: None,
             },
         );
         let merged = merge_built_in_inks(user_inks);
@@ -2120,11 +2078,7 @@ name = "test"
                 model: None,
                 mode: None,
                 guard_preset: None,
-                allowed_tools: None,
-                system_prompt: None,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                instructions: None,
             },
         );
         let merged = merge_built_in_inks(user_inks);
@@ -2174,11 +2128,7 @@ provider = "codex"
             model: None,
             mode: None,
             guard_preset: None,
-            allowed_tools: None,
-            system_prompt: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            instructions: None,
         };
         let toml_str = toml::to_string(&ink).unwrap();
         assert!(toml_str.contains("description = \"Test description\""));
