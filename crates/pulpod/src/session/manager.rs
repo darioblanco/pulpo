@@ -25,6 +25,7 @@ pub struct SessionManager {
     backend: Arc<dyn Backend>,
     store: Store,
     knowledge_repo: Option<KnowledgeRepo>,
+    inject_knowledge: bool,
     default_guard: GuardConfig,
     inks: HashMap<String, InkConfig>,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
@@ -42,6 +43,7 @@ impl SessionManager {
             backend,
             store,
             knowledge_repo: None,
+            inject_knowledge: true,
             default_guard,
             inks,
             event_tx: None,
@@ -50,7 +52,8 @@ impl SessionManager {
     }
 
     #[must_use]
-    pub fn with_knowledge_repo(mut self, repo: KnowledgeRepo) -> Self {
+    pub fn with_knowledge_repo(mut self, repo: KnowledgeRepo, inject: bool) -> Self {
+        self.inject_knowledge = inject;
         self.knowledge_repo = Some(repo);
         self
     }
@@ -106,6 +109,7 @@ impl SessionManager {
         req: CreateSessionRequest,
     ) -> Result<(Session, Vec<String>)> {
         let req = self.resolve_ink(req)?;
+        let req = self.inject_knowledge_context(req);
         validate_workdir(&req.workdir)?;
         let id = Uuid::new_v4();
         let provider = req.provider.unwrap_or(Provider::Claude);
@@ -242,6 +246,39 @@ impl SessionManager {
         }
 
         Ok(req)
+    }
+
+    /// Inject knowledge context into the request `prompt`/`system_prompt`.
+    /// Adds a compact summary of past findings plus the repo path for deeper
+    /// exploration, and instructs the agent to write back discoveries.
+    fn inject_knowledge_context(&self, mut req: CreateSessionRequest) -> CreateSessionRequest {
+        if !self.inject_knowledge {
+            return req;
+        }
+        let Some(repo) = &self.knowledge_repo else {
+            return req;
+        };
+
+        let items = repo
+            .query_context(Some(&req.workdir), req.ink.as_deref(), 5)
+            .unwrap_or_default();
+
+        let root = repo.root().display();
+        let context = build_knowledge_context(&items, &root.to_string(), &req.workdir);
+
+        let provider = req.provider.unwrap_or(Provider::Claude);
+        if crate::guard::provider_capabilities(provider).system_prompt {
+            let existing = req.system_prompt.unwrap_or_default();
+            req.system_prompt = Some(if existing.is_empty() {
+                context
+            } else {
+                format!("{existing}\n\n{context}")
+            });
+        } else {
+            req.prompt = format!("{context}\n\n{}", req.prompt);
+        }
+
+        req
     }
 
     pub async fn get_session(&self, id: &str) -> Result<Option<Session>> {
@@ -500,6 +537,67 @@ pub(crate) fn build_command(
             format!("bash -c '{inner}; echo \"[pulpo] Agent exited ($?)\"; exec bash'")
         }
     }
+}
+
+use pulpo_common::knowledge::Knowledge;
+
+/// Build a knowledge context block for injection into agent prompts.
+///
+/// Contains three sections:
+/// 1. A compact summary of the most relevant past findings
+/// 2. The knowledge repo path for deeper exploration
+/// 3. Write-back instructions so the agent documents new discoveries
+fn build_knowledge_context(items: &[Knowledge], repo_root: &str, workdir: &str) -> String {
+    use std::fmt::Write;
+    let mut ctx = String::new();
+
+    ctx.push_str("## Knowledge from previous sessions\n\n");
+
+    if items.is_empty() {
+        ctx.push_str("No previous findings for this repo/ink.\n");
+    } else {
+        for item in items {
+            let kind = match item.kind {
+                pulpo_common::knowledge::KnowledgeKind::Summary => "summary",
+                pulpo_common::knowledge::KnowledgeKind::Failure => "failure",
+            };
+            let _ = writeln!(ctx, "- [{kind}] {}", item.title);
+            // Include body if short enough (max 200 chars)
+            if !item.body.is_empty() && item.body.len() <= 200 {
+                let _ = writeln!(ctx, "  {}", item.body);
+            }
+        }
+    }
+
+    let slug = std::path::Path::new(workdir)
+        .file_name()
+        .map_or_else(|| workdir.to_owned(), |n| n.to_string_lossy().to_string());
+
+    let _ = write!(
+        ctx,
+        "\nKnowledge repo: {repo_root}\n\
+         Repo-scoped files: {repo_root}/repos/{slug}/\n\
+         Global files: {repo_root}/global/\n\n\
+         When you discover important patterns, gotchas, or environment requirements \
+         about this codebase, save them as JSON files in the repo-scoped directory above. \
+         Use this format:\n\
+         ```json\n\
+         {{\n  \
+           \"id\": \"<uuid>\",\n  \
+           \"session_id\": \"<your-session-id>\",\n  \
+           \"kind\": \"summary\",\n  \
+           \"scope_repo\": \"{workdir}\",\n  \
+           \"scope_ink\": null,\n  \
+           \"title\": \"Short description of the finding\",\n  \
+           \"body\": \"Detailed explanation\",\n  \
+           \"tags\": [],\n  \
+           \"relevance\": 0.5,\n  \
+           \"created_at\": \"<ISO 8601 timestamp>\"\n\
+         }}\n\
+         ```"
+    );
+
+    ctx
 }
 
 #[cfg(test)]
@@ -1496,6 +1594,7 @@ mod tests {
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             knowledge_repo: None,
+            inject_knowledge: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1514,6 +1613,7 @@ mod tests {
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             knowledge_repo: None,
+            inject_knowledge: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1546,6 +1646,7 @@ mod tests {
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             knowledge_repo: None,
+            inject_knowledge: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1581,6 +1682,7 @@ mod tests {
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             knowledge_repo: None,
+            inject_knowledge: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1621,6 +1723,7 @@ mod tests {
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             knowledge_repo: None,
+            inject_knowledge: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1655,6 +1758,7 @@ mod tests {
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             knowledge_repo: None,
+            inject_knowledge: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1699,6 +1803,7 @@ mod tests {
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             knowledge_repo: None,
+            inject_knowledge: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1732,6 +1837,7 @@ mod tests {
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             knowledge_repo: None,
+            inject_knowledge: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1766,6 +1872,7 @@ mod tests {
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             knowledge_repo: None,
+            inject_knowledge: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2078,5 +2185,224 @@ mod tests {
             .unwrap();
         let result = mgr.delete_session("test").await;
         assert!(result.is_err());
+    }
+
+    // -- build_knowledge_context tests --
+
+    fn make_knowledge_item(title: &str, kind: pulpo_common::knowledge::KnowledgeKind) -> Knowledge {
+        Knowledge {
+            id: Uuid::new_v4(),
+            session_id: Uuid::new_v4(),
+            kind,
+            scope_repo: Some("/tmp/repo".into()),
+            scope_ink: None,
+            title: title.into(),
+            body: "Details here.".into(),
+            tags: vec![],
+            relevance: 0.5,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn test_build_knowledge_context_empty() {
+        let ctx = build_knowledge_context(&[], "/data/knowledge", "/tmp/repo");
+        assert!(ctx.contains("No previous findings"));
+        assert!(ctx.contains("Knowledge repo: /data/knowledge"));
+        assert!(ctx.contains("repos/repo/"));
+        assert!(ctx.contains("global/"));
+        assert!(ctx.contains("save them as JSON"));
+    }
+
+    #[test]
+    fn test_build_knowledge_context_with_items() {
+        let items = vec![
+            make_knowledge_item(
+                "Auth race condition",
+                pulpo_common::knowledge::KnowledgeKind::Failure,
+            ),
+            make_knowledge_item(
+                "Uses pnpm not npm",
+                pulpo_common::knowledge::KnowledgeKind::Summary,
+            ),
+        ];
+        let ctx = build_knowledge_context(&items, "/data/knowledge", "/tmp/repo");
+        assert!(ctx.contains("[failure] Auth race condition"));
+        assert!(ctx.contains("[summary] Uses pnpm not npm"));
+        assert!(ctx.contains("Details here."));
+        assert!(!ctx.contains("No previous findings"));
+    }
+
+    #[test]
+    fn test_build_knowledge_context_long_body_excluded() {
+        let mut item =
+            make_knowledge_item("Long body", pulpo_common::knowledge::KnowledgeKind::Summary);
+        item.body = "x".repeat(201);
+        let ctx = build_knowledge_context(&[item], "/data/knowledge", "/tmp/repo");
+        assert!(ctx.contains("[summary] Long body"));
+        assert!(!ctx.contains(&"x".repeat(201)));
+    }
+
+    #[test]
+    fn test_build_knowledge_context_repo_slug() {
+        let ctx = build_knowledge_context(&[], "/data/knowledge", "/home/user/my-project");
+        assert!(ctx.contains("repos/my-project/"));
+    }
+
+    #[test]
+    fn test_build_knowledge_context_write_back_format() {
+        let ctx = build_knowledge_context(&[], "/data/knowledge", "/tmp/repo");
+        assert!(ctx.contains("\"kind\": \"summary\""));
+        assert!(ctx.contains("\"scope_repo\": \"/tmp/repo\""));
+        assert!(ctx.contains("\"relevance\": 0.5"));
+    }
+
+    // -- inject_knowledge_context tests --
+
+    #[test]
+    fn test_inject_knowledge_disabled() {
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: None,
+            inject_knowledge: false,
+            store: unsafe_empty_store(),
+            default_guard: GuardConfig::default(),
+            inks: HashMap::new(),
+            event_tx: None,
+            node_name: String::new(),
+        };
+        let req = make_req("test");
+        let result = mgr.inject_knowledge_context(req);
+        // No modification when disabled
+        assert_eq!(result.prompt, "test");
+        assert_eq!(result.system_prompt, None);
+    }
+
+    #[test]
+    fn test_inject_knowledge_no_repo() {
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: None,
+            inject_knowledge: true,
+            store: unsafe_empty_store(),
+            default_guard: GuardConfig::default(),
+            inks: HashMap::new(),
+            event_tx: None,
+            node_name: String::new(),
+        };
+        let req = make_req("test");
+        let result = mgr.inject_knowledge_context(req);
+        assert_eq!(result.prompt, "test");
+        assert_eq!(result.system_prompt, None);
+    }
+
+    async fn async_store() -> Store {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        store
+    }
+
+    #[tokio::test]
+    async fn test_inject_knowledge_claude_appends_system_prompt() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        repo.save(&make_knowledge_item(
+            "DB needs migration",
+            pulpo_common::knowledge::KnowledgeKind::Summary,
+        ))
+        .await
+        .unwrap();
+
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: Some(repo),
+            inject_knowledge: true,
+            store: async_store().await,
+            default_guard: GuardConfig::default(),
+            inks: HashMap::new(),
+            event_tx: None,
+            node_name: String::new(),
+        };
+        let mut req = make_req("test");
+        req.provider = Some(Provider::Claude);
+        req.workdir = "/tmp/repo".into();
+        let result = mgr.inject_knowledge_context(req);
+        // Claude: knowledge goes to system_prompt
+        let sp = result.system_prompt.unwrap();
+        assert!(sp.contains("DB needs migration"));
+        assert!(sp.contains("Knowledge repo:"));
+    }
+
+    #[tokio::test]
+    async fn test_inject_knowledge_codex_prepends_prompt() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        repo.save(&make_knowledge_item(
+            "Use pnpm",
+            pulpo_common::knowledge::KnowledgeKind::Summary,
+        ))
+        .await
+        .unwrap();
+
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: Some(repo),
+            inject_knowledge: true,
+            store: async_store().await,
+            default_guard: GuardConfig::default(),
+            inks: HashMap::new(),
+            event_tx: None,
+            node_name: String::new(),
+        };
+        let mut req = make_req("test");
+        req.provider = Some(Provider::Codex);
+        req.workdir = "/tmp/repo".into();
+        let result = mgr.inject_knowledge_context(req);
+        // Codex: knowledge prepended to prompt
+        assert!(
+            result
+                .prompt
+                .starts_with("## Knowledge from previous sessions")
+        );
+        assert!(result.prompt.contains("Use pnpm"));
+        assert!(result.prompt.ends_with("test"));
+        assert!(result.system_prompt.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_inject_knowledge_preserves_existing_system_prompt() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: Some(repo),
+            inject_knowledge: true,
+            store: async_store().await,
+            default_guard: GuardConfig::default(),
+            inks: HashMap::new(),
+            event_tx: None,
+            node_name: String::new(),
+        };
+        let mut req = make_req("test");
+        req.provider = Some(Provider::Claude);
+        req.workdir = "/tmp/repo".into();
+        req.system_prompt = Some("Be careful with auth module.".into());
+        let result = mgr.inject_knowledge_context(req);
+        let sp = result.system_prompt.unwrap();
+        // Existing system prompt preserved, knowledge appended
+        assert!(sp.starts_with("Be careful with auth module."));
+        assert!(sp.contains("Knowledge from previous sessions"));
     }
 }

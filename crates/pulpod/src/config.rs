@@ -52,6 +52,15 @@ pub struct KnowledgeConfig {
     /// to this remote after each commit, enabling multi-node knowledge sharing.
     #[serde(default)]
     pub remote: Option<String>,
+    /// Inject relevant knowledge into agent prompts at session spawn time.
+    /// Includes a compact summary of past findings plus the repo path for
+    /// deeper exploration. Defaults to true when absent.
+    #[serde(default = "default_inject")]
+    pub inject: bool,
+}
+
+const fn default_inject() -> bool {
+    true
 }
 
 /// Notification configuration (webhooks for status updates).
@@ -2094,6 +2103,31 @@ provider = "codex"
         assert_eq!(
             deserialized.description.as_deref(),
             Some("Test description")
+        );
+    }
+
+    #[test]
+    fn test_knowledge_config_default_inject_true() {
+        let config: KnowledgeConfig = toml::from_str("").unwrap();
+        assert!(config.inject);
+        assert!(config.remote.is_none());
+    }
+
+    #[test]
+    fn test_knowledge_config_inject_disabled() {
+        let config: KnowledgeConfig = toml::from_str("inject = false").unwrap();
+        assert!(!config.inject);
+    }
+
+    #[test]
+    fn test_knowledge_config_with_remote_and_inject() {
+        let config: KnowledgeConfig =
+            toml::from_str("remote = \"git@github.com:user/knowledge.git\"\ninject = true")
+                .unwrap();
+        assert!(config.inject);
+        assert_eq!(
+            config.remote.as_deref(),
+            Some("git@github.com:user/knowledge.git")
         );
     }
 }

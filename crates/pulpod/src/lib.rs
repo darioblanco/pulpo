@@ -173,7 +173,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         knowledge::repo::KnowledgeRepo::init(&config.data_dir(), config.knowledge.remote.clone())
             .await?;
     let manager = SessionManager::new(backend, store, default_guard, config.inks.clone())
-        .with_knowledge_repo(knowledge_repo)
+        .with_knowledge_repo(knowledge_repo, config.knowledge.inject)
         .with_event_tx(event_tx.clone(), node_name);
 
     let peer_registry = peers::PeerRegistry::new(&config.peers);
@@ -472,7 +472,7 @@ pub async fn build_mcp_server(cli: &Cli) -> Result<mcp::PulpoMcp> {
             .await?;
     let manager =
         session::manager::SessionManager::new(backend, store, default_guard, config.inks.clone())
-            .with_knowledge_repo(knowledge_repo);
+            .with_knowledge_repo(knowledge_repo, config.knowledge.inject);
     let peer_registry = peers::PeerRegistry::new(&config.peers);
 
     Ok(mcp::PulpoMcp::new(manager, peer_registry, config))

@@ -121,7 +121,7 @@ mod tests {
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
         )
-        .with_knowledge_repo(knowledge_repo.clone());
+        .with_knowledge_repo(knowledge_repo.clone(), true);
         let peer_registry = PeerRegistry::new(&HashMap::new());
         (
             AppState::new(config, manager, peer_registry),
