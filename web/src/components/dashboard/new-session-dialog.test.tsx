@@ -93,7 +93,6 @@ describe('NewSessionDialog', () => {
         prompt: 'Fix the bug',
         provider: 'claude',
         mode: 'interactive',
-        guard_preset: 'standard',
       });
       expect(onCreated).toHaveBeenCalledWith(sessionResult);
     });
@@ -118,7 +117,6 @@ describe('NewSessionDialog', () => {
         prompt: 'Fix it',
         provider: 'claude',
         mode: 'interactive',
-        guard_preset: 'standard',
       });
     });
   });
@@ -195,7 +193,6 @@ describe('NewSessionDialog', () => {
         prompt: 'Fix it',
         provider: 'claude',
         mode: 'interactive',
-        guard_preset: 'standard',
       });
     });
   });
@@ -237,7 +234,7 @@ describe('NewSessionDialog', () => {
           description: 'Code review',
           provider: 'claude',
           mode: 'interactive',
-          guard_preset: 'strict',
+          unrestricted: false,
           instructions: null,
         },
       },
@@ -257,7 +254,7 @@ describe('NewSessionDialog', () => {
           description: 'Code review',
           provider: 'claude',
           mode: 'interactive',
-          guard_preset: 'strict',
+          unrestricted: false,
           instructions: null,
         },
       },
@@ -289,7 +286,7 @@ describe('NewSessionDialog', () => {
           description: 'Code review',
           provider: 'codex',
           mode: 'autonomous',
-          guard_preset: 'strict',
+          unrestricted: false,
           instructions: null,
         },
       },
@@ -328,8 +325,11 @@ describe('NewSessionDialog', () => {
           ink: 'reviewer',
           provider: 'codex',
           mode: 'autonomous',
-          guard_preset: 'strict',
         }),
+      );
+      // unrestricted is false, so it should NOT be in the request
+      expect(mockCreateSession).toHaveBeenCalledWith(
+        expect.not.objectContaining({ unrestricted: expect.anything() }),
       );
     });
   });
@@ -341,7 +341,7 @@ describe('NewSessionDialog', () => {
           description: 'Code review',
           provider: 'codex',
           mode: 'autonomous',
-          guard_preset: 'strict',
+          unrestricted: false,
           instructions: null,
         },
       },
@@ -368,7 +368,8 @@ describe('NewSessionDialog', () => {
       expect(summary).toBeInTheDocument();
       expect(summary.textContent).toContain('codex');
       expect(summary.textContent).toContain('autonomous');
-      expect(summary.textContent).toContain('guards: strict');
+      // unrestricted is false, so 'unrestricted' text should NOT appear
+      expect(summary.textContent).not.toContain('unrestricted');
     });
   });
 

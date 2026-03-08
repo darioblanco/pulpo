@@ -1,4 +1,4 @@
-use pulpo_common::guard::{GuardConfig, GuardPreset};
+use pulpo_common::guard::GuardConfig;
 use pulpo_common::session::{Provider, SessionMode};
 
 /// Provider-agnostic parameter set for spawning an agent session.
@@ -35,8 +35,8 @@ pub fn shell_escape(s: &str) -> String {
     out
 }
 
-pub fn is_unrestricted(guards: &GuardConfig) -> bool {
-    guards.preset == GuardPreset::Unrestricted
+pub const fn is_unrestricted(guards: &GuardConfig) -> bool {
+    guards.unrestricted
 }
 
 /// Capabilities that a provider supports for `SpawnParams` fields.
@@ -50,7 +50,7 @@ pub struct ProviderCapabilities {
     pub max_budget_usd: bool,
     pub output_format: bool,
     pub worktree: bool,
-    pub guard_preset: bool,
+    pub unrestricted: bool,
     pub resume: bool,
 }
 
@@ -66,7 +66,7 @@ pub const fn provider_capabilities(provider: Provider) -> ProviderCapabilities {
             max_budget_usd: true,
             output_format: true,
             worktree: true,
-            guard_preset: true,
+            unrestricted: true,
             resume: true,
         },
         Provider::Codex => ProviderCapabilities {
@@ -77,7 +77,7 @@ pub const fn provider_capabilities(provider: Provider) -> ProviderCapabilities {
             max_budget_usd: false,
             output_format: false,
             worktree: false,
-            guard_preset: false,
+            unrestricted: false,
             resume: true,
         },
         Provider::Gemini => ProviderCapabilities {
@@ -88,7 +88,7 @@ pub const fn provider_capabilities(provider: Provider) -> ProviderCapabilities {
             max_budget_usd: false,
             output_format: true,
             worktree: false,
-            guard_preset: true,
+            unrestricted: true,
             resume: true,
         },
         Provider::OpenCode => ProviderCapabilities {
@@ -99,7 +99,7 @@ pub const fn provider_capabilities(provider: Provider) -> ProviderCapabilities {
             max_budget_usd: false,
             output_format: true,
             worktree: false,
-            guard_preset: false,
+            unrestricted: false,
             resume: false,
         },
     }
@@ -193,20 +193,14 @@ pub fn claude_permission_flags(params: &SpawnParams) -> Vec<String> {
     } else {
         let tools = params.explicit_tools.as_ref().map_or_else(
             || {
-                let mut default_tools = vec![
+                vec![
                     "Edit".to_owned(),
                     "Write".to_owned(),
                     "Read".to_owned(),
                     "Glob".to_owned(),
                     "Grep".to_owned(),
-                ];
-                match params.guards.preset {
-                    GuardPreset::Standard | GuardPreset::Unrestricted => {
-                        default_tools.push("Bash".into());
-                    }
-                    GuardPreset::Strict => {}
-                }
-                default_tools
+                    "Bash".to_owned(),
+                ]
             },
             Clone::clone,
         );
@@ -313,13 +307,9 @@ pub fn build_codex_interactive_flags(params: &SpawnParams) -> Vec<String> {
 
 // -- Gemini flag builders --
 
-/// Map a `GuardPreset` to Gemini's `--approval-mode` value.
+/// Map the guard config to Gemini's `--approval-mode` value.
 const fn gemini_approval_mode(guards: &GuardConfig) -> &'static str {
-    match guards.preset {
-        GuardPreset::Unrestricted => "yolo",
-        GuardPreset::Standard => "default",
-        GuardPreset::Strict => "plan",
-    }
+    if guards.unrestricted { "yolo" } else { "plan" }
 }
 
 /// Common flags shared between Gemini autonomous and interactive modes.
@@ -398,20 +388,14 @@ mod tests {
         }
     }
 
-    fn strict_guards() -> GuardConfig {
+    fn restricted_guards() -> GuardConfig {
         GuardConfig {
-            preset: GuardPreset::Strict,
+            unrestricted: false,
         }
-    }
-
-    fn standard_guards() -> GuardConfig {
-        GuardConfig::default()
     }
 
     fn unrestricted_guards() -> GuardConfig {
-        GuardConfig {
-            preset: GuardPreset::Unrestricted,
-        }
+        GuardConfig { unrestricted: true }
     }
 
     #[test]
@@ -444,21 +428,8 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_flags_strict() {
-        let p = params("Fix bug", strict_guards());
-        let flags = build_claude_flags(&p);
-        assert!(!flags.contains(&"--dangerously-skip-permissions".into()));
-        assert!(flags.contains(&"--allowedTools".into()));
-        let tools_idx = flags.iter().position(|f| f == "--allowedTools").unwrap();
-        let tools = &flags[tools_idx + 1];
-        assert!(!tools.contains("Bash"));
-        assert!(tools.contains("Read"));
-        assert!(tools.contains("Edit"));
-    }
-
-    #[test]
-    fn test_claude_flags_standard() {
-        let p = params("test", standard_guards());
+    fn test_claude_flags_restricted() {
+        let p = params("Fix bug", restricted_guards());
         let flags = build_claude_flags(&p);
         assert!(!flags.contains(&"--dangerously-skip-permissions".into()));
         assert!(flags.contains(&"--allowedTools".into()));
@@ -466,11 +437,12 @@ mod tests {
         let tools = &flags[tools_idx + 1];
         assert!(tools.contains("Bash"));
         assert!(tools.contains("Read"));
+        assert!(tools.contains("Edit"));
     }
 
     #[test]
     fn test_codex_flags() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_codex_flags(&p);
         assert!(flags.contains(&"-q".into()));
         assert!(flags.contains(&"'test'".into()));
@@ -478,7 +450,7 @@ mod tests {
 
     #[test]
     fn test_codex_interactive_flags() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_codex_interactive_flags(&p);
         assert!(flags.contains(&"'test'".into()));
         assert!(!flags.contains(&"-q".into()));
@@ -489,7 +461,7 @@ mod tests {
     fn test_codex_flags_with_model() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("gpt-4".into()),
             ..SpawnParams::default()
         };
@@ -505,7 +477,7 @@ mod tests {
     fn test_claude_flags_with_explicit_tools() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             explicit_tools: Some(vec!["Read".into(), "Grep".into()]),
             ..SpawnParams::default()
         };
@@ -533,7 +505,7 @@ mod tests {
     fn test_claude_flags_with_model() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("opus".into()),
             ..SpawnParams::default()
         };
@@ -560,7 +532,7 @@ mod tests {
     fn test_claude_flags_with_system_prompt() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             system_prompt: Some("Be concise".into()),
             ..SpawnParams::default()
         };
@@ -586,7 +558,7 @@ mod tests {
     fn test_claude_flags_all_new_flags() {
         let p = SpawnParams {
             prompt: "Fix it".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             explicit_tools: Some(vec!["Read".into(), "Write".into()]),
             model: Some("opus".into()),
             system_prompt: Some("Review only".into()),
@@ -605,7 +577,7 @@ mod tests {
     fn test_claude_flags_with_max_turns() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             max_turns: Some(10),
             ..SpawnParams::default()
         };
@@ -618,7 +590,7 @@ mod tests {
     fn test_claude_flags_with_budget() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             max_budget_usd: Some(5.0),
             ..SpawnParams::default()
         };
@@ -631,7 +603,7 @@ mod tests {
     fn test_claude_flags_with_output_format() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             output_format: Some("json".into()),
             ..SpawnParams::default()
         };
@@ -642,7 +614,7 @@ mod tests {
 
     #[test]
     fn test_claude_interactive_flags_no_p() {
-        let p = params("Fix bug", standard_guards());
+        let p = params("Fix bug", restricted_guards());
         let flags = build_claude_interactive_flags(&p);
         assert!(!flags.contains(&"-p".into()));
         assert!(flags.contains(&"'Fix bug'".into()));
@@ -661,7 +633,7 @@ mod tests {
     fn test_claude_worktree_flag_in_autonomous() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             worktree: Some("my-session".into()),
             ..SpawnParams::default()
         };
@@ -674,7 +646,7 @@ mod tests {
     fn test_claude_worktree_flag_in_interactive() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             worktree: Some("my-session".into()),
             ..SpawnParams::default()
         };
@@ -686,7 +658,7 @@ mod tests {
 
     #[test]
     fn test_claude_no_worktree_flag_when_none() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_claude_flags(&p);
         assert!(!flags.contains(&"--worktree".into()));
     }
@@ -695,7 +667,7 @@ mod tests {
     fn test_codex_ignores_worktree() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             worktree: Some("my-session".into()),
             ..SpawnParams::default()
         };
@@ -707,14 +679,14 @@ mod tests {
 
     #[test]
     fn test_codex_interactive_full_auto_is_first() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_codex_interactive_flags(&p);
         assert_eq!(flags[0], "--full-auto");
     }
 
     #[test]
     fn test_codex_autonomous_no_full_auto() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_codex_flags(&p);
         assert!(!flags.contains(&"--full-auto".into()));
     }
@@ -723,7 +695,7 @@ mod tests {
     fn test_claude_interactive_flags_no_output_format() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             output_format: Some("json".into()),
             ..SpawnParams::default()
         };
@@ -740,7 +712,7 @@ mod tests {
 
     #[test]
     fn test_build_flags_claude_interactive() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_flags(Provider::Claude, SessionMode::Interactive, &p);
         assert!(flags.contains(&"--allowedTools".into()));
         assert!(!flags.contains(&"-p".into()));
@@ -748,14 +720,14 @@ mod tests {
 
     #[test]
     fn test_build_flags_codex_autonomous() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_flags(Provider::Codex, SessionMode::Autonomous, &p);
         assert!(flags.contains(&"-q".into()));
     }
 
     #[test]
     fn test_build_flags_codex_interactive() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_flags(Provider::Codex, SessionMode::Interactive, &p);
         assert!(flags.contains(&"--full-auto".into()));
     }
@@ -767,14 +739,8 @@ mod tests {
     }
 
     #[test]
-    fn test_is_unrestricted_false_standard() {
-        let guards = standard_guards();
-        assert!(!is_unrestricted(&guards));
-    }
-
-    #[test]
-    fn test_is_unrestricted_false_strict() {
-        let guards = strict_guards();
+    fn test_is_unrestricted_false() {
+        let guards = restricted_guards();
         assert!(!is_unrestricted(&guards));
     }
 
@@ -822,7 +788,7 @@ mod tests {
     fn test_claude_interactive_resume_flags() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("sonnet".into()),
             conversation_id: Some("conv-123".into()),
             worktree: Some("my-session".into()),
@@ -861,7 +827,7 @@ mod tests {
     fn test_claude_autonomous_resume_flags() {
         let p = SpawnParams {
             prompt: "Fix bug".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("opus".into()),
             conversation_id: Some("conv-789".into()),
             system_prompt: Some("Review only".into()),
@@ -882,7 +848,7 @@ mod tests {
     fn test_claude_interactive_resume_no_model() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             conversation_id: Some("conv-000".into()),
             ..SpawnParams::default()
         };
@@ -897,7 +863,7 @@ mod tests {
     fn test_codex_interactive_resume_flags() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("gpt-4".into()),
             conversation_id: Some("conv-codex-1".into()),
             ..SpawnParams::default()
@@ -916,7 +882,7 @@ mod tests {
     fn test_codex_autonomous_resume_flags() {
         let p = SpawnParams {
             prompt: "Fix bug".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("gpt-4".into()),
             conversation_id: Some("conv-codex-2".into()),
             ..SpawnParams::default()
@@ -936,7 +902,7 @@ mod tests {
     fn test_codex_interactive_resume_no_model() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             conversation_id: Some("conv-codex-3".into()),
             ..SpawnParams::default()
         };
@@ -950,7 +916,7 @@ mod tests {
 
     #[test]
     fn test_opencode_autonomous_flags() {
-        let p = params("Fix the bug", standard_guards());
+        let p = params("Fix the bug", restricted_guards());
         let flags = build_opencode_flags(&p);
         assert_eq!(flags[0], "-p");
         assert_eq!(flags[1], "'Fix the bug'");
@@ -961,7 +927,7 @@ mod tests {
     fn test_opencode_autonomous_with_output_format() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             output_format: Some("json".into()),
             ..SpawnParams::default()
         };
@@ -972,7 +938,7 @@ mod tests {
 
     #[test]
     fn test_opencode_interactive_flags_empty() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_opencode_interactive_flags(&p);
         assert!(flags.is_empty());
     }
@@ -981,7 +947,7 @@ mod tests {
     fn test_opencode_interactive_with_output_format() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             output_format: Some("text".into()),
             ..SpawnParams::default()
         };
@@ -993,7 +959,7 @@ mod tests {
     fn test_opencode_ignores_model() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("gpt-4".into()),
             ..SpawnParams::default()
         };
@@ -1007,7 +973,7 @@ mod tests {
     fn test_opencode_ignores_system_prompt() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             system_prompt: Some("Be concise".into()),
             ..SpawnParams::default()
         };
@@ -1019,7 +985,7 @@ mod tests {
     fn test_opencode_ignores_worktree() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             worktree: Some("my-session".into()),
             ..SpawnParams::default()
         };
@@ -1029,14 +995,14 @@ mod tests {
 
     #[test]
     fn test_build_flags_opencode_autonomous() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_flags(Provider::OpenCode, SessionMode::Autonomous, &p);
         assert!(flags.contains(&"-p".into()));
     }
 
     #[test]
     fn test_build_flags_opencode_interactive() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_flags(Provider::OpenCode, SessionMode::Interactive, &p);
         assert!(flags.is_empty());
     }
@@ -1045,19 +1011,19 @@ mod tests {
 
     #[test]
     fn test_gemini_autonomous_flags() {
-        let p = params("Fix the bug", standard_guards());
+        let p = params("Fix the bug", restricted_guards());
         let flags = build_gemini_flags(&p);
         assert_eq!(flags[0], "-p");
         assert_eq!(flags[1], "'Fix the bug'");
         assert!(flags.contains(&"--approval-mode".into()));
-        assert!(flags.contains(&"default".into()));
+        assert!(flags.contains(&"plan".into()));
     }
 
     #[test]
     fn test_gemini_autonomous_with_model() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("gemini-2.5-pro".into()),
             ..SpawnParams::default()
         };
@@ -1070,7 +1036,7 @@ mod tests {
     fn test_gemini_autonomous_with_output_format() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             output_format: Some("json".into()),
             ..SpawnParams::default()
         };
@@ -1088,8 +1054,8 @@ mod tests {
     }
 
     #[test]
-    fn test_gemini_autonomous_strict() {
-        let p = params("test", strict_guards());
+    fn test_gemini_autonomous_restricted() {
+        let p = params("test", restricted_guards());
         let flags = build_gemini_flags(&p);
         assert!(flags.contains(&"--approval-mode".into()));
         assert!(flags.contains(&"plan".into()));
@@ -1097,19 +1063,19 @@ mod tests {
 
     #[test]
     fn test_gemini_interactive_flags() {
-        let p = params("Fix the bug", standard_guards());
+        let p = params("Fix the bug", restricted_guards());
         let flags = build_gemini_interactive_flags(&p);
         assert_eq!(flags[0], "-i");
         assert_eq!(flags[1], "'Fix the bug'");
         assert!(flags.contains(&"--approval-mode".into()));
-        assert!(flags.contains(&"default".into()));
+        assert!(flags.contains(&"plan".into()));
     }
 
     #[test]
     fn test_gemini_interactive_with_model() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("gemini-2.5-flash".into()),
             ..SpawnParams::default()
         };
@@ -1122,7 +1088,7 @@ mod tests {
     fn test_gemini_interactive_no_output_format() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             output_format: Some("json".into()),
             ..SpawnParams::default()
         };
@@ -1134,7 +1100,7 @@ mod tests {
     fn test_gemini_autonomous_resume_flags() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("gemini-2.5-pro".into()),
             conversation_id: Some("latest".into()),
             ..SpawnParams::default()
@@ -1167,7 +1133,7 @@ mod tests {
     fn test_gemini_ignores_system_prompt() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             system_prompt: Some("Be concise".into()),
             ..SpawnParams::default()
         };
@@ -1179,7 +1145,7 @@ mod tests {
     fn test_gemini_ignores_worktree() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             worktree: Some("my-session".into()),
             ..SpawnParams::default()
         };
@@ -1189,7 +1155,7 @@ mod tests {
 
     #[test]
     fn test_build_flags_gemini_autonomous() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_flags(Provider::Gemini, SessionMode::Autonomous, &p);
         assert!(flags.contains(&"-p".into()));
         assert!(flags.contains(&"--approval-mode".into()));
@@ -1197,7 +1163,7 @@ mod tests {
 
     #[test]
     fn test_build_flags_gemini_interactive() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let flags = build_flags(Provider::Gemini, SessionMode::Interactive, &p);
         assert!(flags.contains(&"-i".into()));
         assert!(flags.contains(&"--approval-mode".into()));
@@ -1215,7 +1181,7 @@ mod tests {
         assert!(caps.max_budget_usd);
         assert!(caps.output_format);
         assert!(caps.worktree);
-        assert!(caps.guard_preset);
+        assert!(caps.unrestricted);
         assert!(caps.resume);
     }
 
@@ -1229,7 +1195,7 @@ mod tests {
         assert!(!caps.max_budget_usd);
         assert!(!caps.output_format);
         assert!(!caps.worktree);
-        assert!(!caps.guard_preset);
+        assert!(!caps.unrestricted);
         assert!(caps.resume);
     }
 
@@ -1243,7 +1209,7 @@ mod tests {
         assert!(!caps.max_budget_usd);
         assert!(caps.output_format);
         assert!(!caps.worktree);
-        assert!(caps.guard_preset);
+        assert!(caps.unrestricted);
         assert!(caps.resume);
     }
 
@@ -1257,7 +1223,7 @@ mod tests {
         assert!(!caps.max_budget_usd);
         assert!(caps.output_format);
         assert!(!caps.worktree);
-        assert!(!caps.guard_preset);
+        assert!(!caps.unrestricted);
         assert!(!caps.resume);
     }
 
@@ -1276,7 +1242,7 @@ mod tests {
     fn test_check_capability_warnings_claude_no_warnings() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("opus".into()),
             system_prompt: Some("Be concise".into()),
             max_turns: Some(10),
@@ -1293,7 +1259,7 @@ mod tests {
     fn test_check_capability_warnings_codex_model_ok() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("gpt-4".into()),
             ..SpawnParams::default()
         };
@@ -1305,7 +1271,7 @@ mod tests {
     fn test_check_capability_warnings_codex_unsupported() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             system_prompt: Some("Be concise".into()),
             max_turns: Some(10),
             max_budget_usd: Some(5.0),
@@ -1328,7 +1294,7 @@ mod tests {
     fn test_check_capability_warnings_gemini_unsupported() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             system_prompt: Some("Be concise".into()),
             max_turns: Some(10),
             max_budget_usd: Some(5.0),
@@ -1349,7 +1315,7 @@ mod tests {
     fn test_check_capability_warnings_gemini_model_ok() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("gemini-2.5-pro".into()),
             output_format: Some("json".into()),
             ..SpawnParams::default()
@@ -1362,7 +1328,7 @@ mod tests {
     fn test_check_capability_warnings_opencode_all() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             model: Some("gpt-4".into()),
             system_prompt: Some("Be concise".into()),
             max_turns: Some(10),
@@ -1385,7 +1351,7 @@ mod tests {
     fn test_check_capability_warnings_opencode_output_format_ok() {
         let p = SpawnParams {
             prompt: "test".into(),
-            guards: standard_guards(),
+            guards: restricted_guards(),
             output_format: Some("json".into()),
             ..SpawnParams::default()
         };
@@ -1395,7 +1361,7 @@ mod tests {
 
     #[test]
     fn test_check_capability_warnings_no_params_no_warnings() {
-        let p = params("test", standard_guards());
+        let p = params("test", restricted_guards());
         let warnings = check_capability_warnings(Provider::OpenCode, &p);
         assert!(warnings.is_empty());
     }

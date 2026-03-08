@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use base64::Engine;
 use pulpo_common::auth::BindMode;
-use pulpo_common::guard::{GuardConfig, GuardPreset};
+use pulpo_common::guard::GuardConfig;
 use pulpo_common::peer::PeerEntry;
 use serde::{Deserialize, Serialize};
 
@@ -34,7 +34,7 @@ pub struct InkConfig {
     #[serde(default)]
     pub mode: Option<String>,
     #[serde(default)]
-    pub guard_preset: Option<String>,
+    pub unrestricted: Option<bool>,
     /// Role instructions — passed as system prompt for providers that support it,
     /// or prepended to the prompt as a universal fallback.
     #[serde(default, alias = "system_prompt")]
@@ -105,39 +105,18 @@ pub fn ensure_auth_token(config: &mut Config) -> bool {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct GuardDefaultConfig {
-    #[serde(default = "default_preset")]
-    pub preset: GuardPreset,
     #[serde(default)]
-    pub max_turns: Option<u32>,
-    #[serde(default)]
-    pub max_budget_usd: Option<f64>,
-    #[serde(default)]
-    pub output_format: Option<String>,
-}
-
-impl Default for GuardDefaultConfig {
-    fn default() -> Self {
-        Self {
-            preset: default_preset(),
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-        }
-    }
+    pub unrestricted: bool,
 }
 
 impl GuardDefaultConfig {
     pub const fn to_guard_config(&self) -> GuardConfig {
         GuardConfig {
-            preset: self.preset,
+            unrestricted: self.unrestricted,
         }
     }
-}
-
-const fn default_preset() -> GuardPreset {
-    GuardPreset::Standard
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -304,7 +283,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
             ),
             provider: Some("claude".to_owned()),
             mode: Some("interactive".to_owned()),
-            guard_preset: Some("strict".to_owned()),
+            unrestricted: Some(false),
             instructions: Some(
                 "You are a senior code reviewer. Analyze the code for bugs, security issues, \
                  performance problems, and style violations. Provide actionable feedback with \
@@ -322,7 +301,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
             ),
             provider: Some("claude".to_owned()),
             mode: Some("autonomous".to_owned()),
-            guard_preset: Some("standard".to_owned()),
+            unrestricted: Some(false),
             instructions: Some(
                 "You are an expert software engineer. Implement the requested changes following \
                  the project's conventions, patterns, and style. Write clean, tested, production-\
@@ -340,7 +319,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
             ),
             provider: None,
             mode: Some("autonomous".to_owned()),
-            guard_preset: Some("standard".to_owned()),
+            unrestricted: Some(false),
             instructions: Some(
                 "Fix the reported bug with minimal changes. Focus on the root cause, not \
                  symptoms. Keep the diff small and targeted. Run existing tests to verify the fix \
@@ -358,7 +337,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
             ),
             provider: None,
             mode: Some("autonomous".to_owned()),
-            guard_preset: Some("strict".to_owned()),
+            unrestricted: Some(false),
             instructions: Some(
                 "You are a test engineer. Write comprehensive tests for the specified code. \
                  Cover happy paths, edge cases, error conditions, and boundary values. Follow \
@@ -377,7 +356,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
             ),
             provider: None,
             mode: Some("autonomous".to_owned()),
-            guard_preset: Some("standard".to_owned()),
+            unrestricted: Some(false),
             instructions: Some(
                 "Refactor the specified code to improve readability, maintainability, and \
                  structure. Do not change external behavior. Run all tests after refactoring to \
@@ -686,14 +665,11 @@ port = 7433
         .unwrap();
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(
-            config.guards.preset,
-            pulpo_common::guard::GuardPreset::Standard
-        );
+        assert!(!config.guards.unrestricted);
     }
 
     #[test]
-    fn test_load_config_with_guards_preset() {
+    fn test_load_config_with_guards_unrestricted() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
@@ -703,77 +679,39 @@ name = "guarded"
 port = 7433
 
 [guards]
-preset = "strict"
+unrestricted = true
 "#
         )
         .unwrap();
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(
-            config.guards.preset,
-            pulpo_common::guard::GuardPreset::Strict
-        );
-    }
-
-    #[test]
-    fn test_load_config_with_guards_guardrails() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "guardrailed"
-
-[guards]
-preset = "standard"
-max_turns = 50
-max_budget_usd = 10.0
-output_format = "stream-json"
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.guards.max_turns, Some(50));
-        assert_eq!(config.guards.max_budget_usd, Some(10.0));
-        assert_eq!(config.guards.output_format, Some("stream-json".into()));
+        assert!(config.guards.unrestricted);
     }
 
     #[test]
     fn test_guard_default_config_to_guard_config() {
-        let gdc = GuardDefaultConfig {
-            preset: pulpo_common::guard::GuardPreset::Strict,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-        };
+        let gdc = GuardDefaultConfig { unrestricted: true };
         let gc = gdc.to_guard_config();
-        assert_eq!(gc.preset, pulpo_common::guard::GuardPreset::Strict);
+        assert!(gc.unrestricted);
     }
 
     #[test]
     fn test_guard_default_config_default() {
         let gdc = GuardDefaultConfig::default();
-        assert_eq!(gdc.preset, pulpo_common::guard::GuardPreset::Standard);
-        assert!(gdc.max_turns.is_none());
-        assert!(gdc.max_budget_usd.is_none());
-        assert!(gdc.output_format.is_none());
+        assert!(!gdc.unrestricted);
     }
 
     #[test]
     fn test_guard_default_config_debug() {
         let gdc = GuardDefaultConfig::default();
         let debug = format!("{gdc:?}");
-        assert!(debug.contains("Standard"));
+        assert!(debug.contains("false"));
     }
 
     #[test]
     fn test_missing_config_has_default_guards() {
         let config = load("/nonexistent/guards/config.toml").unwrap();
-        assert_eq!(
-            config.guards.preset,
-            pulpo_common::guard::GuardPreset::Standard
-        );
+        assert!(!config.guards.unrestricted);
     }
 
     #[test]
@@ -816,12 +754,7 @@ output_format = "stream-json"
             },
             auth: AuthConfig::default(),
             peers,
-            guards: GuardDefaultConfig {
-                preset: pulpo_common::guard::GuardPreset::Strict,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
-            },
+            guards: GuardDefaultConfig { unrestricted: true },
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -834,10 +767,7 @@ output_format = "stream-json"
             loaded.peers["remote"],
             PeerEntry::Simple("10.0.0.1:7433".into())
         );
-        assert_eq!(
-            loaded.guards.preset,
-            pulpo_common::guard::GuardPreset::Strict
-        );
+        assert!(loaded.guards.unrestricted);
     }
 
     #[test]
@@ -978,7 +908,7 @@ output_format = "stream-json"
         let gdc = GuardDefaultConfig::default();
         #[allow(clippy::redundant_clone)]
         let cloned = gdc.clone();
-        assert_eq!(cloned.preset, pulpo_common::guard::GuardPreset::Standard);
+        assert!(!cloned.unrestricted);
     }
 
     #[test]
@@ -1590,7 +1520,7 @@ data_dir = "/tmp"
 [inks.reviewer]
 provider = "claude"
 mode = "autonomous"
-guard_preset = "strict"
+unrestricted = false
 instructions = "You are a code reviewer."
 description = "Code review specialist"
 
@@ -1606,7 +1536,7 @@ provider = "codex"
         let reviewer = &config.inks["reviewer"];
         assert_eq!(reviewer.provider, Some("claude".into()));
         assert_eq!(reviewer.mode, Some("autonomous".into()));
-        assert_eq!(reviewer.guard_preset, Some("strict".into()));
+        assert_eq!(reviewer.unrestricted, Some(false));
         assert_eq!(
             reviewer.instructions,
             Some("You are a code reviewer.".into())
@@ -1630,7 +1560,7 @@ provider = "codex"
                 description: Some("Code reviewer".into()),
                 provider: Some("claude".into()),
                 mode: Some("autonomous".into()),
-                guard_preset: Some("strict".into()),
+                unrestricted: Some(false),
                 instructions: Some("Review only.".into()),
             },
         );
@@ -1663,7 +1593,7 @@ provider = "codex"
             description: None,
             provider: Some("claude".into()),
             mode: None,
-            guard_preset: None,
+            unrestricted: None,
             instructions: None,
         };
         let cloned = p.clone();
@@ -2036,7 +1966,7 @@ name = "test"
                 description: Some("My custom reviewer".to_owned()),
                 provider: Some("codex".to_owned()),
                 mode: None,
-                guard_preset: None,
+                unrestricted: None,
                 instructions: None,
             },
         );
@@ -2061,7 +1991,7 @@ name = "test"
                 description: Some("Custom ink".to_owned()),
                 provider: None,
                 mode: None,
-                guard_preset: None,
+                unrestricted: None,
                 instructions: None,
             },
         );
@@ -2110,7 +2040,7 @@ provider = "codex"
             description: Some("Test description".to_owned()),
             provider: Some("claude".to_owned()),
             mode: None,
-            guard_preset: None,
+            unrestricted: None,
             instructions: None,
         };
         let toml_str = toml::to_string(&ink).unwrap();

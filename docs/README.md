@@ -16,7 +16,7 @@ features:
   - title: Reliability
     details: Session state persistence, stale session detection, and explicit resume semantics.
   - title: Guardrails
-    details: Policy presets, budget/turn limits, and intervention tracking.
+    details: Binary guard toggle, per-session overrides, and intervention tracking.
   - title: API First
     details: REST, SSE, and MCP surfaces for integration with tools and automation.
 ---

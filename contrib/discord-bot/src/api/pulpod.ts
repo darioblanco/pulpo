@@ -31,7 +31,7 @@ export interface InkConfig {
   description: string | null;
   provider?: string;
   mode?: string;
-  guard_preset?: string;
+  unrestricted?: boolean;
   instructions?: string;
 }
 

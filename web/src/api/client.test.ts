@@ -186,7 +186,7 @@ describe('createSession', () => {
       prompt: 'Fix the bug',
       provider: 'claude',
       mode: 'interactive',
-      guard_preset: 'standard',
+      unrestricted: false,
     };
     const result = await createSession(data);
 
@@ -487,7 +487,7 @@ describe('updateRemoteConfig', () => {
           description: 'Test',
           provider: 'claude',
           mode: null,
-          guard_preset: null,
+          unrestricted: null,
           instructions: null,
         },
       },

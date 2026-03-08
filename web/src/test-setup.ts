@@ -20,6 +20,14 @@ Object.defineProperty(window, 'matchMedia', {
   }),
 });
 
+// jsdom doesn't implement ResizeObserver — stub for Radix Switch tests
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+window.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
+
 // jsdom doesn't implement scrollIntoView — stub for output-view tests
 Element.prototype.scrollIntoView = () => {};
 

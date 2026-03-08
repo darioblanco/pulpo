@@ -10,6 +10,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -34,7 +35,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
   const [prompt, setPrompt] = useState('');
   const [provider, setProvider] = useState('claude');
   const [mode, setMode] = useState('interactive');
-  const [guardPreset, setGuardPreset] = useState('standard');
+  const [unrestricted, setUnrestricted] = useState(false);
   const [targetNode, setTargetNode] = useState('local');
   const [selectedInk, setSelectedInk] = useState('');
   const [inks, setInks] = useState<Record<string, InkConfig>>({});
@@ -63,7 +64,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
     if (!ink) return;
     if (ink.provider) setProvider(ink.provider);
     if (ink.mode) setMode(ink.mode);
-    if (ink.guard_preset) setGuardPreset(ink.guard_preset);
+    if (ink.unrestricted != null) setUnrestricted(ink.unrestricted);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -78,7 +79,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         prompt,
         provider,
         mode,
-        guard_preset: guardPreset,
+        ...(unrestricted ? { unrestricted: true } : {}),
         ...(selectedInk ? { ink: selectedInk } : {}),
       };
 
@@ -178,7 +179,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
                   {[
                     activeInk.provider,
                     activeInk.mode,
-                    activeInk.guard_preset ? `guards: ${activeInk.guard_preset}` : null,
+                    activeInk.unrestricted ? 'unrestricted' : null,
                     activeInk.instructions
                       ? activeInk.instructions.length > 60
                         ? `${activeInk.instructions.slice(0, 60)}...`
@@ -221,23 +222,19 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
               </Select>
             </div>
 
-            <div className={`space-y-1.5 ${caps.guard_preset ? '' : 'opacity-50'}`}>
-              <Label htmlFor="guard-preset">Guards</Label>
-              <Select
-                value={guardPreset}
-                onValueChange={setGuardPreset}
-                disabled={!caps.guard_preset}
-              >
-                <SelectTrigger id="guard-preset" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="standard">Standard</SelectItem>
-                  <SelectItem value="strict">Strict</SelectItem>
-                  <SelectItem value="unrestricted">Unrestricted</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {caps.unrestricted && (
+              <div className="flex items-center gap-2 self-end pb-1.5">
+                <Switch
+                  id="unrestricted-toggle"
+                  checked={unrestricted}
+                  onCheckedChange={setUnrestricted}
+                  data-testid="unrestricted-toggle"
+                />
+                <Label htmlFor="unrestricted-toggle" className="text-sm">
+                  Unrestricted
+                </Label>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label htmlFor="target-node">Node</Label>

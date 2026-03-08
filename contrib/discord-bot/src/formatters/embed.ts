@@ -85,7 +85,7 @@ export function inkListEmbed(inks: Record<string, InkConfig>): EmbedBuilder {
   }
 
   const lines = entries.map(([name, p]) => {
-    const parts = [p.provider, p.mode, p.guard_preset].filter(Boolean);
+    const parts = [p.provider, p.mode, p.unrestricted ? 'unrestricted' : undefined].filter(Boolean);
     return `**${name}** — ${parts.join(', ') || 'default'}`;
   });
 

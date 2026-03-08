@@ -33,10 +33,7 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
         auth: AuthConfigResponse {},
         peers: config.peers.clone(),
         guards: GuardDefaultConfigResponse {
-            preset: config.guards.preset,
-            max_turns: config.guards.max_turns,
-            max_budget_usd: config.guards.max_budget_usd,
-            output_format: config.guards.output_format.clone(),
+            unrestricted: config.guards.unrestricted,
         },
         watchdog: WatchdogConfigResponse {
             enabled: config.watchdog.enabled,
@@ -77,7 +74,7 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
                         description: v.description.clone(),
                         provider: v.provider.clone(),
                         mode: v.mode.clone(),
-                        guard_preset: v.guard_preset.clone(),
+                        unrestricted: v.unrestricted,
                         instructions: v.instructions.clone(),
                     },
                 )
@@ -127,17 +124,8 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
     }
 
     // Guard defaults
-    if let Some(preset) = req.guard_preset {
-        config.guards.preset = preset;
-    }
-    if let Some(turns) = req.guard_max_turns {
-        config.guards.max_turns = Some(turns);
-    }
-    if let Some(budget) = req.guard_max_budget_usd {
-        config.guards.max_budget_usd = Some(budget);
-    }
-    if let Some(fmt) = req.guard_output_format {
-        config.guards.output_format = if fmt.is_empty() { None } else { Some(fmt) };
+    if let Some(unrestricted) = req.unrestricted {
+        config.guards.unrestricted = unrestricted;
     }
 
     // Watchdog
@@ -201,7 +189,7 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
                         description: v.description,
                         provider: v.provider,
                         mode: v.mode,
-                        guard_preset: v.guard_preset,
+                        unrestricted: v.unrestricted,
                         instructions: v.instructions,
                     },
                 )
@@ -368,10 +356,7 @@ mod tests {
         let Json(resp) = get_config(State(state)).await.unwrap();
         assert_eq!(resp.node.name, "test-node");
         assert_eq!(resp.node.port, 7433);
-        assert_eq!(
-            resp.guards.preset,
-            pulpo_common::guard::GuardPreset::Standard
-        );
+        assert!(!resp.guards.unrestricted);
         assert!(resp.peers.is_empty());
     }
 
@@ -383,8 +368,6 @@ mod tests {
             port: None,
             data_dir: None,
             bind: None,
-            guard_preset: None,
-
             ..Default::default()
         };
         let Json(resp) = update_config(State(state.clone()), Json(req))
@@ -406,8 +389,6 @@ mod tests {
             port: Some(9999),
             data_dir: None,
             bind: None,
-            guard_preset: None,
-
             ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -423,8 +404,6 @@ mod tests {
             port: Some(7433),
             data_dir: None,
             bind: None,
-            guard_preset: None,
-
             ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -432,22 +411,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_config_guard_preset() {
+    async fn test_update_config_unrestricted() {
         let state = test_state().await;
         let req = UpdateConfigRequest {
-            node_name: None,
-            port: None,
-            data_dir: None,
-            bind: None,
-            guard_preset: Some(pulpo_common::guard::GuardPreset::Strict),
-
+            unrestricted: Some(true),
             ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(
-            resp.config.guards.preset,
-            pulpo_common::guard::GuardPreset::Strict
-        );
+        assert!(resp.config.guards.unrestricted);
     }
 
     #[tokio::test]
@@ -475,8 +446,6 @@ mod tests {
             port: None,
             data_dir: Some("/new/data/dir".into()),
             bind: None,
-            guard_preset: None,
-
             ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -489,19 +458,13 @@ mod tests {
         let req = UpdateConfigRequest {
             node_name: Some("multi".into()),
             port: Some(8888),
-            data_dir: None,
-            bind: None,
-            guard_preset: Some(pulpo_common::guard::GuardPreset::Unrestricted),
-
+            unrestricted: Some(true),
             ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.config.node.name, "multi");
         assert_eq!(resp.config.node.port, 8888);
-        assert_eq!(
-            resp.config.guards.preset,
-            pulpo_common::guard::GuardPreset::Unrestricted
-        );
+        assert!(resp.config.guards.unrestricted);
         assert!(resp.restart_required);
     }
 
@@ -513,8 +476,6 @@ mod tests {
             port: None,
             data_dir: None,
             bind: None,
-            guard_preset: None,
-
             ..Default::default()
         };
         let Json(resp) = update_config(State(state.clone()), Json(req))
@@ -535,8 +496,7 @@ mod tests {
             port: Some(9000),
             data_dir: None,
             bind: None,
-            guard_preset: Some(pulpo_common::guard::GuardPreset::Strict),
-
+            unrestricted: Some(true),
             ..Default::default()
         };
         let _ = update_config(State(state.clone()), Json(req))
@@ -547,10 +507,7 @@ mod tests {
         let loaded = crate::config::load(state.config_path.to_str().unwrap()).unwrap();
         assert_eq!(loaded.node.name, "roundtrip");
         assert_eq!(loaded.node.port, 9000);
-        assert_eq!(
-            loaded.guards.preset,
-            pulpo_common::guard::GuardPreset::Strict
-        );
+        assert!(loaded.guards.unrestricted);
     }
 
     #[tokio::test]
@@ -561,8 +518,6 @@ mod tests {
             port: None,
             data_dir: None,
             bind: None,
-            guard_preset: None,
-
             ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -602,7 +557,6 @@ mod tests {
             port: None,
             data_dir: None,
             bind: Some(pulpo_common::auth::BindMode::Public),
-            guard_preset: None,
             ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -618,7 +572,6 @@ mod tests {
             port: None,
             data_dir: None,
             bind: Some(pulpo_common::auth::BindMode::Local),
-            guard_preset: None,
             ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
@@ -719,57 +672,6 @@ mod tests {
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.config.node.discovery_interval_secs, 120);
         assert!(!resp.restart_required);
-    }
-
-    #[tokio::test]
-    async fn test_update_config_guard_max_turns() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            guard_max_turns: Some(50),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.guards.max_turns, Some(50));
-    }
-
-    #[tokio::test]
-    async fn test_update_config_guard_max_budget() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            guard_max_budget_usd: Some(10.0),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.guards.max_budget_usd, Some(10.0));
-    }
-
-    #[tokio::test]
-    async fn test_update_config_guard_output_format() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            guard_output_format: Some("json".into()),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.guards.output_format, Some("json".into()));
-    }
-
-    #[tokio::test]
-    async fn test_update_config_guard_output_format_empty_clears() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            guard_output_format: Some("json".into()),
-            ..Default::default()
-        };
-        let _ = update_config(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        let req = UpdateConfigRequest {
-            guard_output_format: Some(String::new()),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.guards.output_format, None);
     }
 
     #[tokio::test]
@@ -875,7 +777,7 @@ mod tests {
                 description: None,
                 provider: Some("claude".into()),
                 mode: Some("interactive".into()),
-                guard_preset: Some("strict".into()),
+                unrestricted: Some(true),
                 instructions: Some("You are a reviewer.".into()),
             },
         );
@@ -904,12 +806,7 @@ mod tests {
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig {
-                max_turns: Some(50),
-                max_budget_usd: Some(10.0),
-                output_format: Some("json".into()),
-                ..GuardDefaultConfig::default()
-            },
+            guards: GuardDefaultConfig { unrestricted: true },
             watchdog: crate::config::WatchdogConfig {
                 enabled: true,
                 memory_threshold: 85,
@@ -926,7 +823,7 @@ mod tests {
                         description: None,
                         provider: Some("claude".into()),
                         mode: None,
-                        guard_preset: None,
+                        unrestricted: None,
                         instructions: None,
                     },
                 );
@@ -946,9 +843,7 @@ mod tests {
         assert_eq!(resp.node.seed, Some("10.0.0.1:7433".into()));
         assert_eq!(resp.node.discovery_interval_secs, 120);
         // Guard fields
-        assert_eq!(resp.guards.max_turns, Some(50));
-        assert_eq!(resp.guards.max_budget_usd, Some(10.0));
-        assert_eq!(resp.guards.output_format, Some("json".into()));
+        assert!(resp.guards.unrestricted);
         // Watchdog
         assert!(resp.watchdog.enabled);
         assert_eq!(resp.watchdog.memory_threshold, 85);
@@ -1143,8 +1038,6 @@ mod tests {
             port: None,
             data_dir: None,
             bind: None,
-            guard_preset: None,
-
             ..Default::default()
         };
         let result = update_config(State(state), Json(req)).await;

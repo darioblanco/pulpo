@@ -9,4 +9,4 @@ bind = "public"
 token = "replace-with-long-random-token"
 
 [guards]
-preset = "standard"
+unrestricted = false

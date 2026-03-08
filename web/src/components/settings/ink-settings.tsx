@@ -10,6 +10,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import { FormField } from './form-field';
 import { updateRemoteConfig } from '@/api/client';
 import type { InkConfig, PeerInfo } from '@/api/types';
@@ -25,7 +27,7 @@ const emptyInk: InkConfig = {
   description: null,
   provider: null,
   mode: null,
-  guard_preset: null,
+  unrestricted: null,
   instructions: null,
 };
 
@@ -53,10 +55,15 @@ export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps
     if (expandedInk === name) setExpandedInk(null);
   }
 
-  function updateInk(name: string, field: keyof InkConfig, value: string | string[] | null) {
+  function updateInk(
+    name: string,
+    field: keyof InkConfig,
+    value: string | string[] | boolean | null,
+  ) {
     const ink = inks[name];
     if (!ink) return;
-    onInksChange({ ...inks, [name]: { ...ink, [field]: value || null } });
+    const resolved = typeof value === 'boolean' ? value : value || null;
+    onInksChange({ ...inks, [name]: { ...ink, [field]: resolved } });
   }
 
   async function pushToPeers() {
@@ -163,21 +170,17 @@ export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps
                         </Select>
                       </FormField>
 
-                      <FormField label="Guards" htmlFor={`ink-guard-${name}`}>
-                        <Select
-                          value={ink.guard_preset ?? ''}
-                          onValueChange={(v) => updateInk(name, 'guard_preset', v)}
-                        >
-                          <SelectTrigger id={`ink-guard-${name}`} className="w-full">
-                            <SelectValue placeholder="Default" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="standard">Standard</SelectItem>
-                            <SelectItem value="strict">Strict</SelectItem>
-                            <SelectItem value="unrestricted">Unrestricted</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </FormField>
+                      <div className="flex items-center gap-2 self-end pb-1">
+                        <Switch
+                          id={`ink-unrestricted-${name}`}
+                          checked={ink.unrestricted === true}
+                          onCheckedChange={(checked) => updateInk(name, 'unrestricted', checked)}
+                          data-testid={`ink-unrestricted-${name}`}
+                        />
+                        <Label htmlFor={`ink-unrestricted-${name}`} className="text-sm">
+                          Unrestricted
+                        </Label>
+                      </div>
                     </div>
 
                     <FormField label="Instructions" htmlFor={`ink-prompt-${name}`}>

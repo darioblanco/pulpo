@@ -306,7 +306,7 @@ pulpo/
 │       ├── session.rs            # Session, Provider, SessionStatus types
 │       ├── node.rs               # NodeInfo type
 │       ├── peer.rs               # PeerInfo, PeerStatus types
-│       ├── guard.rs              # GuardConfig, GuardPreset types
+│       ├── guard.rs              # GuardConfig type (binary unrestricted toggle)
 │       ├── event.rs              # SessionEvent for SSE + notifications
 │       └── api.rs                # API request/response types
 └── web/                          # React 19 + Vite + Tailwind v4 + shadcn/ui

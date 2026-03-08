@@ -8,7 +8,7 @@ Pulpo is a self-hosted agent operations stack:
 
 - Run coding agents on your own machines.
 - Recover from failures (watchdog + session persistence).
-- Control access via guard presets.
+- Control access via guard configuration (binary unrestricted toggle).
 
 Current core scope: `pulpod` daemon, `pulpo` CLI, embedded web UI.
 Do not expand scope into desktop/mobile clients unless explicitly requested.

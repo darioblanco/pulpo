@@ -71,8 +71,8 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-function makeGuard(preset: string): GuardConfig {
-  return { preset };
+function makeGuard(unrestricted: boolean): GuardConfig {
+  return { unrestricted };
 }
 
 function clickExpand() {
@@ -113,13 +113,10 @@ describe('SessionCard', () => {
 
   it('shows guard badge', () => {
     render(
-      <SessionCard
-        session={makeSession({ guard_config: makeGuard('strict') })}
-        onRefresh={vi.fn()}
-      />,
+      <SessionCard session={makeSession({ guard_config: makeGuard(false) })} onRefresh={vi.fn()} />,
     );
     expect(screen.getByTestId('guard-badge')).toBeInTheDocument();
-    expect(screen.getByText('strict')).toBeInTheDocument();
+    expect(screen.getByText('restricted')).toBeInTheDocument();
   });
 
   it('shows no guard badge when null', () => {

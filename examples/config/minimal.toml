@@ -6,4 +6,4 @@ name = "pulpo-local"
 bind = "local"
 
 [guards]
-preset = "standard"
+unrestricted = false

@@ -1019,13 +1019,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_guard_config_roundtrip() {
-        use pulpo_common::guard::{GuardConfig, GuardPreset};
+        use pulpo_common::guard::GuardConfig;
 
         let store = test_store().await;
         let mut session = make_session("guard-test");
-        let strict = GuardConfig {
-            preset: GuardPreset::Strict,
-        };
+        let strict = GuardConfig { unrestricted: true };
         session.guard_config = Some(strict.clone());
 
         store.insert_session(&session).await.unwrap();

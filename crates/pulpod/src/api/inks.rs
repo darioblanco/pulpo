@@ -111,7 +111,7 @@ mod tests {
                 description: None,
                 provider: Some("claude".into()),
                 mode: Some("autonomous".into()),
-                guard_preset: Some("strict".into()),
+                unrestricted: Some(true),
                 instructions: Some("Review code".into()),
             },
         );
@@ -156,7 +156,7 @@ mod tests {
                 description: None,
                 provider: None,
                 mode: None,
-                guard_preset: None,
+                unrestricted: None,
                 instructions: None,
             },
         );

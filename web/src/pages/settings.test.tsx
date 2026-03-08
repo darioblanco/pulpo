@@ -40,10 +40,7 @@ const testConfig: ConfigResponse = {
   },
   peers: {},
   guards: {
-    preset: 'standard',
-    max_turns: null,
-    max_budget_usd: null,
-    output_format: null,
+    unrestricted: false,
   },
   watchdog: {
     enabled: true,
@@ -184,10 +181,7 @@ describe('SettingsPage', () => {
     const configWithGuards: ConfigResponse = {
       ...testConfig,
       guards: {
-        preset: 'strict',
-        max_turns: 50,
-        max_budget_usd: 10.5,
-        output_format: 'json',
+        unrestricted: true,
       },
     };
     mockGetConfig.mockResolvedValue(configWithGuards);
@@ -195,9 +189,8 @@ describe('SettingsPage', () => {
     renderSettings();
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Max turns')).toHaveValue(50);
-      expect(screen.getByLabelText('Max budget (USD)')).toHaveValue(10.5);
-      expect(screen.getByLabelText('Output format')).toHaveValue('json');
+      const toggle = screen.getByTestId('guard-unrestricted-toggle');
+      expect(toggle).toHaveAttribute('data-state', 'checked');
     });
   });
 
@@ -231,7 +224,7 @@ describe('SettingsPage', () => {
           port: 7433,
           data_dir: '~/.pulpo/data',
           bind: 'local',
-          guard_preset: 'standard',
+          unrestricted: false,
           watchdog_enabled: true,
           watchdog_memory_threshold: 85,
         }),
@@ -273,34 +266,6 @@ describe('SettingsPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Failed to save config')).toBeInTheDocument();
-    });
-  });
-
-  it('sends guard_max_turns when set', async () => {
-    const configWithTurns: ConfigResponse = {
-      ...testConfig,
-      guards: { ...testConfig.guards, max_turns: 25 },
-    };
-    mockGetConfig.mockResolvedValue(configWithTurns);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
-    mockUpdateConfig.mockResolvedValue({
-      config: configWithTurns,
-      restart_required: false,
-    });
-    renderSettings();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('save-btn')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByTestId('save-btn'));
-
-    await waitFor(() => {
-      expect(mockUpdateConfig).toHaveBeenCalledWith(
-        expect.objectContaining({
-          guard_max_turns: 25,
-        }),
-      );
     });
   });
 
@@ -347,7 +312,7 @@ describe('SettingsPage', () => {
           description: 'Code reviewer',
           provider: 'claude',
           mode: 'interactive',
-          guard_preset: 'strict',
+          unrestricted: false,
           instructions: null,
         },
       },
@@ -370,7 +335,7 @@ describe('SettingsPage', () => {
           description: 'Coder ink',
           provider: 'claude',
           mode: 'autonomous',
-          guard_preset: 'standard',
+          unrestricted: false,
           instructions: null,
         },
       },

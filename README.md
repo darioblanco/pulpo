@@ -19,7 +19,7 @@ Pulpo runs as a daemon (`pulpod`) with a CLI (`pulpo`) and embedded web UI. It m
 
 - Manage agents across machines without SSH/tmux juggling.
 - Recover from failures with explicit session states and resume flow.
-- Apply guard presets for safer default execution.
+- Apply guard controls for safer default execution.
 - Observe behavior through logs, interventions, and SSE events.
 - Stay in control: self-hosted, API-first, open source.
 
@@ -131,7 +131,7 @@ name = "mac-mini"
 
 [inks.reviewer]
 provider = "claude"
-guard_preset = "strict"
+unrestricted = false
 instructions = "You are a senior reviewer focused on correctness and security."
 ```
 

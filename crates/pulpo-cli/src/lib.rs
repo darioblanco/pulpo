@@ -60,9 +60,9 @@ pub enum Commands {
         #[arg(long)]
         auto: bool,
 
-        /// Guard preset (strict, standard, unrestricted)
-        #[arg(long, default_value = "standard")]
-        guard: String,
+        /// Disable all safety guardrails
+        #[arg(long)]
+        unrestricted: bool,
 
         /// Model override (e.g. opus, sonnet)
         #[arg(long)]
@@ -822,7 +822,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             name,
             provider,
             auto,
-            guard,
+            unrestricted,
             model,
             system_prompt,
             allowed_tools,
@@ -839,8 +839,10 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 "provider": provider,
                 "prompt": prompt_text,
                 "mode": mode,
-                "guard_preset": guard,
             });
+            if *unrestricted {
+                body["unrestricted"] = serde_json::json!(true);
+            }
             if let Some(n) = name {
                 body["name"] = serde_json::json!(n);
             }
@@ -1024,9 +1026,9 @@ mod tests {
         .unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { workdir, provider, auto, guard, prompt, .. }
+            Commands::Spawn { workdir, provider, auto, unrestricted, prompt, .. }
                 if workdir == "/tmp/repo" && provider == "claude" && !auto
-                && guard == "standard" && prompt == &["Fix", "the", "bug"]
+                && !unrestricted && prompt == &["Fix", "the", "bug"]
         ));
     }
 
@@ -1059,29 +1061,28 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_spawn_with_guard() {
+    fn test_cli_parse_spawn_unrestricted() {
         let cli = Cli::try_parse_from([
             "pulpo",
             "spawn",
             "--workdir",
             "/tmp",
-            "--guard",
-            "strict",
+            "--unrestricted",
             "Do it",
         ])
         .unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { guard, .. } if guard == "strict"
+            Commands::Spawn { unrestricted, .. } if *unrestricted
         ));
     }
 
     #[test]
-    fn test_cli_parse_spawn_guard_default() {
+    fn test_cli_parse_spawn_unrestricted_default() {
         let cli = Cli::try_parse_from(["pulpo", "spawn", "--workdir", "/tmp", "Do it"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { guard, .. } if guard == "standard"
+            Commands::Spawn { unrestricted, .. } if !unrestricted
         ));
     }
 
@@ -1332,7 +1333,7 @@ mod tests {
                 name: None,
                 provider: "claude".into(),
                 auto: false,
-                guard: "standard".into(),
+                unrestricted: false,
                 model: None,
                 system_prompt: None,
                 allowed_tools: None,
@@ -1359,7 +1360,7 @@ mod tests {
                 name: None,
                 provider: "claude".into(),
                 auto: false,
-                guard: "standard".into(),
+                unrestricted: false,
                 model: Some("opus".into()),
                 system_prompt: Some("Be helpful".into()),
                 allowed_tools: Some(vec!["Read".into(), "Write".into()]),
@@ -1385,7 +1386,7 @@ mod tests {
                 name: None,
                 provider: "claude".into(),
                 auto: true,
-                guard: "standard".into(),
+                unrestricted: false,
                 model: None,
                 system_prompt: None,
                 allowed_tools: None,
@@ -1411,7 +1412,7 @@ mod tests {
                 name: Some("my-task".into()),
                 provider: "claude".into(),
                 auto: false,
-                guard: "standard".into(),
+                unrestricted: false,
                 model: None,
                 system_prompt: None,
                 allowed_tools: None,
@@ -1642,7 +1643,7 @@ mod tests {
                 name: None,
                 provider: "claude".into(),
                 auto: false,
-                guard: "standard".into(),
+                unrestricted: false,
                 model: None,
                 system_prompt: None,
                 allowed_tools: None,
@@ -2012,7 +2013,7 @@ mod tests {
                 name: None,
                 provider: "claude".into(),
                 auto: false,
-                guard: "standard".into(),
+                unrestricted: false,
                 model: None,
                 system_prompt: None,
                 allowed_tools: None,

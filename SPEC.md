@@ -105,7 +105,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 - **Dashboard**: all nodes, all sessions, at a glance
 - **Session detail**: live terminal output (xterm.js), input field, metadata
 - **History**: session history with search/filter
-- **Settings**: node config, guard presets, peer management
+- **Settings**: node config, guard configuration, peer management
 
 ---
 
@@ -333,7 +333,7 @@ WS     /sessions/:id/stream   Stream terminal output (WebSocket)
   "provider": "claude",
   "prompt": "Fix the auth bug in login.py",
   "mode": "interactive",
-  "guard_preset": "standard",
+  "unrestricted": false,
   "model": "sonnet",
   "system_prompt": "Focus on security",
   "allowed_tools": ["Read", "Glob", "Grep"],
@@ -360,7 +360,7 @@ is used as defaults; explicit fields override ink values.
     "mode": "interactive",
     "model": "sonnet",
     "ink": "reviewer",
-    "guard_config": { "...": "..." },
+    "guard_config": { "unrestricted": false },
     "output_snapshot": "Analyzing login.py...\nFound issue in validate_token()...",
     "created_at": "2026-02-16T10:30:00Z",
     "updated_at": "2026-02-16T10:35:00Z"
@@ -513,7 +513,7 @@ pulpo/
 │   │   └── mcp/                #   MCP server (session tools as MCP resources)
 │   ├── pulpo-cli/src/          # CLI: thin client, clap commands
 │   └── pulpo-common/src/       # Shared types: Session, Provider, NodeInfo, PeerInfo,
-│                               #   GuardConfig, SessionEvent, API request/response
+│                               #   GuardConfig (binary toggle), SessionEvent, API request/response
 ├── web/                        # Svelte 5 + SvelteKit + Tailwind v4 + Konsta UI v5
 └── contrib/discord-bot/        # Discord bot: slash commands + SSE listener
 ```
@@ -590,7 +590,7 @@ Ship the smallest useful thing first.
 ### Phase 4: Sandboxing ✅
 
 - ✅ Codex provider support
-- ✅ Guard presets (standard/strict/unrestricted) with per-provider flags
+- ✅ Binary guard toggle (unrestricted on/off) with per-provider flags
 
 ### Phase 5: Web UI + Konsta UI ✅
 
@@ -659,7 +659,7 @@ bind = "local"          # "local", "tailscale", "public", or "container"
 # token is auto-generated on first run (only used with bind = "public")
 
 [guards]
-preset = "standard"     # standard (default), strict, or unrestricted
+unrestricted = false    # true = disable all provider safety flags
 
 [watchdog]
 enabled = true
@@ -675,13 +675,13 @@ server = "hetzner:7433"
 
 [inks.reviewer]
 provider = "claude"
-guard_preset = "strict"
+unrestricted = false
 instructions = "You are a code reviewer. Focus on correctness and security."
 
 [inks.coder]
 provider = "claude"
 mode = "autonomous"
-guard_preset = "standard"
+unrestricted = false
 instructions = "Implement the task with tests and clear commit messages."
 
 [notifications.discord]
@@ -706,7 +706,7 @@ events = ["running", "completed", "dead"]   # optional filter; omit for all even
   in every request. Retrieve it locally via `GET /api/v1/auth/token`. In `container`
   mode, auth is disabled — the container runtime provides isolation.
 - **Agents**: agents run as your user (same as running Claude Code directly).
-  Guard presets control environment variable sanitization and agent permissions.
+  The `unrestricted` guard toggle controls environment variable sanitization and agent permissions.
 - **No secrets in the API**: the API never exposes API keys. Keys are in the
   environment or config files on each node. The daemon passes them through to
   the agent process.

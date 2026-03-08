@@ -5,26 +5,24 @@ name = "pulpo-inks"
 bind = "local"
 
 [guards]
-preset = "standard"
-max_turns = 50
-max_budget_usd = 10.0
+unrestricted = false
 
 [inks.reviewer]
 provider = "claude"
 mode = "interactive"
-guard_preset = "strict"
+unrestricted = false
 instructions = "You are a code reviewer. Prioritize correctness and security."
-description = "Read-only code reviewer with strict guards"
+description = "Read-only code reviewer with restricted guards"
 
 [inks.coder]
 provider = "claude"
 mode = "autonomous"
-guard_preset = "standard"
+unrestricted = false
 instructions = "Implement the task with tests and clear commit messages."
-description = "Full-access coding agent with standard guards"
+description = "Full-access coding agent with restricted guards"
 
 [inks.quick-fix]
 mode = "autonomous"
-guard_preset = "standard"
+unrestricted = false
 instructions = "Fix the reported bug with minimal changes. Run tests to verify."
 description = "Fast bug fixes — any provider"

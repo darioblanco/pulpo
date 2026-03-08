@@ -23,7 +23,7 @@ export interface PeersResponse {
 }
 
 export interface GuardConfig {
-  preset: string;
+  unrestricted: boolean;
 }
 
 export interface Session {
@@ -61,7 +61,7 @@ export interface InkConfig {
   description: string | null;
   provider: string | null;
   mode: string | null;
-  guard_preset: string | null;
+  unrestricted: boolean | null;
   instructions: string | null;
 }
 
@@ -88,10 +88,7 @@ export interface NodeConfigResponse {
 }
 
 export interface GuardDefaultConfigResponse {
-  preset: string;
-  max_turns: number | null;
-  max_budget_usd: number | null;
-  output_format: string | null;
+  unrestricted: boolean;
 }
 
 export interface WatchdogConfigResponse {
@@ -146,10 +143,7 @@ export interface UpdateConfigRequest {
   tag?: string;
   seed?: string;
   discovery_interval_secs?: number;
-  guard_preset?: string;
-  guard_max_turns?: number;
-  guard_max_budget_usd?: number;
-  guard_output_format?: string;
+  unrestricted?: boolean;
   watchdog_enabled?: boolean;
   watchdog_memory_threshold?: number;
   watchdog_check_interval_secs?: number;
@@ -178,7 +172,7 @@ export interface CreateSessionRequest {
   provider?: string;
   prompt: string;
   mode?: string;
-  guard_preset?: string;
+  unrestricted?: boolean;
   model?: string;
   allowed_tools?: string[];
   system_prompt?: string;
@@ -203,7 +197,7 @@ export interface ProviderCapabilities {
   max_budget_usd: boolean;
   output_format: boolean;
   worktree: boolean;
-  guard_preset: boolean;
+  unrestricted: boolean;
   resume: boolean;
 }
 
@@ -219,7 +213,7 @@ export function getProviderCapabilities(provider: string): ProviderCapabilities 
         max_budget_usd: true,
         output_format: true,
         worktree: true,
-        guard_preset: true,
+        unrestricted: true,
         resume: true,
       };
     case 'codex':
@@ -231,7 +225,7 @@ export function getProviderCapabilities(provider: string): ProviderCapabilities 
         max_budget_usd: false,
         output_format: false,
         worktree: false,
-        guard_preset: false,
+        unrestricted: false,
         resume: true,
       };
     case 'gemini':
@@ -243,7 +237,7 @@ export function getProviderCapabilities(provider: string): ProviderCapabilities 
         max_budget_usd: false,
         output_format: true,
         worktree: false,
-        guard_preset: true,
+        unrestricted: true,
         resume: true,
       };
     case 'open_code':
@@ -256,7 +250,7 @@ export function getProviderCapabilities(provider: string): ProviderCapabilities 
         max_budget_usd: false,
         output_format: true,
         worktree: false,
-        guard_preset: false,
+        unrestricted: false,
         resume: false,
       };
     default:
@@ -269,7 +263,7 @@ export function getProviderCapabilities(provider: string): ProviderCapabilities 
         max_budget_usd: true,
         output_format: true,
         worktree: true,
-        guard_preset: true,
+        unrestricted: true,
         resume: true,
       };
   }

@@ -21,9 +21,6 @@ pub struct SessionManager {
     backend: Arc<dyn Backend>,
     store: Store,
     default_guard: GuardConfig,
-    default_max_turns: Option<u32>,
-    default_max_budget_usd: Option<f64>,
-    default_output_format: Option<String>,
     inks: HashMap<String, InkConfig>,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
     node_name: String,
@@ -40,26 +37,10 @@ impl SessionManager {
             backend,
             store,
             default_guard,
-            default_max_turns: None,
-            default_max_budget_usd: None,
-            default_output_format: None,
             inks,
             event_tx: None,
             node_name: String::new(),
         }
-    }
-
-    #[must_use]
-    pub fn with_guardrail_defaults(
-        mut self,
-        max_turns: Option<u32>,
-        max_budget_usd: Option<f64>,
-        output_format: Option<String>,
-    ) -> Self {
-        self.default_max_turns = max_turns;
-        self.default_max_budget_usd = max_budget_usd;
-        self.default_output_format = output_format;
-        self
     }
 
     #[must_use]
@@ -108,8 +89,7 @@ impl SessionManager {
         &self,
         req: CreateSessionRequest,
     ) -> Result<(Session, Vec<String>)> {
-        let mut req = self.resolve_ink(req)?;
-        self.apply_guardrail_defaults(&mut req);
+        let req = self.resolve_ink(req)?;
         validate_workdir(&req.workdir)?;
         let id = Uuid::new_v4();
         let provider = req.provider.unwrap_or(Provider::Claude);
@@ -221,8 +201,8 @@ impl SessionManager {
         if req.mode.is_none() {
             req.mode = ink.mode.as_ref().and_then(|m| m.parse().ok());
         }
-        if req.guard_preset.is_none() && req.guard_config.is_none() {
-            req.guard_preset = ink.guard_preset.as_ref().and_then(|g| g.parse().ok());
+        if req.unrestricted.is_none() {
+            req.unrestricted = ink.unrestricted;
         }
 
         // Instructions: provider-aware routing
@@ -243,18 +223,6 @@ impl SessionManager {
         }
 
         Ok(req)
-    }
-
-    fn apply_guardrail_defaults(&self, req: &mut CreateSessionRequest) {
-        if req.max_turns.is_none() {
-            req.max_turns = self.default_max_turns;
-        }
-        if req.max_budget_usd.is_none() {
-            req.max_budget_usd = self.default_max_budget_usd;
-        }
-        if req.output_format.is_none() {
-            req.output_format.clone_from(&self.default_output_format);
-        }
     }
 
     pub async fn get_session(&self, id: &str) -> Result<Option<Session>> {
@@ -442,10 +410,8 @@ fn validate_workdir(workdir: &str) -> Result<()> {
 }
 
 fn resolve_guard_config(req: &CreateSessionRequest, default: &GuardConfig) -> GuardConfig {
-    req.guard_config
-        .clone()
-        .or_else(|| req.guard_preset.map(|p| GuardConfig { preset: p }))
-        .unwrap_or_else(|| default.clone())
+    req.unrestricted
+        .map_or_else(|| default.clone(), |u| GuardConfig { unrestricted: u })
 }
 
 fn build_spawn_params(
@@ -494,7 +460,6 @@ pub(crate) fn build_command(
 mod tests {
     use super::*;
     use pulpo_common::event::SessionEvent;
-    use pulpo_common::guard::GuardPreset;
     use std::sync::Mutex;
 
     /// Extract the inner `SessionEvent` from a `PulpoEvent`.
@@ -632,8 +597,7 @@ mod tests {
             provider: None,
             prompt: prompt.into(),
             mode: None,
-            guard_preset: None,
-            guard_config: None,
+            unrestricted: None,
             model: None,
             allowed_tools: None,
             system_prompt: None,
@@ -688,20 +652,7 @@ mod tests {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
             name: Some("custom-name".into()),
-            workdir: "/tmp".into(),
-            provider: None,
-            prompt: "test".into(),
-            mode: None,
-            guard_preset: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            ..make_req("test")
         };
         let (session, _) = mgr.create_session(req).await.unwrap();
         assert_eq!(session.name, "custom-name");
@@ -711,25 +662,14 @@ mod tests {
     async fn test_create_session_autonomous() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
             provider: Some(Provider::Claude),
             prompt: "Do something".into(),
             mode: Some(SessionMode::Autonomous),
-            guard_preset: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            ..make_req("Do something")
         };
         let (session, _) = mgr.create_session(req).await.unwrap();
         assert_eq!(session.mode, SessionMode::Autonomous);
-        // Default guard is Standard — uses --allowedTools, not --dangerously-skip-permissions
+        // Default guard is restricted — uses --allowedTools, not --dangerously-skip-permissions
         assert!(session.guard_config.is_some());
 
         let calls = backend.calls.lock().unwrap();
@@ -747,21 +687,10 @@ mod tests {
     async fn test_create_session_autonomous_unrestricted() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
             provider: Some(Provider::Claude),
-            prompt: "Do something".into(),
             mode: Some(SessionMode::Autonomous),
-            guard_preset: Some(pulpo_common::guard::GuardPreset::Unrestricted),
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            unrestricted: Some(true),
+            ..make_req("Do something")
         };
         let (session, _) = mgr.create_session(req).await.unwrap();
         assert_eq!(session.mode, SessionMode::Autonomous);
@@ -786,62 +715,32 @@ mod tests {
             .unwrap();
         assert!(fetched.guard_config.is_some());
         let gc = fetched.guard_config.unwrap();
-        // Default is Standard preset
-        assert_eq!(gc.preset, pulpo_common::guard::GuardPreset::Standard);
+        // Default is restricted
+        assert!(!gc.unrestricted);
     }
 
     #[tokio::test]
-    async fn test_create_session_with_guard_preset() {
+    async fn test_create_session_with_unrestricted() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
-            provider: None,
-            prompt: "test".into(),
-            mode: None,
-            guard_preset: Some(pulpo_common::guard::GuardPreset::Strict),
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            unrestricted: Some(true),
+            ..make_req("test")
         };
         let (session, _) = mgr.create_session(req).await.unwrap();
         let gc = session.guard_config.unwrap();
-        assert_eq!(gc.preset, pulpo_common::guard::GuardPreset::Strict);
+        assert!(gc.unrestricted);
     }
 
     #[tokio::test]
-    async fn test_create_session_with_guard_config_override() {
+    async fn test_create_session_with_unrestricted_false() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let custom = GuardConfig {
-            preset: pulpo_common::guard::GuardPreset::Unrestricted,
-        };
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
-            provider: None,
-            prompt: "test".into(),
-            mode: None,
-            guard_preset: Some(pulpo_common::guard::GuardPreset::Strict),
-            guard_config: Some(custom.clone()),
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            unrestricted: Some(false),
+            ..make_req("test")
         };
         let (session, _) = mgr.create_session(req).await.unwrap();
-        // guard_config takes precedence over guard_preset
         let gc = session.guard_config.unwrap();
-        assert_eq!(gc.preset, pulpo_common::guard::GuardPreset::Unrestricted);
+        assert!(!gc.unrestricted);
     }
 
     #[tokio::test]
@@ -1265,60 +1164,29 @@ mod tests {
         let req = make_req("test");
         let default = GuardConfig::default();
         let result = resolve_guard_config(&req, &default);
-        assert_eq!(result.preset, pulpo_common::guard::GuardPreset::Standard);
+        assert!(!result.unrestricted);
     }
 
     #[test]
-    fn test_resolve_guard_config_preset() {
+    fn test_resolve_guard_config_unrestricted() {
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
-            provider: None,
-            prompt: "test".into(),
-            mode: None,
-            guard_preset: Some(pulpo_common::guard::GuardPreset::Strict),
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            unrestricted: Some(true),
+            ..make_req("test")
         };
         let result = resolve_guard_config(&req, &GuardConfig::default());
-        assert_eq!(result.preset, pulpo_common::guard::GuardPreset::Strict);
+        assert!(result.unrestricted);
     }
 
     #[test]
-    fn test_resolve_guard_config_config_wins() {
-        let custom = GuardConfig {
-            preset: pulpo_common::guard::GuardPreset::Unrestricted,
-        };
+    fn test_resolve_guard_config_restricted() {
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
-            provider: None,
-            prompt: "test".into(),
-            mode: None,
-            guard_preset: Some(pulpo_common::guard::GuardPreset::Strict),
-            guard_config: Some(custom),
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            unrestricted: Some(false),
+            ..make_req("test")
         };
-        let result = resolve_guard_config(&req, &GuardConfig::default());
-        // guard_config wins over guard_preset
-        assert_eq!(
-            result.preset,
-            pulpo_common::guard::GuardPreset::Unrestricted
-        );
+        let default = GuardConfig { unrestricted: true };
+        let result = resolve_guard_config(&req, &default);
+        // Explicit unrestricted=false wins over unrestricted default
+        assert!(!result.unrestricted);
     }
 
     #[test]
@@ -1337,9 +1205,7 @@ mod tests {
 
     #[test]
     fn test_build_command_autonomous_claude_resume_unrestricted() {
-        let guards = GuardConfig {
-            preset: pulpo_common::guard::GuardPreset::Unrestricted,
-        };
+        let guards = GuardConfig { unrestricted: true };
         let params = crate::guard::SpawnParams {
             prompt: "Fix bug".into(),
             guards,
@@ -1448,9 +1314,7 @@ mod tests {
 
     #[test]
     fn test_build_command_autonomous_claude_unrestricted() {
-        let guards = GuardConfig {
-            preset: pulpo_common::guard::GuardPreset::Unrestricted,
-        };
+        let guards = GuardConfig { unrestricted: true };
         let params = crate::guard::SpawnParams {
             prompt: "Fix bug".into(),
             guards,
@@ -1587,30 +1451,11 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
-            default_max_turns: None,
-            default_max_budget_usd: None,
-            default_output_format: None,
             inks,
             event_tx: None,
             node_name: String::new(),
         };
-        let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
-            provider: None,
-            prompt: "test".into(),
-            mode: None,
-            guard_preset: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-        };
+        let req = make_req("test");
         let resolved = mgr.resolve_ink(req).unwrap();
         assert!(resolved.model.is_none());
         assert!(resolved.system_prompt.is_none());
@@ -1623,29 +1468,13 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
-            default_max_turns: None,
-            default_max_budget_usd: None,
-            default_output_format: None,
             inks,
             event_tx: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
-            provider: None,
-            prompt: "test".into(),
-            mode: None,
-            guard_preset: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
             ink: Some("nonexistent".into()),
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            ..make_req("test")
         };
         let result = mgr.resolve_ink(req);
         assert!(result.is_err());
@@ -1661,7 +1490,7 @@ mod tests {
                 description: None,
                 provider: Some("claude".into()),
                 mode: Some("autonomous".into()),
-                guard_preset: Some("strict".into()),
+                unrestricted: Some(false),
                 instructions: Some("Review code".into()),
             },
         );
@@ -1669,34 +1498,18 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
-            default_max_turns: None,
-            default_max_budget_usd: None,
-            default_output_format: None,
             inks,
             event_tx: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
-            provider: None,
-            prompt: "test".into(),
-            mode: None,
-            guard_preset: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
             ink: Some("reviewer".into()),
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            ..make_req("test")
         };
         let resolved = mgr.resolve_ink(req).unwrap();
         assert_eq!(resolved.provider, Some(Provider::Claude));
         assert_eq!(resolved.mode, Some(SessionMode::Autonomous));
-        assert_eq!(resolved.guard_preset, Some(GuardPreset::Strict));
+        assert_eq!(resolved.unrestricted, Some(false));
         // Claude supports system_prompt, so instructions → system_prompt
         assert_eq!(resolved.system_prompt, Some("Review code".into()));
     }
@@ -1710,7 +1523,7 @@ mod tests {
                 description: None,
                 provider: Some("codex".into()),
                 mode: None,
-                guard_preset: None,
+                unrestricted: None,
                 instructions: Some("You are an expert coder.".into()),
             },
         );
@@ -1718,29 +1531,13 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
-            default_max_turns: None,
-            default_max_budget_usd: None,
-            default_output_format: None,
             inks,
             event_tx: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
-            provider: None,
-            prompt: "Fix the bug".into(),
-            mode: None,
-            guard_preset: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
             ink: Some("coder".into()),
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            ..make_req("Fix the bug")
         };
         let resolved = mgr.resolve_ink(req).unwrap();
         // Codex doesn't support system_prompt, so instructions are prepended to prompt
@@ -1758,7 +1555,7 @@ mod tests {
                 description: None,
                 provider: Some("claude".into()),
                 mode: Some("autonomous".into()),
-                guard_preset: Some("strict".into()),
+                unrestricted: Some(false),
                 instructions: Some("Review code".into()),
             },
         );
@@ -1766,43 +1563,33 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
-            default_max_turns: None,
-            default_max_budget_usd: None,
-            default_output_format: None,
             inks,
             event_tx: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
             provider: Some(Provider::Codex),
-            prompt: "test".into(),
             mode: Some(SessionMode::Interactive),
-            guard_preset: Some(GuardPreset::Unrestricted),
-            guard_config: None,
+            unrestricted: Some(true),
             model: Some("opus".into()),
             allowed_tools: Some(vec!["Bash".into()]),
             system_prompt: Some("Explicit prompt".into()),
-            metadata: None,
             ink: Some("reviewer".into()),
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            ..make_req("test")
         };
         let resolved = mgr.resolve_ink(req).unwrap();
         // Explicit request values win
         assert_eq!(resolved.provider, Some(Provider::Codex));
         assert_eq!(resolved.model, Some("opus".into()));
         assert_eq!(resolved.mode, Some(SessionMode::Interactive));
-        assert_eq!(resolved.guard_preset, Some(GuardPreset::Unrestricted));
+        assert_eq!(resolved.unrestricted, Some(true));
         assert_eq!(resolved.allowed_tools, Some(vec!["Bash".into()]));
         // Explicit system_prompt wins over ink instructions
         assert_eq!(resolved.system_prompt, Some("Explicit prompt".into()));
     }
 
     #[test]
-    fn test_resolve_ink_guard_config_blocks_preset() {
+    fn test_resolve_ink_explicit_unrestricted_blocks_ink() {
         let mut inks = HashMap::new();
         inks.insert(
             "coder".into(),
@@ -1810,7 +1597,7 @@ mod tests {
                 description: None,
                 provider: None,
                 mode: None,
-                guard_preset: Some("strict".into()),
+                unrestricted: Some(false),
                 instructions: None,
             },
         );
@@ -1818,38 +1605,22 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
-            default_max_turns: None,
-            default_max_budget_usd: None,
-            default_output_format: None,
             inks,
             event_tx: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
-            provider: None,
-            prompt: "test".into(),
-            mode: None,
-            guard_preset: None,
-            guard_config: Some(GuardConfig::default()),
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
+            unrestricted: Some(true),
             ink: Some("coder".into()),
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            ..make_req("test")
         };
         let resolved = mgr.resolve_ink(req).unwrap();
-        // guard_config is set, so ink's guard_preset should NOT be applied
-        assert!(resolved.guard_preset.is_none());
-        assert!(resolved.guard_config.is_some());
+        // Explicit unrestricted=true wins over ink's unrestricted=false
+        assert_eq!(resolved.unrestricted, Some(true));
     }
 
     #[test]
-    fn test_resolve_ink_applies_guardrail_defaults() {
+    fn test_resolve_ink_applies_unrestricted_from_ink() {
         let mut inks = HashMap::new();
         inks.insert(
             "safe-agent".into(),
@@ -1857,7 +1628,7 @@ mod tests {
                 description: Some("A safe agent".into()),
                 provider: Some("claude".into()),
                 mode: None,
-                guard_preset: Some("strict".into()),
+                unrestricted: Some(false),
                 instructions: Some("Be careful".into()),
             },
         );
@@ -1865,33 +1636,17 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
-            default_max_turns: None,
-            default_max_budget_usd: None,
-            default_output_format: None,
             inks,
             event_tx: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
-            provider: None,
-            prompt: "test".into(),
-            mode: None,
-            guard_preset: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
             ink: Some("safe-agent".into()),
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
+            ..make_req("test")
         };
         let resolved = mgr.resolve_ink(req).unwrap();
         assert_eq!(resolved.provider, Some(Provider::Claude));
-        assert_eq!(resolved.guard_preset, Some(GuardPreset::Strict));
+        assert_eq!(resolved.unrestricted, Some(false));
         // Claude supports system_prompt, so instructions → system_prompt
         assert_eq!(resolved.system_prompt, Some("Be careful".into()));
     }
@@ -1905,7 +1660,7 @@ mod tests {
                 description: None,
                 provider: Some("claude".into()),
                 mode: None,
-                guard_preset: None,
+                unrestricted: None,
                 instructions: Some("Ink instructions".into()),
             },
         );
@@ -1913,29 +1668,16 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
-            default_max_turns: None,
-            default_max_budget_usd: None,
-            default_output_format: None,
             inks,
             event_tx: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
-            name: None,
-            workdir: "/tmp".into(),
-            provider: None,
-            prompt: "test".into(),
-            mode: None,
-            guard_preset: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
             ink: Some("safe-agent".into()),
             max_turns: Some(3),
             max_budget_usd: Some(1.0),
             output_format: Some("stream-json".into()),
+            ..make_req("test")
         };
         let resolved = mgr.resolve_ink(req).unwrap();
         // Explicit request guardrail values pass through (ink doesn't set them)
@@ -1948,100 +1690,6 @@ mod tests {
         assert_eq!(resolved.model, None);
         // Instructions → system_prompt (Claude provider)
         assert_eq!(resolved.system_prompt, Some("Ink instructions".into()));
-    }
-
-    #[tokio::test]
-    async fn test_global_guardrail_defaults_applied() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let mgr = mgr.with_guardrail_defaults(Some(50), Some(10.0), Some("stream-json".into()));
-
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-        assert_eq!(session.max_turns, Some(50));
-        assert_eq!(session.max_budget_usd, Some(10.0));
-        assert_eq!(session.output_format, Some("stream-json".into()));
-    }
-
-    #[tokio::test]
-    async fn test_global_guardrail_defaults_overridden_by_request() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let mgr = mgr.with_guardrail_defaults(Some(50), Some(10.0), Some("stream-json".into()));
-
-        let req = CreateSessionRequest {
-            max_turns: Some(5),
-            max_budget_usd: Some(1.0),
-            output_format: Some("json".into()),
-            ..make_req("test")
-        };
-        let (session, _) = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.max_turns, Some(5));
-        assert_eq!(session.max_budget_usd, Some(1.0));
-        assert_eq!(session.output_format, Some("json".into()));
-    }
-
-    #[tokio::test]
-    async fn test_global_guardrail_defaults_not_overridden_by_ink() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let mut inks = HashMap::new();
-        inks.insert(
-            "strict-agent".into(),
-            crate::config::InkConfig {
-                description: None,
-                provider: None,
-                mode: None,
-                guard_preset: None,
-                instructions: None,
-            },
-        );
-        let mgr = SessionManager::new(
-            Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store,
-            GuardConfig::default(),
-            inks,
-        )
-        .with_guardrail_defaults(Some(50), Some(10.0), Some("stream-json".into()));
-
-        let req = CreateSessionRequest {
-            ink: Some("strict-agent".into()),
-            ..make_req("test")
-        };
-        let (session, _) = mgr.create_session(req).await.unwrap();
-        // Ink no longer carries guardrail fields, so global defaults apply
-        assert_eq!(session.max_turns, Some(50));
-        assert_eq!(session.max_budget_usd, Some(10.0));
-        assert_eq!(session.output_format, Some("stream-json".into()));
-    }
-
-    #[tokio::test]
-    async fn test_global_guardrail_defaults_none_when_unset() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        // No guardrail defaults set
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-        assert!(session.max_turns.is_none());
-        assert!(session.max_budget_usd.is_none());
-        assert!(session.output_format.is_none());
-    }
-
-    #[test]
-    fn test_with_guardrail_defaults_builder() {
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            default_max_turns: None,
-            default_max_budget_usd: None,
-            default_output_format: None,
-            inks: HashMap::new(),
-            event_tx: None,
-            node_name: String::new(),
-        };
-
-        let mgr = mgr.with_guardrail_defaults(Some(100), Some(25.0), Some("json".into()));
-        assert_eq!(mgr.default_max_turns, Some(100));
-        assert_eq!(mgr.default_max_budget_usd, Some(25.0));
-        assert_eq!(mgr.default_output_format, Some("json".into()));
     }
 
     /// Helper to create a `SessionManager` without a valid store (for sync-only tests).

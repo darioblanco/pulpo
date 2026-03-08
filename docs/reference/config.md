@@ -17,7 +17,7 @@ Notes:
 
 - `bind` in `[node]` determines both network exposure and discovery method.
 - `[auth]` is only relevant for `bind = "public"`. Other modes skip auth.
-- `inks` are universal named roles. Each ink can set: `description`, `provider`, `mode`, `guard_preset`, and `instructions`. Instructions are passed as system prompt for providers that support it (Claude), or prepended to the prompt for others (Codex, Gemini, OpenCode).
+- `inks` are universal named roles. Each ink can set: `description`, `provider`, `mode`, `unrestricted`, and `instructions`. Instructions are passed as system prompt for providers that support it (Claude), or prepended to the prompt for others (Codex, Gemini, OpenCode).
 - Manual `peers` always coexist with dynamic discovery.
 
 Source of truth for full semantics:

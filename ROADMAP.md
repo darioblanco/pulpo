@@ -66,7 +66,7 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
 - Session lifecycle: `creating`, `running`, `completed`, `dead`, `stale`
 - Resume flow after stale detection
 - Watchdog interventions (memory + idle)
-- Guard presets (`standard`, `strict`, `unrestricted`)
+- Binary guard toggle (`unrestricted` on/off)
 - Claude Code + Codex provider support
 - Multi-node support (manual peers + mDNS in `public` mode)
 - SSE events (`/api/v1/events`)
@@ -82,7 +82,7 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
 
 - Expose watchdog settings via API/UI (`GET/PUT /api/v1/watchdog`)
 - Expose notifications settings via API/UI (`GET/PUT /api/v1/notifications`)
-- Expose missing guard defaults in API (`max_turns`, `max_budget_usd`, `output_format`)
+- Expose per-session overrides in API (`max_turns`, `max_budget_usd`, `output_format`)
 - Expose bind mode controls in settings (with explicit restart_required semantics)
 
 Why: reduce SSH/TOML edits and make operational policy manageable from one surface.
@@ -115,7 +115,7 @@ Why: this separates Pulpo from single-machine wrappers.
 
 ### 5. Policy as configuration (without platform bloat)
 
-- Per-ink policy bundles (guard + budget + tool allowlists + runtime limits)
+- Per-ink policy bundles (unrestricted toggle + budget + tool allowlists + runtime limits)
 - Global policy defaults with local override visibility
 - Policy dry-run endpoint to explain effective settings before spawn
 

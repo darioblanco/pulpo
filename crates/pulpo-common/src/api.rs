@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::BindMode;
-use crate::guard::{GuardConfig, GuardPreset};
 use crate::node::NodeInfo;
 use crate::peer::{PeerEntry, PeerInfo};
 use crate::session::{Provider, Session, SessionMode};
@@ -15,8 +14,7 @@ pub struct CreateSessionRequest {
     pub provider: Option<Provider>,
     pub prompt: String,
     pub mode: Option<SessionMode>,
-    pub guard_preset: Option<GuardPreset>,
-    pub guard_config: Option<GuardConfig>,
+    pub unrestricted: Option<bool>,
     pub model: Option<String>,
     pub allowed_tools: Option<Vec<String>>,
     pub system_prompt: Option<String>,
@@ -108,10 +106,7 @@ pub struct NodeConfigResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GuardDefaultConfigResponse {
-    pub preset: GuardPreset,
-    pub max_turns: Option<u32>,
-    pub max_budget_usd: Option<f64>,
-    pub output_format: Option<String>,
+    pub unrestricted: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -149,7 +144,7 @@ pub struct InkConfigResponse {
     pub description: Option<String>,
     pub provider: Option<String>,
     pub mode: Option<String>,
-    pub guard_preset: Option<String>,
+    pub unrestricted: Option<bool>,
     pub instructions: Option<String>,
 }
 
@@ -173,10 +168,7 @@ pub struct UpdateConfigRequest {
     pub seed: Option<String>,
     pub discovery_interval_secs: Option<u64>,
     // Guard defaults
-    pub guard_preset: Option<GuardPreset>,
-    pub guard_max_turns: Option<u32>,
-    pub guard_max_budget_usd: Option<f64>,
-    pub guard_output_format: Option<String>,
+    pub unrestricted: Option<bool>,
     // Watchdog
     pub watchdog_enabled: Option<bool>,
     pub watchdog_memory_threshold: Option<u8>,
@@ -242,10 +234,7 @@ mod tests {
             auth: AuthConfigResponse {},
             peers: HashMap::new(),
             guards: GuardDefaultConfigResponse {
-                preset: GuardPreset::Standard,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                unrestricted: false,
             },
             watchdog: WatchdogConfigResponse {
                 enabled: true,
@@ -278,10 +267,7 @@ mod tests {
             auth: AuthConfigResponse {},
             peers: HashMap::new(),
             guards: GuardDefaultConfigResponse {
-                preset: GuardPreset::Standard,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                unrestricted: false,
             },
             watchdog: WatchdogConfigResponse {
                 enabled: true,
@@ -304,12 +290,12 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"guards":{"preset":"strict","max_turns":null,"max_budget_usd":null,"output_format":null},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert"},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"guards":{"unrestricted":true},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert"},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
         assert_eq!(resp.node.bind, BindMode::Local);
-        assert_eq!(resp.guards.preset, GuardPreset::Strict);
+        assert!(resp.guards.unrestricted);
         assert!(resp.watchdog.enabled);
         assert!(resp.notifications.discord.is_none());
         assert!(resp.inks.is_empty());
@@ -330,10 +316,7 @@ mod tests {
             auth: AuthConfigResponse {},
             peers: HashMap::new(),
             guards: GuardDefaultConfigResponse {
-                preset: GuardPreset::Standard,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                unrestricted: false,
             },
             watchdog: WatchdogConfigResponse {
                 enabled: true,
@@ -370,14 +353,9 @@ mod tests {
 
     #[test]
     fn test_guard_default_config_response_debug() {
-        let resp = GuardDefaultConfigResponse {
-            preset: GuardPreset::Unrestricted,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-        };
+        let resp = GuardDefaultConfigResponse { unrestricted: true };
         let debug = format!("{resp:?}");
-        assert!(debug.contains("Unrestricted"));
+        assert!(debug.contains("true"));
     }
 
     #[test]
@@ -388,7 +366,7 @@ mod tests {
         assert_eq!(req.port, Some(9999));
         assert!(req.data_dir.is_none());
         assert!(req.bind.is_none());
-        assert!(req.guard_preset.is_none());
+        assert!(req.unrestricted.is_none());
         assert!(req.peers.is_none());
     }
 
@@ -447,10 +425,7 @@ mod tests {
             auth: AuthConfigResponse {},
             peers,
             guards: GuardDefaultConfigResponse {
-                preset: GuardPreset::Standard,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
+                unrestricted: false,
             },
             watchdog: WatchdogConfigResponse {
                 enabled: true,
@@ -472,13 +447,13 @@ mod tests {
 
     #[test]
     fn test_update_config_request_with_all_fields() {
-        let json = r#"{"node_name":"new","port":9999,"data_dir":"/d","bind":"public","guard_preset":"strict","peers":{"remote":"10.0.0.1:7433"}}"#;
+        let json = r#"{"node_name":"new","port":9999,"data_dir":"/d","bind":"public","unrestricted":true,"peers":{"remote":"10.0.0.1:7433"}}"#;
         let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.node_name, Some("new".into()));
         assert_eq!(req.port, Some(9999));
         assert_eq!(req.data_dir, Some("/d".into()));
         assert_eq!(req.bind, Some(BindMode::Public));
-        assert_eq!(req.guard_preset, Some(GuardPreset::Strict));
+        assert_eq!(req.unrestricted, Some(true));
         assert!(req.peers.is_some());
     }
 
@@ -592,8 +567,7 @@ mod tests {
             provider: None,
             prompt: "test".into(),
             mode: None,
-            guard_preset: None,
-            guard_config: None,
+            unrestricted: None,
             model: None,
             allowed_tools: None,
             system_prompt: None,
@@ -615,36 +589,17 @@ mod tests {
     }
 
     #[test]
-    fn test_create_session_request_with_guard_preset() {
-        let json = r#"{"workdir":"/repo","prompt":"test","guard_preset":"strict"}"#;
+    fn test_create_session_request_with_unrestricted() {
+        let json = r#"{"workdir":"/repo","prompt":"test","unrestricted":true}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.guard_preset, Some(crate::guard::GuardPreset::Strict));
-        assert!(req.guard_config.is_none());
+        assert_eq!(req.unrestricted, Some(true));
     }
 
     #[test]
-    fn test_create_session_request_with_guard_config() {
-        let json = r#"{"workdir":"/repo","prompt":"test","guard_config":{"preset":"standard"}}"#;
-        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert!(req.guard_config.is_some());
-        assert!(req.guard_preset.is_none());
-    }
-
-    #[test]
-    fn test_create_session_request_with_legacy_guard_config() {
-        let json = r#"{"workdir":"/repo","prompt":"test","guard_config":{"file_write":"repo_only","file_read":"workspace","shell":"restricted","network":true,"install_packages":false,"git_push":false}}"#;
-        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert!(req.guard_config.is_some());
-        let gc = req.guard_config.unwrap();
-        assert_eq!(gc.preset, crate::guard::GuardPreset::Standard);
-    }
-
-    #[test]
-    fn test_create_session_request_without_guard_fields() {
+    fn test_create_session_request_without_unrestricted() {
         let json = r#"{"workdir":"/repo","prompt":"test"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert!(req.guard_preset.is_none());
-        assert!(req.guard_config.is_none());
+        assert!(req.unrestricted.is_none());
     }
 
     #[test]

@@ -138,7 +138,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
               variant="outline"
               className="hidden border-[#1e2d3d] text-[0.55rem] uppercase text-[#5a7a9a] sm:inline-flex"
             >
-              {session.guard_config.preset}
+              {session.guard_config.unrestricted ? 'unrestricted' : 'restricted'}
             </Badge>
           )}
           {session.status === 'dead' && session.intervention_reason && (

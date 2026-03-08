@@ -6,20 +6,20 @@ describe('getProviderCapabilities', () => {
     const caps = getProviderCapabilities('claude');
     expect(caps.model).toBe(true);
     expect(caps.system_prompt).toBe(true);
-    expect(caps.guard_preset).toBe(true);
+    expect(caps.unrestricted).toBe(true);
   });
 
   it('returns limited capabilities for codex', () => {
     const caps = getProviderCapabilities('codex');
     expect(caps.model).toBe(true);
     expect(caps.system_prompt).toBe(false);
-    expect(caps.guard_preset).toBe(false);
+    expect(caps.unrestricted).toBe(false);
   });
 
   it('returns model support for gemini', () => {
     const caps = getProviderCapabilities('gemini');
     expect(caps.model).toBe(true);
-    expect(caps.guard_preset).toBe(true);
+    expect(caps.unrestricted).toBe(true);
   });
 
   it('returns no model support for open_code', () => {

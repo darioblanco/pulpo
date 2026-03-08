@@ -1,59 +1,16 @@
-use std::fmt;
-use std::str::FromStr;
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GuardPreset {
-    Strict,
-    Standard,
-    #[serde(alias = "yolo")]
-    Unrestricted,
-}
-
-impl fmt::Display for GuardPreset {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Strict => write!(f, "strict"),
-            Self::Standard => write!(f, "standard"),
-            Self::Unrestricted => write!(f, "unrestricted"),
-        }
-    }
-}
-
-impl FromStr for GuardPreset {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "strict" => Ok(Self::Strict),
-            "standard" => Ok(Self::Standard),
-            "unrestricted" | "yolo" => Ok(Self::Unrestricted),
-            other => Err(format!("unknown guard preset: {other}")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct GuardConfig {
-    pub preset: GuardPreset,
+    pub unrestricted: bool,
 }
 
-impl Default for GuardConfig {
-    fn default() -> Self {
-        Self {
-            preset: GuardPreset::Standard,
-        }
-    }
-}
-
-/// Custom deserializer that handles both the new format and the legacy DB format.
+/// Custom deserializer that handles the new format, the old preset format, and legacy DB rows.
 ///
-/// New format: `{"preset": "standard"}`
-/// Legacy format: `{"file_write": "repo_only", "file_read": "workspace", "shell": "restricted",
-///   "network": true, "install_packages": false, "git_push": false, ...}`
+/// New format: `{"unrestricted": true}`
+/// Old preset format: `{"preset": "unrestricted"}` → `unrestricted: true`
+/// Legacy format: `{"shell": "unrestricted", "network": true, ...}` → inferred
 impl<'de> Deserialize<'de> for GuardConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -61,8 +18,10 @@ impl<'de> Deserialize<'de> for GuardConfig {
     {
         #[derive(Deserialize)]
         struct RawGuardConfig {
-            // New format field
-            preset: Option<GuardPreset>,
+            // New format
+            unrestricted: Option<bool>,
+            // Old preset format
+            preset: Option<String>,
             // Legacy format fields
             shell: Option<String>,
             network: Option<bool>,
@@ -72,26 +31,26 @@ impl<'de> Deserialize<'de> for GuardConfig {
 
         let raw = RawGuardConfig::deserialize(deserializer)?;
 
-        if let Some(preset) = raw.preset {
-            // New format
-            return Ok(Self { preset });
+        // New format takes priority
+        if let Some(unrestricted) = raw.unrestricted {
+            return Ok(Self { unrestricted });
         }
 
-        // Legacy format — infer preset from fields
+        // Old preset format
+        if let Some(ref preset) = raw.preset {
+            let unrestricted = matches!(preset.as_str(), "unrestricted" | "yolo");
+            return Ok(Self { unrestricted });
+        }
+
+        // Legacy format — infer from fields
         let shell = raw.shell.as_deref().unwrap_or("restricted");
         let network = raw.network.unwrap_or(true);
         let install_packages = raw.install_packages.unwrap_or(false);
         let git_push = raw.git_push.unwrap_or(false);
 
-        let preset = if shell == "unrestricted" && network && install_packages && git_push {
-            GuardPreset::Unrestricted
-        } else if shell == "none" {
-            GuardPreset::Strict
-        } else {
-            GuardPreset::Standard
-        };
+        let unrestricted = shell == "unrestricted" && network && install_packages && git_push;
 
-        Ok(Self { preset })
+        Ok(Self { unrestricted })
     }
 }
 
@@ -99,147 +58,30 @@ impl<'de> Deserialize<'de> for GuardConfig {
 mod tests {
     use super::*;
 
-    // GuardPreset tests
-
     #[test]
-    fn test_guard_preset_serialize() {
-        assert_eq!(
-            serde_json::to_string(&GuardPreset::Strict).unwrap(),
-            "\"strict\""
-        );
-        assert_eq!(
-            serde_json::to_string(&GuardPreset::Standard).unwrap(),
-            "\"standard\""
-        );
-        assert_eq!(
-            serde_json::to_string(&GuardPreset::Unrestricted).unwrap(),
-            "\"unrestricted\""
-        );
-    }
-
-    #[test]
-    fn test_guard_preset_deserialize() {
-        assert_eq!(
-            serde_json::from_str::<GuardPreset>("\"strict\"").unwrap(),
-            GuardPreset::Strict
-        );
-        assert_eq!(
-            serde_json::from_str::<GuardPreset>("\"standard\"").unwrap(),
-            GuardPreset::Standard
-        );
-        assert_eq!(
-            serde_json::from_str::<GuardPreset>("\"unrestricted\"").unwrap(),
-            GuardPreset::Unrestricted
-        );
-    }
-
-    #[test]
-    fn test_guard_preset_deserialize_yolo_alias() {
-        // Backward compat: "yolo" in old DB rows maps to Unrestricted
-        assert_eq!(
-            serde_json::from_str::<GuardPreset>("\"yolo\"").unwrap(),
-            GuardPreset::Unrestricted
-        );
-    }
-
-    #[test]
-    fn test_guard_preset_from_str_yolo_alias() {
-        assert_eq!(
-            "yolo".parse::<GuardPreset>().unwrap(),
-            GuardPreset::Unrestricted
-        );
-    }
-
-    #[test]
-    fn test_guard_preset_invalid_deserialize() {
-        assert!(serde_json::from_str::<GuardPreset>("\"invalid\"").is_err());
-    }
-
-    #[test]
-    fn test_guard_preset_display() {
-        assert_eq!(GuardPreset::Strict.to_string(), "strict");
-        assert_eq!(GuardPreset::Standard.to_string(), "standard");
-        assert_eq!(GuardPreset::Unrestricted.to_string(), "unrestricted");
-    }
-
-    #[test]
-    fn test_guard_preset_from_str() {
-        assert_eq!(
-            "strict".parse::<GuardPreset>().unwrap(),
-            GuardPreset::Strict
-        );
-        assert_eq!(
-            "standard".parse::<GuardPreset>().unwrap(),
-            GuardPreset::Standard
-        );
-        assert_eq!(
-            "unrestricted".parse::<GuardPreset>().unwrap(),
-            GuardPreset::Unrestricted
-        );
-    }
-
-    #[test]
-    fn test_guard_preset_from_str_invalid() {
-        let err = "invalid".parse::<GuardPreset>().unwrap_err();
-        assert!(err.contains("unknown guard preset"));
-    }
-
-    #[test]
-    fn test_guard_preset_clone_and_copy() {
-        let p = GuardPreset::Standard;
-        let p2 = p;
-        #[allow(clippy::clone_on_copy)]
-        let p3 = p.clone();
-        assert_eq!(p, p2);
-        assert_eq!(p, p3);
-    }
-
-    #[test]
-    fn test_guard_preset_debug() {
-        assert_eq!(format!("{:?}", GuardPreset::Strict), "Strict");
-        assert_eq!(format!("{:?}", GuardPreset::Standard), "Standard");
-        assert_eq!(format!("{:?}", GuardPreset::Unrestricted), "Unrestricted");
-    }
-
-    // GuardConfig tests
-
-    #[test]
-    fn test_guard_config_default_is_standard() {
+    fn test_guard_config_default_is_restricted() {
         let config = GuardConfig::default();
-        assert_eq!(config.preset, GuardPreset::Standard);
-    }
-
-    #[test]
-    fn test_guard_config_strict() {
-        let config = GuardConfig {
-            preset: GuardPreset::Strict,
-        };
-        assert_eq!(config.preset, GuardPreset::Strict);
+        assert!(!config.unrestricted);
     }
 
     #[test]
     fn test_guard_config_unrestricted() {
-        let config = GuardConfig {
-            preset: GuardPreset::Unrestricted,
-        };
-        assert_eq!(config.preset, GuardPreset::Unrestricted);
+        let config = GuardConfig { unrestricted: true };
+        assert!(config.unrestricted);
     }
 
     #[test]
     fn test_guard_config_serialize_roundtrip() {
-        let config = GuardConfig {
-            preset: GuardPreset::Strict,
-        };
+        let config = GuardConfig { unrestricted: true };
         let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("\"unrestricted\":true"));
         let deserialized: GuardConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config, deserialized);
     }
 
     #[test]
     fn test_guard_config_clone() {
-        let config = GuardConfig {
-            preset: GuardPreset::Unrestricted,
-        };
+        let config = GuardConfig { unrestricted: true };
         #[allow(clippy::redundant_clone)]
         let cloned = config.clone();
         assert_eq!(config, cloned);
@@ -250,24 +92,58 @@ mod tests {
         let config = GuardConfig::default();
         let debug = format!("{config:?}");
         assert!(debug.contains("GuardConfig"));
-        assert!(debug.contains("Standard"));
+        assert!(debug.contains("false"));
     }
 
     // Backward-compatible deserialization tests
 
     #[test]
     fn test_guard_config_deserialize_new_format() {
-        let json = r#"{"preset":"strict"}"#;
+        let json = r#"{"unrestricted":false}"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.preset, GuardPreset::Strict);
+        assert!(!config.unrestricted);
     }
 
     #[test]
-    fn test_guard_config_deserialize_new_format_ignores_env() {
-        // Old DB rows may still have an env field — silently ignore it
+    fn test_guard_config_deserialize_new_format_true() {
+        let json = r#"{"unrestricted":true}"#;
+        let config: GuardConfig = serde_json::from_str(json).unwrap();
+        assert!(config.unrestricted);
+    }
+
+    #[test]
+    fn test_guard_config_deserialize_old_preset_standard() {
+        let json = r#"{"preset":"standard"}"#;
+        let config: GuardConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.unrestricted);
+    }
+
+    #[test]
+    fn test_guard_config_deserialize_old_preset_strict() {
+        let json = r#"{"preset":"strict"}"#;
+        let config: GuardConfig = serde_json::from_str(json).unwrap();
+        assert!(!config.unrestricted);
+    }
+
+    #[test]
+    fn test_guard_config_deserialize_old_preset_unrestricted() {
+        let json = r#"{"preset":"unrestricted"}"#;
+        let config: GuardConfig = serde_json::from_str(json).unwrap();
+        assert!(config.unrestricted);
+    }
+
+    #[test]
+    fn test_guard_config_deserialize_old_preset_yolo() {
+        let json = r#"{"preset":"yolo"}"#;
+        let config: GuardConfig = serde_json::from_str(json).unwrap();
+        assert!(config.unrestricted);
+    }
+
+    #[test]
+    fn test_guard_config_deserialize_old_preset_ignores_env() {
         let json = r#"{"preset":"unrestricted","env":{"allow":["PATH"],"deny":[]}}"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.preset, GuardPreset::Unrestricted);
+        assert!(config.unrestricted);
     }
 
     #[test]
@@ -281,7 +157,7 @@ mod tests {
             "git_push": false
         }"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.preset, GuardPreset::Standard);
+        assert!(!config.unrestricted);
     }
 
     #[test]
@@ -295,7 +171,7 @@ mod tests {
             "git_push": false
         }"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.preset, GuardPreset::Strict);
+        assert!(!config.unrestricted);
     }
 
     #[test]
@@ -309,12 +185,11 @@ mod tests {
             "git_push": true
         }"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.preset, GuardPreset::Unrestricted);
+        assert!(config.unrestricted);
     }
 
     #[test]
     fn test_guard_config_deserialize_legacy_with_env_ignored() {
-        // Legacy rows with env field — env is silently ignored
         let json = r#"{
             "file_write": "repo_only",
             "file_read": "workspace",
@@ -325,12 +200,11 @@ mod tests {
             "env": {"allow": ["PATH"], "deny": ["SECRET"]}
         }"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.preset, GuardPreset::Standard);
+        assert!(!config.unrestricted);
     }
 
     #[test]
-    fn test_guard_config_deserialize_legacy_partial_yolo_is_standard() {
-        // Has unrestricted shell and network, but missing install_packages/git_push
+    fn test_guard_config_deserialize_legacy_partial_yolo_is_restricted() {
         let json = r#"{
             "shell": "unrestricted",
             "network": true,
@@ -338,7 +212,6 @@ mod tests {
             "git_push": true
         }"#;
         let config: GuardConfig = serde_json::from_str(json).unwrap();
-        // Not all yolo fields set, so falls to Standard
-        assert_eq!(config.preset, GuardPreset::Standard);
+        assert!(!config.unrestricted);
     }
 }

@@ -29,10 +29,7 @@ export function SettingsPage() {
   const [discoveryInterval, setDiscoveryInterval] = useState(60);
 
   // Guards
-  const [guardPreset, setGuardPreset] = useState('standard');
-  const [guardMaxTurns, setGuardMaxTurns] = useState('');
-  const [guardMaxBudget, setGuardMaxBudget] = useState('');
-  const [guardOutputFormat, setGuardOutputFormat] = useState('');
+  const [unrestricted, setUnrestricted] = useState(false);
 
   // Watchdog
   const [watchdogEnabled, setWatchdogEnabled] = useState(true);
@@ -65,10 +62,7 @@ export function SettingsPage() {
       setSeed(config.node.seed ?? '');
       setDiscoveryInterval(config.node.discovery_interval_secs);
 
-      setGuardPreset(config.guards.preset);
-      setGuardMaxTurns(config.guards.max_turns?.toString() ?? '');
-      setGuardMaxBudget(config.guards.max_budget_usd?.toString() ?? '');
-      setGuardOutputFormat(config.guards.output_format ?? '');
+      setUnrestricted(config.guards.unrestricted);
 
       setWatchdogEnabled(config.watchdog.enabled);
       setWatchdogMemoryThreshold(config.watchdog.memory_threshold);
@@ -108,8 +102,7 @@ export function SettingsPage() {
         tag,
         seed,
         discovery_interval_secs: discoveryInterval,
-        guard_preset: guardPreset,
-        guard_output_format: guardOutputFormat,
+        unrestricted,
         watchdog_enabled: watchdogEnabled,
         watchdog_memory_threshold: watchdogMemoryThreshold,
         watchdog_check_interval_secs: watchdogCheckInterval,
@@ -131,12 +124,6 @@ export function SettingsPage() {
         req.inks = inks;
       }
 
-      if (guardMaxTurns) {
-        req.guard_max_turns = parseInt(guardMaxTurns, 10);
-      }
-      if (guardMaxBudget) {
-        req.guard_max_budget_usd = parseFloat(guardMaxBudget);
-      }
       if (discordEvents.trim()) {
         req.discord_events = discordEvents
           .split(',')
@@ -230,14 +217,8 @@ export function SettingsPage() {
                 <div className="space-y-6">
                   <PeerSettings peers={peers} onUpdate={setPeers} bind={bind} />
                   <GuardSettings
-                    preset={guardPreset}
-                    onPresetChange={setGuardPreset}
-                    maxTurns={guardMaxTurns}
-                    onMaxTurnsChange={setGuardMaxTurns}
-                    maxBudgetUsd={guardMaxBudget}
-                    onMaxBudgetUsdChange={setGuardMaxBudget}
-                    outputFormat={guardOutputFormat}
-                    onOutputFormatChange={setGuardOutputFormat}
+                    unrestricted={unrestricted}
+                    onUnrestrictedChange={setUnrestricted}
                   />
                   <InkSettings inks={inks} onInksChange={setInks} peers={peers} />
                   <WatchdogSettings

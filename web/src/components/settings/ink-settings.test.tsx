@@ -17,7 +17,7 @@ const emptyInk: InkConfig = {
   description: null,
   provider: null,
   mode: null,
-  guard_preset: null,
+  unrestricted: null,
   instructions: null,
 };
 
@@ -25,7 +25,7 @@ const reviewerInk: InkConfig = {
   description: 'Code review specialist',
   provider: 'claude',
   mode: 'interactive',
-  guard_preset: 'strict',
+  unrestricted: false,
   instructions: 'You are a code reviewer.',
 };
 
