@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.0.8](https://github.com/darioblanco/pulpo/compare/v0.0.7...v0.0.8) (2026-03-08)
+
+
+### Features
+
+* **inks:** built-in ink presets + settings CRUD + session dialog selector ([5802638](https://github.com/darioblanco/pulpo/commit/5802638e5c431ab72b63157f4ca3a74229454119))
+* **inks:** push-to-peers sync for ink presets ([e1a39c9](https://github.com/darioblanco/pulpo/commit/e1a39c9b0a8fee225b4369f38a5e78058767352d))
+* **inks:** remove model from ink config + add provider-aware model selector ([097ab5e](https://github.com/darioblanco/pulpo/commit/097ab5edd463def0bb5382b17dcfc7ea742018e9))
+* **inks:** rename persona to ink across all layers ([7d474f8](https://github.com/darioblanco/pulpo/commit/7d474f8441bbd1940bd005df8ac8115e6540e68c))
+* **inks:** simplify to universal roles + fix MCP spawn_session ink bug ([6307563](https://github.com/darioblanco/pulpo/commit/63075638179369d35b64047f804bb8f17c9a9d8f))
+* **peers:** scheme-aware peer addressing for Tailscale multi-node support ([02073ff](https://github.com/darioblanco/pulpo/commit/02073ffcc8d1159c45f04a5d41435d1c99610ab3))
+* **providers:** add OpenCode provider with capability warnings ([c7937ec](https://github.com/darioblanco/pulpo/commit/c7937ec5d73547a68d15cac57b2b3079c64abef1))
+* **session:** octopus-themed name generator for unnamed sessions ([7bd17a6](https://github.com/darioblanco/pulpo/commit/7bd17a6fb8572c5a4dc7c4b6c4945271d5f465b9))
+* **tailscale:** auto-manage tailscale serve for HTTPS dashboard access ([7aa371c](https://github.com/darioblanco/pulpo/commit/7aa371c8571ac9f4e76fcdd03218a03af2270de0))
+* **web:** terminal-window session cards + tmux mouse scrollback ([2130f8d](https://github.com/darioblanco/pulpo/commit/2130f8dd83149fe183489e02fb7a0421374c16b7))
+
+
+### Bug Fixes
+
+* **coverage:** align pre-commit threshold with cargo-llvm-cov 0.8+ behavior ([8961ff3](https://github.com/darioblanco/pulpo/commit/8961ff3ac1b48a581d212d08f9561c6f913adf6e))
+* resolve attach session via API + restore 100% coverage ([f4dcfbe](https://github.com/darioblanco/pulpo/commit/f4dcfbe80f5951da912513d31ac64b35910eb1b2))
+* **web:** update tailscale bind description + fix PeerEntry type ([c3ce927](https://github.com/darioblanco/pulpo/commit/c3ce927cfcfaa8b8a5d016df7c236e0c8cf014d7))
+
 ## [0.0.7](https://github.com/darioblanco/pulpo/compare/v0.0.6...v0.0.7) (2026-03-07)
 
 
