@@ -3,6 +3,7 @@ pub mod backend;
 pub mod config;
 pub mod discovery;
 pub mod guard;
+pub mod knowledge;
 pub mod mcp;
 pub mod notifications;
 pub mod peers;

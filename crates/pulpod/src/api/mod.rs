@@ -4,6 +4,7 @@ mod embed;
 pub mod events;
 pub mod health;
 pub mod inks;
+pub mod knowledge;
 pub mod node;
 pub mod peers;
 pub mod routes;

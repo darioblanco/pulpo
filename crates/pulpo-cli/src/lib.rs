@@ -1,6 +1,9 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use pulpo_common::api::{AuthTokenResponse, InterventionEventResponse, PeersResponse};
+use pulpo_common::api::{
+    AuthTokenResponse, InterventionEventResponse, KnowledgeResponse, PeersResponse,
+};
+use pulpo_common::knowledge::Knowledge;
 use pulpo_common::session::Session;
 
 #[derive(Parser, Debug)]
@@ -150,6 +153,34 @@ pub enum Commands {
     /// Open the web dashboard in your browser
     Ui,
 
+    /// Query extracted knowledge from past sessions
+    #[command(visible_alias = "kn")]
+    Knowledge {
+        /// Filter by session ID
+        #[arg(long)]
+        session: Option<String>,
+
+        /// Filter by kind (summary, failure)
+        #[arg(long)]
+        kind: Option<String>,
+
+        /// Filter by repo/workdir
+        #[arg(long)]
+        repo: Option<String>,
+
+        /// Filter by ink name
+        #[arg(long)]
+        ink: Option<String>,
+
+        /// Maximum results
+        #[arg(long, default_value = "20")]
+        limit: usize,
+
+        /// Context mode: find relevant knowledge for a workdir
+        #[arg(long)]
+        context: bool,
+    },
+
     /// Manage scheduled agent runs via crontab
     #[command(visible_alias = "sched")]
     Schedule {
@@ -265,6 +296,35 @@ fn format_interventions(events: &[InterventionEventResponse]) -> String {
     let mut lines = vec![format!("{:<8} {:<20} {}", "ID", "TIMESTAMP", "REASON")];
     for e in events {
         lines.push(format!("{:<8} {:<20} {}", e.id, e.created_at, e.reason));
+    }
+    lines.join("\n")
+}
+
+/// Format knowledge items as a table.
+fn format_knowledge(items: &[Knowledge]) -> String {
+    if items.is_empty() {
+        return "No knowledge found.".into();
+    }
+    let mut lines = vec![format!(
+        "{:<10} {:<40} {:<10} {:<6} {}",
+        "KIND", "TITLE", "REPO", "REL", "TAGS"
+    )];
+    for k in items {
+        let title = if k.title.len() > 38 {
+            format!("{}…", &k.title[..37])
+        } else {
+            k.title.clone()
+        };
+        let repo = k
+            .scope_repo
+            .as_deref()
+            .and_then(|r| r.rsplit('/').next())
+            .unwrap_or("-");
+        let tags = k.tags.join(",");
+        lines.push(format!(
+            "{:<10} {:<40} {:<10} {:<6.2} {}",
+            k.kind, title, repo, k.relevance, tags
+        ));
     }
     lines.join("\n")
 }
@@ -960,6 +1020,46 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let text = ok_or_api_error(resp).await?;
             let session: Session = serde_json::from_str(&text)?;
             Ok(format!("Resumed session \"{}\"", session.name))
+        }
+        Commands::Knowledge {
+            session,
+            kind,
+            repo,
+            ink,
+            limit,
+            context,
+        } => {
+            let mut params = vec![format!("limit={limit}")];
+            let endpoint = if *context {
+                if let Some(r) = repo {
+                    params.push(format!("workdir={r}"));
+                }
+                if let Some(i) = ink {
+                    params.push(format!("ink={i}"));
+                }
+                format!("{url}/api/v1/knowledge/context?{}", params.join("&"))
+            } else {
+                if let Some(s) = session {
+                    params.push(format!("session_id={s}"));
+                }
+                if let Some(k) = kind {
+                    params.push(format!("kind={k}"));
+                }
+                if let Some(r) = repo {
+                    params.push(format!("repo={r}"));
+                }
+                if let Some(i) = ink {
+                    params.push(format!("ink={i}"));
+                }
+                format!("{url}/api/v1/knowledge?{}", params.join("&"))
+            };
+            let resp = authed_get(&client, endpoint, token.as_deref())
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let resp: KnowledgeResponse = serde_json::from_str(&text)?;
+            Ok(format_knowledge(&resp.knowledge))
         }
         Commands::Schedule { action } => execute_schedule(action, node),
     }
@@ -3163,5 +3263,158 @@ mod tests {
     fn test_schedule_action_debug() {
         let action = ScheduleAction::List;
         assert_eq!(format!("{action:?}"), "List");
+    }
+
+    // ── Knowledge CLI tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_cli_parse_knowledge() {
+        let cli = Cli::try_parse_from(["pulpo", "knowledge"]).unwrap();
+        assert!(matches!(cli.command, Commands::Knowledge { .. }));
+    }
+
+    #[test]
+    fn test_cli_parse_knowledge_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "kn"]).unwrap();
+        assert!(matches!(cli.command, Commands::Knowledge { .. }));
+    }
+
+    #[test]
+    fn test_cli_parse_knowledge_with_filters() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "knowledge",
+            "--kind",
+            "failure",
+            "--repo",
+            "/tmp/repo",
+            "--ink",
+            "coder",
+            "--limit",
+            "5",
+        ])
+        .unwrap();
+        match &cli.command {
+            Commands::Knowledge {
+                kind,
+                repo,
+                ink,
+                limit,
+                ..
+            } => {
+                assert_eq!(kind.as_deref(), Some("failure"));
+                assert_eq!(repo.as_deref(), Some("/tmp/repo"));
+                assert_eq!(ink.as_deref(), Some("coder"));
+                assert_eq!(*limit, 5);
+            }
+            _ => panic!("expected Knowledge command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_knowledge_context() {
+        let cli = Cli::try_parse_from(["pulpo", "knowledge", "--context", "--repo", "/tmp/repo"])
+            .unwrap();
+        match &cli.command {
+            Commands::Knowledge { context, repo, .. } => {
+                assert!(*context);
+                assert_eq!(repo.as_deref(), Some("/tmp/repo"));
+            }
+            _ => panic!("expected Knowledge command"),
+        }
+    }
+
+    #[test]
+    fn test_format_knowledge_empty() {
+        assert_eq!(format_knowledge(&[]), "No knowledge found.");
+    }
+
+    #[test]
+    fn test_format_knowledge_items() {
+        use chrono::Utc;
+        use pulpo_common::knowledge::{Knowledge, KnowledgeKind};
+        use uuid::Uuid;
+
+        let items = vec![
+            Knowledge {
+                id: Uuid::new_v4(),
+                session_id: Uuid::new_v4(),
+                kind: KnowledgeKind::Summary,
+                scope_repo: Some("/tmp/repo".into()),
+                scope_ink: Some("coder".into()),
+                title: "Fixed the auth bug".into(),
+                body: "Details".into(),
+                tags: vec!["claude".into(), "completed".into()],
+                relevance: 0.7,
+                created_at: Utc::now(),
+            },
+            Knowledge {
+                id: Uuid::new_v4(),
+                session_id: Uuid::new_v4(),
+                kind: KnowledgeKind::Failure,
+                scope_repo: None,
+                scope_ink: None,
+                title: "OOM crash during build".into(),
+                body: "Details".into(),
+                tags: vec!["failure".into()],
+                relevance: 0.9,
+                created_at: Utc::now(),
+            },
+        ];
+
+        let output = format_knowledge(&items);
+        assert!(output.contains("KIND"));
+        assert!(output.contains("TITLE"));
+        assert!(output.contains("summary"));
+        assert!(output.contains("failure"));
+        assert!(output.contains("Fixed the auth bug"));
+        assert!(output.contains("repo"));
+        assert!(output.contains("0.70"));
+    }
+
+    #[test]
+    fn test_format_knowledge_long_title_truncated() {
+        use chrono::Utc;
+        use pulpo_common::knowledge::{Knowledge, KnowledgeKind};
+        use uuid::Uuid;
+
+        let items = vec![Knowledge {
+            id: Uuid::new_v4(),
+            session_id: Uuid::new_v4(),
+            kind: KnowledgeKind::Summary,
+            scope_repo: Some("/repo".into()),
+            scope_ink: None,
+            title: "A very long title that exceeds the maximum display width for knowledge items in the CLI".into(),
+            body: "Body".into(),
+            tags: vec![],
+            relevance: 0.5,
+            created_at: Utc::now(),
+        }];
+
+        let output = format_knowledge(&items);
+        assert!(output.contains('…'));
+    }
+
+    #[test]
+    fn test_format_knowledge_no_repo() {
+        use chrono::Utc;
+        use pulpo_common::knowledge::{Knowledge, KnowledgeKind};
+        use uuid::Uuid;
+
+        let items = vec![Knowledge {
+            id: Uuid::new_v4(),
+            session_id: Uuid::new_v4(),
+            kind: KnowledgeKind::Summary,
+            scope_repo: None,
+            scope_ink: None,
+            title: "Global finding".into(),
+            body: "Body".into(),
+            tags: vec![],
+            relevance: 0.5,
+            created_at: Utc::now(),
+        }];
+
+        let output = format_knowledge(&items);
+        assert!(output.contains('-')); // "-" for no repo
     }
 }

@@ -57,6 +57,23 @@ export interface InterventionEvent {
   created_at: string;
 }
 
+export interface Knowledge {
+  id: string;
+  session_id: string;
+  kind: 'summary' | 'failure';
+  scope_repo: string | null;
+  scope_ink: string | null;
+  title: string;
+  body: string;
+  tags: string[];
+  relevance: number;
+  created_at: string;
+}
+
+export interface KnowledgeResponse {
+  knowledge: Knowledge[];
+}
+
 export interface InkConfig {
   description: string | null;
   provider: string | null;

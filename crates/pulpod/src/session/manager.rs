@@ -11,9 +11,12 @@ use uuid::Uuid;
 
 use pulpo_common::guard::GuardConfig;
 
+use tracing::{debug, warn};
+
 use crate::backend::Backend;
 use crate::config::InkConfig;
 use crate::guard::check_capability_warnings;
+use crate::knowledge;
 use crate::store::Store;
 
 #[derive(Clone)]
@@ -272,6 +275,7 @@ impl SessionManager {
             .update_session_status(&session.id.to_string(), SessionStatus::Stale)
             .await?;
         session.status = SessionStatus::Stale;
+        self.extract_and_store_knowledge(session).await;
         Ok(true)
     }
 
@@ -294,6 +298,7 @@ impl SessionManager {
             .await?;
         let mut dead_session = session;
         dead_session.status = SessionStatus::Dead;
+        self.extract_and_store_knowledge(&dead_session).await;
         self.emit_event(&dead_session, Some(previous));
         Ok(())
     }
@@ -395,6 +400,28 @@ impl SessionManager {
 
     pub const fn store(&self) -> &Store {
         &self.store
+    }
+
+    /// Extract knowledge from a session and persist it to the store.
+    /// Best-effort: logs warnings on failure but does not propagate errors.
+    async fn extract_and_store_knowledge(&self, session: &Session) {
+        let items = knowledge::extract(session);
+        for item in &items {
+            if let Err(e) = self.store.insert_knowledge(item).await {
+                warn!(
+                    session_id = %session.id,
+                    kind = %item.kind,
+                    "Failed to store knowledge: {e}"
+                );
+            }
+        }
+        if !items.is_empty() {
+            debug!(
+                session_id = %session.id,
+                count = items.len(),
+                "Extracted knowledge from session"
+            );
+        }
     }
 }
 

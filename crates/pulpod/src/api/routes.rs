@@ -12,6 +12,7 @@ use super::config;
 use super::events;
 use super::health;
 use super::inks;
+use super::knowledge;
 use super::node;
 use super::peers;
 use super::sessions;
@@ -60,6 +61,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/sessions/{id}/stream", get(ws::stream))
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
         .route("/api/v1/inks", get(inks::list))
+        .route("/api/v1/knowledge", get(knowledge::list))
+        .route("/api/v1/knowledge/context", get(knowledge::context))
         .route("/api/v1/events", get(events::stream))
         .layer(middleware::from_fn_with_state(
             state.clone(),

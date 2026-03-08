@@ -390,6 +390,8 @@ DELETE /peers/:name           Remove a peer
 
 ```
 GET    /inks                  List configured inks
+GET    /knowledge             List extracted knowledge (filters: session_id, kind, repo, ink, limit)
+GET    /knowledge/context     Query relevant knowledge for a workdir/ink (for prompt injection)
 GET    /events                SSE event stream (session lifecycle events)
 ```
 
@@ -421,6 +423,8 @@ GET    /events                SSE event stream (session lifecycle events)
 | `GET`    | `/auth/token`                   | Get auth token (local only)    |
 | `GET`    | `/auth/pairing-url`             | Get QR pairing URL (local)     |
 | `GET`    | `/inks`                         | List configured inks           |
+| `GET`    | `/knowledge`                    | List extracted knowledge       |
+| `GET`    | `/knowledge/context`            | Query context-relevant knowledge |
 | `GET`    | `/events`                       | SSE event stream               |
 
 ---

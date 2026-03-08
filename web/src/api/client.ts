@@ -11,6 +11,7 @@ import type {
   InksResponse,
   CreateSessionRequest,
   CreateSessionResponse,
+  KnowledgeResponse,
 } from './types';
 
 let getBaseUrl: () => string = () => '';
@@ -230,5 +231,39 @@ export async function updateRemoteConfig(
     const err = await res.json();
     throw new Error(err.error || 'Failed to update remote config');
   }
+  return res.json();
+}
+
+export async function listKnowledge(params?: {
+  session_id?: string;
+  kind?: string;
+  repo?: string;
+  ink?: string;
+  limit?: number;
+}): Promise<KnowledgeResponse> {
+  const query = new URLSearchParams();
+  if (params?.session_id) query.set('session_id', params.session_id);
+  if (params?.kind) query.set('kind', params.kind);
+  if (params?.repo) query.set('repo', params.repo);
+  if (params?.ink) query.set('ink', params.ink);
+  if (params?.limit) query.set('limit', String(params.limit));
+  const qs = query.toString();
+  const res = await authFetch(`${resolveBaseUrl()}/knowledge${qs ? `?${qs}` : ''}`);
+  if (!res.ok) throw new Error('Failed to fetch knowledge');
+  return res.json();
+}
+
+export async function getKnowledgeContext(params?: {
+  workdir?: string;
+  ink?: string;
+  limit?: number;
+}): Promise<KnowledgeResponse> {
+  const query = new URLSearchParams();
+  if (params?.workdir) query.set('workdir', params.workdir);
+  if (params?.ink) query.set('ink', params.ink);
+  if (params?.limit) query.set('limit', String(params.limit));
+  const qs = query.toString();
+  const res = await authFetch(`${resolveBaseUrl()}/knowledge/context${qs ? `?${qs}` : ''}`);
+  if (!res.ok) throw new Error('Failed to fetch knowledge context');
   return res.json();
 }

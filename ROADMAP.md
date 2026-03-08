@@ -67,12 +67,13 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
 - Resume flow after stale detection
 - Watchdog interventions (memory + idle)
 - Binary guard toggle (`unrestricted` on/off)
-- Claude Code + Codex provider support
+- Claude Code + Codex + Gemini + OpenCode provider support
 - Multi-node support (manual peers + mDNS in `public` mode)
 - SSE events (`/api/v1/events`)
 - MCP server mode (`pulpod mcp`)
 - Scheduling via crontab wrapper
 - Discord integration in `contrib/`
+- **Knowledge extraction**: rule-based extraction of summaries and failure learnings when sessions end, stored in SQLite, queryable via API (`/api/v1/knowledge`, `/api/v1/knowledge/context`) and CLI (`pulpo knowledge`)
 
 ## Refactored Roadmap
 

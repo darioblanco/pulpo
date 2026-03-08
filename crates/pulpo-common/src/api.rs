@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::BindMode;
+use crate::knowledge::{Knowledge, KnowledgeKind};
 use crate::node::NodeInfo;
 use crate::peer::{PeerEntry, PeerInfo};
 use crate::session::{Provider, Session, SessionMode};
@@ -214,6 +215,29 @@ pub struct ListSessionsQuery {
     pub search: Option<String>,
     pub sort: Option<String>,
     pub order: Option<String>,
+}
+
+// -- Knowledge types --
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct KnowledgeResponse {
+    pub knowledge: Vec<Knowledge>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct ListKnowledgeQuery {
+    pub repo: Option<String>,
+    pub ink: Option<String>,
+    pub kind: Option<KnowledgeKind>,
+    pub session_id: Option<String>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct KnowledgeContextQuery {
+    pub workdir: Option<String>,
+    pub ink: Option<String>,
+    pub limit: Option<usize>,
 }
 
 #[cfg(test)]
@@ -1238,5 +1262,76 @@ mod tests {
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"webhooks\""));
         assert!(json.contains("\"hook\""));
+    }
+
+    #[test]
+    fn test_knowledge_response_serialize() {
+        let resp = KnowledgeResponse { knowledge: vec![] };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"knowledge\":[]"));
+    }
+
+    #[test]
+    fn test_knowledge_response_debug() {
+        let resp = KnowledgeResponse { knowledge: vec![] };
+        let debug = format!("{resp:?}");
+        assert!(debug.contains("KnowledgeResponse"));
+    }
+
+    #[test]
+    fn test_list_knowledge_query_default() {
+        let q = ListKnowledgeQuery::default();
+        assert!(q.repo.is_none());
+        assert!(q.ink.is_none());
+        assert!(q.kind.is_none());
+        assert!(q.session_id.is_none());
+        assert!(q.limit.is_none());
+    }
+
+    #[test]
+    fn test_list_knowledge_query_deserialize() {
+        let json = r#"{"repo":"/tmp/repo","ink":"coder","kind":"failure","limit":10}"#;
+        let q: ListKnowledgeQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(q.repo, Some("/tmp/repo".into()));
+        assert_eq!(q.ink, Some("coder".into()));
+        assert_eq!(q.kind, Some(KnowledgeKind::Failure));
+        assert_eq!(q.limit, Some(10));
+    }
+
+    #[test]
+    fn test_list_knowledge_query_debug() {
+        let q = ListKnowledgeQuery {
+            repo: Some("/repo".into()),
+            ..Default::default()
+        };
+        let debug = format!("{q:?}");
+        assert!(debug.contains("/repo"));
+    }
+
+    #[test]
+    fn test_knowledge_context_query_default() {
+        let q = KnowledgeContextQuery::default();
+        assert!(q.workdir.is_none());
+        assert!(q.ink.is_none());
+        assert!(q.limit.is_none());
+    }
+
+    #[test]
+    fn test_knowledge_context_query_deserialize() {
+        let json = r#"{"workdir":"/repo","ink":"reviewer","limit":5}"#;
+        let q: KnowledgeContextQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(q.workdir, Some("/repo".into()));
+        assert_eq!(q.ink, Some("reviewer".into()));
+        assert_eq!(q.limit, Some(5));
+    }
+
+    #[test]
+    fn test_knowledge_context_query_debug() {
+        let q = KnowledgeContextQuery {
+            workdir: Some("/repo".into()),
+            ..Default::default()
+        };
+        let debug = format!("{q:?}");
+        assert!(debug.contains("/repo"));
     }
 }
