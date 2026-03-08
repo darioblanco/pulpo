@@ -20,7 +20,7 @@ import {
 import { Plus } from 'lucide-react';
 import { createSession, createRemoteSession, getInks } from '@/api/client';
 import type { InkConfig, PeerInfo, Session } from '@/api/types';
-import { getProviderCapabilities, getProviderModels } from '@/api/types';
+import { getProviderCapabilities } from '@/api/types';
 
 interface NewSessionDialogProps {
   peers?: PeerInfo[];
@@ -36,7 +36,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
   const [mode, setMode] = useState('interactive');
   const [guardPreset, setGuardPreset] = useState('standard');
   const [targetNode, setTargetNode] = useState('local');
-  const [model, setModel] = useState('');
   const [selectedInk, setSelectedInk] = useState('');
   const [inks, setInks] = useState<Record<string, InkConfig>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -80,7 +79,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         provider,
         mode,
         guard_preset: guardPreset,
-        ...(model ? { model } : {}),
         ...(selectedInk ? { ink: selectedInk } : {}),
       };
 
@@ -96,7 +94,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
       setName('');
       setRepoPath('');
       setPrompt('');
-      setModel('');
       setSelectedInk('');
       setOpen(false);
       onCreated(resp.session);
@@ -198,13 +195,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             <div className="space-y-1.5">
               <Label htmlFor="provider">Provider</Label>
-              <Select
-                value={provider}
-                onValueChange={(v) => {
-                  setProvider(v);
-                  setModel('');
-                }}
-              >
+              <Select value={provider} onValueChange={setProvider}>
                 <SelectTrigger id="provider" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
@@ -247,28 +238,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
                 </SelectContent>
               </Select>
             </div>
-
-            {caps.model && (
-              <div className="space-y-1.5">
-                <Label htmlFor="model">Model</Label>
-                <Select
-                  value={model || 'default'}
-                  onValueChange={(v) => setModel(v === 'default' ? '' : v)}
-                >
-                  <SelectTrigger id="model" className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="default">Default</SelectItem>
-                    {getProviderModels(provider).map((m) => (
-                      <SelectItem key={m.value} value={m.value}>
-                        {m.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
 
             <div className="space-y-1.5">
               <Label htmlFor="target-node">Node</Label>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getProviderCapabilities, getProviderModels } from './types';
+import { getProviderCapabilities } from './types';
 
 describe('getProviderCapabilities', () => {
   it('returns full capabilities for claude', () => {
@@ -39,37 +39,3 @@ describe('getProviderCapabilities', () => {
   });
 });
 
-describe('getProviderModels', () => {
-  it('returns Claude model shortcuts', () => {
-    const models = getProviderModels('claude');
-    expect(models).toEqual([
-      { value: 'opus', label: 'Opus' },
-      { value: 'sonnet', label: 'Sonnet' },
-      { value: 'haiku', label: 'Haiku' },
-    ]);
-  });
-
-  it('returns Codex model shortcuts', () => {
-    const models = getProviderModels('codex');
-    expect(models).toEqual([
-      { value: 'o3', label: 'o3' },
-      { value: 'o4-mini', label: 'o4-mini' },
-    ]);
-  });
-
-  it('returns Gemini model shortcuts', () => {
-    const models = getProviderModels('gemini');
-    expect(models).toEqual([
-      { value: 'gemini-2.5-pro', label: '2.5 Pro' },
-      { value: 'gemini-2.5-flash', label: '2.5 Flash' },
-    ]);
-  });
-
-  it('returns empty array for open_code', () => {
-    expect(getProviderModels('open_code')).toEqual([]);
-  });
-
-  it('returns empty array for unknown provider', () => {
-    expect(getProviderModels('unknown')).toEqual([]);
-  });
-});
