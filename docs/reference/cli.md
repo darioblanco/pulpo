@@ -3,7 +3,7 @@
 Top-level commands:
 
 ```text
-pulpo spawn --workdir <PATH> [PROMPT...]
+pulpo spawn [--workdir <PATH>] [PROMPT...]
 pulpo list
 pulpo logs <NAME> [--follow]
 pulpo attach <NAME>

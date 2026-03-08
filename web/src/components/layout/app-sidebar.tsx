@@ -1,4 +1,4 @@
-import { LayoutDashboard, History, BookOpen, Settings } from 'lucide-react';
+import { LayoutDashboard, History, BookOpen, Waves, Settings } from 'lucide-react';
 import { Link, useLocation } from 'react-router';
 import {
   Sidebar,
@@ -17,6 +17,7 @@ const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/history', icon: History, label: 'History' },
   { to: '/knowledge', icon: BookOpen, label: 'Knowledge' },
+  { to: '/ocean', icon: Waves, label: 'Ocean' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 

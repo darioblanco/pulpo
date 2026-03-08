@@ -1,10 +1,10 @@
 [node]
 name = "pulpo-public"
 port = 7433
-
-[auth]
 # public = bind to 0.0.0.0 so other devices can reach pulpod (requires auth token)
 bind = "public"
+
+[auth]
 # Generate a strong token and keep it secret
 token = "replace-with-long-random-token"
 

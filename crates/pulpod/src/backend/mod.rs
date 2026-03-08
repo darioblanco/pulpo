@@ -24,12 +24,6 @@ pub trait Backend: Send + Sync {
         Ok("unknown".into())
     }
 
-    /// Check that the provider binary is available.
-    /// Default is no-op (for mocks). Real backends override this.
-    fn check_provider(&self, _provider: &str) -> Result<()> {
-        Ok(())
-    }
-
     /// Create a new terminal session running the given command.
     fn create_session(&self, backend_id: &str, working_dir: &str, command: &str) -> Result<()>;
 
@@ -93,12 +87,6 @@ mod tests {
     fn test_default_check_version() {
         let b = MinimalBackend;
         assert_eq!(b.check_version().unwrap(), "unknown");
-    }
-
-    #[test]
-    fn test_default_check_provider() {
-        let b = MinimalBackend;
-        assert!(b.check_provider("claude").is_ok());
     }
 
     #[test]

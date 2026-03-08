@@ -11,9 +11,9 @@ use crate::session::{Provider, Session, SessionMode};
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
     pub name: Option<String>,
-    pub workdir: String,
+    pub workdir: Option<String>,
     pub provider: Option<Provider>,
-    pub prompt: String,
+    pub prompt: Option<String>,
     pub mode: Option<SessionMode>,
     pub unrestricted: Option<bool>,
     pub model: Option<String>,
@@ -103,6 +103,7 @@ pub struct NodeConfigResponse {
     pub tag: Option<String>,
     pub seed: Option<String>,
     pub discovery_interval_secs: u64,
+    pub default_provider: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -279,6 +280,7 @@ mod tests {
                 tag: None,
                 seed: None,
                 discovery_interval_secs: 30,
+                default_provider: None,
             },
             auth: AuthConfigResponse {},
             peers: HashMap::new(),
@@ -312,6 +314,7 @@ mod tests {
                 tag: None,
                 seed: None,
                 discovery_interval_secs: 30,
+                default_provider: None,
             },
             auth: AuthConfigResponse {},
             peers: HashMap::new(),
@@ -361,6 +364,7 @@ mod tests {
                 tag: None,
                 seed: None,
                 discovery_interval_secs: 30,
+                default_provider: None,
             },
             auth: AuthConfigResponse {},
             peers: HashMap::new(),
@@ -395,6 +399,7 @@ mod tests {
             tag: None,
             seed: None,
             discovery_interval_secs: 30,
+            default_provider: None,
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("test"));
@@ -470,6 +475,7 @@ mod tests {
                 tag: None,
                 seed: None,
                 discovery_interval_secs: 30,
+                default_provider: None,
             },
             auth: AuthConfigResponse {},
             peers,
@@ -510,8 +516,8 @@ mod tests {
     fn test_create_session_request_deserialize() {
         let json = r#"{"workdir":"/tmp/repo","prompt":"Fix bug"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.workdir, "/tmp/repo");
-        assert_eq!(req.prompt, "Fix bug");
+        assert_eq!(req.workdir.as_deref(), Some("/tmp/repo"));
+        assert_eq!(req.prompt.as_deref(), Some("Fix bug"));
         assert!(req.name.is_none());
         assert!(req.provider.is_none());
         assert!(req.mode.is_none());
@@ -540,10 +546,11 @@ mod tests {
     }
 
     #[test]
-    fn test_create_session_request_missing_required() {
+    fn test_create_session_request_all_optional() {
         let json = r#"{"workdir":"/tmp"}"#;
-        let result = serde_json::from_str::<CreateSessionRequest>(json);
-        assert!(result.is_err()); // missing "prompt"
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.workdir.as_deref(), Some("/tmp"));
+        assert!(req.prompt.is_none());
     }
 
     #[test]
@@ -612,9 +619,9 @@ mod tests {
     fn test_create_session_request_debug() {
         let req = CreateSessionRequest {
             name: None,
-            workdir: "/tmp".into(),
+            workdir: Some("/tmp".into()),
             provider: None,
-            prompt: "test".into(),
+            prompt: Some("test".into()),
             mode: None,
             unrestricted: None,
             model: None,
@@ -979,6 +986,7 @@ mod tests {
             tag: None,
             seed: None,
             discovery_interval_secs: 30,
+            default_provider: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"bind\":\"tailscale\""));

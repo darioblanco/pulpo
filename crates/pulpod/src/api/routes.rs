@@ -791,9 +791,9 @@ mod tests {
         // Create a session, then kill it so it's not running
         let req = pulpo_common::api::CreateSessionRequest {
             name: Some("ws-dead".into()),
-            workdir: "/tmp".into(),
+            workdir: Some("/tmp".into()),
             provider: None,
-            prompt: "test".into(),
+            prompt: Some("test".into()),
             mode: None,
             unrestricted: None,
             model: None,
@@ -901,9 +901,9 @@ mod tests {
         // Create a session (create works, but later get_session will call is_alive → error)
         let req = pulpo_common::api::CreateSessionRequest {
             name: Some("ws-err".into()),
-            workdir: "/tmp".into(),
+            workdir: Some("/tmp".into()),
             provider: None,
-            prompt: "test".into(),
+            prompt: Some("test".into()),
             mode: None,
             unrestricted: None,
             model: None,
@@ -938,9 +938,9 @@ mod tests {
         let (addr, state) = ws_test_server().await;
         let req = pulpo_common::api::CreateSessionRequest {
             name: Some("ws-upgrade".into()),
-            workdir: "/tmp".into(),
+            workdir: Some("/tmp".into()),
             provider: None,
-            prompt: "test".into(),
+            prompt: Some("test".into()),
             mode: None,
             unrestricted: None,
             model: None,
@@ -974,9 +974,9 @@ mod tests {
         let (addr, state) = ws_test_server().await;
         let req = pulpo_common::api::CreateSessionRequest {
             name: Some("ws-echo-bin".into()),
-            workdir: "/tmp".into(),
+            workdir: Some("/tmp".into()),
             provider: None,
-            prompt: "test".into(),
+            prompt: Some("test".into()),
             mode: None,
             unrestricted: None,
             model: None,
@@ -1020,9 +1020,9 @@ mod tests {
         let (addr, state) = ws_test_server().await;
         let req = pulpo_common::api::CreateSessionRequest {
             name: Some("ws-echo-txt".into()),
-            workdir: "/tmp".into(),
+            workdir: Some("/tmp".into()),
             provider: None,
-            prompt: "test".into(),
+            prompt: Some("test".into()),
             mode: None,
             unrestricted: None,
             model: None,
@@ -1064,9 +1064,9 @@ mod tests {
         let (addr, state) = ws_test_server().await;
         let req = pulpo_common::api::CreateSessionRequest {
             name: Some("ws-close".into()),
-            workdir: "/tmp".into(),
+            workdir: Some("/tmp".into()),
             provider: None,
-            prompt: "test".into(),
+            prompt: Some("test".into()),
             mode: None,
             unrestricted: None,
             model: None,

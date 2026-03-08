@@ -123,6 +123,7 @@ export interface NodeConfigResponse {
   tag: string | null;
   seed: string | null;
   discovery_interval_secs: number;
+  default_provider: string | null;
 }
 
 export interface GuardDefaultConfigResponse {
@@ -206,9 +207,9 @@ export interface PairingUrlResponse {
 
 export interface CreateSessionRequest {
   name?: string;
-  workdir: string;
+  workdir?: string;
   provider?: string;
-  prompt: string;
+  prompt?: string;
   mode?: string;
   unrestricted?: boolean;
   model?: string;

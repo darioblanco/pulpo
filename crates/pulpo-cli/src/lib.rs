@@ -48,17 +48,17 @@ pub enum Commands {
     /// Spawn a new agent session
     #[command(visible_alias = "s")]
     Spawn {
-        /// Working directory
+        /// Working directory (defaults to current directory)
         #[arg(long)]
-        workdir: String,
+        workdir: Option<String>,
 
         /// Session name (auto-derived from workdir if omitted)
         #[arg(long)]
         name: Option<String>,
 
-        /// Agent provider (claude, codex, gemini, opencode)
-        #[arg(long, default_value = "claude")]
-        provider: String,
+        /// Agent provider (claude, codex, gemini, opencode). Uses config `default_provider` or claude.
+        #[arg(long)]
+        provider: Option<String>,
 
         /// Run in autonomous mode (fire-and-forget)
         #[arg(long)]
@@ -907,12 +907,23 @@ pub async fn execute(cli: &Cli) -> Result<String> {
         } => {
             let prompt_text = prompt.join(" ");
             let mode = if *auto { "autonomous" } else { "interactive" };
+            // Resolve workdir: --workdir flag > current directory
+            let resolved_workdir = workdir.clone().unwrap_or_else(|| {
+                std::env::current_dir()
+                    .map_or_else(|_| ".".into(), |p| p.to_string_lossy().into_owned())
+            });
             let mut body = serde_json::json!({
-                "workdir": workdir,
-                "provider": provider,
-                "prompt": prompt_text,
+                "workdir": resolved_workdir,
                 "mode": mode,
             });
+            // Only include prompt if non-empty
+            if !prompt_text.is_empty() {
+                body["prompt"] = serde_json::json!(prompt_text);
+            }
+            // Only include provider if explicitly specified
+            if let Some(p) = provider {
+                body["provider"] = serde_json::json!(p);
+            }
             if *unrestricted {
                 body["unrestricted"] = serde_json::json!(true);
             }
@@ -1184,7 +1195,7 @@ mod tests {
         assert!(matches!(
             &cli.command,
             Commands::Spawn { workdir, provider, auto, unrestricted, prompt, .. }
-                if workdir == "/tmp/repo" && provider == "claude" && !auto
+                if workdir.as_deref() == Some("/tmp/repo") && provider.is_none() && !auto
                 && !unrestricted && prompt == &["Fix", "the", "bug"]
         ));
     }
@@ -1203,7 +1214,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { provider, .. } if provider == "codex"
+            Commands::Spawn { provider, .. } if provider.as_deref() == Some("codex")
         ));
     }
 
@@ -1258,7 +1269,7 @@ mod tests {
         assert!(matches!(
             &cli.command,
             Commands::Spawn { workdir, name, .. }
-                if workdir == "/tmp/repo" && name.as_deref() == Some("my-task")
+                if workdir.as_deref() == Some("/tmp/repo") && name.as_deref() == Some("my-task")
         ));
     }
 
@@ -1486,9 +1497,9 @@ mod tests {
             node,
             token: None,
             command: Commands::Spawn {
-                workdir: "/tmp/repo".into(),
+                workdir: Some("/tmp/repo".into()),
                 name: None,
-                provider: "claude".into(),
+                provider: Some("claude".into()),
                 auto: false,
                 unrestricted: false,
                 model: None,
@@ -1513,9 +1524,9 @@ mod tests {
             node,
             token: None,
             command: Commands::Spawn {
-                workdir: "/tmp/repo".into(),
+                workdir: Some("/tmp/repo".into()),
                 name: None,
-                provider: "claude".into(),
+                provider: Some("claude".into()),
                 auto: false,
                 unrestricted: false,
                 model: Some("opus".into()),
@@ -1539,9 +1550,9 @@ mod tests {
             node,
             token: None,
             command: Commands::Spawn {
-                workdir: "/tmp/repo".into(),
+                workdir: Some("/tmp/repo".into()),
                 name: None,
-                provider: "claude".into(),
+                provider: Some("claude".into()),
                 auto: true,
                 unrestricted: false,
                 model: None,
@@ -1565,9 +1576,9 @@ mod tests {
             node,
             token: None,
             command: Commands::Spawn {
-                workdir: "/tmp/repo".into(),
+                workdir: Some("/tmp/repo".into()),
                 name: Some("my-task".into()),
-                provider: "claude".into(),
+                provider: Some("claude".into()),
                 auto: false,
                 unrestricted: false,
                 model: None,
@@ -1796,9 +1807,9 @@ mod tests {
             node,
             token: None,
             command: Commands::Spawn {
-                workdir: "/tmp/repo".into(),
+                workdir: Some("/tmp/repo".into()),
                 name: None,
-                provider: "claude".into(),
+                provider: Some("claude".into()),
                 auto: false,
                 unrestricted: false,
                 model: None,
@@ -2166,9 +2177,9 @@ mod tests {
             node: "localhost:1".into(),
             token: None,
             command: Commands::Spawn {
-                workdir: "/tmp".into(),
+                workdir: Some("/tmp".into()),
                 name: None,
-                provider: "claude".into(),
+                provider: Some("claude".into()),
                 auto: false,
                 unrestricted: false,
                 model: None,

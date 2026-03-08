@@ -27,9 +27,9 @@ use crate::session::manager::SessionManager;
 #[derive(Serialize)]
 struct RemoteSpawnReq {
     name: Option<String>,
-    workdir: String,
+    workdir: Option<String>,
     provider: Option<Provider>,
-    prompt: String,
+    prompt: Option<String>,
     mode: Option<SessionMode>,
     unrestricted: Option<bool>,
     ink: Option<String>,
@@ -41,9 +41,9 @@ struct RemoteSpawnReq {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SpawnSessionParams {
     /// Path to the git repository on the target machine.
-    pub workdir: String,
+    pub workdir: Option<String>,
     /// The prompt/task to give to the coding agent.
-    pub prompt: String,
+    pub prompt: Option<String>,
     /// AI provider to use (claude or codex). Defaults to claude.
     pub provider: Option<Provider>,
     /// Session mode (interactive or autonomous). Defaults to interactive.
@@ -135,9 +135,9 @@ pub struct WaitForSessionParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SpawnAndWaitParams {
     /// Path to the git repository on the target machine.
-    pub workdir: String,
+    pub workdir: Option<String>,
     /// The prompt/task to give to the coding agent.
-    pub prompt: String,
+    pub prompt: Option<String>,
     /// AI provider to use (claude or codex). Defaults to claude.
     pub provider: Option<Provider>,
     /// Session mode (interactive or autonomous). Defaults to interactive.
@@ -164,9 +164,9 @@ pub struct SpawnAndWaitParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FanOutTask {
     /// Path to the git repository on the target machine.
-    pub workdir: String,
+    pub workdir: Option<String>,
     /// The prompt/task to give to the coding agent.
-    pub prompt: String,
+    pub prompt: Option<String>,
     /// AI provider to use (claude or codex). Defaults to claude.
     pub provider: Option<Provider>,
     /// Session mode (interactive or autonomous). Defaults to interactive.
@@ -197,8 +197,8 @@ pub struct FanOutParams {
 
 /// Internal request struct for `spawn_and_wait_impl` to avoid too-many-arguments.
 struct SpawnAndWaitRequest {
-    workdir: String,
-    prompt: String,
+    workdir: Option<String>,
+    prompt: Option<String>,
     provider: Option<Provider>,
     mode: Option<SessionMode>,
     unrestricted: Option<bool>,
@@ -1139,8 +1139,8 @@ mod tests {
     async fn test_spawn_session_local() {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "Fix the bug".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("Fix the bug".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1159,8 +1159,8 @@ mod tests {
     async fn test_spawn_session_local_explicit_node() {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "Do stuff".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("Do stuff".into()),
             provider: Some(Provider::Claude),
             mode: Some(SessionMode::Autonomous),
             unrestricted: Some(true),
@@ -1178,8 +1178,8 @@ mod tests {
     async fn test_spawn_session_remote_unknown_node() {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1212,8 +1212,8 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         // Create a session first
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1275,8 +1275,8 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         // Create a session
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1314,8 +1314,8 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         // Create a session
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1364,8 +1364,8 @@ mod tests {
         let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
         // Create session, it becomes stale via get_session
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1401,8 +1401,8 @@ mod tests {
     async fn test_resume_session_not_stale() {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1440,8 +1440,8 @@ mod tests {
     async fn test_get_output_local() {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1466,8 +1466,8 @@ mod tests {
     async fn test_get_output_default_lines() {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1518,8 +1518,8 @@ mod tests {
     async fn test_send_input_local() {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1593,8 +1593,8 @@ mod tests {
     async fn test_wait_for_session_already_terminal() {
         let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1630,8 +1630,8 @@ mod tests {
     async fn test_wait_for_session_timeout() {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1708,8 +1708,8 @@ mod tests {
     #[test]
     fn test_spawn_session_params_debug() {
         let params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -1867,7 +1867,7 @@ mod tests {
     fn test_spawn_session_params_deserialize() {
         let json = r#"{"workdir":"/tmp","prompt":"test"}"#;
         let params: SpawnSessionParams = serde_json::from_str(json).unwrap();
-        assert_eq!(params.workdir, "/tmp");
+        assert_eq!(params.workdir.as_deref(), Some("/tmp"));
         assert!(params.node.is_none());
     }
 
@@ -2136,8 +2136,8 @@ mod tests {
     async fn test_send_input_backend_error() {
         let mcp = test_mcp_with_send_input_error().await;
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -2346,8 +2346,8 @@ mod tests {
         let (addr, _session) = start_mock_remote_server().await;
         let mcp = test_mcp_with_remote(&addr).await;
         let params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "remote test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("remote test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -2531,8 +2531,8 @@ mod tests {
         let (addr, _session) = start_mock_remote_server().await;
         let mcp = test_mcp_with_remote_and_token(&addr).await;
         let params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -2594,8 +2594,8 @@ mod tests {
 
         // Create a session
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -2726,8 +2726,8 @@ mod tests {
         // Backend starts alive=false so session immediately goes stale on poll
         let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
         let params = SpawnAndWaitParams {
-            workdir: "/tmp".into(),
-            prompt: "fix the bug".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("fix the bug".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -2751,8 +2751,8 @@ mod tests {
         // Backend alive=true so session stays running
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnAndWaitParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -2775,8 +2775,8 @@ mod tests {
         // Spawn to unknown remote node — spawn fails
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnAndWaitParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -2798,8 +2798,8 @@ mod tests {
         // Test with all defaults
         let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
         let params = SpawnAndWaitParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: Some(Provider::Claude),
             mode: Some(SessionMode::Autonomous),
             unrestricted: Some(false),
@@ -2820,8 +2820,8 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_and_wait_params_debug() {
         let params = SpawnAndWaitParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -2841,7 +2841,7 @@ mod tests {
     async fn test_spawn_and_wait_params_deserialize() {
         let json = r#"{"workdir":"/tmp","prompt":"test"}"#;
         let params: SpawnAndWaitParams = serde_json::from_str(json).unwrap();
-        assert_eq!(params.workdir, "/tmp");
+        assert_eq!(params.workdir.as_deref(), Some("/tmp"));
         assert!(params.timeout_secs.is_none());
     }
 
@@ -2867,8 +2867,8 @@ mod tests {
         let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
         let params = FanOutParams {
             tasks: vec![FanOutTask {
-                workdir: "/tmp".into(),
-                prompt: "test task".into(),
+                workdir: Some("/tmp".into()),
+                prompt: Some("test task".into()),
                 provider: None,
                 mode: None,
                 unrestricted: None,
@@ -2896,8 +2896,8 @@ mod tests {
         let params = FanOutParams {
             tasks: vec![
                 FanOutTask {
-                    workdir: "/tmp".into(),
-                    prompt: "task A".into(),
+                    workdir: Some("/tmp".into()),
+                    prompt: Some("task A".into()),
                     provider: None,
                     mode: None,
                     unrestricted: None,
@@ -2907,8 +2907,8 @@ mod tests {
                     node: None,
                 },
                 FanOutTask {
-                    workdir: "/tmp".into(),
-                    prompt: "task B".into(),
+                    workdir: Some("/tmp".into()),
+                    prompt: Some("task B".into()),
                     provider: Some(Provider::Codex),
                     mode: Some(SessionMode::Autonomous),
                     unrestricted: Some(true),
@@ -2938,8 +2938,8 @@ mod tests {
         let params = FanOutParams {
             tasks: vec![
                 FanOutTask {
-                    workdir: "/tmp".into(),
-                    prompt: "good task".into(),
+                    workdir: Some("/tmp".into()),
+                    prompt: Some("good task".into()),
                     provider: None,
                     mode: None,
                     unrestricted: None,
@@ -2949,8 +2949,8 @@ mod tests {
                     node: None,
                 },
                 FanOutTask {
-                    workdir: "/tmp".into(),
-                    prompt: "bad task".into(),
+                    workdir: Some("/tmp".into()),
+                    prompt: Some("bad task".into()),
                     provider: None,
                     mode: None,
                     unrestricted: None,
@@ -2991,8 +2991,8 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = FanOutParams {
             tasks: vec![FanOutTask {
-                workdir: "/tmp".into(),
-                prompt: "long running".into(),
+                workdir: Some("/tmp".into()),
+                prompt: Some("long running".into()),
                 provider: None,
                 mode: None,
                 unrestricted: None,
@@ -3017,8 +3017,8 @@ mod tests {
         let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
         let params = FanOutParams {
             tasks: vec![FanOutTask {
-                workdir: "/tmp".into(),
-                prompt: "test".into(),
+                workdir: Some("/tmp".into()),
+                prompt: Some("test".into()),
                 provider: None,
                 mode: None,
                 unrestricted: None,
@@ -3062,8 +3062,8 @@ mod tests {
     #[test]
     fn test_fan_out_task_debug() {
         let task = FanOutTask {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -3160,8 +3160,8 @@ mod tests {
         // Create and make stale
         let spawn_result = mcp
             .spawn_session(Parameters(SpawnSessionParams {
-                workdir: "/tmp".into(),
-                prompt: "test".into(),
+                workdir: Some("/tmp".into()),
+                prompt: Some("test".into()),
                 provider: None,
                 mode: None,
                 unrestricted: None,
@@ -3196,8 +3196,8 @@ mod tests {
 
         // Create a session first to ensure spawn works
         let spawn_params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -3301,8 +3301,8 @@ mod tests {
 
         let result = mcp
             .spawn_and_wait_impl(SpawnAndWaitRequest {
-                workdir: "/tmp".into(),
-                prompt: "test".into(),
+                workdir: Some("/tmp".into()),
+                prompt: Some("test".into()),
                 provider: None,
                 mode: None,
                 unrestricted: None,
@@ -3355,8 +3355,8 @@ mod tests {
         let addr = format!("127.0.0.1:{}", remote_addr.port());
         let mcp = test_mcp_with_remote(&addr).await;
         let params = SpawnAndWaitParams {
-            workdir: "/tmp/remote".into(),
-            prompt: "remote test".into(),
+            workdir: Some("/tmp/remote".into()),
+            prompt: Some("remote test".into()),
             provider: None,
             mode: None,
             unrestricted: None,

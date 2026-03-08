@@ -296,8 +296,8 @@ mod tests {
         let mcp = test_mcp().await;
         // Create a session
         let params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -328,8 +328,8 @@ mod tests {
         let mcp = test_mcp().await;
         // Create a session first
         let params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -420,8 +420,8 @@ mod tests {
         let mcp = test_mcp().await;
         // Create a session
         let params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -443,8 +443,8 @@ mod tests {
         let (mcp, pool) = test_mcp_with_pool().await;
         // Create a session
         let params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,
@@ -474,8 +474,8 @@ mod tests {
         let (mcp, pool) = test_mcp_with_pool().await;
         // Create a session
         let params = SpawnSessionParams {
-            workdir: "/tmp".into(),
-            prompt: "test".into(),
+            workdir: Some("/tmp".into()),
+            prompt: Some("test".into()),
             provider: None,
             mode: None,
             unrestricted: None,

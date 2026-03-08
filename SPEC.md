@@ -2,7 +2,7 @@
 
 > _Eight arms, one brain — orchestrating agents across your network._
 >
-> Last verified against code: 2026-03-03
+> Last verified against code: 2026-03-08
 
 Pulpo is a lightweight daemon that manages coding agent sessions (Claude Code,
 Codex) across multiple machines on a trusted network (LAN, VPN, or Tailscale).
@@ -338,13 +338,18 @@ WS     /sessions/:id/stream   Stream terminal output (WebSocket)
   "system_prompt": "Focus on security",
   "allowed_tools": ["Read", "Glob", "Grep"],
   "metadata": { "discord_channel_id": "123456" },
-  "ink": "reviewer"
+  "ink": "reviewer",
+  "max_turns": 50,
+  "max_budget_usd": 10.0,
+  "output_format": "json"
 }
 ```
 
-All fields except `workdir` and `prompt` are optional. `mode` is
-`"interactive"` (default) or `"autonomous"`. If `ink` is set, its config
-is used as defaults; explicit fields override ink values.
+All fields are optional. `workdir` defaults to the user's home directory,
+`prompt` defaults to empty, and `provider` defaults to the configured
+`default_provider` (or `"claude"` if unset). `mode` is `"interactive"`
+(default) or `"autonomous"`. If `ink` is set, its config is used as
+defaults; explicit fields override ink values.
 
 #### GET /sessions
 
@@ -370,7 +375,8 @@ is used as defaults; explicit fields override ink values.
 
 The full `Session` object includes additional nullable fields: `conversation_id`,
 `exit_code`, `backend_session_id`, `allowed_tools`, `system_prompt`, `metadata`,
-`intervention_reason`, `intervention_at`, `last_output_at`, `idle_since`.
+`intervention_reason`, `intervention_at`, `last_output_at`, `idle_since`,
+`max_turns`, `max_budget_usd`, `output_format`.
 
 ### Node
 
@@ -666,6 +672,7 @@ Tauri 2 builds native iOS `.ipa` and Android `.apk` from the same React + Rust c
 name = "mac-mini"       # Display name (default: hostname)
 port = 7433             # API port (default: 7433)
 bind = "local"          # "local", "tailscale", "public", or "container"
+default_provider = "codex"  # Default provider for new sessions (default: "claude")
 
 [auth]
 # token is auto-generated on first run (only used with bind = "public")

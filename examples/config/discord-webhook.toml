@@ -1,8 +1,8 @@
 [node]
 name = "pulpo-discord"
+bind = "public"
 
 [auth]
-bind = "public"
 token = "replace-with-long-random-token"
 
 [notifications.discord]

@@ -238,6 +238,9 @@ pub struct NodeConfig {
     /// Scan interval in seconds for peer discovery (tailscale/seed). Defaults to 30.
     #[serde(default = "default_discovery_interval_secs")]
     pub discovery_interval_secs: u64,
+    /// Default agent provider when none is specified (e.g. "claude", "codex").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_provider: Option<String>,
 }
 
 impl Default for NodeConfig {
@@ -250,6 +253,7 @@ impl Default for NodeConfig {
             tag: None,
             seed: None,
             discovery_interval_secs: default_discovery_interval_secs(),
+            default_provider: None,
         }
     }
 }
@@ -424,6 +428,7 @@ pub fn load(path: &str) -> Result<Config> {
                 tag: None,
                 seed: None,
                 discovery_interval_secs: default_discovery_interval_secs(),
+                default_provider: None,
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -1968,6 +1973,7 @@ name = "test"
             tag: None,
             seed: Some("10.0.0.1:7433".into()),
             discovery_interval_secs: 30,
+            default_provider: None,
         };
         let toml_str = toml::to_string(&config).unwrap();
         assert!(toml_str.contains("seed = \"10.0.0.1:7433\""));

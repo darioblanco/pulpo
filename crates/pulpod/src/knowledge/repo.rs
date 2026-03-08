@@ -7,17 +7,23 @@ use tracing::{debug, warn};
 
 /// Git-backed knowledge repository.
 ///
-/// Stores knowledge items as JSON files in a local git repo, optionally synced
-/// to a remote. Directory structure:
+/// Stores knowledge items as Markdown files with YAML frontmatter in a local
+/// git repo, optionally synced to a remote. Directory structure:
 ///
 /// ```text
 /// <root>/
 ///   repos/<slug>/
-///     summary-<date>-<name>.json
-///     failure-<date>-<name>.json
-///   global/
-///     summary-<date>-<name>.json
+///     summary-<date>-<id>.md
+///     failure-<date>-<id>.md
+///   inks/<ink>/
+///     summary-<date>-<id>.md
+///   culture/
+///     summary-<date>-<id>.md
 /// ```
+///
+/// - `repos/<slug>/` — scoped to a specific working directory / repository
+/// - `inks/<ink>/` — scoped to an ink (but not a specific repo)
+/// - `culture/` — global knowledge, not scoped to any repo or ink
 #[derive(Clone, Debug)]
 pub struct KnowledgeRepo {
     root: PathBuf,
@@ -56,7 +62,7 @@ impl KnowledgeRepo {
         Ok(Self { root, remote })
     }
 
-    /// Persist a knowledge item as a JSON file, commit, and optionally push.
+    /// Persist a knowledge item as a Markdown file with YAML frontmatter.
     pub async fn save(&self, knowledge: &Knowledge) -> Result<()> {
         let dir = self.item_dir(knowledge);
         std::fs::create_dir_all(&dir)?;
@@ -64,8 +70,8 @@ impl KnowledgeRepo {
         let filename = item_filename(knowledge);
         let path = dir.join(&filename);
 
-        let json = serde_json::to_string_pretty(knowledge)?;
-        std::fs::write(&path, &json)?;
+        let content = serialize_to_markdown(knowledge)?;
+        std::fs::write(&path, &content)?;
 
         // Relative path for git add
         let rel = path
@@ -230,8 +236,7 @@ impl KnowledgeRepo {
             return Ok(None);
         };
         let content = std::fs::read_to_string(&path)?;
-        let item: Knowledge = serde_json::from_str(&content)?;
-        Ok(Some(item))
+        Ok(parse_file(&path, &content))
     }
 
     /// Update a knowledge item. Only non-`None` fields are patched.
@@ -248,7 +253,9 @@ impl KnowledgeRepo {
             return Ok(false);
         };
         let content = std::fs::read_to_string(&path)?;
-        let mut item: Knowledge = serde_json::from_str(&content)?;
+        let Some(mut item) = parse_file(&path, &content) else {
+            return Ok(false);
+        };
 
         if let Some(t) = title {
             item.title = t.to_owned();
@@ -263,8 +270,8 @@ impl KnowledgeRepo {
             item.relevance = r;
         }
 
-        let json = serde_json::to_string_pretty(&item)?;
-        std::fs::write(&path, json)?;
+        let md = serialize_to_markdown(&item)?;
+        std::fs::write(&path, md)?;
 
         let rel = path
             .strip_prefix(&self.root)
@@ -300,20 +307,29 @@ impl KnowledgeRepo {
     // ── Private helpers ─────────────────────────────────────────────────
 
     /// Determine the directory for a knowledge item.
+    ///
+    /// - `scope_repo` set → `repos/<slug>/`
+    /// - `scope_ink` set (no repo) → `inks/<ink>/`
+    /// - neither → `culture/`
     fn item_dir(&self, k: &Knowledge) -> PathBuf {
         k.scope_repo.as_ref().map_or_else(
-            || self.root.join("global"),
+            || {
+                k.scope_ink.as_ref().map_or_else(
+                    || self.root.join("culture"),
+                    |ink| self.root.join("inks").join(ink),
+                )
+            },
             |repo| self.root.join("repos").join(repo_slug(repo)),
         )
     }
 
-    /// Read all JSON files from the repo.
+    /// Read all knowledge files from the repo (`.md` and legacy `.json`).
     fn read_all(&self) -> Result<Vec<Knowledge>> {
         let mut items = Vec::new();
-        for dir_name in &["repos", "global"] {
+        for dir_name in &["repos", "inks", "culture"] {
             let base = self.root.join(dir_name);
             if base.exists() {
-                collect_json_files(&base, &mut items)?;
+                collect_knowledge_files(&base, &mut items)?;
             }
         }
         Ok(items)
@@ -324,7 +340,7 @@ impl KnowledgeRepo {
         let all = self.read_all_paths()?;
         for path in all {
             if let Ok(content) = std::fs::read_to_string(&path)
-                && let Ok(k) = serde_json::from_str::<Knowledge>(&content)
+                && let Some(k) = parse_file(&path, &content)
                 && k.id.to_string() == id
             {
                 return Ok(Some(path));
@@ -333,13 +349,13 @@ impl KnowledgeRepo {
         Ok(None)
     }
 
-    /// Collect all JSON file paths.
+    /// Collect all knowledge file paths (`.md` and legacy `.json`).
     fn read_all_paths(&self) -> Result<Vec<PathBuf>> {
         let mut paths = Vec::new();
-        for dir_name in &["repos", "global"] {
+        for dir_name in &["repos", "inks", "culture"] {
             let base = self.root.join(dir_name);
             if base.exists() {
-                collect_json_paths(&base, &mut paths)?;
+                collect_knowledge_paths(&base, &mut paths)?;
             }
         }
         Ok(paths)
@@ -356,6 +372,113 @@ impl KnowledgeRepo {
         }
     }
 }
+
+// ── Markdown serialization ──────────────────────────────────────────────
+
+/// YAML frontmatter metadata for knowledge files.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct KnowledgeFrontmatter {
+    id: uuid::Uuid,
+    session_id: uuid::Uuid,
+    kind: KnowledgeKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope_repo: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope_ink: Option<String>,
+    title: String,
+    tags: Vec<String>,
+    relevance: f64,
+    created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Serialize a `Knowledge` item to Markdown with YAML frontmatter.
+///
+/// Format:
+/// ```text
+/// ---
+/// id: <uuid>
+/// session_id: <uuid>
+/// kind: summary
+/// title: "Some finding"
+/// tags: [claude, completed]
+/// relevance: 0.5
+/// created_at: "2026-03-08T12:00:00Z"
+/// ---
+///
+/// Body content here...
+/// ```
+fn serialize_to_markdown(k: &Knowledge) -> Result<String> {
+    let frontmatter = KnowledgeFrontmatter {
+        id: k.id,
+        session_id: k.session_id,
+        kind: k.kind,
+        scope_repo: k.scope_repo.clone(),
+        scope_ink: k.scope_ink.clone(),
+        title: k.title.clone(),
+        tags: k.tags.clone(),
+        relevance: k.relevance,
+        created_at: k.created_at,
+    };
+    let yaml = serde_yaml::to_string(&frontmatter)?;
+    Ok(format!("---\n{yaml}---\n\n{}\n", k.body))
+}
+
+/// Parse a Markdown file with YAML frontmatter into a `Knowledge` item.
+fn parse_from_markdown(content: &str) -> Result<Knowledge> {
+    let content = content.trim();
+    if !content.starts_with("---") {
+        bail!("missing YAML frontmatter delimiter");
+    }
+
+    let after_first = &content[3..];
+    let end = after_first
+        .find("\n---")
+        .context("missing closing frontmatter delimiter")?;
+    let yaml_str = &after_first[..end];
+    let body_start = end + 4; // skip "\n---"
+    let body = after_first[body_start..].trim().to_owned();
+
+    let fm: KnowledgeFrontmatter = serde_yaml::from_str(yaml_str)?;
+
+    Ok(Knowledge {
+        id: fm.id,
+        session_id: fm.session_id,
+        kind: fm.kind,
+        scope_repo: fm.scope_repo,
+        scope_ink: fm.scope_ink,
+        title: fm.title,
+        body,
+        tags: fm.tags,
+        relevance: fm.relevance,
+        created_at: fm.created_at,
+    })
+}
+
+/// Parse a file as either Markdown (`.md`) or legacy JSON (`.json`).
+fn parse_file(path: &Path, content: &str) -> Option<Knowledge> {
+    if path.extension().is_some_and(|ext| ext == "md") {
+        match parse_from_markdown(content) {
+            Ok(k) => Some(k),
+            Err(e) => {
+                warn!("skip invalid knowledge markdown {}: {e}", path.display());
+                None
+            }
+        }
+    } else if path.extension().is_some_and(|ext| ext == "json") {
+        // Legacy JSON backward compatibility
+        match serde_json::from_str::<Knowledge>(content) {
+            Ok(k) => Some(k),
+            Err(e) => {
+                warn!("skip invalid knowledge json {}: {e}", path.display());
+                None
+            }
+        }
+    } else {
+        None
+    }
+}
+
+// ── File helpers ────────────────────────────────────────────────────────
 
 /// Run a git command in the given directory.
 async fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
@@ -402,11 +525,11 @@ fn item_filename(k: &Knowledge) -> String {
     };
     let date = k.created_at.format("%Y-%m-%d");
     let id_short = &k.id.to_string()[..8];
-    format!("{kind_str}-{date}-{id_short}.json")
+    format!("{kind_str}-{date}-{id_short}.md")
 }
 
-/// Recursively collect all `.json` files and parse them as `Knowledge`.
-fn collect_json_files(dir: &Path, items: &mut Vec<Knowledge>) -> Result<()> {
+/// Recursively collect all knowledge files (`.md` and legacy `.json`) and parse them.
+fn collect_knowledge_files(dir: &Path, items: &mut Vec<Knowledge>) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -414,13 +537,14 @@ fn collect_json_files(dir: &Path, items: &mut Vec<Knowledge>) -> Result<()> {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_json_files(&path, items)?;
-        } else if path.extension().is_some_and(|ext| ext == "json") {
+            collect_knowledge_files(&path, items)?;
+        } else if is_knowledge_file(&path) {
             match std::fs::read_to_string(&path) {
-                Ok(content) => match serde_json::from_str::<Knowledge>(&content) {
-                    Ok(k) => items.push(k),
-                    Err(e) => warn!("skip invalid knowledge file {}: {e}", path.display()),
-                },
+                Ok(content) => {
+                    if let Some(k) = parse_file(&path, &content) {
+                        items.push(k);
+                    }
+                }
                 Err(e) => warn!("skip unreadable knowledge file {}: {e}", path.display()),
             }
         }
@@ -428,8 +552,8 @@ fn collect_json_files(dir: &Path, items: &mut Vec<Knowledge>) -> Result<()> {
     Ok(())
 }
 
-/// Recursively collect all `.json` file paths.
-fn collect_json_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+/// Recursively collect all knowledge file paths (`.md` and legacy `.json`).
+fn collect_knowledge_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -437,12 +561,18 @@ fn collect_json_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_json_paths(&path, paths)?;
-        } else if path.extension().is_some_and(|ext| ext == "json") {
+            collect_knowledge_paths(&path, paths)?;
+        } else if is_knowledge_file(&path) {
             paths.push(path);
         }
     }
     Ok(())
+}
+
+/// Check if a path is a knowledge file (`.md` or legacy `.json`).
+fn is_knowledge_file(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext == "md" || ext == "json")
 }
 
 #[cfg(test)]
@@ -474,6 +604,107 @@ mod tests {
         }
     }
 
+    // ── Markdown serialization tests ────────────────────────────────────
+
+    #[test]
+    fn test_serialize_to_markdown() {
+        let k = make_knowledge("test finding", Some("/tmp/repo"), Some("coder"));
+        let md = serialize_to_markdown(&k).unwrap();
+        assert!(md.starts_with("---\n"));
+        assert!(md.contains("title: test finding"));
+        assert!(md.contains("kind: summary"));
+        assert!(md.contains("\n---\n"));
+        assert!(md.contains("Test body"));
+    }
+
+    #[test]
+    fn test_parse_from_markdown() {
+        let k = make_knowledge("roundtrip", Some("/tmp/repo"), Some("coder"));
+        let md = serialize_to_markdown(&k).unwrap();
+        let parsed = parse_from_markdown(&md).unwrap();
+        assert_eq!(parsed.id, k.id);
+        assert_eq!(parsed.session_id, k.session_id);
+        assert_eq!(parsed.kind, k.kind);
+        assert_eq!(parsed.scope_repo, k.scope_repo);
+        assert_eq!(parsed.scope_ink, k.scope_ink);
+        assert_eq!(parsed.title, k.title);
+        assert_eq!(parsed.body, k.body);
+        assert_eq!(parsed.tags, k.tags);
+        assert!((parsed.relevance - k.relevance).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_from_markdown_no_frontmatter() {
+        let err = parse_from_markdown("just body text").unwrap_err();
+        assert!(err.to_string().contains("frontmatter"));
+    }
+
+    #[test]
+    fn test_parse_from_markdown_no_closing_delimiter() {
+        let err = parse_from_markdown("---\ntitle: test\nbody text").unwrap_err();
+        assert!(err.to_string().contains("closing frontmatter"));
+    }
+
+    #[test]
+    fn test_serialize_roundtrip_failure_kind() {
+        let k = make_failure("fail roundtrip", Some("/tmp"));
+        let md = serialize_to_markdown(&k).unwrap();
+        let parsed = parse_from_markdown(&md).unwrap();
+        assert_eq!(parsed.kind, KnowledgeKind::Failure);
+        assert_eq!(parsed.title, "fail roundtrip");
+    }
+
+    #[test]
+    fn test_serialize_omits_none_scopes() {
+        let k = make_knowledge("global", None, None);
+        let md = serialize_to_markdown(&k).unwrap();
+        assert!(!md.contains("scope_repo"));
+        assert!(!md.contains("scope_ink"));
+    }
+
+    #[test]
+    fn test_parse_file_md() {
+        let k = make_knowledge("md test", Some("/tmp"), None);
+        let md = serialize_to_markdown(&k).unwrap();
+        let path = Path::new("test.md");
+        let parsed = parse_file(path, &md);
+        assert!(parsed.is_some());
+        assert_eq!(parsed.unwrap().title, "md test");
+    }
+
+    #[test]
+    fn test_parse_file_json_legacy() {
+        let k = make_knowledge("json test", Some("/tmp"), None);
+        let json = serde_json::to_string(&k).unwrap();
+        let path = Path::new("test.json");
+        let parsed = parse_file(path, &json);
+        assert!(parsed.is_some());
+        assert_eq!(parsed.unwrap().title, "json test");
+    }
+
+    #[test]
+    fn test_parse_file_unknown_ext() {
+        let path = Path::new("test.txt");
+        let parsed = parse_file(path, "whatever");
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn test_parse_file_invalid_md() {
+        let path = Path::new("bad.md");
+        let parsed = parse_file(path, "not valid markdown frontmatter");
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn test_parse_file_invalid_json() {
+        let path = Path::new("bad.json");
+        let parsed = parse_file(path, "not valid json");
+        assert!(parsed.is_none());
+    }
+
+    // ── Filename and directory tests ────────────────────────────────────
+
     #[test]
     fn test_repo_slug() {
         assert_eq!(repo_slug("/Users/dario/Code/pulpo"), "pulpo");
@@ -499,11 +730,7 @@ mod tests {
         let k = make_knowledge("test", Some("/tmp/repo"), None);
         let name = item_filename(&k);
         assert!(name.starts_with("summary-"));
-        assert!(
-            Path::new(&name)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-        );
+        assert_eq!(std::path::Path::new(&name).extension().unwrap(), "md");
     }
 
     #[test]
@@ -511,10 +738,11 @@ mod tests {
         let k = make_failure("fail", Some("/tmp/repo"));
         let name = item_filename(&k);
         assert!(name.starts_with("failure-"));
+        assert_eq!(std::path::Path::new(&name).extension().unwrap(), "md");
     }
 
     #[test]
-    fn test_item_dir_with_scope() {
+    fn test_item_dir_with_scope_repo() {
         let repo = KnowledgeRepo {
             root: PathBuf::from("/data/knowledge"),
             remote: None,
@@ -525,15 +753,48 @@ mod tests {
     }
 
     #[test]
-    fn test_item_dir_global() {
+    fn test_item_dir_with_scope_ink_only() {
+        let repo = KnowledgeRepo {
+            root: PathBuf::from("/data/knowledge"),
+            remote: None,
+        };
+        let k = make_knowledge("test", None, Some("reviewer"));
+        let dir = repo.item_dir(&k);
+        assert_eq!(dir, PathBuf::from("/data/knowledge/inks/reviewer"));
+    }
+
+    #[test]
+    fn test_item_dir_culture() {
         let repo = KnowledgeRepo {
             root: PathBuf::from("/data/knowledge"),
             remote: None,
         };
         let k = make_knowledge("test", None, None);
         let dir = repo.item_dir(&k);
-        assert_eq!(dir, PathBuf::from("/data/knowledge/global"));
+        assert_eq!(dir, PathBuf::from("/data/knowledge/culture"));
     }
+
+    #[test]
+    fn test_item_dir_repo_takes_precedence_over_ink() {
+        let repo = KnowledgeRepo {
+            root: PathBuf::from("/data/knowledge"),
+            remote: None,
+        };
+        // When both scope_repo and scope_ink are set, repo wins
+        let k = make_knowledge("test", Some("/tmp/myrepo"), Some("coder"));
+        let dir = repo.item_dir(&k);
+        assert_eq!(dir, PathBuf::from("/data/knowledge/repos/myrepo"));
+    }
+
+    #[test]
+    fn test_is_knowledge_file() {
+        assert!(is_knowledge_file(Path::new("test.md")));
+        assert!(is_knowledge_file(Path::new("test.json")));
+        assert!(!is_knowledge_file(Path::new("test.txt")));
+        assert!(!is_knowledge_file(Path::new("test")));
+    }
+
+    // ── Integration tests (git-backed) ──────────────────────────────────
 
     #[tokio::test]
     async fn test_init_creates_git_repo() {
@@ -567,6 +828,32 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "finding-1");
         assert_eq!(items[0].id, k.id);
+    }
+
+    #[tokio::test]
+    async fn test_save_creates_markdown_file() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_knowledge("md-test", Some("/tmp/repo"), None);
+        repo.save(&k).await.unwrap();
+
+        // Verify the file is a .md file with YAML frontmatter
+        let repo_dir = repo.root().join("repos").join("repo");
+        let entries: Vec<_> = std::fs::read_dir(&repo_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+        assert_eq!(entries.len(), 1);
+        let path = entries[0].path();
+        assert_eq!(path.extension().unwrap(), "md");
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with("---\n"));
+        assert!(content.contains("title: md-test"));
+        assert!(content.contains("Test body"));
     }
 
     #[tokio::test]
@@ -849,7 +1136,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_global_knowledge() {
+    async fn test_save_culture_knowledge() {
         let tmpdir = tempfile::tempdir().unwrap();
         let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
@@ -858,9 +1145,27 @@ mod tests {
         let k = make_knowledge("global", None, None);
         repo.save(&k).await.unwrap();
 
-        // Should be in global/ directory
-        let global_dir = repo.root().join("global");
-        assert!(global_dir.exists());
+        // Should be in culture/ directory
+        let culture_dir = repo.root().join("culture");
+        assert!(culture_dir.exists());
+
+        let items = repo.list(None, None, None, None, None).unwrap();
+        assert_eq!(items.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_save_ink_scoped_knowledge() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_knowledge("ink-only", None, Some("reviewer"));
+        repo.save(&k).await.unwrap();
+
+        // Should be in inks/reviewer/ directory
+        let ink_dir = repo.root().join("inks").join("reviewer");
+        assert!(ink_dir.exists());
 
         let items = repo.list(None, None, None, None, None).unwrap();
         assert_eq!(items.len(), 1);
@@ -876,7 +1181,7 @@ mod tests {
         let k = make_knowledge("scoped", Some("/home/user/myrepo"), Some("coder"));
         repo.save(&k).await.unwrap();
 
-        // Should be in repos/myrepo/ directory
+        // Should be in repos/myrepo/ directory (repo takes precedence)
         let repo_dir = repo.root().join("repos").join("myrepo");
         assert!(repo_dir.exists());
     }
@@ -908,42 +1213,59 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_json_files_ignores_non_json() {
+    fn test_collect_knowledge_files_ignores_unknown_ext() {
         let tmpdir = tempfile::tempdir().unwrap();
         let dir = tmpdir.path();
-        std::fs::write(dir.join("readme.txt"), "not json").unwrap();
-        std::fs::write(dir.join("valid.json"), "{}").unwrap(); // invalid Knowledge but valid JSON
+        std::fs::write(dir.join("readme.txt"), "not knowledge").unwrap();
 
         let mut items = Vec::new();
-        // Should not panic, just warn on invalid Knowledge
-        collect_json_files(dir, &mut items).unwrap();
-        assert!(items.is_empty()); // {} is not a valid Knowledge
+        collect_knowledge_files(dir, &mut items).unwrap();
+        assert!(items.is_empty());
     }
 
     #[test]
-    fn test_collect_json_files_skips_invalid() {
+    fn test_collect_knowledge_files_skips_invalid_md() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let dir = tmpdir.path();
+        std::fs::write(dir.join("bad.md"), "not valid frontmatter").unwrap();
+
+        let mut items = Vec::new();
+        collect_knowledge_files(dir, &mut items).unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_collect_knowledge_files_skips_invalid_json() {
         let tmpdir = tempfile::tempdir().unwrap();
         let dir = tmpdir.path();
         std::fs::write(dir.join("bad.json"), "not json at all").unwrap();
 
         let mut items = Vec::new();
-        collect_json_files(dir, &mut items).unwrap();
+        collect_knowledge_files(dir, &mut items).unwrap();
         assert!(items.is_empty());
     }
 
     #[test]
-    fn test_collect_json_files_nonexistent_dir() {
+    fn test_collect_knowledge_files_nonexistent_dir() {
         let mut items = Vec::new();
-        let result = collect_json_files(Path::new("/nonexistent"), &mut items);
+        let result = collect_knowledge_files(Path::new("/nonexistent"), &mut items);
         assert!(result.is_ok());
         assert!(items.is_empty());
     }
 
     #[test]
-    fn test_collect_json_paths_empty() {
+    fn test_collect_knowledge_paths_empty() {
         let tmpdir = tempfile::tempdir().unwrap();
         let mut paths = Vec::new();
-        collect_json_paths(tmpdir.path(), &mut paths).unwrap();
+        collect_knowledge_paths(tmpdir.path(), &mut paths).unwrap();
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn test_collect_knowledge_paths_nonexistent_dir() {
+        let mut paths = Vec::new();
+        let result = collect_knowledge_paths(Path::new("/nonexistent"), &mut paths);
+        assert!(result.is_ok());
         assert!(paths.is_empty());
     }
 
@@ -1098,5 +1420,30 @@ mod tests {
         .await
         .unwrap();
         assert!(repo.root().join(".git").exists());
+    }
+
+    #[tokio::test]
+    async fn test_legacy_json_backward_compat() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        // Manually write a legacy JSON file into repos/
+        let legacy_dir = repo.root().join("repos").join("legacy-project");
+        std::fs::create_dir_all(&legacy_dir).unwrap();
+
+        let k = make_knowledge("legacy item", Some("/tmp/legacy-project"), None);
+        let json = serde_json::to_string_pretty(&k).unwrap();
+        std::fs::write(legacy_dir.join("summary-2026-01-01-abcd1234.json"), &json).unwrap();
+
+        // read_all should pick up the legacy JSON file
+        let items = repo.list(None, None, None, None, None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "legacy item");
+
+        // get_by_id should also work
+        let found = repo.get_by_id(&k.id.to_string()).unwrap();
+        assert!(found.is_some());
     }
 }

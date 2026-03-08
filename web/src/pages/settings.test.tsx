@@ -37,6 +37,7 @@ const testConfig: ConfigResponse = {
     tag: null,
     seed: null,
     discovery_interval_secs: 60,
+    default_provider: null,
   },
   peers: {},
   guards: {

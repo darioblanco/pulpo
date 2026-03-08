@@ -8,6 +8,7 @@ import { DashboardPage } from '@/pages/dashboard';
 import { HistoryPage } from '@/pages/history';
 import { SettingsPage } from '@/pages/settings';
 import { KnowledgePage } from '@/pages/knowledge';
+import { OceanPage } from '@/pages/ocean';
 import { ConnectPage } from '@/pages/connect';
 
 export function App() {
@@ -21,6 +22,7 @@ export function App() {
                 <Route index element={<DashboardPage />} />
                 <Route path="history" element={<HistoryPage />} />
                 <Route path="knowledge" element={<KnowledgePage />} />
+                <Route path="ocean" element={<OceanPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>
               <Route path="connect" element={<ConnectPage />} />

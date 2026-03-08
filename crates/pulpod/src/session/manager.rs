@@ -27,6 +27,7 @@ pub struct SessionManager {
     knowledge_repo: Option<KnowledgeRepo>,
     inject_knowledge: bool,
     default_guard: GuardConfig,
+    default_provider: Option<String>,
     inks: HashMap<String, InkConfig>,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
     node_name: String,
@@ -45,10 +46,17 @@ impl SessionManager {
             knowledge_repo: None,
             inject_knowledge: true,
             default_guard,
+            default_provider: None,
             inks,
             event_tx: None,
             node_name: String::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_default_provider(mut self, provider: Option<String>) -> Self {
+        self.default_provider = provider;
+        self
     }
 
     #[must_use]
@@ -108,12 +116,14 @@ impl SessionManager {
         &self,
         req: CreateSessionRequest,
     ) -> Result<(Session, Vec<String>)> {
-        let req = self.resolve_ink(req)?;
-        let req = self.inject_knowledge_context(req);
-        validate_workdir(&req.workdir)?;
+        let mut req = self.apply_defaults(req);
+        req = self.resolve_ink(req)?;
+        req = self.inject_knowledge_context(req);
+        let workdir = req.workdir.clone().unwrap_or_default();
+        validate_workdir(&workdir)?;
+        let prompt = req.prompt.clone().unwrap_or_default();
         let id = Uuid::new_v4();
         let provider = req.provider.unwrap_or(Provider::Claude);
-        self.backend.check_provider(&provider.to_string())?;
         let mode = req.mode.unwrap_or_default();
         let guards = resolve_guard_config(&req, &self.default_guard);
         let name = if let Some(n) = req.name {
@@ -130,7 +140,7 @@ impl SessionManager {
         };
         let backend_id = self.backend.session_id(&name);
         let mut spawn_params = build_spawn_params(
-            &req.prompt,
+            &prompt,
             &guards,
             req.allowed_tools.as_deref(),
             req.model.as_deref(),
@@ -147,9 +157,9 @@ impl SessionManager {
         let session = Session {
             id,
             name: name.clone(),
-            workdir: req.workdir,
+            workdir,
             provider,
-            prompt: req.prompt.clone(),
+            prompt,
             status: SessionStatus::Creating,
             mode,
             conversation_id: None,
@@ -204,6 +214,29 @@ impl SessionManager {
         Ok((session, warnings))
     }
 
+    /// Apply defaults for optional fields: workdir defaults to home directory,
+    /// prompt defaults to empty string, provider defaults to config `default_provider`.
+    fn apply_defaults(&self, mut req: CreateSessionRequest) -> CreateSessionRequest {
+        if req.workdir.is_none() {
+            req.workdir = Some(
+                dirs::home_dir()
+                    .map_or_else(|| "/tmp".to_owned(), |h| h.to_string_lossy().into_owned()),
+            );
+        }
+        if req.prompt.is_none() {
+            req.prompt = Some(String::new());
+        }
+        if req.provider.is_none() {
+            let default = self
+                .default_provider
+                .as_ref()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(Provider::Claude);
+            req.provider = Some(default);
+        }
+        req
+    }
+
     fn resolve_ink(&self, mut req: CreateSessionRequest) -> Result<CreateSessionRequest> {
         let ink_name = match &req.ink {
             Some(name) => name.clone(),
@@ -241,7 +274,8 @@ impl SessionManager {
                 }
             } else {
                 // Universal fallback: prepend to prompt
-                req.prompt = format!("{instructions}\n\n{}", req.prompt);
+                let prompt = req.prompt.unwrap_or_default();
+                req.prompt = Some(format!("{instructions}\n\n{prompt}"));
             }
         }
 
@@ -259,12 +293,13 @@ impl SessionManager {
             return req;
         };
 
+        let workdir = req.workdir.as_deref().unwrap_or_default();
         let items = repo
-            .query_context(Some(&req.workdir), req.ink.as_deref(), 5)
+            .query_context(Some(workdir), req.ink.as_deref(), 5)
             .unwrap_or_default();
 
         let root = repo.root().display();
-        let context = build_knowledge_context(&items, &root.to_string(), &req.workdir);
+        let context = build_knowledge_context(&items, &root.to_string(), workdir);
 
         let provider = req.provider.unwrap_or(Provider::Claude);
         if crate::guard::provider_capabilities(provider).system_prompt {
@@ -275,7 +310,8 @@ impl SessionManager {
                 format!("{existing}\n\n{context}")
             });
         } else {
-            req.prompt = format!("{context}\n\n{}", req.prompt);
+            let prompt = req.prompt.unwrap_or_default();
+            req.prompt = Some(format!("{context}\n\n{prompt}"));
         }
 
         req
@@ -575,26 +611,29 @@ fn build_knowledge_context(items: &[Knowledge], repo_root: &str, workdir: &str) 
 
     let _ = write!(
         ctx,
-        "\nKnowledge repo: {repo_root}\n\
-         Repo-scoped files: {repo_root}/repos/{slug}/\n\
-         Global files: {repo_root}/global/\n\n\
-         When you discover important patterns, gotchas, or environment requirements \
-         about this codebase, save them as JSON files in the repo-scoped directory above. \
-         Use this format:\n\
-         ```json\n\
-         {{\n  \
-           \"id\": \"<uuid>\",\n  \
-           \"session_id\": \"<your-session-id>\",\n  \
-           \"kind\": \"summary\",\n  \
-           \"scope_repo\": \"{workdir}\",\n  \
-           \"scope_ink\": null,\n  \
-           \"title\": \"Short description of the finding\",\n  \
-           \"body\": \"Detailed explanation\",\n  \
-           \"tags\": [],\n  \
-           \"relevance\": 0.5,\n  \
-           \"created_at\": \"<ISO 8601 timestamp>\"\n\
-         }}\n\
-         ```"
+        "\n## Culture repo\n\n\
+         Path: {repo_root}\n\
+         Structure:\n\
+         - `repos/{slug}/` — findings specific to this codebase\n\
+         - `inks/<ink>/` — findings specific to a role (reviewer, coder, etc.)\n\
+         - `culture/` — global team knowledge\n\n\
+         Files are Markdown with YAML frontmatter. When you discover important patterns, \
+         gotchas, or environment requirements, save them as `.md` files:\n\n\
+         ```markdown\n\
+         ---\n\
+         id: <uuid>\n\
+         session_id: <your-session-id>\n\
+         kind: summary\n\
+         scope_repo: \"{workdir}\"\n\
+         title: Short description of the finding\n\
+         tags: []\n\
+         relevance: 0.5\n\
+         created_at: <ISO 8601 timestamp>\n\
+         ---\n\n\
+         Detailed explanation in Markdown.\n\
+         ```\n\n\
+         You may also update or remove existing files that are outdated or wrong. \
+         Treat this repo as living documentation that the team curates over time."
     );
 
     ctx
@@ -737,9 +776,9 @@ mod tests {
     fn make_req(prompt: &str) -> CreateSessionRequest {
         CreateSessionRequest {
             name: None,
-            workdir: "/tmp".into(),
+            workdir: Some("/tmp".into()),
             provider: None,
-            prompt: prompt.into(),
+            prompt: Some(prompt.into()),
             mode: None,
             unrestricted: None,
             model: None,
@@ -779,6 +818,105 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_apply_defaults_fills_workdir_and_prompt() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let req = CreateSessionRequest {
+            name: None,
+            workdir: None,
+            provider: None,
+            prompt: None,
+            mode: None,
+            unrestricted: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+        };
+        let result = mgr.apply_defaults(req);
+        assert!(result.workdir.is_some(), "workdir should be filled");
+        assert_eq!(result.prompt.as_deref(), Some(""));
+        assert_eq!(result.provider, Some(Provider::Claude));
+    }
+
+    #[tokio::test]
+    async fn test_apply_defaults_preserves_explicit_values() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let req = CreateSessionRequest {
+            name: None,
+            workdir: Some("/my/dir".into()),
+            provider: Some(Provider::Codex),
+            prompt: Some("do stuff".into()),
+            mode: None,
+            unrestricted: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+        };
+        let result = mgr.apply_defaults(req);
+        assert_eq!(result.workdir.as_deref(), Some("/my/dir"));
+        assert_eq!(result.prompt.as_deref(), Some("do stuff"));
+        assert_eq!(result.provider, Some(Provider::Codex));
+    }
+
+    #[tokio::test]
+    async fn test_apply_defaults_uses_config_default_provider() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let mgr = mgr.with_default_provider(Some("codex".into()));
+        let req = CreateSessionRequest {
+            name: None,
+            workdir: None,
+            provider: None,
+            prompt: None,
+            mode: None,
+            unrestricted: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+        };
+        let result = mgr.apply_defaults(req);
+        assert_eq!(result.provider, Some(Provider::Codex));
+    }
+
+    #[tokio::test]
+    async fn test_create_session_with_no_args() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let req = CreateSessionRequest {
+            name: None,
+            workdir: None,
+            provider: None,
+            prompt: None,
+            mode: None,
+            unrestricted: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+        };
+        let (session, _) = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.provider, Provider::Claude);
+        assert!(session.prompt.is_empty());
+        assert!(!session.workdir.is_empty());
+    }
+
+    #[tokio::test]
     async fn test_create_session_calls_setup_logging() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
         let (_session, _) = mgr.create_session(make_req("test")).await.unwrap();
@@ -807,7 +945,7 @@ mod tests {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
             provider: Some(Provider::Claude),
-            prompt: "Do something".into(),
+            prompt: Some("Do something".into()),
             mode: Some(SessionMode::Autonomous),
             ..make_req("Do something")
         };
@@ -891,7 +1029,7 @@ mod tests {
     async fn test_create_session_workdir_not_found() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
-            workdir: "/nonexistent/path/that/does/not/exist".into(),
+            workdir: Some("/nonexistent/path/that/does/not/exist".into()),
             ..make_req("test")
         };
         let result = mgr.create_session(req).await;
@@ -905,7 +1043,7 @@ mod tests {
         let path = tmp.path().to_str().unwrap().to_owned();
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
-            workdir: path,
+            workdir: Some(path),
             ..make_req("test")
         };
         let result = mgr.create_session(req).await;
@@ -1599,6 +1737,7 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks,
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let req = make_req("test");
@@ -1618,6 +1757,7 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks,
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -1651,6 +1791,7 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks,
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -1687,6 +1828,7 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks,
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -1728,6 +1870,7 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks,
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -1737,7 +1880,10 @@ mod tests {
         let resolved = mgr.resolve_ink(req).unwrap();
         // Codex doesn't support system_prompt, so instructions are prepended to prompt
         assert!(resolved.system_prompt.is_none());
-        assert_eq!(resolved.prompt, "You are an expert coder.\n\nFix the bug");
+        assert_eq!(
+            resolved.prompt.as_deref(),
+            Some("You are an expert coder.\n\nFix the bug")
+        );
         assert_eq!(resolved.provider, Some(Provider::Codex));
     }
 
@@ -1763,6 +1909,7 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks,
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -1808,6 +1955,7 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks,
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -1842,6 +1990,7 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks,
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -1877,6 +2026,7 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks,
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -2208,10 +2358,9 @@ mod tests {
     fn test_build_knowledge_context_empty() {
         let ctx = build_knowledge_context(&[], "/data/knowledge", "/tmp/repo");
         assert!(ctx.contains("No previous findings"));
-        assert!(ctx.contains("Knowledge repo: /data/knowledge"));
+        assert!(ctx.contains("Path: /data/knowledge"));
         assert!(ctx.contains("repos/repo/"));
-        assert!(ctx.contains("global/"));
-        assert!(ctx.contains("save them as JSON"));
+        assert!(ctx.contains("culture/"));
     }
 
     #[test]
@@ -2252,9 +2401,20 @@ mod tests {
     #[test]
     fn test_build_knowledge_context_write_back_format() {
         let ctx = build_knowledge_context(&[], "/data/knowledge", "/tmp/repo");
-        assert!(ctx.contains("\"kind\": \"summary\""));
-        assert!(ctx.contains("\"scope_repo\": \"/tmp/repo\""));
-        assert!(ctx.contains("\"relevance\": 0.5"));
+        assert!(ctx.contains("kind: summary"));
+        assert!(ctx.contains("scope_repo:"));
+        assert!(ctx.contains("relevance: 0.5"));
+        assert!(ctx.contains(".md"));
+    }
+
+    #[test]
+    fn test_build_knowledge_context_culture_repo_structure() {
+        let ctx = build_knowledge_context(&[], "/data/knowledge", "/tmp/repo");
+        assert!(ctx.contains("Culture repo"));
+        assert!(ctx.contains("inks/<ink>/"));
+        assert!(ctx.contains("culture/"));
+        assert!(ctx.contains("update or remove"));
+        assert!(ctx.contains("living documentation"));
     }
 
     // -- inject_knowledge_context tests --
@@ -2269,12 +2429,13 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let req = make_req("test");
         let result = mgr.inject_knowledge_context(req);
         // No modification when disabled
-        assert_eq!(result.prompt, "test");
+        assert_eq!(result.prompt.as_deref(), Some("test"));
         assert_eq!(result.system_prompt, None);
     }
 
@@ -2288,11 +2449,12 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let req = make_req("test");
         let result = mgr.inject_knowledge_context(req);
-        assert_eq!(result.prompt, "test");
+        assert_eq!(result.prompt.as_deref(), Some("test"));
         assert_eq!(result.system_prompt, None);
     }
 
@@ -2326,16 +2488,17 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let mut req = make_req("test");
         req.provider = Some(Provider::Claude);
-        req.workdir = "/tmp/repo".into();
+        req.workdir = Some("/tmp/repo".into());
         let result = mgr.inject_knowledge_context(req);
         // Claude: knowledge goes to system_prompt
         let sp = result.system_prompt.unwrap();
         assert!(sp.contains("DB needs migration"));
-        assert!(sp.contains("Knowledge repo:"));
+        assert!(sp.contains("Culture repo"));
     }
 
     #[tokio::test]
@@ -2360,20 +2523,18 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let mut req = make_req("test");
         req.provider = Some(Provider::Codex);
-        req.workdir = "/tmp/repo".into();
+        req.workdir = Some("/tmp/repo".into());
         let result = mgr.inject_knowledge_context(req);
         // Codex: knowledge prepended to prompt
-        assert!(
-            result
-                .prompt
-                .starts_with("## Knowledge from previous sessions")
-        );
-        assert!(result.prompt.contains("Use pnpm"));
-        assert!(result.prompt.ends_with("test"));
+        let prompt = result.prompt.as_ref().unwrap();
+        assert!(prompt.starts_with("## Knowledge from previous sessions"));
+        assert!(prompt.contains("Use pnpm"));
+        assert!(prompt.ends_with("test"));
         assert!(result.system_prompt.is_none());
     }
 
@@ -2393,11 +2554,12 @@ mod tests {
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
             event_tx: None,
+            default_provider: None,
             node_name: String::new(),
         };
         let mut req = make_req("test");
         req.provider = Some(Provider::Claude);
-        req.workdir = "/tmp/repo".into();
+        req.workdir = Some("/tmp/repo".into());
         req.system_prompt = Some("Be careful with auth module.".into());
         let result = mgr.inject_knowledge_context(req);
         let sp = result.system_prompt.unwrap();

@@ -29,6 +29,7 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
             tag: config.node.tag.clone(),
             seed: config.node.seed.clone(),
             discovery_interval_secs: config.node.discovery_interval_secs,
+            default_provider: config.node.default_provider.clone(),
         },
         auth: AuthConfigResponse {},
         peers: config.peers.clone(),

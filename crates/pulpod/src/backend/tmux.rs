@@ -99,27 +99,6 @@ pub fn parse_tmux_version(output: &str) -> Option<(u32, u32)> {
     Some((major, minor))
 }
 
-/// Check that the provider binary (e.g. `claude`, `codex`) is on `$PATH`.
-#[cfg(not(coverage))]
-pub fn check_provider_binary(provider: &str) -> anyhow::Result<()> {
-    let output = Command::new("which").arg(provider).output();
-    match output {
-        Ok(o) if o.status.success() => Ok(()),
-        _ => anyhow::bail!(
-            "{provider} is not installed. Install it before spawning sessions.\n\
-             Claude: npm install -g @anthropic-ai/claude-code\n\
-             Codex: npm install -g @openai/codex\n\
-             Gemini: npm install -g @google/gemini-cli\n\
-             OpenCode: go install github.com/opencode-ai/opencode@latest"
-        ),
-    }
-}
-
-#[cfg(coverage)]
-pub fn check_provider_binary(_provider: &str) -> anyhow::Result<()> {
-    Ok(())
-}
-
 /// Check tmux is installed and >= 3.2. Returns `Ok(version string)` or `Err`.
 #[cfg(not(coverage))]
 pub fn check_tmux_version() -> anyhow::Result<String> {
@@ -179,10 +158,6 @@ impl Backend for TmuxBackend {
 
     fn check_version(&self) -> Result<String> {
         check_tmux_version()
-    }
-
-    fn check_provider(&self, provider: &str) -> Result<()> {
-        check_provider_binary(provider)
     }
 
     fn create_session(&self, backend_id: &str, working_dir: &str, command: &str) -> Result<()> {
@@ -440,21 +415,5 @@ mod tests {
             version.starts_with("tmux "),
             "Expected 'tmux ...' got '{version}'"
         );
-    }
-
-    #[cfg(not(coverage))]
-    #[test]
-    fn test_check_provider_binary_missing() {
-        let result = check_provider_binary("nonexistent-binary-xyz-12345");
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("is not installed"), "got: {err}");
-    }
-
-    #[test]
-    fn test_check_provider_binary_coverage_noop() {
-        // Under non-coverage builds this calls real `which`, so use a binary that exists
-        let result = check_provider_binary("ls");
-        assert!(result.is_ok());
     }
 }
