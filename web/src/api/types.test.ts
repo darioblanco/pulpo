@@ -38,4 +38,3 @@ describe('getProviderCapabilities', () => {
     expect(caps.system_prompt).toBe(true);
   });
 });
-
