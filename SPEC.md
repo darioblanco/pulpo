@@ -392,6 +392,10 @@ DELETE /peers/:name           Remove a peer
 GET    /inks                  List configured inks
 GET    /knowledge             List extracted knowledge (filters: session_id, kind, repo, ink, limit)
 GET    /knowledge/context     Query relevant knowledge for a workdir/ink (for prompt injection)
+GET    /knowledge/:id         Get a single knowledge item
+PUT    /knowledge/:id         Update a knowledge item (title, body, tags, relevance)
+DELETE /knowledge/:id         Delete a knowledge item
+POST   /knowledge/push        Push local knowledge commits to configured remote
 GET    /events                SSE event stream (session lifecycle events)
 ```
 
@@ -425,14 +429,18 @@ GET    /events                SSE event stream (session lifecycle events)
 | `GET`    | `/inks`                         | List configured inks           |
 | `GET`    | `/knowledge`                    | List extracted knowledge       |
 | `GET`    | `/knowledge/context`            | Query context-relevant knowledge |
+| `GET`    | `/knowledge/:id`                | Get single knowledge item      |
+| `PUT`    | `/knowledge/:id`                | Update knowledge item          |
+| `DELETE` | `/knowledge/:id`                | Delete knowledge item          |
+| `POST`   | `/knowledge/push`               | Push knowledge to remote       |
 | `GET`    | `/events`                       | SSE event stream               |
 
 ---
 
 ## Web UI Design
 
-**Stack:** Svelte 5 + SvelteKit + Tailwind CSS v4 + Konsta UI v5. Built as a
-static SPA (`adapter-static`), embedded into the `pulpod` binary via `rust-embed`.
+**Stack:** React 19 + Vite + Tailwind CSS v4 + shadcn/ui. Built as a
+static SPA, embedded into the `pulpod` binary via `rust-embed`.
 Single binary to distribute — no separate web server needed.
 
 ### Layout (Mobile-First)
@@ -518,7 +526,7 @@ pulpo/
 │   ├── pulpo-cli/src/          # CLI: thin client, clap commands
 │   └── pulpo-common/src/       # Shared types: Session, Provider, NodeInfo, PeerInfo,
 │                               #   GuardConfig (binary toggle), SessionEvent, API request/response
-├── web/                        # Svelte 5 + SvelteKit + Tailwind v4 + Konsta UI v5
+├── web/                        # React 19 + Vite + Tailwind v4 + shadcn/ui
 └── contrib/discord-bot/        # Discord bot: slash commands + SSE listener
 ```
 
@@ -596,10 +604,10 @@ Ship the smallest useful thing first.
 - ✅ Codex provider support
 - ✅ Binary guard toggle (unrestricted on/off) with per-provider flags
 
-### Phase 5: Web UI + Konsta UI ✅
+### Phase 5: Web UI ✅
 
-- ✅ Konsta UI migration (iOS-native look, responsive phone/tablet/desktop)
-- ✅ Svelte 5 + SvelteKit + Tailwind CSS v4 + Konsta UI v5
+- ✅ React 19 + Vite + Tailwind CSS v4 + shadcn/ui
+- ✅ Responsive dashboard, history, settings, knowledge pages
 - ✅ Static SPA embedded in `pulpod` binary via `rust-embed`
 
 ### Phase 5b: Desktop App UX Features ✅
@@ -620,7 +628,7 @@ Ship the smallest useful thing first.
 
 **Stack:** Tauri 2 mobile (iOS/Android) + `tauri-plugin-remote-push` (APNs + FCM)
 
-Tauri 2 builds native iOS `.ipa` and Android `.apk` from the same Svelte + Rust codebase. The Konsta UI components from Phase 5 already provide the mobile-native look.
+Tauri 2 builds native iOS `.ipa` and Android `.apk` from the same React + Rust codebase. The shadcn/ui components from Phase 5 already provide a responsive, mobile-friendly look.
 
 **Deliverables:**
 
