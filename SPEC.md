@@ -675,7 +675,6 @@ server = "hetzner:7433"
 
 [inks.reviewer]
 provider = "claude"
-model = "sonnet"
 guard_preset = "strict"
 instructions = "You are a code reviewer. Focus on correctness and security."
 

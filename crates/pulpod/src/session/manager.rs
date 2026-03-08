@@ -218,9 +218,6 @@ impl SessionManager {
         if req.provider.is_none() {
             req.provider = ink.provider.as_ref().and_then(|p| p.parse().ok());
         }
-        if req.model.is_none() {
-            req.model.clone_from(&ink.model);
-        }
         if req.mode.is_none() {
             req.mode = ink.mode.as_ref().and_then(|m| m.parse().ok());
         }
@@ -1663,7 +1660,6 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: Some("claude".into()),
-                model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
                 guard_preset: Some("strict".into()),
                 instructions: Some("Review code".into()),
@@ -1699,7 +1695,6 @@ mod tests {
         };
         let resolved = mgr.resolve_ink(req).unwrap();
         assert_eq!(resolved.provider, Some(Provider::Claude));
-        assert_eq!(resolved.model, Some("sonnet".into()));
         assert_eq!(resolved.mode, Some(SessionMode::Autonomous));
         assert_eq!(resolved.guard_preset, Some(GuardPreset::Strict));
         // Claude supports system_prompt, so instructions → system_prompt
@@ -1714,7 +1709,6 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: Some("codex".into()),
-                model: None,
                 mode: None,
                 guard_preset: None,
                 instructions: Some("You are an expert coder.".into()),
@@ -1763,7 +1757,6 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: Some("claude".into()),
-                model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
                 guard_preset: Some("strict".into()),
                 instructions: Some("Review code".into()),
@@ -1816,7 +1809,6 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: None,
-                model: None,
                 mode: None,
                 guard_preset: Some("strict".into()),
                 instructions: None,
@@ -1864,7 +1856,6 @@ mod tests {
             crate::config::InkConfig {
                 description: Some("A safe agent".into()),
                 provider: Some("claude".into()),
-                model: Some("sonnet".into()),
                 mode: None,
                 guard_preset: Some("strict".into()),
                 instructions: Some("Be careful".into()),
@@ -1900,7 +1891,6 @@ mod tests {
         };
         let resolved = mgr.resolve_ink(req).unwrap();
         assert_eq!(resolved.provider, Some(Provider::Claude));
-        assert_eq!(resolved.model, Some("sonnet".into()));
         assert_eq!(resolved.guard_preset, Some(GuardPreset::Strict));
         // Claude supports system_prompt, so instructions → system_prompt
         assert_eq!(resolved.system_prompt, Some("Be careful".into()));
@@ -1914,7 +1904,6 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: Some("claude".into()),
-                model: Some("sonnet".into()),
                 mode: None,
                 guard_preset: None,
                 instructions: Some("Ink instructions".into()),
@@ -1955,7 +1944,8 @@ mod tests {
         assert_eq!(resolved.output_format, Some("stream-json".into()));
         // Ink defaults applied for fields not set in request
         assert_eq!(resolved.provider, Some(Provider::Claude));
-        assert_eq!(resolved.model, Some("sonnet".into()));
+        // model is not set by inks (model is per-session only)
+        assert_eq!(resolved.model, None);
         // Instructions → system_prompt (Claude provider)
         assert_eq!(resolved.system_prompt, Some("Ink instructions".into()));
     }
@@ -2000,7 +1990,6 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: None,
-                model: None,
                 mode: None,
                 guard_preset: None,
                 instructions: None,

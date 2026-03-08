@@ -110,7 +110,6 @@ mod tests {
             InkConfig {
                 description: None,
                 provider: Some("claude".into()),
-                model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
                 guard_preset: Some("strict".into()),
                 instructions: Some("Review code".into()),
@@ -145,7 +144,6 @@ mod tests {
         let Json(response) = list(State(state)).await;
         assert_eq!(response.inks.len(), 1);
         let reviewer = &response.inks["reviewer"];
-        assert_eq!(reviewer.model, Some("sonnet".into()));
         assert_eq!(reviewer.instructions, Some("Review code".into()));
     }
 
@@ -157,7 +155,6 @@ mod tests {
             InkConfig {
                 description: None,
                 provider: None,
-                model: Some("opus".into()),
                 mode: None,
                 guard_preset: None,
                 instructions: None,
@@ -166,6 +163,5 @@ mod tests {
         let resp = InksResponse { inks };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("coder"));
-        assert!(json.contains("opus"));
     }
 }

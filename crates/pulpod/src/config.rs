@@ -32,8 +32,6 @@ pub struct InkConfig {
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
     pub mode: Option<String>,
     #[serde(default)]
     pub guard_preset: Option<String>,
@@ -305,7 +303,6 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                 "Code review — read-only analysis, strict guards, detailed feedback".to_owned(),
             ),
             provider: Some("claude".to_owned()),
-            model: None,
             mode: Some("interactive".to_owned()),
             guard_preset: Some("strict".to_owned()),
             instructions: Some(
@@ -324,7 +321,6 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                     .to_owned(),
             ),
             provider: Some("claude".to_owned()),
-            model: None,
             mode: Some("autonomous".to_owned()),
             guard_preset: Some("standard".to_owned()),
             instructions: Some(
@@ -343,7 +339,6 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                     .to_owned(),
             ),
             provider: None,
-            model: None,
             mode: Some("autonomous".to_owned()),
             guard_preset: Some("standard".to_owned()),
             instructions: Some(
@@ -362,7 +357,6 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                     .to_owned(),
             ),
             provider: None,
-            model: None,
             mode: Some("autonomous".to_owned()),
             guard_preset: Some("strict".to_owned()),
             instructions: Some(
@@ -382,7 +376,6 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                     .to_owned(),
             ),
             provider: None,
-            model: None,
             mode: Some("autonomous".to_owned()),
             guard_preset: Some("standard".to_owned()),
             instructions: Some(
@@ -1596,15 +1589,13 @@ data_dir = "/tmp"
 
 [inks.reviewer]
 provider = "claude"
-model = "sonnet"
 mode = "autonomous"
 guard_preset = "strict"
-allowed_tools = ["Read", "Glob", "Grep"]
-system_prompt = "You are a code reviewer."
+instructions = "You are a code reviewer."
 description = "Code review specialist"
 
 [inks.coder]
-model = "opus"
+provider = "codex"
 "#
         )
         .unwrap();
@@ -1614,7 +1605,6 @@ model = "opus"
         // User config overrides the built-in reviewer
         let reviewer = &config.inks["reviewer"];
         assert_eq!(reviewer.provider, Some("claude".into()));
-        assert_eq!(reviewer.model, Some("sonnet".into()));
         assert_eq!(reviewer.mode, Some("autonomous".into()));
         assert_eq!(reviewer.guard_preset, Some("strict".into()));
         assert_eq!(
@@ -1622,10 +1612,9 @@ model = "opus"
             Some("You are a code reviewer.".into())
         );
         assert_eq!(reviewer.description, Some("Code review specialist".into()));
-        // User config overrides the built-in coder (partial — only model set)
+        // User config overrides the built-in coder (partial — only provider set)
         let coder = &config.inks["coder"];
-        assert_eq!(coder.provider, None);
-        assert_eq!(coder.model, Some("opus".into()));
+        assert_eq!(coder.provider, Some("codex".into()));
         assert!(coder.instructions.is_none());
         assert!(coder.description.is_none());
     }
@@ -1640,7 +1629,6 @@ model = "opus"
             InkConfig {
                 description: Some("Code reviewer".into()),
                 provider: Some("claude".into()),
-                model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
                 guard_preset: Some("strict".into()),
                 instructions: Some("Review only.".into()),
@@ -1665,7 +1653,6 @@ model = "opus"
         // 1 user ink + 4 other built-ins (reviewer is overridden)
         assert_eq!(loaded.inks.len(), 5);
         let reviewer = &loaded.inks["reviewer"];
-        assert_eq!(reviewer.model, Some("sonnet".into()));
         assert_eq!(reviewer.instructions, Some("Review only.".into()));
         assert_eq!(reviewer.description, Some("Code reviewer".into()));
     }
@@ -1675,7 +1662,6 @@ model = "opus"
         let p = InkConfig {
             description: None,
             provider: Some("claude".into()),
-            model: None,
             mode: None,
             guard_preset: None,
             instructions: None,
@@ -2049,7 +2035,6 @@ name = "test"
             InkConfig {
                 description: Some("My custom reviewer".to_owned()),
                 provider: Some("codex".to_owned()),
-                model: None,
                 mode: None,
                 guard_preset: None,
                 instructions: None,
@@ -2075,7 +2060,6 @@ name = "test"
             InkConfig {
                 description: Some("Custom ink".to_owned()),
                 provider: None,
-                model: None,
                 mode: None,
                 guard_preset: None,
                 instructions: None,
@@ -2125,7 +2109,6 @@ provider = "codex"
         let ink = InkConfig {
             description: Some("Test description".to_owned()),
             provider: Some("claude".to_owned()),
-            model: None,
             mode: None,
             guard_preset: None,
             instructions: None,

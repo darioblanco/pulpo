@@ -148,7 +148,6 @@ pub struct NotificationsConfigResponse {
 pub struct InkConfigResponse {
     pub description: Option<String>,
     pub provider: Option<String>,
-    pub model: Option<String>,
     pub mode: Option<String>,
     pub guard_preset: Option<String>,
     pub instructions: Option<String>,

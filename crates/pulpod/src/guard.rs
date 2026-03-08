@@ -80,6 +80,17 @@ pub const fn provider_capabilities(provider: Provider) -> ProviderCapabilities {
             guard_preset: false,
             resume: true,
         },
+        Provider::Gemini => ProviderCapabilities {
+            model: true,
+            system_prompt: false,
+            allowed_tools: false,
+            max_turns: false,
+            max_budget_usd: false,
+            output_format: true,
+            worktree: false,
+            guard_preset: true,
+            resume: true,
+        },
         Provider::OpenCode => ProviderCapabilities {
             model: false,
             system_prompt: false,
@@ -143,6 +154,8 @@ pub fn build_flags(provider: Provider, mode: SessionMode, params: &SpawnParams) 
         (Provider::Claude, SessionMode::Interactive) => build_claude_interactive_flags(params),
         (Provider::Codex, SessionMode::Autonomous) => build_codex_flags(params),
         (Provider::Codex, SessionMode::Interactive) => build_codex_interactive_flags(params),
+        (Provider::Gemini, SessionMode::Autonomous) => build_gemini_flags(params),
+        (Provider::Gemini, SessionMode::Interactive) => build_gemini_interactive_flags(params),
         (Provider::OpenCode, SessionMode::Autonomous) => build_opencode_flags(params),
         (Provider::OpenCode, SessionMode::Interactive) => build_opencode_interactive_flags(params),
     }
@@ -295,6 +308,57 @@ pub fn build_codex_interactive_flags(params: &SpawnParams) -> Vec<String> {
         flags.push("--model".into());
         flags.push(m.clone());
     }
+    flags
+}
+
+// -- Gemini flag builders --
+
+/// Map a `GuardPreset` to Gemini's `--approval-mode` value.
+const fn gemini_approval_mode(guards: &GuardConfig) -> &'static str {
+    match guards.preset {
+        GuardPreset::Unrestricted => "yolo",
+        GuardPreset::Standard => "default",
+        GuardPreset::Strict => "plan",
+    }
+}
+
+/// Common flags shared between Gemini autonomous and interactive modes.
+fn gemini_common_flags(params: &SpawnParams) -> Vec<String> {
+    let mut flags = Vec::new();
+    if let Some(m) = &params.model {
+        flags.push("--model".into());
+        flags.push(m.clone());
+    }
+    flags.push("--approval-mode".into());
+    flags.push(gemini_approval_mode(&params.guards).into());
+    flags
+}
+
+/// Build flags for `Gemini` autonomous mode (`-p` for prompt).
+pub fn build_gemini_flags(params: &SpawnParams) -> Vec<String> {
+    if let Some(id) = &params.conversation_id {
+        let mut flags = vec!["--resume".into(), id.clone()];
+        flags.extend(gemini_common_flags(params));
+        return flags;
+    }
+    let mut flags = vec!["-p".into(), shell_escape(&params.prompt)];
+    flags.extend(gemini_common_flags(params));
+    if let Some(fmt) = &params.output_format {
+        flags.push("--output-format".into());
+        flags.push(fmt.clone());
+    }
+    flags
+}
+
+/// Build flags for `Gemini` interactive mode (`-i` for prompt).
+pub fn build_gemini_interactive_flags(params: &SpawnParams) -> Vec<String> {
+    if let Some(id) = &params.conversation_id {
+        let mut flags = vec!["--resume".into(), id.clone()];
+        flags.extend(gemini_common_flags(params));
+        return flags;
+    }
+    let mut flags = vec!["-i".into(), shell_escape(&params.prompt)];
+    flags.extend(gemini_common_flags(params));
     flags
 }
 
@@ -977,6 +1041,168 @@ mod tests {
         assert!(flags.is_empty());
     }
 
+    // -- Gemini tests --
+
+    #[test]
+    fn test_gemini_autonomous_flags() {
+        let p = params("Fix the bug", standard_guards());
+        let flags = build_gemini_flags(&p);
+        assert_eq!(flags[0], "-p");
+        assert_eq!(flags[1], "'Fix the bug'");
+        assert!(flags.contains(&"--approval-mode".into()));
+        assert!(flags.contains(&"default".into()));
+    }
+
+    #[test]
+    fn test_gemini_autonomous_with_model() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            model: Some("gemini-2.5-pro".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_gemini_flags(&p);
+        assert!(flags.contains(&"--model".into()));
+        assert!(flags.contains(&"gemini-2.5-pro".into()));
+    }
+
+    #[test]
+    fn test_gemini_autonomous_with_output_format() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            output_format: Some("json".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_gemini_flags(&p);
+        assert!(flags.contains(&"--output-format".into()));
+        assert!(flags.contains(&"json".into()));
+    }
+
+    #[test]
+    fn test_gemini_autonomous_unrestricted() {
+        let p = params("test", unrestricted_guards());
+        let flags = build_gemini_flags(&p);
+        assert!(flags.contains(&"--approval-mode".into()));
+        assert!(flags.contains(&"yolo".into()));
+    }
+
+    #[test]
+    fn test_gemini_autonomous_strict() {
+        let p = params("test", strict_guards());
+        let flags = build_gemini_flags(&p);
+        assert!(flags.contains(&"--approval-mode".into()));
+        assert!(flags.contains(&"plan".into()));
+    }
+
+    #[test]
+    fn test_gemini_interactive_flags() {
+        let p = params("Fix the bug", standard_guards());
+        let flags = build_gemini_interactive_flags(&p);
+        assert_eq!(flags[0], "-i");
+        assert_eq!(flags[1], "'Fix the bug'");
+        assert!(flags.contains(&"--approval-mode".into()));
+        assert!(flags.contains(&"default".into()));
+    }
+
+    #[test]
+    fn test_gemini_interactive_with_model() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            model: Some("gemini-2.5-flash".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_gemini_interactive_flags(&p);
+        assert!(flags.contains(&"--model".into()));
+        assert!(flags.contains(&"gemini-2.5-flash".into()));
+    }
+
+    #[test]
+    fn test_gemini_interactive_no_output_format() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            output_format: Some("json".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_gemini_interactive_flags(&p);
+        assert!(!flags.contains(&"--output-format".into()));
+    }
+
+    #[test]
+    fn test_gemini_autonomous_resume_flags() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            model: Some("gemini-2.5-pro".into()),
+            conversation_id: Some("latest".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_gemini_flags(&p);
+        assert_eq!(flags[0], "--resume");
+        assert_eq!(flags[1], "latest");
+        assert!(flags.contains(&"--model".into()));
+        assert!(flags.contains(&"--approval-mode".into()));
+        assert!(!flags.contains(&"-p".into()));
+    }
+
+    #[test]
+    fn test_gemini_interactive_resume_flags() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: unrestricted_guards(),
+            conversation_id: Some("3".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_gemini_interactive_flags(&p);
+        assert_eq!(flags[0], "--resume");
+        assert_eq!(flags[1], "3");
+        assert!(flags.contains(&"--approval-mode".into()));
+        assert!(flags.contains(&"yolo".into()));
+        assert!(!flags.contains(&"-i".into()));
+    }
+
+    #[test]
+    fn test_gemini_ignores_system_prompt() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            system_prompt: Some("Be concise".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_gemini_flags(&p);
+        assert!(!flags.contains(&"--append-system-prompt".into()));
+    }
+
+    #[test]
+    fn test_gemini_ignores_worktree() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            worktree: Some("my-session".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_gemini_flags(&p);
+        assert!(!flags.contains(&"--worktree".into()));
+    }
+
+    #[test]
+    fn test_build_flags_gemini_autonomous() {
+        let p = params("test", standard_guards());
+        let flags = build_flags(Provider::Gemini, SessionMode::Autonomous, &p);
+        assert!(flags.contains(&"-p".into()));
+        assert!(flags.contains(&"--approval-mode".into()));
+    }
+
+    #[test]
+    fn test_build_flags_gemini_interactive() {
+        let p = params("test", standard_guards());
+        let flags = build_flags(Provider::Gemini, SessionMode::Interactive, &p);
+        assert!(flags.contains(&"-i".into()));
+        assert!(flags.contains(&"--approval-mode".into()));
+    }
+
     // -- Provider capabilities tests --
 
     #[test]
@@ -1004,6 +1230,20 @@ mod tests {
         assert!(!caps.output_format);
         assert!(!caps.worktree);
         assert!(!caps.guard_preset);
+        assert!(caps.resume);
+    }
+
+    #[test]
+    fn test_provider_capabilities_gemini() {
+        let caps = provider_capabilities(Provider::Gemini);
+        assert!(caps.model);
+        assert!(!caps.system_prompt);
+        assert!(!caps.allowed_tools);
+        assert!(!caps.max_turns);
+        assert!(!caps.max_budget_usd);
+        assert!(caps.output_format);
+        assert!(!caps.worktree);
+        assert!(caps.guard_preset);
         assert!(caps.resume);
     }
 
@@ -1082,6 +1322,40 @@ mod tests {
         assert!(warnings.iter().any(|w| w.contains("--output-format")));
         assert!(warnings.iter().any(|w| w.contains("--allowed-tools")));
         assert!(warnings.iter().any(|w| w.contains("--worktree")));
+    }
+
+    #[test]
+    fn test_check_capability_warnings_gemini_unsupported() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            system_prompt: Some("Be concise".into()),
+            max_turns: Some(10),
+            max_budget_usd: Some(5.0),
+            worktree: Some("ws".into()),
+            explicit_tools: Some(vec!["Read".into()]),
+            ..SpawnParams::default()
+        };
+        let warnings = check_capability_warnings(Provider::Gemini, &p);
+        assert_eq!(warnings.len(), 5);
+        assert!(warnings.iter().any(|w| w.contains("--system-prompt")));
+        assert!(warnings.iter().any(|w| w.contains("--max-turns")));
+        assert!(warnings.iter().any(|w| w.contains("--max-budget-usd")));
+        assert!(warnings.iter().any(|w| w.contains("--worktree")));
+        assert!(warnings.iter().any(|w| w.contains("--allowed-tools")));
+    }
+
+    #[test]
+    fn test_check_capability_warnings_gemini_model_ok() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            model: Some("gemini-2.5-pro".into()),
+            output_format: Some("json".into()),
+            ..SpawnParams::default()
+        };
+        let warnings = check_capability_warnings(Provider::Gemini, &p);
+        assert!(warnings.is_empty());
     }
 
     #[test]

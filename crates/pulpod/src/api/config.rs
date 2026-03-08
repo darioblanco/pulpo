@@ -76,7 +76,6 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
                     InkConfigResponse {
                         description: v.description.clone(),
                         provider: v.provider.clone(),
-                        model: v.model.clone(),
                         mode: v.mode.clone(),
                         guard_preset: v.guard_preset.clone(),
                         instructions: v.instructions.clone(),
@@ -201,7 +200,6 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
                     crate::config::InkConfig {
                         description: v.description,
                         provider: v.provider,
-                        model: v.model,
                         mode: v.mode,
                         guard_preset: v.guard_preset,
                         instructions: v.instructions,
@@ -876,7 +874,6 @@ mod tests {
             InkConfigResponse {
                 description: None,
                 provider: Some("claude".into()),
-                model: Some("opus".into()),
                 mode: Some("interactive".into()),
                 guard_preset: Some("strict".into()),
                 instructions: Some("You are a reviewer.".into()),
@@ -890,7 +887,6 @@ mod tests {
         assert_eq!(resp.config.inks.len(), 1);
         let p = &resp.config.inks["reviewer"];
         assert_eq!(p.provider, Some("claude".into()));
-        assert_eq!(p.model, Some("opus".into()));
         assert_eq!(p.instructions, Some("You are a reviewer.".into()));
     }
 
@@ -929,7 +925,6 @@ mod tests {
                     crate::config::InkConfig {
                         description: None,
                         provider: Some("claude".into()),
-                        model: Some("sonnet".into()),
                         mode: None,
                         guard_preset: None,
                         instructions: None,
@@ -969,7 +964,6 @@ mod tests {
         assert_eq!(resp.inks.len(), 1);
         let p = &resp.inks["coder"];
         assert_eq!(p.provider, Some("claude".into()));
-        assert_eq!(p.model, Some("sonnet".into()));
     }
 
     #[test]

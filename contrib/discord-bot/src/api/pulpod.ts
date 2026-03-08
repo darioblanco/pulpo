@@ -30,7 +30,6 @@ export interface CreateSessionRequest {
 export interface InkConfig {
   description: string | null;
   provider?: string;
-  model?: string;
   mode?: string;
   guard_preset?: string;
   instructions?: string;

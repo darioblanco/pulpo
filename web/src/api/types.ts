@@ -60,7 +60,6 @@ export interface InterventionEvent {
 export interface InkConfig {
   description: string | null;
   provider: string | null;
-  model: string | null;
   mode: string | null;
   guard_preset: string | null;
   instructions: string | null;
@@ -206,6 +205,35 @@ export interface ProviderCapabilities {
   worktree: boolean;
   guard_preset: boolean;
   resume: boolean;
+}
+
+export interface ModelOption {
+  value: string;
+  label: string;
+}
+
+/** Return the available model shortcuts for a given provider */
+export function getProviderModels(provider: string): ModelOption[] {
+  switch (provider) {
+    case 'claude':
+      return [
+        { value: 'opus', label: 'Opus' },
+        { value: 'sonnet', label: 'Sonnet' },
+        { value: 'haiku', label: 'Haiku' },
+      ];
+    case 'codex':
+      return [
+        { value: 'o3', label: 'o3' },
+        { value: 'o4-mini', label: 'o4-mini' },
+      ];
+    case 'gemini':
+      return [
+        { value: 'gemini-2.5-pro', label: '2.5 Pro' },
+        { value: 'gemini-2.5-flash', label: '2.5 Flash' },
+      ];
+    default:
+      return [];
+  }
 }
 
 /** Return the capability set for a given provider */

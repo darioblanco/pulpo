@@ -486,7 +486,6 @@ describe('updateRemoteConfig', () => {
         reviewer: {
           description: 'Test',
           provider: 'claude',
-          model: null,
           mode: null,
           guard_preset: null,
           instructions: null,
@@ -594,7 +593,7 @@ describe('getPairingUrl', () => {
 
 describe('getInks', () => {
   it('fetches /api/v1/inks', async () => {
-    const resp = { inks: { coder: { provider: 'claude', model: 'opus' } } };
+    const resp = { inks: { coder: { provider: 'claude' } } };
     mockFetch.mockResolvedValue(jsonResponse(resp));
 
     const result = await getInks();

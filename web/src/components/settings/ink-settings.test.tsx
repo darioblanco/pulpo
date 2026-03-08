@@ -16,7 +16,6 @@ const mockUpdateRemoteConfig = vi.mocked(api.updateRemoteConfig);
 const emptyInk: InkConfig = {
   description: null,
   provider: null,
-  model: null,
   mode: null,
   guard_preset: null,
   instructions: null,
@@ -25,7 +24,6 @@ const emptyInk: InkConfig = {
 const reviewerInk: InkConfig = {
   description: 'Code review specialist',
   provider: 'claude',
-  model: null,
   mode: 'interactive',
   guard_preset: 'strict',
   instructions: 'You are a code reviewer.',
@@ -135,18 +133,6 @@ describe('InkSettings', () => {
     });
     expect(onInksChange).toHaveBeenCalledWith({
       reviewer: { ...reviewerInk, description: null },
-    });
-  });
-
-  it('updates model field', () => {
-    const onInksChange = vi.fn();
-    render(<InkSettings inks={{ reviewer: reviewerInk }} onInksChange={onInksChange} />);
-    fireEvent.click(screen.getByTestId('ink-toggle-reviewer'));
-    fireEvent.change(screen.getByLabelText('Model'), {
-      target: { value: 'opus' },
-    });
-    expect(onInksChange).toHaveBeenCalledWith({
-      reviewer: { ...reviewerInk, model: 'opus' },
     });
   });
 

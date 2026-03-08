@@ -236,7 +236,6 @@ describe('NewSessionDialog', () => {
         reviewer: {
           description: 'Code review',
           provider: 'claude',
-          model: null,
           mode: 'interactive',
           guard_preset: 'strict',
           instructions: null,
@@ -257,7 +256,6 @@ describe('NewSessionDialog', () => {
         reviewer: {
           description: 'Code review',
           provider: 'claude',
-          model: null,
           mode: 'interactive',
           guard_preset: 'strict',
           instructions: null,
@@ -290,7 +288,6 @@ describe('NewSessionDialog', () => {
         reviewer: {
           description: 'Code review',
           provider: 'codex',
-          model: 'gpt-4',
           mode: 'autonomous',
           guard_preset: 'strict',
           instructions: null,
@@ -298,7 +295,7 @@ describe('NewSessionDialog', () => {
       },
     });
     mockCreateSession.mockResolvedValue({
-      session: { ...defaultSession, ink: 'reviewer', provider: 'codex', model: 'gpt-4' },
+      session: { ...defaultSession, ink: 'reviewer', provider: 'codex' },
     });
     render(<NewSessionDialog onCreated={vi.fn()} />);
     const user = await openDialog();
@@ -343,7 +340,6 @@ describe('NewSessionDialog', () => {
         reviewer: {
           description: 'Code review',
           provider: 'codex',
-          model: 'gpt-4',
           mode: 'autonomous',
           guard_preset: 'strict',
           instructions: null,
@@ -371,9 +367,98 @@ describe('NewSessionDialog', () => {
       const summary = screen.getByTestId('ink-summary');
       expect(summary).toBeInTheDocument();
       expect(summary.textContent).toContain('codex');
-      expect(summary.textContent).toContain('gpt-4');
       expect(summary.textContent).toContain('autonomous');
       expect(summary.textContent).toContain('guards: strict');
+    });
+  });
+
+  it('shows model selector for claude provider', async () => {
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    await openDialog();
+    expect(screen.getByLabelText('Model')).toBeInTheDocument();
+  });
+
+  it('shows provider-specific model options for claude', async () => {
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    const modelSelect = screen.getByRole('combobox', { name: 'Model' });
+    await user.click(modelSelect);
+
+    await waitFor(() => {
+      const options = document.querySelectorAll('[role="option"]');
+      const texts = Array.from(options).map((o) => o.textContent);
+      expect(texts).toContain('Opus');
+      expect(texts).toContain('Sonnet');
+      expect(texts).toContain('Haiku');
+    });
+  });
+
+  it('sends model in request when non-default selected', async () => {
+    mockCreateSession.mockResolvedValue({
+      session: { ...defaultSession, model: 'opus' },
+    });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+    await user.type(screen.getByLabelText('Prompt'), 'Fix it');
+
+    // Open model dropdown and select Opus
+    const modelSelect = screen.getByRole('combobox', { name: 'Model' });
+    await user.click(modelSelect);
+    await waitFor(() => {
+      expect(document.querySelectorAll('[role="option"]').length).toBeGreaterThan(0);
+    });
+    const options = screen.getAllByText('Opus');
+    const listboxOption = options.find((el) => el.closest('[role="option"]'));
+    if (listboxOption) await user.click(listboxOption);
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith(expect.objectContaining({ model: 'opus' }));
+    });
+  });
+
+  it('does not send model when default is selected', async () => {
+    mockCreateSession.mockResolvedValue({ session: defaultSession });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+    await user.type(screen.getByLabelText('Prompt'), 'Fix it');
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      const call = mockCreateSession.mock.calls[0][0];
+      expect(call).not.toHaveProperty('model');
+    });
+  });
+
+  it('hides model selector for open_code provider', async () => {
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    // Verify model selector exists initially (claude default)
+    expect(screen.getByLabelText('Model')).toBeInTheDocument();
+
+    // Switch to OpenCode
+    const providerSelect = screen.getByRole('combobox', { name: 'Provider' });
+    await user.click(providerSelect);
+    await waitFor(() => {
+      const options = screen.getAllByText('OpenCode');
+      expect(options.length).toBeGreaterThan(0);
+    });
+    const options = screen.getAllByText('OpenCode');
+    const listboxOption = options.find((el) => el.closest('[role="option"]'));
+    if (listboxOption) await user.click(listboxOption);
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText('Model')).not.toBeInTheDocument();
     });
   });
 

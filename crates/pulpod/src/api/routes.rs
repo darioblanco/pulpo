@@ -170,7 +170,6 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 provider: Some("claude".into()),
-                model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
                 guard_preset: Some("strict".into()),
                 instructions: Some("Review code".into()),
@@ -205,7 +204,6 @@ mod tests {
         resp.assert_status_ok();
         let body = resp.text();
         assert!(body.contains("reviewer"));
-        assert!(body.contains("sonnet"));
     }
 
     #[tokio::test]

@@ -131,7 +131,6 @@ name = "mac-mini"
 
 [inks.reviewer]
 provider = "claude"
-model = "sonnet"
 guard_preset = "strict"
 instructions = "You are a senior reviewer focused on correctness and security."
 ```

@@ -15,6 +15,7 @@ use crate::guard::GuardConfig;
 pub enum Provider {
     Claude,
     Codex,
+    Gemini,
     OpenCode,
 }
 
@@ -23,6 +24,7 @@ impl fmt::Display for Provider {
         match self {
             Self::Claude => write!(f, "claude"),
             Self::Codex => write!(f, "codex"),
+            Self::Gemini => write!(f, "gemini"),
             Self::OpenCode => write!(f, "opencode"),
         }
     }
@@ -35,6 +37,7 @@ impl FromStr for Provider {
         match s {
             "claude" => Ok(Self::Claude),
             "codex" => Ok(Self::Codex),
+            "gemini" => Ok(Self::Gemini),
             "opencode" | "open_code" => Ok(Self::OpenCode),
             other => Err(format!("unknown provider: {other}")),
         }
@@ -187,6 +190,10 @@ mod tests {
             "\"codex\""
         );
         assert_eq!(
+            serde_json::to_string(&Provider::Gemini).unwrap(),
+            "\"gemini\""
+        );
+        assert_eq!(
             serde_json::to_string(&Provider::OpenCode).unwrap(),
             "\"open_code\""
         );
@@ -203,6 +210,10 @@ mod tests {
             Provider::Codex
         );
         assert_eq!(
+            serde_json::from_str::<Provider>("\"gemini\"").unwrap(),
+            Provider::Gemini
+        );
+        assert_eq!(
             serde_json::from_str::<Provider>("\"open_code\"").unwrap(),
             Provider::OpenCode
         );
@@ -217,6 +228,7 @@ mod tests {
     fn test_provider_display() {
         assert_eq!(Provider::Claude.to_string(), "claude");
         assert_eq!(Provider::Codex.to_string(), "codex");
+        assert_eq!(Provider::Gemini.to_string(), "gemini");
         assert_eq!(Provider::OpenCode.to_string(), "opencode");
     }
 
@@ -224,6 +236,7 @@ mod tests {
     fn test_provider_from_str() {
         assert_eq!("claude".parse::<Provider>().unwrap(), Provider::Claude);
         assert_eq!("codex".parse::<Provider>().unwrap(), Provider::Codex);
+        assert_eq!("gemini".parse::<Provider>().unwrap(), Provider::Gemini);
         assert_eq!("opencode".parse::<Provider>().unwrap(), Provider::OpenCode);
         assert_eq!("open_code".parse::<Provider>().unwrap(), Provider::OpenCode);
     }
