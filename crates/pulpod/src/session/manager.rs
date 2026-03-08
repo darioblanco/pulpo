@@ -12,7 +12,7 @@ use uuid::Uuid;
 use pulpo_common::guard::GuardConfig;
 
 use crate::backend::Backend;
-use crate::config::PersonaConfig;
+use crate::config::InkConfig;
 use crate::store::Store;
 
 #[derive(Clone)]
@@ -23,7 +23,7 @@ pub struct SessionManager {
     default_max_turns: Option<u32>,
     default_max_budget_usd: Option<f64>,
     default_output_format: Option<String>,
-    personas: HashMap<String, PersonaConfig>,
+    inks: HashMap<String, InkConfig>,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
     node_name: String,
 }
@@ -33,7 +33,7 @@ impl SessionManager {
         backend: Arc<dyn Backend>,
         store: Store,
         default_guard: GuardConfig,
-        personas: HashMap<String, PersonaConfig>,
+        inks: HashMap<String, InkConfig>,
     ) -> Self {
         Self {
             backend,
@@ -42,7 +42,7 @@ impl SessionManager {
             default_max_turns: None,
             default_max_budget_usd: None,
             default_output_format: None,
-            personas,
+            inks,
             event_tx: None,
             node_name: String::new(),
         }
@@ -68,8 +68,8 @@ impl SessionManager {
         self
     }
 
-    pub const fn personas(&self) -> &HashMap<String, PersonaConfig> {
-        &self.personas
+    pub const fn inks(&self) -> &HashMap<String, InkConfig> {
+        &self.inks
     }
 
     pub fn backend(&self) -> Arc<dyn Backend> {
@@ -104,7 +104,7 @@ impl SessionManager {
     }
 
     pub async fn create_session(&self, req: CreateSessionRequest) -> Result<Session> {
-        let mut req = self.resolve_persona(req)?;
+        let mut req = self.resolve_ink(req)?;
         self.apply_guardrail_defaults(&mut req);
         validate_workdir(&req.workdir)?;
         let id = Uuid::new_v4();
@@ -156,7 +156,7 @@ impl SessionManager {
             allowed_tools: req.allowed_tools,
             system_prompt: req.system_prompt,
             metadata: req.metadata,
-            persona: req.persona,
+            ink: req.ink,
             max_turns: req.max_turns,
             max_budget_usd: req.max_budget_usd,
             output_format: req.output_format,
@@ -199,43 +199,43 @@ impl SessionManager {
         Ok(session)
     }
 
-    fn resolve_persona(&self, mut req: CreateSessionRequest) -> Result<CreateSessionRequest> {
-        let persona_name = match &req.persona {
+    fn resolve_ink(&self, mut req: CreateSessionRequest) -> Result<CreateSessionRequest> {
+        let ink_name = match &req.ink {
             Some(name) => name.clone(),
             None => return Ok(req),
         };
-        let persona = self
-            .personas
-            .get(&persona_name)
-            .ok_or_else(|| anyhow!("unknown persona: {persona_name}"))?;
+        let ink = self
+            .inks
+            .get(&ink_name)
+            .ok_or_else(|| anyhow!("unknown ink: {ink_name}"))?;
 
-        // Persona defaults — explicit request fields always win
+        // Ink defaults — explicit request fields always win
         if req.provider.is_none() {
-            req.provider = persona.provider.as_ref().and_then(|p| p.parse().ok());
+            req.provider = ink.provider.as_ref().and_then(|p| p.parse().ok());
         }
         if req.model.is_none() {
-            req.model.clone_from(&persona.model);
+            req.model.clone_from(&ink.model);
         }
         if req.mode.is_none() {
-            req.mode = persona.mode.as_ref().and_then(|m| m.parse().ok());
+            req.mode = ink.mode.as_ref().and_then(|m| m.parse().ok());
         }
         if req.guard_preset.is_none() && req.guard_config.is_none() {
-            req.guard_preset = persona.guard_preset.as_ref().and_then(|g| g.parse().ok());
+            req.guard_preset = ink.guard_preset.as_ref().and_then(|g| g.parse().ok());
         }
         if req.allowed_tools.is_none() {
-            req.allowed_tools.clone_from(&persona.allowed_tools);
+            req.allowed_tools.clone_from(&ink.allowed_tools);
         }
         if req.system_prompt.is_none() {
-            req.system_prompt.clone_from(&persona.system_prompt);
+            req.system_prompt.clone_from(&ink.system_prompt);
         }
         if req.max_turns.is_none() {
-            req.max_turns = persona.max_turns;
+            req.max_turns = ink.max_turns;
         }
         if req.max_budget_usd.is_none() {
-            req.max_budget_usd = persona.max_budget_usd;
+            req.max_budget_usd = ink.max_budget_usd;
         }
         if req.output_format.is_none() {
-            req.output_format.clone_from(&persona.output_format);
+            req.output_format.clone_from(&ink.output_format);
         }
         Ok(req)
     }
@@ -633,7 +633,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -693,7 +693,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -717,7 +717,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -753,7 +753,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -800,7 +800,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -828,7 +828,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -1216,7 +1216,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -1277,7 +1277,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -1303,7 +1303,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -1572,8 +1572,8 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_persona_no_persona() {
-        let personas = HashMap::new();
+    fn test_resolve_ink_no_ink() {
+        let inks = HashMap::new();
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store: unsafe_empty_store(),
@@ -1581,7 +1581,7 @@ mod tests {
             default_max_turns: None,
             default_max_budget_usd: None,
             default_output_format: None,
-            personas,
+            inks,
             event_tx: None,
             node_name: String::new(),
         };
@@ -1597,19 +1597,19 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
         };
-        let resolved = mgr.resolve_persona(req).unwrap();
+        let resolved = mgr.resolve_ink(req).unwrap();
         assert!(resolved.model.is_none());
         assert!(resolved.system_prompt.is_none());
     }
 
     #[test]
-    fn test_resolve_persona_unknown() {
-        let personas = HashMap::new();
+    fn test_resolve_ink_unknown() {
+        let inks = HashMap::new();
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store: unsafe_empty_store(),
@@ -1617,7 +1617,7 @@ mod tests {
             default_max_turns: None,
             default_max_budget_usd: None,
             default_output_format: None,
-            personas,
+            inks,
             event_tx: None,
             node_name: String::new(),
         };
@@ -1633,22 +1633,23 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: Some("nonexistent".into()),
+            ink: Some("nonexistent".into()),
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
         };
-        let result = mgr.resolve_persona(req);
+        let result = mgr.resolve_ink(req);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unknown persona"));
+        assert!(result.unwrap_err().to_string().contains("unknown ink"));
     }
 
     #[test]
-    fn test_resolve_persona_applies_defaults() {
-        let mut personas = HashMap::new();
-        personas.insert(
+    fn test_resolve_ink_applies_defaults() {
+        let mut inks = HashMap::new();
+        inks.insert(
             "reviewer".into(),
-            crate::config::PersonaConfig {
+            crate::config::InkConfig {
+                description: None,
                 provider: Some("claude".into()),
                 model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
@@ -1667,7 +1668,7 @@ mod tests {
             default_max_turns: None,
             default_max_budget_usd: None,
             default_output_format: None,
-            personas,
+            inks,
             event_tx: None,
             node_name: String::new(),
         };
@@ -1683,12 +1684,12 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: Some("reviewer".into()),
+            ink: Some("reviewer".into()),
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
         };
-        let resolved = mgr.resolve_persona(req).unwrap();
+        let resolved = mgr.resolve_ink(req).unwrap();
         assert_eq!(resolved.provider, Some(Provider::Claude));
         assert_eq!(resolved.model, Some("sonnet".into()));
         assert_eq!(resolved.mode, Some(SessionMode::Autonomous));
@@ -1701,11 +1702,12 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_persona_request_overrides() {
-        let mut personas = HashMap::new();
-        personas.insert(
+    fn test_resolve_ink_request_overrides() {
+        let mut inks = HashMap::new();
+        inks.insert(
             "reviewer".into(),
-            crate::config::PersonaConfig {
+            crate::config::InkConfig {
+                description: None,
                 provider: Some("claude".into()),
                 model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
@@ -1724,7 +1726,7 @@ mod tests {
             default_max_turns: None,
             default_max_budget_usd: None,
             default_output_format: None,
-            personas,
+            inks,
             event_tx: None,
             node_name: String::new(),
         };
@@ -1740,12 +1742,12 @@ mod tests {
             allowed_tools: Some(vec!["Bash".into()]),
             system_prompt: Some("Explicit prompt".into()),
             metadata: None,
-            persona: Some("reviewer".into()),
+            ink: Some("reviewer".into()),
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
         };
-        let resolved = mgr.resolve_persona(req).unwrap();
+        let resolved = mgr.resolve_ink(req).unwrap();
         // Explicit request values win
         assert_eq!(resolved.provider, Some(Provider::Codex));
         assert_eq!(resolved.model, Some("opus".into()));
@@ -1756,11 +1758,12 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_persona_guard_config_blocks_preset() {
-        let mut personas = HashMap::new();
-        personas.insert(
+    fn test_resolve_ink_guard_config_blocks_preset() {
+        let mut inks = HashMap::new();
+        inks.insert(
             "coder".into(),
-            crate::config::PersonaConfig {
+            crate::config::InkConfig {
+                description: None,
                 provider: None,
                 model: None,
                 mode: None,
@@ -1779,7 +1782,7 @@ mod tests {
             default_max_turns: None,
             default_max_budget_usd: None,
             default_output_format: None,
-            personas,
+            inks,
             event_tx: None,
             node_name: String::new(),
         };
@@ -1795,23 +1798,24 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: Some("coder".into()),
+            ink: Some("coder".into()),
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
         };
-        let resolved = mgr.resolve_persona(req).unwrap();
-        // guard_config is set, so persona's guard_preset should NOT be applied
+        let resolved = mgr.resolve_ink(req).unwrap();
+        // guard_config is set, so ink's guard_preset should NOT be applied
         assert!(resolved.guard_preset.is_none());
         assert!(resolved.guard_config.is_some());
     }
 
     #[test]
-    fn test_resolve_persona_applies_guardrail_defaults() {
-        let mut personas = HashMap::new();
-        personas.insert(
+    fn test_resolve_ink_applies_guardrail_defaults() {
+        let mut inks = HashMap::new();
+        inks.insert(
             "safe-agent".into(),
-            crate::config::PersonaConfig {
+            crate::config::InkConfig {
+                description: None,
                 provider: None,
                 model: None,
                 mode: None,
@@ -1830,7 +1834,7 @@ mod tests {
             default_max_turns: None,
             default_max_budget_usd: None,
             default_output_format: None,
-            personas,
+            inks,
             event_tx: None,
             node_name: String::new(),
         };
@@ -1846,23 +1850,24 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: Some("safe-agent".into()),
+            ink: Some("safe-agent".into()),
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
         };
-        let resolved = mgr.resolve_persona(req).unwrap();
+        let resolved = mgr.resolve_ink(req).unwrap();
         assert_eq!(resolved.max_turns, Some(10));
         assert_eq!(resolved.max_budget_usd, Some(5.0));
         assert_eq!(resolved.output_format, Some("json".into()));
     }
 
     #[test]
-    fn test_resolve_persona_explicit_guardrails_win() {
-        let mut personas = HashMap::new();
-        personas.insert(
+    fn test_resolve_ink_explicit_guardrails_win() {
+        let mut inks = HashMap::new();
+        inks.insert(
             "safe-agent".into(),
-            crate::config::PersonaConfig {
+            crate::config::InkConfig {
+                description: None,
                 provider: None,
                 model: None,
                 mode: None,
@@ -1881,7 +1886,7 @@ mod tests {
             default_max_turns: None,
             default_max_budget_usd: None,
             default_output_format: None,
-            personas,
+            inks,
             event_tx: None,
             node_name: String::new(),
         };
@@ -1897,13 +1902,13 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: Some("safe-agent".into()),
+            ink: Some("safe-agent".into()),
             max_turns: Some(3),
             max_budget_usd: Some(1.0),
             output_format: Some("stream-json".into()),
         };
-        let resolved = mgr.resolve_persona(req).unwrap();
-        // Explicit request values win over persona defaults
+        let resolved = mgr.resolve_ink(req).unwrap();
+        // Explicit request values win over ink defaults
         assert_eq!(resolved.max_turns, Some(3));
         assert_eq!(resolved.max_budget_usd, Some(1.0));
         assert_eq!(resolved.output_format, Some("stream-json".into()));
@@ -1938,15 +1943,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_global_guardrail_defaults_overridden_by_persona() {
+    async fn test_global_guardrail_defaults_overridden_by_ink() {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
-        let mut personas = HashMap::new();
-        personas.insert(
+        let mut inks = HashMap::new();
+        inks.insert(
             "strict-agent".into(),
-            crate::config::PersonaConfig {
+            crate::config::InkConfig {
+                description: None,
                 provider: None,
                 model: None,
                 mode: None,
@@ -1962,16 +1968,16 @@ mod tests {
             Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store,
             GuardConfig::default(),
-            personas,
+            inks,
         )
         .with_guardrail_defaults(Some(50), Some(10.0), Some("stream-json".into()));
 
         let req = CreateSessionRequest {
-            persona: Some("strict-agent".into()),
+            ink: Some("strict-agent".into()),
             ..make_req("test")
         };
         let session = mgr.create_session(req).await.unwrap();
-        // Persona values win over global defaults
+        // Ink values win over global defaults
         assert_eq!(session.max_turns, Some(10));
         assert_eq!(session.max_budget_usd, Some(2.0));
         assert_eq!(session.output_format, Some("json".into()));
@@ -1996,7 +2002,7 @@ mod tests {
             default_max_turns: None,
             default_max_budget_usd: None,
             default_output_format: None,
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             event_tx: None,
             node_name: String::new(),
         };
@@ -2057,7 +2063,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -2100,7 +2106,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,

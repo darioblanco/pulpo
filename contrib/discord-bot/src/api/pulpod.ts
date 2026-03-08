@@ -9,7 +9,7 @@ export interface Session {
   status: string;
   mode: string;
   model?: string;
-  persona?: string;
+  ink?: string;
   metadata?: Record<string, string>;
   created_at: string;
   updated_at: string;
@@ -21,13 +21,14 @@ export interface CreateSessionRequest {
   provider?: string;
   prompt: string;
   mode?: string;
-  persona?: string;
+  ink?: string;
   model?: string;
   system_prompt?: string;
   metadata?: Record<string, string>;
 }
 
-export interface PersonaConfig {
+export interface InkConfig {
+  description: string | null;
   provider?: string;
   model?: string;
   mode?: string;
@@ -139,12 +140,12 @@ export class PulpodClient {
     return res.text();
   }
 
-  async listPersonas(): Promise<{ personas: Record<string, PersonaConfig> }> {
-    const res = await fetch(`${this.baseUrl}/api/v1/personas`, {
+  async listInks(): Promise<{ inks: Record<string, InkConfig> }> {
+    const res = await fetch(`${this.baseUrl}/api/v1/inks`, {
       headers: this.headers(),
     });
-    if (!res.ok) throw new Error(`Failed to list personas: ${res.status}`);
-    return res.json() as Promise<{ personas: Record<string, PersonaConfig> }>;
+    if (!res.ok) throw new Error(`Failed to list inks: ${res.status}`);
+    return res.json() as Promise<{ inks: Record<string, InkConfig> }>;
   }
 
   sseUrl(): string {

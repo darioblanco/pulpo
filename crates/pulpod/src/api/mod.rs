@@ -3,9 +3,9 @@ pub mod config;
 mod embed;
 pub mod events;
 pub mod health;
+pub mod inks;
 pub mod node;
 pub mod peers;
-pub mod personas;
 pub mod routes;
 pub mod sessions;
 pub mod static_files;
@@ -133,7 +133,7 @@ mod tests {
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
@@ -165,7 +165,7 @@ mod tests {
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let config_path = tmpdir.path().join("config.toml");
@@ -217,7 +217,7 @@ mod tests {
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);

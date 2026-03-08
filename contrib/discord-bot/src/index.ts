@@ -17,7 +17,7 @@ import * as status from './commands/status.js';
 import * as logs from './commands/logs.js';
 import * as kill from './commands/kill.js';
 import * as resume from './commands/resume.js';
-import * as personas from './commands/personas.js';
+import * as inks from './commands/inks.js';
 import * as input from './commands/input.js';
 
 interface Command {
@@ -31,7 +31,7 @@ commands.set('status', status);
 commands.set('logs', logs);
 commands.set('kill', kill);
 commands.set('resume', resume);
-commands.set('personas', personas);
+commands.set('inks', inks);
 commands.set('input', input);
 
 async function handleAutocomplete(

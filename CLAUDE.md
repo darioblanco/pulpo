@@ -244,7 +244,7 @@ pulpo/
 │       │   │   ├── logs.ts       # /logs — recent output
 │       │   │   ├── kill.ts       # /kill — terminate session
 │       │   │   ├── resume.ts     # /resume — resume stale session
-│       │   │   ├── personas.ts   # /personas — list personas
+│       │   │   ├── inks.ts       # /inks — list inks
 │       │   │   └── input.ts      # /input — send text to session
 │       │   ├── listeners/sse.ts  # EventSource → Discord channel messages
 │       │   ├── api/pulpod.ts     # HTTP client for pulpod REST API
@@ -268,7 +268,7 @@ pulpo/
 │   │   │   ├── node.rs           # Node info + memory detection
 │   │   │   ├── peers.rs          # Peers endpoint
 │   │   │   ├── ws.rs             # WebSocket terminal streaming
-│   │   │   ├── personas.rs       # Personas endpoint
+│   │   │   ├── inks.rs           # Inks endpoint
 │   │   │   ├── events.rs         # SSE event stream endpoint
 │   │   │   ├── static_files.rs   # rust-embed static file serving
 │   │   │   └── embed.rs          # rust-embed derive (excluded from coverage)

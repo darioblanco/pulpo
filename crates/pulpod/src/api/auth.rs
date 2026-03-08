@@ -284,7 +284,7 @@ mod tests {
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);

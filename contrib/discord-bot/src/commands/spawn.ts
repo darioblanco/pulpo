@@ -16,7 +16,7 @@ export const data: SlashCommandOptionsOnlyBuilder = new SlashCommandBuilder()
     opt.setName('prompt').setDescription('Task prompt for the agent').setRequired(true),
   )
   .addStringOption((opt) =>
-    opt.setName('persona').setDescription('Persona name (from pulpod config)').setRequired(false),
+    opt.setName('ink').setDescription('Ink name (from pulpod config)').setRequired(false),
   )
   .addStringOption((opt) =>
     opt.setName('model').setDescription('Model override (e.g. opus, sonnet)').setRequired(false),
@@ -36,7 +36,7 @@ export async function execute(
 
   const workdir = interaction.options.getString('workdir', true);
   const prompt = interaction.options.getString('prompt', true);
-  const persona = interaction.options.getString('persona') ?? undefined;
+  const ink = interaction.options.getString('ink') ?? undefined;
   const model = interaction.options.getString('model') ?? undefined;
   const name = interaction.options.getString('name') ?? undefined;
 
@@ -44,7 +44,7 @@ export async function execute(
     const session = await client.createSession({
       workdir,
       prompt,
-      persona,
+      ink,
       model,
       name,
       metadata: {

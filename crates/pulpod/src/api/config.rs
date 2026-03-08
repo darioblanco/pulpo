@@ -3,8 +3,8 @@ use std::sync::Arc;
 use axum::{Json, extract::State, http::StatusCode};
 use pulpo_common::api::{
     AuthConfigResponse, ConfigResponse, DiscordWebhookConfigResponse, ErrorResponse,
-    GuardDefaultConfigResponse, NodeConfigResponse, NotificationsConfigResponse,
-    PersonaConfigResponse, UpdateConfigRequest, UpdateConfigResponse, WatchdogConfigResponse,
+    GuardDefaultConfigResponse, InkConfigResponse, NodeConfigResponse, NotificationsConfigResponse,
+    UpdateConfigRequest, UpdateConfigResponse, WatchdogConfigResponse,
     WebhookEndpointConfigResponse,
 };
 
@@ -67,13 +67,14 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
                 })
                 .collect(),
         },
-        personas: config
-            .personas
+        inks: config
+            .inks
             .iter()
             .map(|(k, v)| {
                 (
                     k.clone(),
-                    PersonaConfigResponse {
+                    InkConfigResponse {
+                        description: v.description.clone(),
                         provider: v.provider.clone(),
                         model: v.model.clone(),
                         mode: v.mode.clone(),
@@ -194,14 +195,15 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
             .collect();
     }
 
-    // Personas (full replace when provided)
-    if let Some(personas) = req.personas {
-        config.personas = personas
+    // Inks (full replace when provided)
+    if let Some(inks) = req.inks {
+        config.inks = inks
             .into_iter()
             .map(|(k, v)| {
                 (
                     k,
-                    crate::config::PersonaConfig {
+                    crate::config::InkConfig {
+                        description: v.description,
                         provider: v.provider,
                         model: v.model,
                         mode: v.mode,
@@ -313,7 +315,7 @@ mod tests {
                 peers: HashMap::new(),
                 guards: GuardDefaultConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
-                personas: HashMap::new(),
+                inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
             },
             manager,
@@ -348,7 +350,7 @@ mod tests {
                 peers: HashMap::new(),
                 guards: GuardDefaultConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
-                personas: HashMap::new(),
+                inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
             },
             config_path,
@@ -593,7 +595,7 @@ mod tests {
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let resp = config_to_response(&config);
@@ -873,13 +875,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_config_personas() {
-        use pulpo_common::api::PersonaConfigResponse;
+    async fn test_update_config_inks() {
+        use pulpo_common::api::InkConfigResponse;
         let state = test_state().await;
-        let mut personas = HashMap::new();
-        personas.insert(
+        let mut inks = HashMap::new();
+        inks.insert(
             "reviewer".into(),
-            PersonaConfigResponse {
+            InkConfigResponse {
+                description: None,
                 provider: Some("claude".into()),
                 model: Some("opus".into()),
                 mode: Some("interactive".into()),
@@ -892,19 +895,19 @@ mod tests {
             },
         );
         let req = UpdateConfigRequest {
-            personas: Some(personas),
+            inks: Some(inks),
             ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.personas.len(), 1);
-        let p = &resp.config.personas["reviewer"];
+        assert_eq!(resp.config.inks.len(), 1);
+        let p = &resp.config.inks["reviewer"];
         assert_eq!(p.provider, Some("claude".into()));
         assert_eq!(p.model, Some("opus".into()));
         assert_eq!(p.max_turns, Some(10));
     }
 
     #[test]
-    fn test_config_to_response_with_notifications_and_personas() {
+    fn test_config_to_response_with_notifications_and_inks() {
         let config = Config {
             node: NodeConfig {
                 name: "test".into(),
@@ -931,11 +934,12 @@ mod tests {
                 idle_timeout_secs: 300,
                 idle_action: "pause".into(),
             },
-            personas: {
+            inks: {
                 let mut m = HashMap::new();
                 m.insert(
                     "coder".into(),
-                    crate::config::PersonaConfig {
+                    crate::config::InkConfig {
+                        description: None,
                         provider: Some("claude".into()),
                         model: Some("sonnet".into()),
                         mode: None,
@@ -977,9 +981,9 @@ mod tests {
         let discord = resp.notifications.discord.as_ref().unwrap();
         assert_eq!(discord.webhook_url, "https://discord.com/test");
         assert_eq!(discord.events, vec!["session.created"]);
-        // Personas
-        assert_eq!(resp.personas.len(), 1);
-        let p = &resp.personas["coder"];
+        // Inks
+        assert_eq!(resp.inks.len(), 1);
+        let p = &resp.inks["coder"];
         assert_eq!(p.provider, Some("claude".into()));
         assert_eq!(p.model, Some("sonnet".into()));
     }
@@ -997,7 +1001,7 @@ mod tests {
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig {
                 discord: None,
                 webhooks: vec![
@@ -1147,7 +1151,7 @@ mod tests {
                 peers: HashMap::new(),
                 guards: GuardDefaultConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
-                personas: HashMap::new(),
+                inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
             },
             std::path::PathBuf::from("/dev/null/impossible/config.toml"),

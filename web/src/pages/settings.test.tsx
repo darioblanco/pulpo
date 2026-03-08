@@ -57,7 +57,7 @@ const testConfig: ConfigResponse = {
     discord: null,
     webhooks: [],
   },
-  personas: {},
+  inks: {},
 };
 
 const testNode = {

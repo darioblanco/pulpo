@@ -76,9 +76,9 @@ pub enum Commands {
         #[arg(long, value_delimiter = ',')]
         allowed_tools: Option<Vec<String>>,
 
-        /// Persona name (from config)
+        /// Ink name (from config)
         #[arg(long)]
-        persona: Option<String>,
+        ink: Option<String>,
 
         /// Maximum agent turns before stopping
         #[arg(long)]
@@ -826,7 +826,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             model,
             system_prompt,
             allowed_tools,
-            persona,
+            ink,
             max_turns,
             max_budget,
             output_format,
@@ -853,8 +853,8 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             if let Some(tools) = allowed_tools {
                 body["allowed_tools"] = serde_json::json!(tools);
             }
-            if let Some(p) = persona {
-                body["persona"] = serde_json::json!(p);
+            if let Some(p) = ink {
+                body["ink"] = serde_json::json!(p);
             }
             if let Some(mt) = max_turns {
                 body["max_turns"] = serde_json::json!(mt);
@@ -1336,7 +1336,7 @@ mod tests {
                 model: None,
                 system_prompt: None,
                 allowed_tools: None,
-                persona: None,
+                ink: None,
                 max_turns: None,
                 max_budget: None,
                 output_format: None,
@@ -1363,7 +1363,7 @@ mod tests {
                 model: Some("opus".into()),
                 system_prompt: Some("Be helpful".into()),
                 allowed_tools: Some(vec!["Read".into(), "Write".into()]),
-                persona: Some("coder".into()),
+                ink: Some("coder".into()),
                 max_turns: Some(5),
                 max_budget: Some(2.5),
                 output_format: Some("json".into()),
@@ -1389,7 +1389,7 @@ mod tests {
                 model: None,
                 system_prompt: None,
                 allowed_tools: None,
-                persona: None,
+                ink: None,
                 max_turns: None,
                 max_budget: None,
                 output_format: None,
@@ -1415,7 +1415,7 @@ mod tests {
                 model: None,
                 system_prompt: None,
                 allowed_tools: None,
-                persona: None,
+                ink: None,
                 max_turns: None,
                 max_budget: None,
                 output_format: None,
@@ -1646,7 +1646,7 @@ mod tests {
                 model: None,
                 system_prompt: None,
                 allowed_tools: None,
-                persona: None,
+                ink: None,
                 max_turns: None,
                 max_budget: None,
                 output_format: None,
@@ -1827,7 +1827,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -1870,7 +1870,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -1909,7 +1909,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -2016,7 +2016,7 @@ mod tests {
                 model: None,
                 system_prompt: None,
                 allowed_tools: None,
-                persona: None,
+                ink: None,
                 max_turns: None,
                 max_budget: None,
                 output_format: None,

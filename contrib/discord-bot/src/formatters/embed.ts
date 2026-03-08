@@ -1,5 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
-import type { PersonaConfig, Session, SessionEvent } from '../api/pulpod.js';
+import type { InkConfig, Session, SessionEvent } from '../api/pulpod.js';
 
 const STATUS_COLORS: Record<string, number> = {
   running: 0x2ecc71,
@@ -37,8 +37,8 @@ export function sessionEmbed(session: Session): EmbedBuilder {
   if (session.model) {
     embed.addFields({ name: 'Model', value: session.model, inline: true });
   }
-  if (session.persona) {
-    embed.addFields({ name: 'Persona', value: session.persona, inline: true });
+  if (session.ink) {
+    embed.addFields({ name: 'Ink', value: session.ink, inline: true });
   }
 
   const prompt =
@@ -75,12 +75,12 @@ export function eventEmbed(event: SessionEvent): EmbedBuilder {
   return embed;
 }
 
-export function personaListEmbed(personas: Record<string, PersonaConfig>): EmbedBuilder {
-  const embed = new EmbedBuilder().setTitle('Personas').setColor(0x9b59b6);
+export function inkListEmbed(inks: Record<string, InkConfig>): EmbedBuilder {
+  const embed = new EmbedBuilder().setTitle('Inks').setColor(0x9b59b6);
 
-  const entries = Object.entries(personas);
+  const entries = Object.entries(inks);
   if (entries.length === 0) {
-    embed.setDescription('No personas configured.');
+    embed.setDescription('No inks configured.');
     return embed;
   }
 

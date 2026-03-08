@@ -21,7 +21,7 @@ pub struct CreateSessionRequest {
     pub allowed_tools: Option<Vec<String>>,
     pub system_prompt: Option<String>,
     pub metadata: Option<HashMap<String, String>>,
-    pub persona: Option<String>,
+    pub ink: Option<String>,
     pub max_turns: Option<u32>,
     pub max_budget_usd: Option<f64>,
     pub output_format: Option<String>,
@@ -70,7 +70,7 @@ pub struct ConfigResponse {
     pub guards: GuardDefaultConfigResponse,
     pub watchdog: WatchdogConfigResponse,
     pub notifications: NotificationsConfigResponse,
-    pub personas: HashMap<String, PersonaConfigResponse>,
+    pub inks: HashMap<String, InkConfigResponse>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -137,7 +137,8 @@ pub struct NotificationsConfigResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PersonaConfigResponse {
+pub struct InkConfigResponse {
+    pub description: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub mode: Option<String>,
@@ -185,8 +186,8 @@ pub struct UpdateConfigRequest {
     pub discord_events: Option<Vec<String>>,
     // Notifications — Generic webhooks (full replace when provided)
     pub webhooks: Option<Vec<WebhookEndpointUpdateRequest>>,
-    // Personas (full replace)
-    pub personas: Option<HashMap<String, PersonaConfigResponse>>,
+    // Inks (full replace)
+    pub inks: Option<HashMap<String, InkConfigResponse>>,
     // Peers
     pub peers: Option<HashMap<String, PeerEntry>>,
 }
@@ -255,7 +256,7 @@ mod tests {
                 discord: None,
                 webhooks: vec![],
             },
-            personas: HashMap::new(),
+            inks: HashMap::new(),
         }
     }
 
@@ -291,7 +292,7 @@ mod tests {
                 discord: None,
                 webhooks: vec![],
             },
-            personas: HashMap::new(),
+            inks: HashMap::new(),
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"test\""));
@@ -300,7 +301,7 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"guards":{"preset":"strict","max_turns":null,"max_budget_usd":null,"output_format":null},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert"},"notifications":{"discord":null,"webhooks":[]},"personas":{}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"guards":{"preset":"strict","max_turns":null,"max_budget_usd":null,"output_format":null},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert"},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
@@ -308,7 +309,7 @@ mod tests {
         assert_eq!(resp.guards.preset, GuardPreset::Strict);
         assert!(resp.watchdog.enabled);
         assert!(resp.notifications.discord.is_none());
-        assert!(resp.personas.is_empty());
+        assert!(resp.inks.is_empty());
     }
 
     #[test]
@@ -343,7 +344,7 @@ mod tests {
                 discord: None,
                 webhooks: vec![],
             },
-            personas: HashMap::new(),
+            inks: HashMap::new(),
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("debug"));
@@ -460,7 +461,7 @@ mod tests {
                 discord: None,
                 webhooks: vec![],
             },
-            personas: HashMap::new(),
+            inks: HashMap::new(),
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("remote"));
@@ -491,12 +492,12 @@ mod tests {
         assert!(req.allowed_tools.is_none());
         assert!(req.system_prompt.is_none());
         assert!(req.metadata.is_none());
-        assert!(req.persona.is_none());
+        assert!(req.ink.is_none());
     }
 
     #[test]
     fn test_create_session_request_with_all_fields() {
-        let json = r#"{"name":"my-session","workdir":"/repo","provider":"claude","prompt":"Do it","mode":"autonomous","model":"opus","allowed_tools":["Read","Grep"],"system_prompt":"Be concise","metadata":{"discord_channel":"123"},"persona":"coder"}"#;
+        let json = r#"{"name":"my-session","workdir":"/repo","provider":"claude","prompt":"Do it","mode":"autonomous","model":"opus","allowed_tools":["Read","Grep"],"system_prompt":"Be concise","metadata":{"discord_channel":"123"},"ink":"coder"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.name, Some("my-session".into()));
         assert_eq!(req.provider, Some(crate::session::Provider::Claude));
@@ -508,7 +509,7 @@ mod tests {
             req.metadata.as_ref().unwrap().get("discord_channel"),
             Some(&"123".into())
         );
-        assert_eq!(req.persona, Some("coder".into()));
+        assert_eq!(req.ink, Some("coder".into()));
     }
 
     #[test]
@@ -594,7 +595,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,

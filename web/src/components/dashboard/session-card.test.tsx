@@ -58,7 +58,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     allowed_tools: null,
     system_prompt: null,
     metadata: null,
-    persona: null,
+    ink: null,
     max_turns: null,
     max_budget_usd: null,
     output_format: null,
@@ -94,20 +94,20 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('session-workdir')).toHaveTextContent('repo');
   });
 
-  it('shows persona and model when set', () => {
+  it('shows ink and model when set', () => {
     render(
       <SessionCard
-        session={makeSession({ persona: 'reviewer', model: 'opus-4' })}
+        session={makeSession({ ink: 'reviewer', model: 'opus-4' })}
         onRefresh={vi.fn()}
       />,
     );
-    expect(screen.getByTestId('session-persona')).toHaveTextContent('reviewer');
+    expect(screen.getByTestId('session-ink')).toHaveTextContent('reviewer');
     expect(screen.getByTestId('session-model')).toHaveTextContent('opus-4');
   });
 
-  it('hides persona and model when null', () => {
+  it('hides ink and model when null', () => {
     render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
-    expect(screen.queryByTestId('session-persona')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('session-ink')).not.toBeInTheDocument();
     expect(screen.queryByTestId('session-model')).not.toBeInTheDocument();
   });
 

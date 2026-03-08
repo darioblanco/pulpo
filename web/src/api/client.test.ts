@@ -20,7 +20,7 @@ import {
   addPeer,
   removePeer,
   getPairingUrl,
-  getPersonas,
+  getInks,
   resolveWsUrl,
   resolveBaseUrl,
   authHeaders,
@@ -531,14 +531,14 @@ describe('getPairingUrl', () => {
   });
 });
 
-describe('getPersonas', () => {
-  it('fetches /api/v1/personas', async () => {
-    const resp = { personas: { coder: { provider: 'claude', model: 'opus' } } };
+describe('getInks', () => {
+  it('fetches /api/v1/inks', async () => {
+    const resp = { inks: { coder: { provider: 'claude', model: 'opus' } } };
     mockFetch.mockResolvedValue(jsonResponse(resp));
 
-    const result = await getPersonas();
+    const result = await getInks();
 
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/personas', { headers: {} });
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/inks', { headers: {} });
     expect(result).toEqual(resp);
   });
 });

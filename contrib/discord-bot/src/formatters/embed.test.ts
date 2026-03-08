@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sessionEmbed, eventEmbed, sessionListEmbed, personaListEmbed } from './embed.js';
+import { sessionEmbed, eventEmbed, sessionListEmbed, inkListEmbed } from './embed.js';
 import type { Session, SessionEvent } from '../api/pulpod.js';
 
 function mockSession(overrides: Partial<Session> = {}): Session {
@@ -48,10 +48,10 @@ describe('sessionEmbed', () => {
     expect(json.fields!.some((f) => f.name === 'Model' && f.value === 'opus')).toBe(true);
   });
 
-  it('includes persona when present', () => {
-    const embed = sessionEmbed(mockSession({ persona: 'coder' }));
+  it('includes ink when present', () => {
+    const embed = sessionEmbed(mockSession({ ink: 'coder' }));
     const json = embed.toJSON();
-    expect(json.fields!.some((f) => f.name === 'Persona' && f.value === 'coder')).toBe(true);
+    expect(json.fields!.some((f) => f.name === 'Ink' && f.value === 'coder')).toBe(true);
   });
 
   it('truncates long prompts', () => {
@@ -115,18 +115,18 @@ describe('eventEmbed', () => {
   });
 });
 
-describe('personaListEmbed', () => {
-  it('shows empty message when no personas', () => {
-    const embed = personaListEmbed({});
+describe('inkListEmbed', () => {
+  it('shows empty message when no inks', () => {
+    const embed = inkListEmbed({});
     const json = embed.toJSON();
-    expect(json.title).toBe('Personas');
-    expect(json.description).toContain('No personas configured');
+    expect(json.title).toBe('Inks');
+    expect(json.description).toContain('No inks configured');
   });
 
-  it('lists personas with key fields', () => {
-    const embed = personaListEmbed({
-      coder: { provider: 'claude', model: 'opus', mode: 'autonomous', guard_preset: 'strict' },
-      reviewer: { provider: 'codex', model: 'codex-mini' },
+  it('lists inks with key fields', () => {
+    const embed = inkListEmbed({
+      coder: { description: null, provider: 'claude', model: 'opus', mode: 'autonomous', guard_preset: 'strict' },
+      reviewer: { description: null, provider: 'codex', model: 'codex-mini' },
     });
     const json = embed.toJSON();
     expect(json.description).toContain('coder');
@@ -137,7 +137,7 @@ describe('personaListEmbed', () => {
   });
 
   it('uses purple color', () => {
-    const embed = personaListEmbed({});
+    const embed = inkListEmbed({});
     expect(embed.toJSON().color).toBe(0x9b59b6);
   });
 });

@@ -9,7 +9,7 @@ pulpo --node "${NODE}" schedule create \
   --name "${NAME}" \
   --cron "0 2 * * *" \
   --workdir "${WORKDIR}" \
-  --persona reviewer \
+  --ink reviewer \
   --concurrency skip \
   --max-executions 30 \
   "Review all changes from the last day and report regressions."

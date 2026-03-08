@@ -93,7 +93,7 @@ describe('PulpodClient', () => {
     const result = await client.createSession({
       workdir: '/code/repo',
       prompt: 'fix the bug',
-      persona: 'coder',
+      ink: 'coder',
     });
 
     expect(result).toEqual(session);
@@ -103,7 +103,7 @@ describe('PulpodClient', () => {
       body: JSON.stringify({
         workdir: '/code/repo',
         prompt: 'fix the bug',
-        persona: 'coder',
+        ink: 'coder',
       }),
     });
   });
@@ -199,23 +199,23 @@ describe('PulpodClient', () => {
     await expect(client.getOutput('abc')).rejects.toThrow('Failed to get output: 500');
   });
 
-  it('listPersonas calls correct endpoint', async () => {
-    const data = { personas: { coder: { model: 'opus' } } };
+  it('listInks calls correct endpoint', async () => {
+    const data = { inks: { coder: { model: 'opus' } } };
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(data),
     });
 
     const client = new PulpodClient(config);
-    const result = await client.listPersonas();
-    expect(result.personas.coder.model).toBe('opus');
+    const result = await client.listInks();
+    expect(result.inks.coder.model).toBe('opus');
   });
 
-  it('listPersonas throws on non-ok response', async () => {
+  it('listInks throws on non-ok response', async () => {
     mockFetch.mockResolvedValue({ ok: false, status: 403 });
 
     const client = new PulpodClient(config);
-    await expect(client.listPersonas()).rejects.toThrow('Failed to list personas: 403');
+    await expect(client.listInks()).rejects.toThrow('Failed to list inks: 403');
   });
 
   it('resumeSession sends POST to /resume', async () => {

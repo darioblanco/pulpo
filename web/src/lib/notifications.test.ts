@@ -23,7 +23,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     allowed_tools: null,
     system_prompt: null,
     metadata: null,
-    persona: null,
+    ink: null,
     intervention_reason: null,
     intervention_at: null,
     max_turns: null,

@@ -20,13 +20,15 @@ pub struct Config {
     #[serde(default)]
     pub watchdog: WatchdogConfig,
     #[serde(default)]
-    pub personas: HashMap<String, PersonaConfig>,
+    pub inks: HashMap<String, InkConfig>,
     #[serde(default)]
     pub notifications: NotificationsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct PersonaConfig {
+pub struct InkConfig {
+    #[serde(default)]
+    pub description: Option<String>,
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
@@ -323,7 +325,7 @@ pub fn load(path: &str) -> Result<Config> {
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         })
     }
@@ -403,7 +405,7 @@ data_dir = "/tmp/pulpo-test"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         let expanded = config.data_dir();
@@ -427,7 +429,7 @@ data_dir = "/tmp/pulpo-test"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         assert_eq!(config.data_dir(), "/absolute/path");
@@ -559,7 +561,7 @@ name = "test"
             peers,
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         let debug = format!("{config:?}");
@@ -685,7 +687,7 @@ output_format = "stream-json"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -717,7 +719,7 @@ output_format = "stream-json"
                 output_format: None,
             },
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -749,7 +751,7 @@ output_format = "stream-json"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -771,7 +773,7 @@ output_format = "stream-json"
                 peers: HashMap::new(),
                 guards: GuardDefaultConfig::default(),
                 watchdog: WatchdogConfig::default(),
-                personas: HashMap::new(),
+                inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
             },
             Path::new("/dev/null/impossible/config.toml"),
@@ -795,7 +797,7 @@ output_format = "stream-json"
                 peers: HashMap::new(),
                 guards: GuardDefaultConfig::default(),
                 watchdog: WatchdogConfig::default(),
-                personas: HashMap::new(),
+                inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
             },
             Path::new(""),
@@ -823,7 +825,7 @@ output_format = "stream-json"
                 peers: HashMap::new(),
                 guards: GuardDefaultConfig::default(),
                 watchdog: WatchdogConfig::default(),
-                personas: HashMap::new(),
+                inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
             },
             &dir_target,
@@ -846,7 +848,7 @@ output_format = "stream-json"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         #[allow(clippy::redundant_clone)]
@@ -888,7 +890,7 @@ output_format = "stream-json"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -958,7 +960,7 @@ output_format = "stream-json"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         assert!(config.auth.token.is_empty());
@@ -983,7 +985,7 @@ output_format = "stream-json"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         let generated = ensure_auth_token(&mut config);
@@ -1050,7 +1052,7 @@ token = "my-secret-token"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -1118,7 +1120,7 @@ token = "peer-secret"
             peers,
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -1225,7 +1227,7 @@ breach_count = 5
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
             },
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -1433,7 +1435,7 @@ idle_action = "pause"
                 idle_action: "kill".into(),
                 ..WatchdogConfig::default()
             },
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -1452,7 +1454,7 @@ idle_action = "pause"
     }
 
     #[test]
-    fn test_config_without_personas_section() {
+    fn test_config_without_inks_section() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
@@ -1465,11 +1467,11 @@ data_dir = "/tmp"
         )
         .unwrap();
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(config.personas.is_empty());
+        assert!(config.inks.is_empty());
     }
 
     #[test]
-    fn test_config_with_personas_section() {
+    fn test_config_with_inks_section() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
@@ -1479,22 +1481,23 @@ name = "test"
 port = 7433
 data_dir = "/tmp"
 
-[personas.reviewer]
+[inks.reviewer]
 provider = "claude"
 model = "sonnet"
 mode = "autonomous"
 guard_preset = "strict"
 allowed_tools = ["Read", "Glob", "Grep"]
 system_prompt = "You are a code reviewer."
+description = "Code review specialist"
 
-[personas.coder]
+[inks.coder]
 model = "opus"
 "#
         )
         .unwrap();
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.personas.len(), 2);
-        let reviewer = &config.personas["reviewer"];
+        assert_eq!(config.inks.len(), 2);
+        let reviewer = &config.inks["reviewer"];
         assert_eq!(reviewer.provider, Some("claude".into()));
         assert_eq!(reviewer.model, Some("sonnet".into()));
         assert_eq!(reviewer.mode, Some("autonomous".into()));
@@ -1507,20 +1510,23 @@ model = "opus"
             reviewer.system_prompt,
             Some("You are a code reviewer.".into())
         );
-        let coder = &config.personas["coder"];
+        assert_eq!(reviewer.description, Some("Code review specialist".into()));
+        let coder = &config.inks["coder"];
         assert_eq!(coder.provider, None);
         assert_eq!(coder.model, Some("opus".into()));
         assert!(coder.allowed_tools.is_none());
+        assert!(coder.description.is_none());
     }
 
     #[test]
-    fn test_persona_config_roundtrip() {
+    fn test_ink_config_roundtrip() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("persona-rt.toml");
-        let mut personas = HashMap::new();
-        personas.insert(
+        let path = tmpdir.path().join("ink-rt.toml");
+        let mut inks = HashMap::new();
+        inks.insert(
             "reviewer".into(),
-            PersonaConfig {
+            InkConfig {
+                description: Some("Code reviewer".into()),
                 provider: Some("claude".into()),
                 model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
@@ -1543,20 +1549,22 @@ model = "opus"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas,
+            inks,
             notifications: NotificationsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(loaded.personas.len(), 1);
-        let reviewer = &loaded.personas["reviewer"];
+        assert_eq!(loaded.inks.len(), 1);
+        let reviewer = &loaded.inks["reviewer"];
         assert_eq!(reviewer.model, Some("sonnet".into()));
         assert_eq!(reviewer.system_prompt, Some("Review only.".into()));
+        assert_eq!(reviewer.description, Some("Code reviewer".into()));
     }
 
     #[test]
-    fn test_persona_config_debug_clone() {
-        let p = PersonaConfig {
+    fn test_ink_config_debug_clone() {
+        let p = InkConfig {
+            description: None,
             provider: Some("claude".into()),
             model: None,
             mode: None,
@@ -1657,7 +1665,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig {
                 discord: Some(DiscordWebhookConfig {
                     webhook_url: "https://discord.com/api/webhooks/789/xyz".into(),
@@ -1760,7 +1768,7 @@ url = "https://example.com"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig {
                 discord: None,
                 webhooks: vec![WebhookEndpointConfig {
@@ -1869,7 +1877,7 @@ name = "test"
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
             watchdog: WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         save(&config, &path).unwrap();

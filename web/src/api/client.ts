@@ -8,7 +8,7 @@ import type {
   UpdateConfigRequest,
   UpdateConfigResponse,
   PairingUrlResponse,
-  PersonasResponse,
+  InksResponse,
   CreateSessionRequest,
 } from './types';
 
@@ -57,8 +57,8 @@ export function resolveWsUrl(path: string): string {
   return wsUrl;
 }
 
-export async function getPersonas(): Promise<PersonasResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/personas`);
+export async function getInks(): Promise<InksResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/inks`);
   return res.json();
 }
 
@@ -86,7 +86,8 @@ export async function getSessions(params?: ListSessionsParams): Promise<Session[
 }
 
 export async function getRemoteSessions(address: string): Promise<Session[]> {
-  const res = await authFetch(`http://${address}/api/v1/sessions`);
+  const base = address.includes('://') ? address : `http://${address}`;
+  const res = await authFetch(`${base}/api/v1/sessions`);
   return res.json();
 }
 
@@ -112,7 +113,8 @@ export async function createRemoteSession(
   address: string,
   data: CreateSessionRequest,
 ): Promise<Session> {
-  const res = await authFetch(`http://${address}/api/v1/sessions`, {
+  const base = address.includes('://') ? address : `http://${address}`;
+  const res = await authFetch(`${base}/api/v1/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),

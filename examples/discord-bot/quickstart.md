@@ -22,12 +22,12 @@ npm start
 
 ## 3. Use slash commands
 
-- `/spawn workdir:/path/to/repo persona:reviewer prompt:Review auth flow`
+- `/spawn workdir:/path/to/repo ink:reviewer prompt:Review auth flow`
 - `/status`
 - `/logs session:<name>`
 - `/kill session:<name>`
 - `/resume session:<name>`
-- `/personas`
+- `/inks`
 
 The bot also subscribes to `GET /api/v1/events` and posts updates back to Discord.
 

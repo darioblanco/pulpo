@@ -168,7 +168,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let default_guard = config.guards.to_guard_config();
     let node_name = config.node.name.clone();
     let (event_tx, _) = broadcast::channel::<PulpoEvent>(256);
-    let manager = SessionManager::new(backend, store, default_guard, config.personas.clone())
+    let manager = SessionManager::new(backend, store, default_guard, config.inks.clone())
         .with_guardrail_defaults(
             config.guards.max_turns,
             config.guards.max_budget_usd,
@@ -467,17 +467,13 @@ pub async fn build_mcp_server(cli: &Cli) -> Result<mcp::PulpoMcp> {
     let backend: Arc<dyn backend::Backend> = Arc::new(CoverageBackend);
 
     let default_guard = config.guards.to_guard_config();
-    let manager = session::manager::SessionManager::new(
-        backend,
-        store,
-        default_guard,
-        config.personas.clone(),
-    )
-    .with_guardrail_defaults(
-        config.guards.max_turns,
-        config.guards.max_budget_usd,
-        config.guards.output_format.clone(),
-    );
+    let manager =
+        session::manager::SessionManager::new(backend, store, default_guard, config.inks.clone())
+            .with_guardrail_defaults(
+                config.guards.max_turns,
+                config.guards.max_budget_usd,
+                config.guards.output_format.clone(),
+            );
     let peer_registry = peers::PeerRegistry::new(&config.peers);
 
     Ok(mcp::PulpoMcp::new(manager, peer_registry, config))

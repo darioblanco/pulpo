@@ -122,7 +122,7 @@ pub struct Session {
     pub allowed_tools: Option<Vec<String>>,
     pub system_prompt: Option<String>,
     pub metadata: Option<HashMap<String, String>>,
-    pub persona: Option<String>,
+    pub ink: Option<String>,
     pub max_turns: Option<u32>,
     pub max_budget_usd: Option<f64>,
     pub output_format: Option<String>,
@@ -159,7 +159,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -419,7 +419,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -487,7 +487,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -523,7 +523,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -562,7 +562,7 @@ mod tests {
             allowed_tools: Some(vec!["Read".into(), "Grep".into()]),
             system_prompt: Some("Be concise".into()),
             metadata: Some(meta),
-            persona: Some("coder".into()),
+            ink: Some("coder".into()),
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -590,6 +590,6 @@ mod tests {
                 .get("discord_channel"),
             Some(&"123".into())
         );
-        assert_eq!(deserialized.persona, Some("coder".into()));
+        assert_eq!(deserialized.ink, Some("coder".into()));
     }
 }

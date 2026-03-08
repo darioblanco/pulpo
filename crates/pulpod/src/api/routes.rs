@@ -11,9 +11,9 @@ use super::auth;
 use super::config;
 use super::events;
 use super::health;
+use super::inks;
 use super::node;
 use super::peers;
-use super::personas;
 use super::sessions;
 use super::static_files;
 use super::ws;
@@ -59,7 +59,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/sessions/{id}/stream", get(ws::stream))
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
-        .route("/api/v1/personas", get(personas::list))
+        .route("/api/v1/inks", get(inks::list))
         .route("/api/v1/events", get(events::stream))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -123,7 +123,7 @@ mod tests {
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
@@ -150,24 +150,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_personas_empty() {
+    async fn test_inks_empty() {
         let server = test_server().await;
-        let resp = server.get("/api/v1/personas").await;
+        let resp = server.get("/api/v1/inks").await;
         resp.assert_status_ok();
         let body = resp.text();
-        assert!(body.contains("\"personas\":{}"));
+        assert!(body.contains("\"inks\":{}"));
     }
 
     #[tokio::test]
-    async fn test_personas_with_entries() {
+    async fn test_inks_with_entries() {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
-        let mut personas = HashMap::new();
-        personas.insert(
+        let mut inks = HashMap::new();
+        inks.insert(
             "reviewer".into(),
-            crate::config::PersonaConfig {
+            crate::config::InkConfig {
+                description: None,
                 provider: Some("claude".into()),
                 model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
@@ -190,7 +191,7 @@ mod tests {
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: personas.clone(),
+            inks: inks.clone(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
@@ -198,13 +199,13 @@ mod tests {
             backend,
             store,
             pulpo_common::guard::GuardConfig::default(),
-            personas,
+            inks,
         );
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
         let app = build(state);
         let server = TestServer::new(app).unwrap();
-        let resp = server.get("/api/v1/personas").await;
+        let resp = server.get("/api/v1/inks").await;
         resp.assert_status_ok();
         let body = resp.text();
         assert!(body.contains("reviewer"));
@@ -743,7 +744,7 @@ mod tests {
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
@@ -792,7 +793,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -876,7 +877,7 @@ mod tests {
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(FailIsAliveBackend);
@@ -902,7 +903,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -940,7 +941,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -977,7 +978,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -1024,7 +1025,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -1069,7 +1070,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -1118,7 +1119,7 @@ mod tests {
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
@@ -1285,7 +1286,7 @@ mod tests {
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
@@ -1389,7 +1390,7 @@ mod tests {
             peers: HashMap::new(),
             guards: crate::config::GuardDefaultConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
-            personas: HashMap::new(),
+            inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);

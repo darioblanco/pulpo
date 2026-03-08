@@ -153,9 +153,9 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
 
           {/* Right side: metadata + status */}
           <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[0.6rem] text-[#5a7a9a]">
-            {session.persona && (
-              <span data-testid="session-persona" className="hidden lg:inline">
-                {session.persona}
+            {session.ink && (
+              <span data-testid="session-ink" className="hidden lg:inline">
+                {session.ink}
               </span>
             )}
             {session.model && (

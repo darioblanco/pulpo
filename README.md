@@ -31,7 +31,7 @@ Pulpo runs as a daemon (`pulpod`) with a CLI (`pulpo`) and embedded web UI. It m
 - Resume flow for stale sessions (`pulpo resume <name>`)
 - Watchdog interventions (memory pressure, idle handling)
 - Multi-node support (manual peers + mDNS discovery in `public` bind mode)
-- Persona support (`[personas.<name>]` in config)
+- Ink support (`[inks.<name>]` in config)
 - Schedule management via crontab wrapper (`pulpo schedule ...`)
 - SSE stream: `GET /api/v1/events`
 - MCP server mode: `pulpod mcp`
@@ -129,7 +129,7 @@ Example:
 [node]
 name = "mac-mini"
 
-[personas.reviewer]
+[inks.reviewer]
 provider = "claude"
 model = "sonnet"
 guard_preset = "strict"

@@ -39,7 +39,7 @@ export interface Session {
   allowed_tools: string[] | null;
   system_prompt: string | null;
   metadata: Record<string, string> | null;
-  persona: string | null;
+  ink: string | null;
   max_turns: number | null;
   max_budget_usd: number | null;
   output_format: string | null;
@@ -57,7 +57,8 @@ export interface InterventionEvent {
   created_at: string;
 }
 
-export interface PersonaConfig {
+export interface InkConfig {
+  description: string | null;
   provider: string | null;
   model: string | null;
   mode: string | null;
@@ -69,8 +70,8 @@ export interface PersonaConfig {
   output_format: string | null;
 }
 
-export interface PersonasResponse {
-  personas: Record<string, PersonaConfig>;
+export interface InksResponse {
+  inks: Record<string, InkConfig>;
 }
 
 export interface ListSessionsParams {
@@ -139,7 +140,7 @@ export interface ConfigResponse {
   guards: GuardDefaultConfigResponse;
   watchdog: WatchdogConfigResponse;
   notifications: NotificationsConfigResponse;
-  personas: Record<string, PersonaConfig>;
+  inks: Record<string, InkConfig>;
 }
 
 export interface UpdateConfigRequest {
@@ -163,7 +164,7 @@ export interface UpdateConfigRequest {
   discord_webhook_url?: string;
   discord_events?: string[];
   webhooks?: WebhookEndpointUpdateRequest[];
-  personas?: Record<string, PersonaConfig>;
+  inks?: Record<string, InkConfig>;
   peers?: Record<string, PeerEntry>;
 }
 
@@ -187,7 +188,7 @@ export interface CreateSessionRequest {
   allowed_tools?: string[];
   system_prompt?: string;
   metadata?: Record<string, string>;
-  persona?: string;
+  ink?: string;
   max_turns?: number;
   max_budget_usd?: number;
   output_format?: string;

@@ -12,6 +12,6 @@ Pulpo is infrastructure, not a prompt framework.
 
 ## Non-Goals
 
-- Defining the "best" personas or prompting methodology
+- Defining the "best" inks or prompting methodology
 - Replacing specialized local agent UX tools
 - Building a monolithic all-in-one platform

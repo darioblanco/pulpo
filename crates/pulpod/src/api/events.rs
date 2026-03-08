@@ -100,7 +100,7 @@ mod tests {
                 peers: HashMap::new(),
                 guards: crate::config::GuardDefaultConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
-                personas: HashMap::new(),
+                inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
             },
             manager,

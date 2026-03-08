@@ -31,12 +31,12 @@ All `session` options support **autocomplete** — type a few characters and mat
 
 | Command | Description | Options |
 |---------|-------------|---------|
-| `/spawn` | Spawn a new agent session | `workdir` (required), `prompt` (required), `persona`, `model`, `name` |
+| `/spawn` | Spawn a new agent session | `workdir` (required), `prompt` (required), `ink`, `model`, `name` |
 | `/status` | Show session status | `session` (optional, omit for all) |
 | `/logs` | Show recent session output | `session` (required), `lines` (1-500, default 50) |
 | `/kill` | Kill a running session | `session` (required) |
 | `/resume` | Resume a stale session after reboot | `session` (required) |
-| `/personas` | List available persona configurations | — |
+| `/inks` | List available ink configurations | — |
 | `/input` | Send text input to a running session | `session` (required), `text` (required) |
 
 ## SSE Notifications
@@ -71,7 +71,7 @@ src/
 │   ├── logs.ts           # /logs — recent output
 │   ├── kill.ts           # /kill — terminate session
 │   ├── resume.ts         # /resume — resume stale session
-│   ├── personas.ts       # /personas — list personas
+│   ├── inks.ts           # /inks — list inks
 │   └── input.ts          # /input — send text to session
 ├── listeners/
 │   └── sse.ts            # EventSource -> Discord channel messages

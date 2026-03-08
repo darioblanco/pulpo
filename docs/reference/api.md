@@ -12,7 +12,7 @@ Common endpoints:
 - `POST /api/v1/sessions/:id/resume`
 - `GET /api/v1/sessions/:id/interventions`
 - `GET /api/v1/events` (SSE)
-- `GET /api/v1/personas`
+- `GET /api/v1/inks`
 
 For payload-level behavior and lifecycle semantics, see:
 

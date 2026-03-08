@@ -3,10 +3,10 @@ set -euo pipefail
 
 NODE="${NODE:-localhost:7433}"
 WORKDIR="${WORKDIR:-$HOME}"
-PERSONA="${PERSONA:-reviewer}"
+INK="${INK:-reviewer}"
 
 pulpo --node "${NODE}" spawn \
-  --persona "${PERSONA}" \
+  --ink "${INK}" \
   --workdir "${WORKDIR}" \
   "Review recent changes and provide a prioritized action list."
 

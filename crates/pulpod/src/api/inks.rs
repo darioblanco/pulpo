@@ -5,16 +5,16 @@ use axum::Json;
 use axum::extract::State;
 use serde::Serialize;
 
-use crate::config::PersonaConfig;
+use crate::config::InkConfig;
 
 #[derive(Serialize)]
-pub struct PersonasResponse {
-    pub personas: HashMap<String, PersonaConfig>,
+pub struct InksResponse {
+    pub inks: HashMap<String, InkConfig>,
 }
 
-pub async fn list(State(state): State<Arc<super::AppState>>) -> Json<PersonasResponse> {
-    let personas = state.session_manager.personas().clone();
-    Json(PersonasResponse { personas })
+pub async fn list(State(state): State<Arc<super::AppState>>) -> Json<InksResponse> {
+    let inks = state.session_manager.inks().clone();
+    Json(InksResponse { inks })
 }
 
 #[cfg(test)]
@@ -63,7 +63,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_personas_empty() {
+    async fn test_list_inks_empty() {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -87,7 +87,7 @@ mod tests {
                 peers: HashMap::new(),
                 guards: crate::config::GuardDefaultConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
-                personas: HashMap::new(),
+                inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
             },
             manager,
@@ -95,19 +95,20 @@ mod tests {
         );
 
         let Json(response) = list(State(state)).await;
-        assert!(response.personas.is_empty());
+        assert!(response.inks.is_empty());
     }
 
     #[tokio::test]
-    async fn test_list_personas_with_entries() {
+    async fn test_list_inks_with_entries() {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
-        let mut personas = HashMap::new();
-        personas.insert(
+        let mut inks = HashMap::new();
+        inks.insert(
             "reviewer".into(),
-            PersonaConfig {
+            InkConfig {
+                description: None,
                 provider: Some("claude".into()),
                 model: Some("sonnet".into()),
                 mode: Some("autonomous".into()),
@@ -123,7 +124,7 @@ mod tests {
             Arc::new(StubBackend),
             store,
             pulpo_common::guard::GuardConfig::default(),
-            personas.clone(),
+            inks.clone(),
         );
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
@@ -138,7 +139,7 @@ mod tests {
                 peers: HashMap::new(),
                 guards: crate::config::GuardDefaultConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
-                personas: personas.clone(),
+                inks: inks.clone(),
                 notifications: crate::config::NotificationsConfig::default(),
             },
             manager,
@@ -146,18 +147,19 @@ mod tests {
         );
 
         let Json(response) = list(State(state)).await;
-        assert_eq!(response.personas.len(), 1);
-        let reviewer = &response.personas["reviewer"];
+        assert_eq!(response.inks.len(), 1);
+        let reviewer = &response.inks["reviewer"];
         assert_eq!(reviewer.model, Some("sonnet".into()));
         assert_eq!(reviewer.system_prompt, Some("Review code".into()));
     }
 
     #[test]
-    fn test_personas_response_serialize() {
-        let mut personas = HashMap::new();
-        personas.insert(
+    fn test_inks_response_serialize() {
+        let mut inks = HashMap::new();
+        inks.insert(
             "coder".into(),
-            PersonaConfig {
+            InkConfig {
+                description: None,
                 provider: None,
                 model: Some("opus".into()),
                 mode: None,
@@ -169,7 +171,7 @@ mod tests {
                 output_format: None,
             },
         );
-        let resp = PersonasResponse { personas };
+        let resp = InksResponse { inks };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("coder"));
         assert!(json.contains("opus"));

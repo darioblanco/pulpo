@@ -10,14 +10,14 @@ Top-level sections:
 - `[auth]` — token (only used with `bind = "public"`)
 - `[watchdog]` — memory/idle intervention policy
 - `[peers]` — manual peer entries
-- `[personas.<name>]` — reusable spawn defaults
+- `[inks.<name>]` — reusable spawn defaults
 - `[notifications.discord]` — webhook notifications
 
 Notes:
 
 - `bind` in `[node]` determines both network exposure and discovery method.
 - `[auth]` is only relevant for `bind = "public"`. Other modes skip auth.
-- `personas` provide reusable spawn defaults.
+- `inks` provide reusable spawn defaults.
 - Manual `peers` always coexist with dynamic discovery.
 
 Source of truth for full semantics:

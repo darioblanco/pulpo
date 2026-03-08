@@ -4,11 +4,11 @@ import {
   type SlashCommandOptionsOnlyBuilder,
 } from 'discord.js';
 import type { PulpodClient } from '../api/pulpod.js';
-import { personaListEmbed } from '../formatters/embed.js';
+import { inkListEmbed } from '../formatters/embed.js';
 
 export const data: SlashCommandOptionsOnlyBuilder = new SlashCommandBuilder()
-  .setName('personas')
-  .setDescription('List available persona configurations');
+  .setName('inks')
+  .setDescription('List available ink configurations');
 
 export async function execute(
   interaction: ChatInputCommandInteraction,
@@ -17,11 +17,11 @@ export async function execute(
   await interaction.deferReply();
 
   try {
-    const { personas } = await client.listPersonas();
-    const embed = personaListEmbed(personas);
+    const { inks } = await client.listInks();
+    const embed = inkListEmbed(inks);
     await interaction.editReply({ embeds: [embed] });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await interaction.editReply(`Failed to list personas: ${msg}`);
+    await interaction.editReply(`Failed to list inks: ${msg}`);
   }
 }

@@ -127,7 +127,7 @@ impl Store {
             sqlx::query("ALTER TABLE sessions ADD COLUMN metadata TEXT")
                 .execute(&self.pool)
                 .await?;
-            sqlx::query("ALTER TABLE sessions ADD COLUMN persona TEXT")
+            sqlx::query("ALTER TABLE sessions ADD COLUMN ink TEXT")
                 .execute(&self.pool)
                 .await?;
         }
@@ -188,6 +188,18 @@ impl Store {
                 .await?;
         }
 
+        // Idempotent migration: rename persona → ink
+        let has_persona: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'persona'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_persona > 0 {
+            sqlx::query("ALTER TABLE sessions RENAME COLUMN persona TO ink")
+                .execute(&self.pool)
+                .await?;
+        }
+
         // Idempotent migration: rename tmux_session → backend_session_id
         let has_tmux_session: i32 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'tmux_session'",
@@ -228,7 +240,7 @@ impl Store {
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
                 conversation_id, exit_code, backend_session_id,
                 output_snapshot, guard_config,
-                model, allowed_tools, system_prompt, metadata, persona,
+                model, allowed_tools, system_prompt, metadata, ink,
                 max_turns, max_budget_usd, output_format,
                 intervention_reason, intervention_at,
                 last_output_at, idle_since, waiting_for_input, created_at, updated_at)
@@ -250,7 +262,7 @@ impl Store {
         .bind(&allowed_tools_json)
         .bind(&session.system_prompt)
         .bind(&metadata_json)
-        .bind(&session.persona)
+        .bind(&session.ink)
         .bind(max_turns_i32)
         .bind(session.max_budget_usd)
         .bind(&session.output_format)
@@ -518,7 +530,7 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
         allowed_tools,
         system_prompt: row.get("system_prompt"),
         metadata,
-        persona: row.get("persona"),
+        ink: row.get("ink"),
         max_turns: {
             let v: Option<i32> = row.get("max_turns");
             v.map(i32::cast_unsigned)
@@ -579,7 +591,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -804,7 +816,7 @@ mod tests {
             allowed_tools: None,
             system_prompt: None,
             metadata: None,
-            persona: None,
+            ink: None,
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
@@ -1767,7 +1779,7 @@ mod tests {
             .into_iter()
             .collect(),
         );
-        session.persona = Some("reviewer".into());
+        session.ink = Some("reviewer".into());
 
         store.insert_session(&session).await.unwrap();
         let fetched = store
@@ -1788,7 +1800,7 @@ mod tests {
         let meta = fetched.metadata.unwrap();
         assert_eq!(meta.get("discord_channel").unwrap(), "123");
         assert_eq!(meta.get("user").unwrap(), "alice");
-        assert_eq!(fetched.persona, Some("reviewer".into()));
+        assert_eq!(fetched.ink, Some("reviewer".into()));
     }
 
     #[tokio::test]

@@ -115,7 +115,7 @@ Why: this separates Pulpo from single-machine wrappers.
 
 ### 5. Policy as configuration (without platform bloat)
 
-- Per-persona policy bundles (guard + budget + tool allowlists + runtime limits)
+- Per-ink policy bundles (guard + budget + tool allowlists + runtime limits)
 - Global policy defaults with local override visibility
 - Policy dry-run endpoint to explain effective settings before spawn
 

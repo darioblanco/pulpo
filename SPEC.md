@@ -33,7 +33,7 @@ Too many layers. And if a machine reboots, you lose your session state.
 - Custom AI model hosting/serving
 - CI/CD integration (use GitHub Actions separately)
 - Multi-user / team features (single-user, your Tailnet)
-- Defining the "best" persona catalog or prompting methodology
+- Defining the "best" ink catalog or prompting methodology
 - Replacing specialized local agent UX tools
 - Becoming a monolithic all-in-one agent platform
 
@@ -338,13 +338,13 @@ WS     /sessions/:id/stream   Stream terminal output (WebSocket)
   "system_prompt": "Focus on security",
   "allowed_tools": ["Read", "Glob", "Grep"],
   "metadata": { "discord_channel_id": "123456" },
-  "persona": "reviewer"
+  "ink": "reviewer"
 }
 ```
 
 All fields except `workdir` and `prompt` are optional. `mode` is
-`"interactive"` (default) or `"autonomous"`. If `persona` is set, its config
-is used as defaults; explicit fields override persona values.
+`"interactive"` (default) or `"autonomous"`. If `ink` is set, its config
+is used as defaults; explicit fields override ink values.
 
 #### GET /sessions
 
@@ -359,7 +359,7 @@ is used as defaults; explicit fields override persona values.
     "status": "running",
     "mode": "interactive",
     "model": "sonnet",
-    "persona": "reviewer",
+    "ink": "reviewer",
     "guard_config": { "...": "..." },
     "output_snapshot": "Analyzing login.py...\nFound issue in validate_token()...",
     "created_at": "2026-02-16T10:30:00Z",
@@ -386,10 +386,10 @@ POST   /peers                 Add a peer
 DELETE /peers/:name           Remove a peer
 ```
 
-### Personas & Events
+### Inks & Events
 
 ```
-GET    /personas              List configured personas
+GET    /inks                  List configured inks
 GET    /events                SSE event stream (session lifecycle events)
 ```
 
@@ -420,7 +420,7 @@ GET    /events                SSE event stream (session lifecycle events)
 | `PUT`    | `/config`                       | Update daemon config           |
 | `GET`    | `/auth/token`                   | Get auth token (local only)    |
 | `GET`    | `/auth/pairing-url`             | Get QR pairing URL (local)     |
-| `GET`    | `/personas`                     | List configured personas       |
+| `GET`    | `/inks`                         | List configured inks           |
 | `GET`    | `/events`                       | SSE event stream               |
 
 ---
@@ -503,7 +503,7 @@ See [CLAUDE.md](CLAUDE.md) for the full, maintained project layout. Key director
 pulpo/
 ├── crates/
 │   ├── pulpod/src/             # Daemon: Axum API, tmux backend, SQLite, watchdog,
-│   │   ├── api/                #   MCP server, mDNS, guard enforcement, SSE, personas
+│   │   ├── api/                #   MCP server, mDNS, guard enforcement, SSE, inks
 │   │   ├── backend/            #   tmux.rs — terminal backend
 │   │   ├── session/            #   manager, state machine, output capture, PTY bridge
 │   │   ├── store/              #   SQLite persistence + migrations
@@ -636,8 +636,8 @@ Tauri 2 builds native iOS `.ipa` and Android `.apk` from the same Svelte + Rust 
 
 ### Phase 8: Control Plane + Notifications ✅
 
-- ✅ Flexible session model (model, allowed_tools, system_prompt, metadata, persona)
-- ✅ Persona config (`[personas.name]` in config.toml, `GET /api/v1/personas`)
+- ✅ Flexible session model (model, allowed_tools, system_prompt, metadata, ink)
+- ✅ Ink config (`[inks.name]` in config.toml, `GET /api/v1/inks`)
 - ✅ SSE event stream (`GET /api/v1/events`, broadcast channel, SessionEvent)
 - ✅ Discord webhook notifications (`[notifications.discord]` config)
 - ✅ Discord bot (`contrib/discord-bot/`) — slash commands + SSE listener
@@ -673,14 +673,14 @@ idle_action = "alert"       # "alert" or "kill"
 macbook = "macbook:7433"
 server = "hetzner:7433"
 
-[personas.reviewer]
+[inks.reviewer]
 provider = "claude"
 model = "sonnet"
 guard_preset = "strict"
 allowed_tools = ["Read", "Glob", "Grep"]
 system_prompt = "You are a code reviewer. Focus on correctness and security."
 
-[personas.coder]
+[inks.coder]
 provider = "claude"
 mode = "autonomous"
 guard_preset = "standard"
