@@ -1,3 +1,5 @@
+pub mod repo;
+
 use chrono::Utc;
 use pulpo_common::knowledge::{Knowledge, KnowledgeKind};
 use pulpo_common::session::Session;

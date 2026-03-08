@@ -295,6 +295,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                knowledge: crate::config::KnowledgeConfig::default(),
             },
             manager,
             peer_registry,
@@ -330,6 +331,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                knowledge: crate::config::KnowledgeConfig::default(),
             },
             config_path,
             manager,
@@ -542,6 +544,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            knowledge: crate::config::KnowledgeConfig::default(),
         };
         let resp = config_to_response(&config);
         assert_eq!(resp.node.name, "test");
@@ -836,6 +839,7 @@ mod tests {
                 }),
                 webhooks: vec![],
             },
+            knowledge: crate::config::KnowledgeConfig::default(),
         };
         let resp = config_to_response(&config);
         // Node fields
@@ -892,6 +896,7 @@ mod tests {
                     },
                 ],
             },
+            knowledge: crate::config::KnowledgeConfig::default(),
         };
         let resp = config_to_response(&config);
         assert_eq!(resp.notifications.webhooks.len(), 2);
@@ -1026,6 +1031,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                knowledge: crate::config::KnowledgeConfig::default(),
             },
             std::path::PathBuf::from("/dev/null/impossible/config.toml"),
             manager,

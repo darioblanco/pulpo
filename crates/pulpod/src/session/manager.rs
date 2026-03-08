@@ -17,12 +17,14 @@ use crate::backend::Backend;
 use crate::config::InkConfig;
 use crate::guard::check_capability_warnings;
 use crate::knowledge;
+use crate::knowledge::repo::KnowledgeRepo;
 use crate::store::Store;
 
 #[derive(Clone)]
 pub struct SessionManager {
     backend: Arc<dyn Backend>,
     store: Store,
+    knowledge_repo: Option<KnowledgeRepo>,
     default_guard: GuardConfig,
     inks: HashMap<String, InkConfig>,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
@@ -39,11 +41,22 @@ impl SessionManager {
         Self {
             backend,
             store,
+            knowledge_repo: None,
             default_guard,
             inks,
             event_tx: None,
             node_name: String::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_knowledge_repo(mut self, repo: KnowledgeRepo) -> Self {
+        self.knowledge_repo = Some(repo);
+        self
+    }
+
+    pub const fn knowledge_repo(&self) -> Option<&KnowledgeRepo> {
+        self.knowledge_repo.as_ref()
     }
 
     #[must_use]
@@ -402,12 +415,15 @@ impl SessionManager {
         &self.store
     }
 
-    /// Extract knowledge from a session and persist it to the store.
+    /// Extract knowledge from a session and persist it to the git-backed knowledge repo.
     /// Best-effort: logs warnings on failure but does not propagate errors.
     async fn extract_and_store_knowledge(&self, session: &Session) {
+        let Some(repo) = &self.knowledge_repo else {
+            return;
+        };
         let items = knowledge::extract(session);
         for item in &items {
-            if let Err(e) = self.store.insert_knowledge(item).await {
+            if let Err(e) = repo.save(item).await {
                 warn!(
                     session_id = %session.id,
                     kind = %item.kind,
@@ -1476,6 +1492,7 @@ mod tests {
         let inks = HashMap::new();
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1493,6 +1510,7 @@ mod tests {
         let inks = HashMap::new();
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1523,6 +1541,7 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1556,6 +1575,7 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1588,6 +1608,7 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1630,6 +1651,7 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1661,6 +1683,7 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -1693,6 +1716,7 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,

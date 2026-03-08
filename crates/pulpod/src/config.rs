@@ -23,6 +23,8 @@ pub struct Config {
     pub inks: HashMap<String, InkConfig>,
     #[serde(default)]
     pub notifications: NotificationsConfig,
+    #[serde(default)]
+    pub knowledge: KnowledgeConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -39,6 +41,15 @@ pub struct InkConfig {
     /// or prepended to the prompt as a universal fallback.
     #[serde(default, alias = "system_prompt")]
     pub instructions: Option<String>,
+}
+
+/// Knowledge repository configuration (git-backed storage for extracted knowledge).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct KnowledgeConfig {
+    /// Optional git remote URL. When set, the knowledge repo will be pushed
+    /// to this remote after each commit, enabling multi-node knowledge sharing.
+    #[serde(default)]
+    pub remote: Option<String>,
 }
 
 /// Notification configuration (webhooks for status updates).
@@ -404,6 +415,7 @@ pub fn load(path: &str) -> Result<Config> {
             watchdog: WatchdogConfig::default(),
             inks: built_in_inks(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         })
     }
 }
@@ -490,6 +502,7 @@ data_dir = "/tmp/pulpo-test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         let expanded = config.data_dir();
         assert!(
@@ -514,6 +527,7 @@ data_dir = "/tmp/pulpo-test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         assert_eq!(config.data_dir(), "/absolute/path");
     }
@@ -646,6 +660,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         let debug = format!("{config:?}");
         assert!(debug.contains("node-a"));
@@ -731,6 +746,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -758,6 +774,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -787,6 +804,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -809,6 +827,7 @@ unrestricted = true
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
+                knowledge: KnowledgeConfig::default(),
             },
             Path::new("/dev/null/impossible/config.toml"),
         );
@@ -833,6 +852,7 @@ unrestricted = true
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
+                knowledge: KnowledgeConfig::default(),
             },
             Path::new(""),
         );
@@ -861,6 +881,7 @@ unrestricted = true
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
+                knowledge: KnowledgeConfig::default(),
             },
             &dir_target,
         );
@@ -884,6 +905,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         #[allow(clippy::redundant_clone)]
         let cloned = config.clone();
@@ -926,6 +948,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("ser"));
@@ -996,6 +1019,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         assert!(config.auth.token.is_empty());
         let generated = ensure_auth_token(&mut config);
@@ -1021,6 +1045,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         let generated = ensure_auth_token(&mut config);
         assert!(!generated);
@@ -1088,6 +1113,7 @@ token = "my-secret-token"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1156,6 +1182,7 @@ token = "peer-secret"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1263,6 +1290,7 @@ breach_count = 5
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1471,6 +1499,7 @@ idle_action = "pause"
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1577,6 +1606,7 @@ provider = "codex"
             watchdog: WatchdogConfig::default(),
             inks,
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1694,6 +1724,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
                 }),
                 webhooks: vec![],
             },
+            knowledge: KnowledgeConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1799,6 +1830,7 @@ url = "https://example.com"
                     secret: Some("key".into()),
                 }],
             },
+            knowledge: KnowledgeConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1900,6 +1932,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
