@@ -12,6 +12,10 @@ import type {
   CreateSessionRequest,
   CreateSessionResponse,
   KnowledgeResponse,
+  KnowledgeItemResponse,
+  KnowledgeDeleteResponse,
+  KnowledgePushResponse,
+  UpdateKnowledgeRequest,
 } from './types';
 
 let getBaseUrl: () => string = () => '';
@@ -265,5 +269,36 @@ export async function getKnowledgeContext(params?: {
   const qs = query.toString();
   const res = await authFetch(`${resolveBaseUrl()}/knowledge/context${qs ? `?${qs}` : ''}`);
   if (!res.ok) throw new Error('Failed to fetch knowledge context');
+  return res.json();
+}
+
+export async function getKnowledgeItem(id: string): Promise<KnowledgeItemResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/knowledge/${id}`);
+  if (!res.ok) throw new Error('Failed to fetch knowledge item');
+  return res.json();
+}
+
+export async function updateKnowledge(
+  id: string,
+  data: UpdateKnowledgeRequest,
+): Promise<KnowledgeItemResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/knowledge/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error('Failed to update knowledge item');
+  return res.json();
+}
+
+export async function deleteKnowledge(id: string): Promise<KnowledgeDeleteResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/knowledge/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete knowledge item');
+  return res.json();
+}
+
+export async function pushKnowledge(): Promise<KnowledgePushResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/knowledge/push`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to push knowledge');
   return res.json();
 }

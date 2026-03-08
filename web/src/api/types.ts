@@ -74,6 +74,26 @@ export interface KnowledgeResponse {
   knowledge: Knowledge[];
 }
 
+export interface KnowledgeItemResponse {
+  knowledge: Knowledge;
+}
+
+export interface KnowledgeDeleteResponse {
+  deleted: boolean;
+}
+
+export interface KnowledgePushResponse {
+  pushed: boolean;
+  message: string;
+}
+
+export interface UpdateKnowledgeRequest {
+  title?: string;
+  body?: string;
+  tags?: string[];
+  relevance?: number;
+}
+
 export interface InkConfig {
   description: string | null;
   provider: string | null;

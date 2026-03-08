@@ -23,6 +23,19 @@ describe('AppHeader', () => {
     expect(screen.getByText('Dashboard')).toBeInTheDocument();
   });
 
+  it('renders children in header', () => {
+    render(
+      <TooltipProvider>
+        <SidebarProvider>
+          <AppHeader title="Test">
+            <button>Action</button>
+          </AppHeader>
+        </SidebarProvider>
+      </TooltipProvider>,
+    );
+    expect(screen.getByText('Action')).toBeInTheDocument();
+  });
+
   it('renders sidebar trigger', () => {
     render(
       <TooltipProvider>
