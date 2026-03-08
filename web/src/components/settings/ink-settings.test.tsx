@@ -1,7 +1,17 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { InkSettings } from './ink-settings';
-import type { InkConfig } from '@/api/types';
+import * as api from '@/api/client';
+import type { InkConfig, PeerInfo, UpdateConfigResponse } from '@/api/types';
+
+vi.mock('@/api/client', () => ({
+  updateRemoteConfig: vi.fn(),
+  resolveBaseUrl: vi.fn().mockReturnValue(''),
+  authHeaders: vi.fn().mockReturnValue({}),
+  setApiConfig: vi.fn(),
+}));
+
+const mockUpdateRemoteConfig = vi.mocked(api.updateRemoteConfig);
 
 const emptyInk: InkConfig = {
   description: null,
@@ -28,6 +38,26 @@ const reviewerInk: InkConfig = {
   max_budget_usd: 1.0,
   output_format: null,
 };
+
+const onlinePeer: PeerInfo = {
+  name: 'remote-node',
+  address: 'remote:7433',
+  status: 'online',
+  node_info: null,
+  session_count: null,
+};
+
+const offlinePeer: PeerInfo = {
+  name: 'offline-node',
+  address: 'offline:7433',
+  status: 'offline',
+  node_info: null,
+  session_count: null,
+};
+
+beforeEach(() => {
+  mockUpdateRemoteConfig.mockReset();
+});
 
 describe('InkSettings', () => {
   it('renders the card', () => {
@@ -239,6 +269,105 @@ describe('InkSettings', () => {
     });
     expect(onInksChange).toHaveBeenCalledWith({
       reviewer: { ...reviewerInk, max_budget_usd: 5.5 },
+    });
+  });
+
+  // Phase B: Push to peers
+  it('does not show push button when no peers', () => {
+    render(<InkSettings inks={{ reviewer: reviewerInk }} onInksChange={vi.fn()} />);
+    expect(screen.queryByTestId('ink-push-btn')).not.toBeInTheDocument();
+  });
+
+  it('does not show push button when no online peers', () => {
+    render(
+      <InkSettings inks={{ reviewer: reviewerInk }} onInksChange={vi.fn()} peers={[offlinePeer]} />,
+    );
+    expect(screen.queryByTestId('ink-push-btn')).not.toBeInTheDocument();
+  });
+
+  it('does not show push button when no inks', () => {
+    render(<InkSettings inks={{}} onInksChange={vi.fn()} peers={[onlinePeer]} />);
+    expect(screen.queryByTestId('ink-push-btn')).not.toBeInTheDocument();
+  });
+
+  it('shows push button when online peers and inks exist', () => {
+    render(
+      <InkSettings inks={{ reviewer: reviewerInk }} onInksChange={vi.fn()} peers={[onlinePeer]} />,
+    );
+    expect(screen.getByTestId('ink-push-btn')).toBeInTheDocument();
+    expect(screen.getByText(/1 online peer/)).toBeInTheDocument();
+  });
+
+  it('shows plural peers text for multiple online peers', () => {
+    const peer2: PeerInfo = { ...onlinePeer, name: 'peer-2', address: 'peer2:7433' };
+    render(
+      <InkSettings
+        inks={{ reviewer: reviewerInk }}
+        onInksChange={vi.fn()}
+        peers={[onlinePeer, peer2, offlinePeer]}
+      />,
+    );
+    expect(screen.getByText(/2 online peers/)).toBeInTheDocument();
+  });
+
+  it('pushes inks to all online peers on click', async () => {
+    mockUpdateRemoteConfig.mockResolvedValue({
+      config: {} as UpdateConfigResponse['config'],
+      restart_required: false,
+    });
+    render(
+      <InkSettings inks={{ reviewer: reviewerInk }} onInksChange={vi.fn()} peers={[onlinePeer]} />,
+    );
+
+    fireEvent.click(screen.getByTestId('ink-push-btn'));
+
+    await waitFor(() => {
+      expect(mockUpdateRemoteConfig).toHaveBeenCalledWith('remote:7433', {
+        inks: { reviewer: reviewerInk },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ink-push-result')).toHaveTextContent('remote-node: ok');
+    });
+  });
+
+  it('shows per-peer error on push failure', async () => {
+    mockUpdateRemoteConfig.mockRejectedValue(new Error('unauthorized'));
+    render(
+      <InkSettings inks={{ reviewer: reviewerInk }} onInksChange={vi.fn()} peers={[onlinePeer]} />,
+    );
+
+    fireEvent.click(screen.getByTestId('ink-push-btn'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('ink-push-result')).toHaveTextContent('remote-node: unauthorized');
+    });
+  });
+
+  it('pushes to multiple peers with mixed results', async () => {
+    const peer2: PeerInfo = { ...onlinePeer, name: 'peer-2', address: 'peer2:7433' };
+    mockUpdateRemoteConfig
+      .mockResolvedValueOnce({
+        config: {} as UpdateConfigResponse['config'],
+        restart_required: false,
+      })
+      .mockRejectedValueOnce(new Error('timeout'));
+
+    render(
+      <InkSettings
+        inks={{ reviewer: reviewerInk }}
+        onInksChange={vi.fn()}
+        peers={[onlinePeer, peer2]}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId('ink-push-btn'));
+
+    await waitFor(() => {
+      const result = screen.getByTestId('ink-push-result');
+      expect(result).toHaveTextContent('remote-node: ok');
+      expect(result).toHaveTextContent('peer-2: timeout');
     });
   });
 });

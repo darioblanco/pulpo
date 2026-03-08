@@ -17,6 +17,7 @@ import {
   getInterventionEvents,
   getConfig,
   updateConfig,
+  updateRemoteConfig,
   addPeer,
   removePeer,
   getPairingUrl,
@@ -469,6 +470,70 @@ describe('updateConfig', () => {
     const result = await updateConfig({ port: 9000 });
 
     expect(result.restart_required).toBe(true);
+  });
+});
+
+describe('updateRemoteConfig', () => {
+  it('sends PUT to remote address /api/v1/config', async () => {
+    const response = {
+      config: { node: { name: 'remote' }, peers: {}, guards: { preset: 'standard' } },
+      restart_required: false,
+    };
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(response) });
+
+    const data = {
+      inks: {
+        reviewer: {
+          description: 'Test',
+          provider: 'claude',
+          model: null,
+          mode: null,
+          guard_preset: null,
+          allowed_tools: null,
+          system_prompt: null,
+          max_turns: null,
+          max_budget_usd: null,
+          output_format: null,
+        },
+      },
+    };
+    const result = await updateRemoteConfig('macbook:7433', data);
+
+    expect(mockFetch).toHaveBeenCalledWith('http://macbook:7433/api/v1/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    expect(result).toEqual(response);
+  });
+
+  it('uses scheme from address when present', async () => {
+    const response = { config: {}, restart_required: false };
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(response) });
+
+    await updateRemoteConfig('https://remote:7433', { inks: {} });
+
+    expect(mockFetch).toHaveBeenCalledWith('https://remote:7433/api/v1/config', expect.anything());
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'unauthorized' }),
+    });
+
+    await expect(updateRemoteConfig('macbook:7433', {})).rejects.toThrow('unauthorized');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(updateRemoteConfig('macbook:7433', {})).rejects.toThrow(
+      'Failed to update remote config',
+    );
   });
 });
 

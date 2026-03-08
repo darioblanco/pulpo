@@ -239,7 +239,7 @@ export function SettingsPage() {
                     outputFormat={guardOutputFormat}
                     onOutputFormatChange={setGuardOutputFormat}
                   />
-                  <InkSettings inks={inks} onInksChange={setInks} />
+                  <InkSettings inks={inks} onInksChange={setInks} peers={peers} />
                   <WatchdogSettings
                     enabled={watchdogEnabled}
                     onEnabledChange={setWatchdogEnabled}

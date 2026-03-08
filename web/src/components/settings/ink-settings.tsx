@@ -11,12 +11,14 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { FormField } from './form-field';
-import type { InkConfig } from '@/api/types';
-import { ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from 'lucide-react';
+import { updateRemoteConfig } from '@/api/client';
+import type { InkConfig, PeerInfo } from '@/api/types';
+import { ChevronDown, ChevronRight, Pencil, Plus, Send, Trash2 } from 'lucide-react';
 
 interface InkSettingsProps {
   inks: Record<string, InkConfig>;
   onInksChange: (inks: Record<string, InkConfig>) => void;
+  peers?: PeerInfo[];
 }
 
 const emptyInk: InkConfig = {
@@ -32,11 +34,14 @@ const emptyInk: InkConfig = {
   output_format: null,
 };
 
-export function InkSettings({ inks, onInksChange }: InkSettingsProps) {
+export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps) {
   const [expandedInk, setExpandedInk] = useState<string | null>(null);
   const [newInkName, setNewInkName] = useState('');
+  const [pushing, setPushing] = useState(false);
+  const [pushResult, setPushResult] = useState<string | null>(null);
 
   const sortedNames = Object.keys(inks).sort();
+  const onlinePeers = peers.filter((p) => p.status === 'online');
 
   function addInk() {
     const name = newInkName.trim().toLowerCase().replace(/\s+/g, '-');
@@ -57,6 +62,23 @@ export function InkSettings({ inks, onInksChange }: InkSettingsProps) {
     const ink = inks[name];
     if (!ink) return;
     onInksChange({ ...inks, [name]: { ...ink, [field]: value || null } });
+  }
+
+  async function pushToPeers() {
+    if (onlinePeers.length === 0) return;
+    setPushing(true);
+    setPushResult(null);
+    const results: string[] = [];
+    for (const peer of onlinePeers) {
+      try {
+        await updateRemoteConfig(peer.address, { inks });
+        results.push(`${peer.name}: ok`);
+      } catch (e) {
+        results.push(`${peer.name}: ${e instanceof Error ? e.message : 'failed'}`);
+      }
+    }
+    setPushResult(results.join(', '));
+    setPushing(false);
   }
 
   return (
@@ -266,6 +288,35 @@ export function InkSettings({ inks, onInksChange }: InkSettingsProps) {
             Add
           </Button>
         </div>
+
+        {onlinePeers.length > 0 && sortedNames.length > 0 && (
+          <div className="border-t pt-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Push to peers</p>
+                <p className="text-xs text-muted-foreground">
+                  Send current inks to {onlinePeers.length} online{' '}
+                  {onlinePeers.length === 1 ? 'peer' : 'peers'}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={pushToPeers}
+                disabled={pushing}
+                data-testid="ink-push-btn"
+              >
+                <Send className="mr-1 h-3 w-3" />
+                {pushing ? 'Pushing...' : 'Push'}
+              </Button>
+            </div>
+            {pushResult && (
+              <p className="mt-2 text-xs text-muted-foreground" data-testid="ink-push-result">
+                {pushResult}
+              </p>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

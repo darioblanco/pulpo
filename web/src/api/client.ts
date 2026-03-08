@@ -214,3 +214,20 @@ export async function updateConfig(data: UpdateConfigRequest): Promise<UpdateCon
   });
   return res.json();
 }
+
+export async function updateRemoteConfig(
+  address: string,
+  data: UpdateConfigRequest,
+): Promise<UpdateConfigResponse> {
+  const base = address.includes('://') ? address : `http://${address}`;
+  const res = await authFetch(`${base}/api/v1/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to update remote config');
+  }
+  return res.json();
+}
