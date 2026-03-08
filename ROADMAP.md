@@ -73,7 +73,14 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
 - MCP server mode (`pulpod mcp`)
 - Scheduling via crontab wrapper
 - Discord integration in `contrib/`
-- **Knowledge extraction**: rule-based extraction of summaries and failure learnings when sessions end, stored in SQLite, queryable via API (`/api/v1/knowledge`, `/api/v1/knowledge/context`) and CLI (`pulpo knowledge`)
+- **Knowledge system**: git-backed knowledge repo with extraction, injection, and human CRUD
+  - Extraction: rule-based summaries and failure learnings from completed sessions
+  - Storage: JSON files in a local git repo (`<data_dir>/knowledge/`), optional remote sync
+  - Injection: context breadcrumbs + write-back instructions injected into new sessions at spawn
+  - CRUD API: `GET/PUT/DELETE /api/v1/knowledge/{id}`, `POST /knowledge/push`
+  - CLI: `pulpo knowledge` with `--get`, `--delete`, `--push`, `--context` flags
+  - Web: `/knowledge` page with filtering, deletion, and push-to-remote
+  - Inks: 6-field universal roles (description, provider, model, mode, unrestricted, instructions)
 
 ## Refactored Roadmap
 
