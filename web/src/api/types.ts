@@ -193,3 +193,77 @@ export interface CreateSessionRequest {
   max_budget_usd?: number;
   output_format?: string;
 }
+
+export interface CreateSessionResponse {
+  session: Session;
+  warnings?: string[];
+}
+
+/** Capabilities that a provider supports */
+export interface ProviderCapabilities {
+  model: boolean;
+  system_prompt: boolean;
+  allowed_tools: boolean;
+  max_turns: boolean;
+  max_budget_usd: boolean;
+  output_format: boolean;
+  worktree: boolean;
+  guard_preset: boolean;
+  resume: boolean;
+}
+
+/** Return the capability set for a given provider */
+export function getProviderCapabilities(provider: string): ProviderCapabilities {
+  switch (provider) {
+    case 'claude':
+      return {
+        model: true,
+        system_prompt: true,
+        allowed_tools: true,
+        max_turns: true,
+        max_budget_usd: true,
+        output_format: true,
+        worktree: true,
+        guard_preset: true,
+        resume: true,
+      };
+    case 'codex':
+      return {
+        model: true,
+        system_prompt: false,
+        allowed_tools: false,
+        max_turns: false,
+        max_budget_usd: false,
+        output_format: false,
+        worktree: false,
+        guard_preset: false,
+        resume: true,
+      };
+    case 'open_code':
+    case 'opencode':
+      return {
+        model: false,
+        system_prompt: false,
+        allowed_tools: false,
+        max_turns: false,
+        max_budget_usd: false,
+        output_format: true,
+        worktree: false,
+        guard_preset: false,
+        resume: false,
+      };
+    default:
+      // Unknown provider — assume full capabilities
+      return {
+        model: true,
+        system_prompt: true,
+        allowed_tools: true,
+        max_turns: true,
+        max_budget_usd: true,
+        output_format: true,
+        worktree: true,
+        guard_preset: true,
+        resume: true,
+      };
+  }
+}

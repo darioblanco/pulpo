@@ -10,6 +10,7 @@ import type {
   PairingUrlResponse,
   InksResponse,
   CreateSessionRequest,
+  CreateSessionResponse,
 } from './types';
 
 let getBaseUrl: () => string = () => '';
@@ -96,7 +97,7 @@ export async function getSession(id: string): Promise<Session> {
   return res.json();
 }
 
-export async function createSession(data: CreateSessionRequest): Promise<Session> {
+export async function createSession(data: CreateSessionRequest): Promise<CreateSessionResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/sessions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -112,7 +113,7 @@ export async function createSession(data: CreateSessionRequest): Promise<Session
 export async function createRemoteSession(
   address: string,
   data: CreateSessionRequest,
-): Promise<Session> {
+): Promise<CreateSessionResponse> {
   const base = address.includes('://') ? address : `http://${address}`;
   const res = await authFetch(`${base}/api/v1/sessions`, {
     method: 'POST',

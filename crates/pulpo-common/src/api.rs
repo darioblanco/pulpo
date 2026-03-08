@@ -6,7 +6,7 @@ use crate::auth::BindMode;
 use crate::guard::{GuardConfig, GuardPreset};
 use crate::node::NodeInfo;
 use crate::peer::{PeerEntry, PeerInfo};
-use crate::session::{Provider, SessionMode};
+use crate::session::{Provider, Session, SessionMode};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
@@ -25,6 +25,14 @@ pub struct CreateSessionRequest {
     pub max_turns: Option<u32>,
     pub max_budget_usd: Option<f64>,
     pub output_format: Option<String>,
+}
+
+/// Response from session creation, includes the session and any capability warnings.
+#[derive(Debug, Serialize)]
+pub struct CreateSessionResponse {
+    pub session: Session,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1136,6 +1144,134 @@ mod tests {
         let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
         assert!(req.webhooks.is_some());
         assert_eq!(req.webhooks.as_ref().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_create_session_response_serialize_no_warnings() {
+        use crate::session::{Session, SessionStatus};
+        use chrono::Utc;
+        use uuid::Uuid;
+        let session = Session {
+            id: Uuid::nil(),
+            name: "test".into(),
+            workdir: "/tmp".into(),
+            provider: crate::session::Provider::Claude,
+            prompt: "test".into(),
+            status: SessionStatus::Running,
+            mode: SessionMode::Interactive,
+            conversation_id: None,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            waiting_for_input: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let resp = CreateSessionResponse {
+            session,
+            warnings: vec![],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"session\""));
+        assert!(!json.contains("\"warnings\""));
+    }
+
+    #[test]
+    fn test_create_session_response_serialize_with_warnings() {
+        use crate::session::{Session, SessionStatus};
+        use chrono::Utc;
+        use uuid::Uuid;
+        let session = Session {
+            id: Uuid::nil(),
+            name: "test".into(),
+            workdir: "/tmp".into(),
+            provider: crate::session::Provider::OpenCode,
+            prompt: "test".into(),
+            status: SessionStatus::Running,
+            mode: SessionMode::Interactive,
+            conversation_id: None,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            waiting_for_input: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let resp = CreateSessionResponse {
+            session,
+            warnings: vec!["opencode does not support --model; value ignored".into()],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"warnings\""));
+        assert!(json.contains("--model"));
+    }
+
+    #[test]
+    fn test_create_session_response_debug() {
+        use crate::session::{Session, SessionStatus};
+        use chrono::Utc;
+        use uuid::Uuid;
+        let session = Session {
+            id: Uuid::nil(),
+            name: "test".into(),
+            workdir: "/tmp".into(),
+            provider: crate::session::Provider::Claude,
+            prompt: "test".into(),
+            status: SessionStatus::Running,
+            mode: SessionMode::Interactive,
+            conversation_id: None,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            waiting_for_input: false,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let resp = CreateSessionResponse {
+            session,
+            warnings: vec![],
+        };
+        let debug = format!("{resp:?}");
+        assert!(debug.contains("CreateSessionResponse"));
     }
 
     #[test]

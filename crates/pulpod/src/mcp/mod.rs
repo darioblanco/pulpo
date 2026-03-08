@@ -450,7 +450,10 @@ impl PulpoMcp {
                 max_budget_usd: None,
                 output_format: None,
             };
-            self.session_manager.create_session(req).await
+            self.session_manager
+                .create_session(req)
+                .await
+                .map(|(s, _warnings)| s)
         } else {
             let n = node.as_deref().unwrap_or_default();
             let body = RemoteSpawnReq {
@@ -530,7 +533,10 @@ impl PulpoMcp {
                 max_budget_usd: None,
                 output_format: None,
             };
-            self.session_manager.create_session(req).await
+            self.session_manager
+                .create_session(req)
+                .await
+                .map(|(s, _warnings)| s)
         } else {
             let node = params.node.as_deref().unwrap_or_default();
             let body = RemoteSpawnReq {

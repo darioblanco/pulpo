@@ -291,7 +291,7 @@ mod tests {
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
-        let id = created["id"].as_str().unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
 
         let resp = server.get(&format!("/api/v1/sessions/{id}")).await;
         resp.assert_status_ok();
@@ -310,7 +310,7 @@ mod tests {
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
-        let id = created["id"].as_str().unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
 
         let resp = server.post(&format!("/api/v1/sessions/{id}/kill")).await;
         resp.assert_status(StatusCode::NO_CONTENT);
@@ -334,7 +334,7 @@ mod tests {
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
-        let id = created["id"].as_str().unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
 
         // Kill first (status → dead), then delete
         server.post(&format!("/api/v1/sessions/{id}/kill")).await;
@@ -358,7 +358,7 @@ mod tests {
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
-        let id = created["id"].as_str().unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
 
         let resp = server.delete(&format!("/api/v1/sessions/{id}")).await;
         resp.assert_status(StatusCode::CONFLICT);
@@ -435,7 +435,7 @@ mod tests {
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
-        let id = created["id"].as_str().unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
 
         let resp = server
             .get(&format!("/api/v1/sessions/{id}/output?lines=50"))
@@ -463,7 +463,7 @@ mod tests {
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
-        let id = created["id"].as_str().unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
 
         let resp = server
             .post(&format!("/api/v1/sessions/{id}/input"))
@@ -493,7 +493,7 @@ mod tests {
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
-        let id = created["id"].as_str().unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
 
         let resp = server
             .get(&format!("/api/v1/sessions/{id}/interventions"))
@@ -520,7 +520,7 @@ mod tests {
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
-        let id = created["id"].as_str().unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
 
         let resp = server.post(&format!("/api/v1/sessions/{id}/resume")).await;
         resp.assert_status(StatusCode::BAD_REQUEST);
@@ -689,7 +689,7 @@ mod tests {
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
-        let id = created["id"].as_str().unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
 
         let resp = server
             .get(&format!("/api/v1/sessions/{id}/output/download"))
@@ -798,7 +798,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let session = state.session_manager.create_session(req).await.unwrap();
+        let (session, _) = state.session_manager.create_session(req).await.unwrap();
         state
             .session_manager
             .kill_session(&session.id.to_string())
@@ -908,7 +908,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let session = state.session_manager.create_session(req).await.unwrap();
+        let (session, _) = state.session_manager.create_session(req).await.unwrap();
 
         let app = build(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -946,7 +946,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let session = state.session_manager.create_session(req).await.unwrap();
+        let (session, _) = state.session_manager.create_session(req).await.unwrap();
 
         // WebSocket upgrade should succeed for a running session
         let result = tokio_tungstenite::connect_async(format!(
@@ -983,7 +983,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let session = state.session_manager.create_session(req).await.unwrap();
+        let (session, _) = state.session_manager.create_session(req).await.unwrap();
 
         let (mut ws, _) = tokio_tungstenite::connect_async(format!(
             "ws://{addr}/api/v1/sessions/{}/stream",
@@ -1030,7 +1030,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let session = state.session_manager.create_session(req).await.unwrap();
+        let (session, _) = state.session_manager.create_session(req).await.unwrap();
 
         let (mut ws, _) = tokio_tungstenite::connect_async(format!(
             "ws://{addr}/api/v1/sessions/{}/stream",
@@ -1075,7 +1075,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let session = state.session_manager.create_session(req).await.unwrap();
+        let (session, _) = state.session_manager.create_session(req).await.unwrap();
 
         let (mut ws, _) = tokio_tungstenite::connect_async(format!(
             "ws://{addr}/api/v1/sessions/{}/stream",

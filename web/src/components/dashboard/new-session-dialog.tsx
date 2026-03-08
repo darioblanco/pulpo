@@ -20,6 +20,7 @@ import {
 import { Plus } from 'lucide-react';
 import { createSession, createRemoteSession, getInks } from '@/api/client';
 import type { InkConfig, PeerInfo, Session } from '@/api/types';
+import { getProviderCapabilities } from '@/api/types';
 
 interface NewSessionDialogProps {
   peers?: PeerInfo[];
@@ -84,13 +85,13 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         ...(model.trim() ? { model: model.trim() } : {}),
       };
 
-      let session: Session;
+      let resp;
       if (targetNode === 'local') {
-        session = await createSession(data);
+        resp = await createSession(data);
       } else {
         const peer = peers.find((p) => p.name === targetNode);
         if (!peer) return;
-        session = await createRemoteSession(peer.address, data);
+        resp = await createRemoteSession(peer.address, data);
       }
 
       setName('');
@@ -99,7 +100,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
       setSelectedInk('');
       setModel('');
       setOpen(false);
-      onCreated(session);
+      onCreated(resp.session);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create session');
     } finally {
@@ -108,6 +109,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
   }
 
   const inkNames = Object.keys(inks).sort();
+  const caps = getProviderCapabilities(provider);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -177,13 +179,14 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
                 </Select>
               </div>
 
-              <div>
+              <div className={caps.model ? '' : 'opacity-50'}>
                 <Label htmlFor="model-override">Model</Label>
                 <Input
                   id="model-override"
-                  placeholder="Default"
+                  placeholder={caps.model ? 'Default' : 'Not supported'}
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
+                  disabled={!caps.model}
                 />
               </div>
             </div>
@@ -199,6 +202,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
                 <SelectContent>
                   <SelectItem value="claude">Claude</SelectItem>
                   <SelectItem value="codex">Codex</SelectItem>
+                  <SelectItem value="open_code">OpenCode</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -216,9 +220,13 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
               </Select>
             </div>
 
-            <div>
+            <div className={caps.guard_preset ? '' : 'opacity-50'}>
               <Label htmlFor="guard-preset">Guards</Label>
-              <Select value={guardPreset} onValueChange={setGuardPreset}>
+              <Select
+                value={guardPreset}
+                onValueChange={setGuardPreset}
+                disabled={!caps.guard_preset}
+              >
                 <SelectTrigger id="guard-preset">
                   <SelectValue />
                 </SelectTrigger>

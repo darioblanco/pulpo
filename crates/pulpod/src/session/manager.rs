@@ -13,6 +13,7 @@ use pulpo_common::guard::GuardConfig;
 
 use crate::backend::Backend;
 use crate::config::InkConfig;
+use crate::guard::check_capability_warnings;
 use crate::store::Store;
 
 #[derive(Clone)]
@@ -103,7 +104,10 @@ impl SessionManager {
             .unwrap_or_else(|| self.backend.session_id(&session.name))
     }
 
-    pub async fn create_session(&self, req: CreateSessionRequest) -> Result<Session> {
+    pub async fn create_session(
+        &self,
+        req: CreateSessionRequest,
+    ) -> Result<(Session, Vec<String>)> {
         let mut req = self.resolve_ink(req)?;
         self.apply_guardrail_defaults(&mut req);
         validate_workdir(&req.workdir)?;
@@ -136,6 +140,7 @@ impl SessionManager {
             req.output_format.as_deref(),
         );
         spawn_params.worktree = Some(name.clone());
+        let warnings = check_capability_warnings(provider, &spawn_params);
         let command = build_command(provider, mode, &spawn_params);
 
         let now = Utc::now();
@@ -196,7 +201,7 @@ impl SessionManager {
         session.status = SessionStatus::Running;
         session.updated_at = Utc::now();
         self.emit_event(&session, Some(SessionStatus::Creating));
-        Ok(session)
+        Ok((session, warnings))
     }
 
     fn resolve_ink(&self, mut req: CreateSessionRequest) -> Result<CreateSessionRequest> {
@@ -643,7 +648,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_session_defaults() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        let session = mgr.create_session(make_req("Fix the bug")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("Fix the bug")).await.unwrap();
 
         // Name is auto-generated (adjective-noun) when not provided
         assert_eq!(session.name.split('-').count(), 2);
@@ -668,7 +673,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_session_calls_setup_logging() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        let _session = mgr.create_session(make_req("test")).await.unwrap();
+        let (_session, _) = mgr.create_session(make_req("test")).await.unwrap();
 
         let calls = backend.calls.lock().unwrap();
         assert!(
@@ -698,7 +703,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let session = mgr.create_session(req).await.unwrap();
+        let (session, _) = mgr.create_session(req).await.unwrap();
         assert_eq!(session.name, "custom-name");
     }
 
@@ -722,7 +727,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let session = mgr.create_session(req).await.unwrap();
+        let (session, _) = mgr.create_session(req).await.unwrap();
         assert_eq!(session.mode, SessionMode::Autonomous);
         // Default guard is Standard — uses --allowedTools, not --dangerously-skip-permissions
         assert!(session.guard_config.is_some());
@@ -758,7 +763,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let session = mgr.create_session(req).await.unwrap();
+        let (session, _) = mgr.create_session(req).await.unwrap();
         assert_eq!(session.mode, SessionMode::Autonomous);
 
         let calls = backend.calls.lock().unwrap();
@@ -772,7 +777,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_session_stores_guard_config() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
 
         let fetched = mgr
             .get_session(&session.id.to_string())
@@ -805,7 +810,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let session = mgr.create_session(req).await.unwrap();
+        let (session, _) = mgr.create_session(req).await.unwrap();
         let gc = session.guard_config.unwrap();
         assert_eq!(gc.preset, pulpo_common::guard::GuardPreset::Strict);
     }
@@ -833,7 +838,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let session = mgr.create_session(req).await.unwrap();
+        let (session, _) = mgr.create_session(req).await.unwrap();
         // guard_config takes precedence over guard_preset
         let gc = session.guard_config.unwrap();
         assert_eq!(gc.preset, pulpo_common::guard::GuardPreset::Unrestricted);
@@ -880,7 +885,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_session_alive() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
 
         let fetched = mgr
             .get_session(&session.id.to_string())
@@ -893,7 +898,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_session_dead_lazy_update() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
 
         let fetched = mgr
             .get_session(&session.id.to_string())
@@ -913,7 +918,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_sessions_with_mixed_status() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let s1 = mgr.create_session(make_req("first")).await.unwrap();
+        let (s1, _) = mgr.create_session(make_req("first")).await.unwrap();
 
         let sessions = mgr.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
@@ -925,7 +930,7 @@ mod tests {
     #[tokio::test]
     async fn test_kill_session() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
 
         mgr.kill_session(&session.id.to_string()).await.unwrap();
 
@@ -953,7 +958,7 @@ mod tests {
     #[tokio::test]
     async fn test_kill_session_backend_error() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_kill_error()).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
 
         let result = mgr.kill_session(&session.id.to_string()).await;
         assert!(result.is_err());
@@ -1105,7 +1110,7 @@ mod tests {
     #[tokio::test]
     async fn test_resume_stale_session() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
 
         // get_session marks it Stale since is_alive returns false
         let fetched = mgr
@@ -1132,7 +1137,7 @@ mod tests {
     #[tokio::test]
     async fn test_resume_stale_session_recreates_when_backend_dead() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
 
         // get_session marks it Stale since is_alive returns false
         let _ = mgr
@@ -1157,7 +1162,7 @@ mod tests {
     #[tokio::test]
     async fn test_resume_non_stale_session_fails() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
 
         // Session is Running, not Stale
         let result = mgr.resume_session(&session.id.to_string()).await;
@@ -1176,7 +1181,7 @@ mod tests {
     #[tokio::test]
     async fn test_resume_with_conversation_id() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
 
         // Set conversation_id
@@ -1243,7 +1248,7 @@ mod tests {
     async fn test_resume_backend_failure() {
         let backend = MockBackend::new().with_alive(false);
         let (mgr, backend_ref, _pool) = test_manager(backend).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
 
         // Mark stale
@@ -1525,7 +1530,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_sessions_filtered() {
         let (mgr, _, _) = test_manager(MockBackend::new()).await;
-        let _ = mgr.create_session(make_req("filter-test")).await.unwrap();
+        let _ = mgr.create_session(make_req("filter-test")).await.unwrap().0;
 
         let query = pulpo_common::api::ListSessionsQuery {
             status: Some("running".into()),
@@ -1538,7 +1543,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_sessions_filtered_no_match() {
         let (mgr, _, _) = test_manager(MockBackend::new()).await;
-        let _ = mgr.create_session(make_req("filter-test")).await.unwrap();
+        let _ = mgr.create_session(make_req("filter-test")).await.unwrap().0;
 
         let query = pulpo_common::api::ListSessionsQuery {
             status: Some("completed".into()),
@@ -1551,7 +1556,11 @@ mod tests {
     #[tokio::test]
     async fn test_list_sessions_filtered_detects_stale() {
         let (mgr, _, _) = test_manager(MockBackend::new().with_alive(false)).await;
-        let _ = mgr.create_session(make_req("stale-filter")).await.unwrap();
+        let _ = mgr
+            .create_session(make_req("stale-filter"))
+            .await
+            .unwrap()
+            .0;
 
         let query = pulpo_common::api::ListSessionsQuery::default();
         let sessions = mgr.list_sessions_filtered(&query).await.unwrap();
@@ -1919,7 +1928,7 @@ mod tests {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let mgr = mgr.with_guardrail_defaults(Some(50), Some(10.0), Some("stream-json".into()));
 
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         assert_eq!(session.max_turns, Some(50));
         assert_eq!(session.max_budget_usd, Some(10.0));
         assert_eq!(session.output_format, Some("stream-json".into()));
@@ -1936,7 +1945,7 @@ mod tests {
             output_format: Some("json".into()),
             ..make_req("test")
         };
-        let session = mgr.create_session(req).await.unwrap();
+        let (session, _) = mgr.create_session(req).await.unwrap();
         assert_eq!(session.max_turns, Some(5));
         assert_eq!(session.max_budget_usd, Some(1.0));
         assert_eq!(session.output_format, Some("json".into()));
@@ -1976,7 +1985,7 @@ mod tests {
             ink: Some("strict-agent".into()),
             ..make_req("test")
         };
-        let session = mgr.create_session(req).await.unwrap();
+        let (session, _) = mgr.create_session(req).await.unwrap();
         // Ink values win over global defaults
         assert_eq!(session.max_turns, Some(10));
         assert_eq!(session.max_budget_usd, Some(2.0));
@@ -1987,7 +1996,7 @@ mod tests {
     async fn test_global_guardrail_defaults_none_when_unset() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         // No guardrail defaults set
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         assert!(session.max_turns.is_none());
         assert!(session.max_budget_usd.is_none());
         assert!(session.output_format.is_none());
@@ -2127,7 +2136,7 @@ mod tests {
         let (tx, mut rx) = broadcast::channel(16);
         let mgr = mgr.with_event_tx(tx, "n".into());
 
-        mgr.create_session(make_req("do it")).await.unwrap();
+        let _ = mgr.create_session(make_req("do it")).await.unwrap();
         let event = unwrap_session_event(rx.recv().await.unwrap());
         assert_eq!(event.status, "running");
         assert_eq!(event.previous_status, Some("creating".into()));
@@ -2139,7 +2148,7 @@ mod tests {
         let (tx, mut rx) = broadcast::channel(16);
         let mgr = mgr.with_event_tx(tx, "n".into());
 
-        let session = mgr.create_session(make_req("work")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("work")).await.unwrap();
         // Drain the create event
         let _ = rx.recv().await.unwrap();
 
@@ -2163,7 +2172,7 @@ mod tests {
         };
         // create_session will fail because is_alive returns false, but we need it in DB.
         // Actually create_session calls backend.create_session (not is_alive), so it succeeds.
-        let session = mgr.create_session(req).await.unwrap();
+        let (session, _) = mgr.create_session(req).await.unwrap();
         // Drain create event
         let _ = rx.recv().await.unwrap();
 
@@ -2186,7 +2195,7 @@ mod tests {
         let (tx, mut rx) = broadcast::channel(16);
         let mgr = mgr.with_event_tx(tx, "n".into());
 
-        let session = mgr.create_session(make_req("work")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("work")).await.unwrap();
         let _ = rx.recv().await.unwrap(); // drain create event
 
         // Mark stale via get_session
@@ -2212,7 +2221,7 @@ mod tests {
         drop(rx);
 
         // emit_event should not panic even with no subscribers
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         // Just verify the session was created successfully (emit silently failed)
         assert_eq!(session.status, SessionStatus::Running);
     }
@@ -2220,7 +2229,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_dead_session() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
 
         // Kill first, then delete
@@ -2235,7 +2244,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_completed_session() {
         let (mgr, _, pool) = test_manager(MockBackend::new()).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
 
         // Manually set status to Completed
@@ -2252,7 +2261,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_stale_session() {
         let (mgr, _, pool) = test_manager(MockBackend::new()).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
 
         // Manually set status to Stale
@@ -2269,7 +2278,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_running_session_rejected() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
 
         let result = mgr.delete_session(&id).await;

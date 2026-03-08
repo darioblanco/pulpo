@@ -52,7 +52,7 @@ pub enum Commands {
         #[arg(long)]
         name: Option<String>,
 
-        /// Agent provider (claude, codex)
+        /// Agent provider (claude, codex, opencode)
         #[arg(long, default_value = "claude")]
         provider: String,
 

@@ -6,7 +6,8 @@ use axum::{
     http::StatusCode,
 };
 use pulpo_common::api::{
-    CreateSessionRequest, ErrorResponse, ListSessionsQuery, OutputQuery, SendInputRequest,
+    CreateSessionRequest, CreateSessionResponse, ErrorResponse, ListSessionsQuery, OutputQuery,
+    SendInputRequest,
 };
 use pulpo_common::session::{Session, SessionStatus};
 
@@ -66,13 +67,16 @@ pub async fn get(
 pub async fn create(
     State(state): State<Arc<super::AppState>>,
     Json(req): Json<CreateSessionRequest>,
-) -> Result<(StatusCode, Json<Session>), ApiError> {
-    let session = state
+) -> Result<(StatusCode, Json<CreateSessionResponse>), ApiError> {
+    let (session, warnings) = state
         .session_manager
         .create_session(req)
         .await
         .map_err(|e| internal_error(&e.to_string()))?;
-    Ok((StatusCode::CREATED, Json(session)))
+    Ok((
+        StatusCode::CREATED,
+        Json(CreateSessionResponse { session, warnings }),
+    ))
 }
 
 pub async fn kill(
@@ -415,9 +419,9 @@ mod tests {
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_ok());
-        let (status, Json(session)) = result.unwrap();
+        let (status, Json(resp)) = result.unwrap();
         assert_eq!(status, StatusCode::CREATED);
-        assert_eq!(session.name, "test");
+        assert_eq!(resp.session.name, "test");
     }
 
     #[tokio::test]
@@ -449,7 +453,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
         let result = kill(State(state), Path(session.id.to_string())).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
@@ -475,7 +480,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         let query = OutputQuery { lines: Some(50) };
         let result = output(State(state), Path(session.id.to_string()), Query(query)).await;
@@ -514,7 +520,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         let input_req = SendInputRequest {
             text: "hello".into(),
@@ -662,7 +669,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         // get() will find the Running session, call is_alive → Err → propagates as 500
         let result = get(State(state), Path(session.id.to_string())).await;
@@ -691,7 +699,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         // kill() finds session, calls backend.kill_session → Err("backend exploded")
         // Error message doesn't contain "not found" → 500
@@ -777,7 +786,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         // output() calls get_session (is_alive fails → Err) → 500
         let query = OutputQuery { lines: Some(50) };
@@ -807,7 +817,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         // input() calls get_session (is_alive fails → Err) → 500
         let input_req = SendInputRequest {
@@ -872,7 +883,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         let query = OutputQuery { lines: Some(50) };
         // When capture fails, it falls back to the log file (empty since no log exists)
@@ -902,7 +914,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         let input_req = SendInputRequest {
             text: "hello".into(),
@@ -996,7 +1009,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         let result = download_output(State(state), Path(session.id.to_string())).await;
         assert!(result.is_ok());
@@ -1075,7 +1089,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         // Kill the session so it becomes Dead
         let _ = kill(State(state.clone()), Path(session.id.to_string())).await;
@@ -1115,7 +1130,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         // download_output calls get_session → is_alive fails → 500
         let result = download_output(State(state), Path(session.id.to_string())).await;
@@ -1144,7 +1160,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
         let Json(events) = list_interventions(State(state), Path(session.id.to_string()))
             .await
             .unwrap();
@@ -1171,7 +1188,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         // Insert intervention events via store
         state
@@ -1238,7 +1256,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         // Session is Running, not Stale
         let result = resume(State(state), Path(session.id.to_string())).await;
@@ -1333,7 +1352,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         // Get session to trigger stale detection
         let _ = get(State(state.clone()), Path(session.id.to_string())).await;
@@ -1448,7 +1468,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         // Mark as stale via get
         let _ = get(State(state.clone()), Path(session.id.to_string())).await;
@@ -1480,7 +1501,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         // Kill first, then delete
         let _ = kill(State(state.clone()), Path(session.id.to_string())).await;
@@ -1509,7 +1531,8 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let (_, Json(session)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
 
         let result = delete(State(state), Path(session.id.to_string())).await;
         assert!(result.is_err());

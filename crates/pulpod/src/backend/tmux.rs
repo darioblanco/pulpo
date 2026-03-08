@@ -108,7 +108,8 @@ pub fn check_provider_binary(provider: &str) -> anyhow::Result<()> {
         _ => anyhow::bail!(
             "{provider} is not installed. Install it before spawning sessions.\n\
              Claude: npm install -g @anthropic-ai/claude-code\n\
-             Codex: npm install -g @openai/codex"
+             Codex: npm install -g @openai/codex\n\
+             OpenCode: go install github.com/opencode-ai/opencode@latest"
         ),
     }
 }

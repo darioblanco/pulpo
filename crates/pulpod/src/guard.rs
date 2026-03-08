@@ -39,6 +39,103 @@ pub fn is_unrestricted(guards: &GuardConfig) -> bool {
     guards.preset == GuardPreset::Unrestricted
 }
 
+/// Capabilities that a provider supports for `SpawnParams` fields.
+#[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct ProviderCapabilities {
+    pub model: bool,
+    pub system_prompt: bool,
+    pub allowed_tools: bool,
+    pub max_turns: bool,
+    pub max_budget_usd: bool,
+    pub output_format: bool,
+    pub worktree: bool,
+    pub guard_preset: bool,
+    pub resume: bool,
+}
+
+/// Return the capability set for a given provider.
+#[must_use]
+pub const fn provider_capabilities(provider: Provider) -> ProviderCapabilities {
+    match provider {
+        Provider::Claude => ProviderCapabilities {
+            model: true,
+            system_prompt: true,
+            allowed_tools: true,
+            max_turns: true,
+            max_budget_usd: true,
+            output_format: true,
+            worktree: true,
+            guard_preset: true,
+            resume: true,
+        },
+        Provider::Codex => ProviderCapabilities {
+            model: true,
+            system_prompt: false,
+            allowed_tools: false,
+            max_turns: false,
+            max_budget_usd: false,
+            output_format: false,
+            worktree: false,
+            guard_preset: false,
+            resume: true,
+        },
+        Provider::OpenCode => ProviderCapabilities {
+            model: false,
+            system_prompt: false,
+            allowed_tools: false,
+            max_turns: false,
+            max_budget_usd: false,
+            output_format: true,
+            worktree: false,
+            guard_preset: false,
+            resume: false,
+        },
+    }
+}
+
+/// Check which requested params are unsupported by the provider and return warnings.
+#[must_use]
+pub fn check_capability_warnings(provider: Provider, params: &SpawnParams) -> Vec<String> {
+    let caps = provider_capabilities(provider);
+    let name = provider.to_string();
+    let mut warnings = Vec::new();
+
+    if !caps.model && params.model.is_some() {
+        warnings.push(format!("{name} does not support --model; value ignored"));
+    }
+    if !caps.system_prompt && params.system_prompt.is_some() {
+        warnings.push(format!(
+            "{name} does not support --system-prompt; value ignored"
+        ));
+    }
+    if !caps.allowed_tools && params.explicit_tools.is_some() {
+        warnings.push(format!(
+            "{name} does not support --allowed-tools; value ignored"
+        ));
+    }
+    if !caps.max_turns && params.max_turns.is_some() {
+        warnings.push(format!(
+            "{name} does not support --max-turns; value ignored"
+        ));
+    }
+    if !caps.max_budget_usd && params.max_budget_usd.is_some() {
+        warnings.push(format!(
+            "{name} does not support --max-budget-usd; value ignored"
+        ));
+    }
+    if !caps.output_format && params.output_format.is_some() {
+        warnings.push(format!(
+            "{name} does not support --output-format; value ignored"
+        ));
+    }
+    if !caps.worktree && params.worktree.is_some() {
+        warnings.push(format!("{name} does not support --worktree; value ignored"));
+    }
+
+    warnings
+}
+
 /// Build flags for the given provider and session mode.
 pub fn build_flags(provider: Provider, mode: SessionMode, params: &SpawnParams) -> Vec<String> {
     match (provider, mode) {
@@ -46,6 +143,8 @@ pub fn build_flags(provider: Provider, mode: SessionMode, params: &SpawnParams) 
         (Provider::Claude, SessionMode::Interactive) => build_claude_interactive_flags(params),
         (Provider::Codex, SessionMode::Autonomous) => build_codex_flags(params),
         (Provider::Codex, SessionMode::Interactive) => build_codex_interactive_flags(params),
+        (Provider::OpenCode, SessionMode::Autonomous) => build_opencode_flags(params),
+        (Provider::OpenCode, SessionMode::Interactive) => build_opencode_interactive_flags(params),
     }
 }
 
@@ -195,6 +294,30 @@ pub fn build_codex_interactive_flags(params: &SpawnParams) -> Vec<String> {
     if let Some(m) = &params.model {
         flags.push("--model".into());
         flags.push(m.clone());
+    }
+    flags
+}
+
+// -- OpenCode flag builders --
+
+/// Build flags for `OpenCode` autonomous mode (`-p` for prompt).
+pub fn build_opencode_flags(params: &SpawnParams) -> Vec<String> {
+    let mut flags = vec!["-p".into(), shell_escape(&params.prompt)];
+    if let Some(fmt) = &params.output_format {
+        flags.push("-f".into());
+        flags.push(fmt.clone());
+    }
+    flags
+}
+
+/// Build flags for `OpenCode` interactive mode (no `-p`, just launch).
+/// `OpenCode` doesn't support passing a prompt in interactive mode,
+/// so we pass only the output format if set.
+pub fn build_opencode_interactive_flags(params: &SpawnParams) -> Vec<String> {
+    let mut flags = Vec::new();
+    if let Some(fmt) = &params.output_format {
+        flags.push("-f".into());
+        flags.push(fmt.clone());
     }
     flags
 }
@@ -757,5 +880,249 @@ mod tests {
         assert_eq!(flags[0], "resume");
         assert_eq!(flags[1], "conv-codex-3");
         assert_eq!(flags.len(), 2);
+    }
+
+    // -- OpenCode tests --
+
+    #[test]
+    fn test_opencode_autonomous_flags() {
+        let p = params("Fix the bug", standard_guards());
+        let flags = build_opencode_flags(&p);
+        assert_eq!(flags[0], "-p");
+        assert_eq!(flags[1], "'Fix the bug'");
+        assert_eq!(flags.len(), 2);
+    }
+
+    #[test]
+    fn test_opencode_autonomous_with_output_format() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            output_format: Some("json".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_opencode_flags(&p);
+        assert!(flags.contains(&"-f".into()));
+        assert!(flags.contains(&"json".into()));
+    }
+
+    #[test]
+    fn test_opencode_interactive_flags_empty() {
+        let p = params("test", standard_guards());
+        let flags = build_opencode_interactive_flags(&p);
+        assert!(flags.is_empty());
+    }
+
+    #[test]
+    fn test_opencode_interactive_with_output_format() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            output_format: Some("text".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_opencode_interactive_flags(&p);
+        assert_eq!(flags, vec!["-f", "text"]);
+    }
+
+    #[test]
+    fn test_opencode_ignores_model() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            model: Some("gpt-4".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_opencode_flags(&p);
+        assert!(!flags.contains(&"--model".into()));
+        let iflags = build_opencode_interactive_flags(&p);
+        assert!(!iflags.contains(&"--model".into()));
+    }
+
+    #[test]
+    fn test_opencode_ignores_system_prompt() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            system_prompt: Some("Be concise".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_opencode_flags(&p);
+        assert!(!flags.contains(&"--append-system-prompt".into()));
+    }
+
+    #[test]
+    fn test_opencode_ignores_worktree() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            worktree: Some("my-session".into()),
+            ..SpawnParams::default()
+        };
+        let flags = build_opencode_flags(&p);
+        assert!(!flags.contains(&"--worktree".into()));
+    }
+
+    #[test]
+    fn test_build_flags_opencode_autonomous() {
+        let p = params("test", standard_guards());
+        let flags = build_flags(Provider::OpenCode, SessionMode::Autonomous, &p);
+        assert!(flags.contains(&"-p".into()));
+    }
+
+    #[test]
+    fn test_build_flags_opencode_interactive() {
+        let p = params("test", standard_guards());
+        let flags = build_flags(Provider::OpenCode, SessionMode::Interactive, &p);
+        assert!(flags.is_empty());
+    }
+
+    // -- Provider capabilities tests --
+
+    #[test]
+    fn test_provider_capabilities_claude() {
+        let caps = provider_capabilities(Provider::Claude);
+        assert!(caps.model);
+        assert!(caps.system_prompt);
+        assert!(caps.allowed_tools);
+        assert!(caps.max_turns);
+        assert!(caps.max_budget_usd);
+        assert!(caps.output_format);
+        assert!(caps.worktree);
+        assert!(caps.guard_preset);
+        assert!(caps.resume);
+    }
+
+    #[test]
+    fn test_provider_capabilities_codex() {
+        let caps = provider_capabilities(Provider::Codex);
+        assert!(caps.model);
+        assert!(!caps.system_prompt);
+        assert!(!caps.allowed_tools);
+        assert!(!caps.max_turns);
+        assert!(!caps.max_budget_usd);
+        assert!(!caps.output_format);
+        assert!(!caps.worktree);
+        assert!(!caps.guard_preset);
+        assert!(caps.resume);
+    }
+
+    #[test]
+    fn test_provider_capabilities_opencode() {
+        let caps = provider_capabilities(Provider::OpenCode);
+        assert!(!caps.model);
+        assert!(!caps.system_prompt);
+        assert!(!caps.allowed_tools);
+        assert!(!caps.max_turns);
+        assert!(!caps.max_budget_usd);
+        assert!(caps.output_format);
+        assert!(!caps.worktree);
+        assert!(!caps.guard_preset);
+        assert!(!caps.resume);
+    }
+
+    #[test]
+    fn test_provider_capabilities_debug_clone() {
+        let caps = provider_capabilities(Provider::Claude);
+        #[allow(clippy::redundant_clone)]
+        let caps2 = caps.clone();
+        let debug = format!("{caps2:?}");
+        assert!(debug.contains("model: true"));
+    }
+
+    // -- Capability warnings tests --
+
+    #[test]
+    fn test_check_capability_warnings_claude_no_warnings() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            model: Some("opus".into()),
+            system_prompt: Some("Be concise".into()),
+            max_turns: Some(10),
+            max_budget_usd: Some(5.0),
+            output_format: Some("json".into()),
+            worktree: Some("ws".into()),
+            ..SpawnParams::default()
+        };
+        let warnings = check_capability_warnings(Provider::Claude, &p);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_check_capability_warnings_codex_model_ok() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            model: Some("gpt-4".into()),
+            ..SpawnParams::default()
+        };
+        let warnings = check_capability_warnings(Provider::Codex, &p);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_check_capability_warnings_codex_unsupported() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            system_prompt: Some("Be concise".into()),
+            max_turns: Some(10),
+            max_budget_usd: Some(5.0),
+            output_format: Some("json".into()),
+            worktree: Some("ws".into()),
+            explicit_tools: Some(vec!["Read".into()]),
+            ..SpawnParams::default()
+        };
+        let warnings = check_capability_warnings(Provider::Codex, &p);
+        assert_eq!(warnings.len(), 6);
+        assert!(warnings.iter().any(|w| w.contains("--system-prompt")));
+        assert!(warnings.iter().any(|w| w.contains("--max-turns")));
+        assert!(warnings.iter().any(|w| w.contains("--max-budget-usd")));
+        assert!(warnings.iter().any(|w| w.contains("--output-format")));
+        assert!(warnings.iter().any(|w| w.contains("--allowed-tools")));
+        assert!(warnings.iter().any(|w| w.contains("--worktree")));
+    }
+
+    #[test]
+    fn test_check_capability_warnings_opencode_all() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            model: Some("gpt-4".into()),
+            system_prompt: Some("Be concise".into()),
+            max_turns: Some(10),
+            max_budget_usd: Some(5.0),
+            worktree: Some("ws".into()),
+            explicit_tools: Some(vec!["Read".into()]),
+            ..SpawnParams::default()
+        };
+        let warnings = check_capability_warnings(Provider::OpenCode, &p);
+        assert_eq!(warnings.len(), 6);
+        assert!(warnings.iter().any(|w| w.contains("--model")));
+        assert!(warnings.iter().any(|w| w.contains("--system-prompt")));
+        assert!(warnings.iter().any(|w| w.contains("--max-turns")));
+        assert!(warnings.iter().any(|w| w.contains("--max-budget-usd")));
+        assert!(warnings.iter().any(|w| w.contains("--worktree")));
+        assert!(warnings.iter().any(|w| w.contains("--allowed-tools")));
+    }
+
+    #[test]
+    fn test_check_capability_warnings_opencode_output_format_ok() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: standard_guards(),
+            output_format: Some("json".into()),
+            ..SpawnParams::default()
+        };
+        let warnings = check_capability_warnings(Provider::OpenCode, &p);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_check_capability_warnings_no_params_no_warnings() {
+        let p = params("test", standard_guards());
+        let warnings = check_capability_warnings(Provider::OpenCode, &p);
+        assert!(warnings.is_empty());
     }
 }

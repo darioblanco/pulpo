@@ -249,7 +249,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
         };
-        let session = state.session_manager.create_session(req).await.unwrap();
+        let (session, _) = state.session_manager.create_session(req).await.unwrap();
         // DeadBackend's is_alive returns false, so get_session marks it Stale
         let fetched = state
             .session_manager

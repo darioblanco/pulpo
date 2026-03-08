@@ -15,6 +15,7 @@ use crate::guard::GuardConfig;
 pub enum Provider {
     Claude,
     Codex,
+    OpenCode,
 }
 
 impl fmt::Display for Provider {
@@ -22,6 +23,7 @@ impl fmt::Display for Provider {
         match self {
             Self::Claude => write!(f, "claude"),
             Self::Codex => write!(f, "codex"),
+            Self::OpenCode => write!(f, "opencode"),
         }
     }
 }
@@ -33,6 +35,7 @@ impl FromStr for Provider {
         match s {
             "claude" => Ok(Self::Claude),
             "codex" => Ok(Self::Codex),
+            "opencode" | "open_code" => Ok(Self::OpenCode),
             other => Err(format!("unknown provider: {other}")),
         }
     }
@@ -183,6 +186,10 @@ mod tests {
             serde_json::to_string(&Provider::Codex).unwrap(),
             "\"codex\""
         );
+        assert_eq!(
+            serde_json::to_string(&Provider::OpenCode).unwrap(),
+            "\"open_code\""
+        );
     }
 
     #[test]
@@ -195,6 +202,10 @@ mod tests {
             serde_json::from_str::<Provider>("\"codex\"").unwrap(),
             Provider::Codex
         );
+        assert_eq!(
+            serde_json::from_str::<Provider>("\"open_code\"").unwrap(),
+            Provider::OpenCode
+        );
     }
 
     #[test]
@@ -206,12 +217,15 @@ mod tests {
     fn test_provider_display() {
         assert_eq!(Provider::Claude.to_string(), "claude");
         assert_eq!(Provider::Codex.to_string(), "codex");
+        assert_eq!(Provider::OpenCode.to_string(), "opencode");
     }
 
     #[test]
     fn test_provider_from_str() {
         assert_eq!("claude".parse::<Provider>().unwrap(), Provider::Claude);
         assert_eq!("codex".parse::<Provider>().unwrap(), Provider::Codex);
+        assert_eq!("opencode".parse::<Provider>().unwrap(), Provider::OpenCode);
+        assert_eq!("open_code".parse::<Provider>().unwrap(), Provider::OpenCode);
     }
 
     #[test]

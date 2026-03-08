@@ -75,9 +75,8 @@ describe('NewSessionDialog', () => {
   });
 
   it('calls createSession for local target on submit', async () => {
-    mockCreateSession.mockResolvedValue({ ...defaultSession, prompt: 'Fix the bug' });
     const sessionResult = { ...defaultSession, prompt: 'Fix the bug', workdir: '/home/user/repo' };
-    mockCreateSession.mockResolvedValue(sessionResult);
+    mockCreateSession.mockResolvedValue({ session: sessionResult });
     const onCreated = vi.fn();
     render(<NewSessionDialog onCreated={onCreated} />);
     const user = await openDialog();
@@ -101,7 +100,7 @@ describe('NewSessionDialog', () => {
   });
 
   it('sends name when provided', async () => {
-    mockCreateSession.mockResolvedValue({ ...defaultSession, name: 'my-task' });
+    mockCreateSession.mockResolvedValue({ session: { ...defaultSession, name: 'my-task' } });
     render(<NewSessionDialog onCreated={vi.fn()} />);
     const user = await openDialog();
 
@@ -158,9 +157,7 @@ describe('NewSessionDialog', () => {
 
   it('calls createRemoteSession for remote target', async () => {
     mockCreateRemoteSession.mockResolvedValue({
-      ...defaultSession,
-      id: '2',
-      name: 'remote-test',
+      session: { ...defaultSession, id: '2', name: 'remote-test' },
     });
     const peers: PeerInfo[] = [
       {
@@ -314,10 +311,7 @@ describe('NewSessionDialog', () => {
       },
     });
     mockCreateSession.mockResolvedValue({
-      ...defaultSession,
-      ink: 'reviewer',
-      provider: 'codex',
-      model: 'gpt-4',
+      session: { ...defaultSession, ink: 'reviewer', provider: 'codex', model: 'gpt-4' },
     });
     render(<NewSessionDialog onCreated={vi.fn()} />);
     const user = await openDialog();
@@ -374,7 +368,7 @@ describe('NewSessionDialog', () => {
         },
       },
     });
-    mockCreateSession.mockResolvedValue({ ...defaultSession, model: 'opus' });
+    mockCreateSession.mockResolvedValue({ session: { ...defaultSession, model: 'opus' } });
     render(<NewSessionDialog onCreated={vi.fn()} />);
     const user = await openDialog();
 
