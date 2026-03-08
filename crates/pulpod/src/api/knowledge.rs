@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use pulpo_common::api::{
-    ErrorResponse, KnowledgeContextQuery, KnowledgeResponse, ListKnowledgeQuery,
+    ErrorResponse, KnowledgeContextQuery, KnowledgeDeleteResponse, KnowledgeItemResponse,
+    KnowledgePushResponse, KnowledgeResponse, ListKnowledgeQuery, UpdateKnowledgeRequest,
 };
 
 use super::AppState;
+
+type ApiError = (StatusCode, Json<ErrorResponse>);
 
 pub async fn list(
     State(state): State<Arc<AppState>>,
@@ -50,6 +54,147 @@ pub async fn context(
         })?;
 
     Ok(Json(KnowledgeResponse { knowledge }))
+}
+
+pub async fn get(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<KnowledgeItemResponse>, ApiError> {
+    let Some(repo) = state.session_manager.knowledge_repo() else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "knowledge repo not configured".into(),
+            }),
+        ));
+    };
+    let item = repo.get_by_id(&id).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    item.map_or_else(
+        || {
+            Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("knowledge item not found: {id}"),
+                }),
+            ))
+        },
+        |knowledge| Ok(Json(KnowledgeItemResponse { knowledge })),
+    )
+}
+
+pub async fn update(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateKnowledgeRequest>,
+) -> Result<Json<KnowledgeItemResponse>, ApiError> {
+    let Some(repo) = state.session_manager.knowledge_repo() else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "knowledge repo not configured".into(),
+            }),
+        ));
+    };
+    let updated = repo
+        .update(
+            &id,
+            body.title.as_deref(),
+            body.body.as_deref(),
+            body.tags.as_deref(),
+            body.relevance,
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    if !updated {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("knowledge item not found: {id}"),
+            }),
+        ));
+    }
+    // Re-read the updated item
+    let item = repo.get_by_id(&id).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    item.map_or_else(
+        || {
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "item deleted after update".into(),
+                }),
+            ))
+        },
+        |knowledge| Ok(Json(KnowledgeItemResponse { knowledge })),
+    )
+}
+
+pub async fn delete(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<KnowledgeDeleteResponse>, ApiError> {
+    let Some(repo) = state.session_manager.knowledge_repo() else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "knowledge repo not configured".into(),
+            }),
+        ));
+    };
+    let deleted = repo.delete(&id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(KnowledgeDeleteResponse { deleted }))
+}
+
+pub async fn push(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<KnowledgePushResponse>, ApiError> {
+    let Some(repo) = state.session_manager.knowledge_repo() else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "knowledge repo not configured".into(),
+            }),
+        ));
+    };
+    match repo.push().await {
+        Ok(()) => Ok(Json(KnowledgePushResponse {
+            pushed: true,
+            message: "pushed to remote".into(),
+        })),
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -131,10 +276,15 @@ mod tests {
 
     fn test_router(state: Arc<AppState>) -> TestServer {
         use axum::Router;
-        use axum::routing::get;
+        use axum::routing::{self, post};
         let app = Router::new()
-            .route("/api/v1/knowledge", get(list))
-            .route("/api/v1/knowledge/context", get(context))
+            .route("/api/v1/knowledge", routing::get(list))
+            .route("/api/v1/knowledge/context", routing::get(context))
+            .route("/api/v1/knowledge/push", post(push))
+            .route(
+                "/api/v1/knowledge/{id}",
+                routing::get(get).put(update).delete(delete),
+            )
             .with_state(state);
         TestServer::new(app).unwrap()
     }
@@ -361,6 +511,256 @@ mod tests {
         resp.assert_status_ok();
         let body: KnowledgeResponse = resp.json();
         assert!(body.knowledge.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_item() {
+        let (state, repo) = test_state().await;
+        let k = make_knowledge("target", Some("/repo"), None);
+        let id = k.id.to_string();
+        repo.save(&k).await.unwrap();
+
+        let server = test_router(state);
+        let resp = server.get(&format!("/api/v1/knowledge/{id}")).await;
+        resp.assert_status_ok();
+        let body: KnowledgeItemResponse = resp.json();
+        assert_eq!(body.knowledge.title, "target");
+    }
+
+    #[tokio::test]
+    async fn test_get_item_not_found() {
+        let (state, _repo) = test_state().await;
+        let server = test_router(state);
+        let resp = server.get("/api/v1/knowledge/nonexistent-id").await;
+        assert_ne!(resp.status_code(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_update_item() {
+        let (state, repo) = test_state().await;
+        let k = make_knowledge("original", Some("/repo"), None);
+        let id = k.id.to_string();
+        repo.save(&k).await.unwrap();
+
+        let server = test_router(state);
+        let body = UpdateKnowledgeRequest {
+            title: Some("updated".into()),
+            body: None,
+            tags: None,
+            relevance: Some(0.9),
+        };
+        let resp = server
+            .put(&format!("/api/v1/knowledge/{id}"))
+            .json(&body)
+            .await;
+        resp.assert_status_ok();
+        let result: KnowledgeItemResponse = resp.json();
+        assert_eq!(result.knowledge.title, "updated");
+        assert!((result.knowledge.relevance - 0.9).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_update_item_not_found() {
+        let (state, _repo) = test_state().await;
+        let server = test_router(state);
+        let body = UpdateKnowledgeRequest {
+            title: Some("updated".into()),
+            body: None,
+            tags: None,
+            relevance: None,
+        };
+        let resp = server
+            .put("/api/v1/knowledge/nonexistent-id")
+            .json(&body)
+            .await;
+        assert_ne!(resp.status_code(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_delete_item() {
+        let (state, repo) = test_state().await;
+        let k = make_knowledge("to-delete", Some("/repo"), None);
+        let id = k.id.to_string();
+        repo.save(&k).await.unwrap();
+
+        let server = test_router(state);
+        let resp = server.delete(&format!("/api/v1/knowledge/{id}")).await;
+        resp.assert_status_ok();
+        let body: KnowledgeDeleteResponse = resp.json();
+        assert!(body.deleted);
+
+        // Verify it's gone
+        let resp = server.get(&format!("/api/v1/knowledge/{id}")).await;
+        assert_ne!(resp.status_code(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_delete_item_not_found() {
+        let (state, _repo) = test_state().await;
+        let server = test_router(state);
+        let resp = server.delete("/api/v1/knowledge/nonexistent-id").await;
+        resp.assert_status_ok();
+        let body: KnowledgeDeleteResponse = resp.json();
+        assert!(!body.deleted);
+    }
+
+    #[tokio::test]
+    async fn test_push_no_remote() {
+        let (state, _repo) = test_state().await;
+        let server = test_router(state);
+        let resp = server.post("/api/v1/knowledge/push").await;
+        // Should error — no remote configured
+        assert_ne!(resp.status_code(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_get_no_knowledge_repo() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: crate::config::GuardDefaultConfig::default(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            knowledge: crate::config::KnowledgeConfig::default(),
+        };
+        let backend = Arc::new(StubBackend);
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        );
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let state = AppState::new(config, manager, peer_registry);
+
+        let server = test_router(state);
+        let resp = server.get("/api/v1/knowledge/some-id").await;
+        assert_ne!(resp.status_code(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_update_no_knowledge_repo() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: crate::config::GuardDefaultConfig::default(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            knowledge: crate::config::KnowledgeConfig::default(),
+        };
+        let backend = Arc::new(StubBackend);
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        );
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let state = AppState::new(config, manager, peer_registry);
+
+        let server = test_router(state);
+        let body = UpdateKnowledgeRequest {
+            title: Some("x".into()),
+            body: None,
+            tags: None,
+            relevance: None,
+        };
+        let resp = server.put("/api/v1/knowledge/some-id").json(&body).await;
+        assert_ne!(resp.status_code(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_delete_no_knowledge_repo() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: crate::config::GuardDefaultConfig::default(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            knowledge: crate::config::KnowledgeConfig::default(),
+        };
+        let backend = Arc::new(StubBackend);
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        );
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let state = AppState::new(config, manager, peer_registry);
+
+        let server = test_router(state);
+        let resp = server.delete("/api/v1/knowledge/some-id").await;
+        assert_ne!(resp.status_code(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_push_no_knowledge_repo() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: crate::config::GuardDefaultConfig::default(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            knowledge: crate::config::KnowledgeConfig::default(),
+        };
+        let backend = Arc::new(StubBackend);
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        );
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let state = AppState::new(config, manager, peer_registry);
+
+        let server = test_router(state);
+        let resp = server.post("/api/v1/knowledge/push").await;
+        assert_ne!(resp.status_code(), 200);
     }
 
     #[tokio::test]

@@ -63,6 +63,13 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/inks", get(inks::list))
         .route("/api/v1/knowledge", get(knowledge::list))
         .route("/api/v1/knowledge/context", get(knowledge::context))
+        .route("/api/v1/knowledge/push", post(knowledge::push))
+        .route(
+            "/api/v1/knowledge/{id}",
+            get(knowledge::get)
+                .put(knowledge::update)
+                .delete(knowledge::delete),
+        )
         .route("/api/v1/events", get(events::stream))
         .layer(middleware::from_fn_with_state(
             state.clone(),

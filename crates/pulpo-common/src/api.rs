@@ -241,6 +241,30 @@ pub struct KnowledgeContextQuery {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateKnowledgeRequest {
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub relevance: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct KnowledgeItemResponse {
+    pub knowledge: Knowledge,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct KnowledgeDeleteResponse {
+    pub deleted: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct KnowledgePushResponse {
+    pub pushed: bool,
+    pub message: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1334,5 +1358,81 @@ mod tests {
         };
         let debug = format!("{q:?}");
         assert!(debug.contains("/repo"));
+    }
+
+    #[test]
+    fn test_update_knowledge_request_deserialize() {
+        let json = r#"{"title":"new","body":"updated","tags":["a","b"],"relevance":0.8}"#;
+        let req: UpdateKnowledgeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.title, Some("new".into()));
+        assert_eq!(req.body, Some("updated".into()));
+        assert_eq!(req.tags, Some(vec!["a".into(), "b".into()]));
+        assert!((req.relevance.unwrap() - 0.8).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_update_knowledge_request_partial() {
+        let json = r#"{"title":"only-title"}"#;
+        let req: UpdateKnowledgeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.title, Some("only-title".into()));
+        assert!(req.body.is_none());
+        assert!(req.tags.is_none());
+        assert!(req.relevance.is_none());
+    }
+
+    #[test]
+    fn test_update_knowledge_request_debug() {
+        let req = UpdateKnowledgeRequest {
+            title: Some("test".into()),
+            body: None,
+            tags: None,
+            relevance: None,
+        };
+        let debug = format!("{req:?}");
+        assert!(debug.contains("test"));
+    }
+
+    #[test]
+    fn test_knowledge_item_response_roundtrip() {
+        use chrono::Utc;
+        use uuid::Uuid;
+
+        let resp = KnowledgeItemResponse {
+            knowledge: Knowledge {
+                id: Uuid::new_v4(),
+                session_id: Uuid::new_v4(),
+                kind: KnowledgeKind::Summary,
+                scope_repo: Some("/repo".into()),
+                scope_ink: Some("coder".into()),
+                title: "test".into(),
+                body: "body".into(),
+                tags: vec!["tag".into()],
+                relevance: 0.5,
+                created_at: Utc::now(),
+            },
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: KnowledgeItemResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.knowledge.title, "test");
+    }
+
+    #[test]
+    fn test_knowledge_delete_response_roundtrip() {
+        let resp = KnowledgeDeleteResponse { deleted: true };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: KnowledgeDeleteResponse = serde_json::from_str(&json).unwrap();
+        assert!(back.deleted);
+    }
+
+    #[test]
+    fn test_knowledge_push_response_roundtrip() {
+        let resp = KnowledgePushResponse {
+            pushed: true,
+            message: "pushed to remote".into(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: KnowledgePushResponse = serde_json::from_str(&json).unwrap();
+        assert!(back.pushed);
+        assert_eq!(back.message, "pushed to remote");
     }
 }

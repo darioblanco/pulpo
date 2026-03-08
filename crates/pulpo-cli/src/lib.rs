@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use pulpo_common::api::{
-    AuthTokenResponse, InterventionEventResponse, KnowledgeResponse, PeersResponse,
+    AuthTokenResponse, InterventionEventResponse, KnowledgeDeleteResponse, KnowledgeItemResponse,
+    KnowledgePushResponse, KnowledgeResponse, PeersResponse,
 };
 use pulpo_common::knowledge::Knowledge;
 use pulpo_common::session::Session;
@@ -179,6 +180,18 @@ pub enum Commands {
         /// Context mode: find relevant knowledge for a workdir
         #[arg(long)]
         context: bool,
+
+        /// Get a single knowledge item by ID
+        #[arg(long)]
+        get: Option<String>,
+
+        /// Delete a knowledge item by ID
+        #[arg(long)]
+        delete: Option<String>,
+
+        /// Push local knowledge to configured remote
+        #[arg(long)]
+        push: bool,
     },
 
     /// Manage scheduled agent runs via crontab
@@ -1028,7 +1041,51 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             ink,
             limit,
             context,
+            get,
+            delete,
+            push,
         } => {
+            // Single-item get
+            if let Some(id) = get {
+                let endpoint = format!("{url}/api/v1/knowledge/{id}");
+                let resp = authed_get(&client, endpoint, token.as_deref())
+                    .send()
+                    .await
+                    .map_err(|e| friendly_error(&e, node))?;
+                let text = ok_or_api_error(resp).await?;
+                let resp: KnowledgeItemResponse = serde_json::from_str(&text)?;
+                return Ok(format_knowledge(&[resp.knowledge]));
+            }
+
+            // Delete by ID
+            if let Some(id) = delete {
+                let endpoint = format!("{url}/api/v1/knowledge/{id}");
+                let resp = authed_delete(&client, endpoint, token.as_deref())
+                    .send()
+                    .await
+                    .map_err(|e| friendly_error(&e, node))?;
+                let text = ok_or_api_error(resp).await?;
+                let resp: KnowledgeDeleteResponse = serde_json::from_str(&text)?;
+                return Ok(if resp.deleted {
+                    format!("Deleted knowledge item {id}")
+                } else {
+                    format!("Knowledge item {id} not found")
+                });
+            }
+
+            // Push to remote
+            if *push {
+                let endpoint = format!("{url}/api/v1/knowledge/push");
+                let resp = authed_post(&client, endpoint, token.as_deref())
+                    .send()
+                    .await
+                    .map_err(|e| friendly_error(&e, node))?;
+                let text = ok_or_api_error(resp).await?;
+                let resp: KnowledgePushResponse = serde_json::from_str(&text)?;
+                return Ok(resp.message);
+            }
+
+            // List / context query
             let mut params = vec![format!("limit={limit}")];
             let endpoint = if *context {
                 if let Some(r) = repo {
@@ -3393,6 +3450,39 @@ mod tests {
 
         let output = format_knowledge(&items);
         assert!(output.contains('…'));
+    }
+
+    #[test]
+    fn test_cli_parse_knowledge_get() {
+        let cli = Cli::try_parse_from(["pulpo", "knowledge", "--get", "abc-123"]).unwrap();
+        match &cli.command {
+            Commands::Knowledge { get, .. } => {
+                assert_eq!(get.as_deref(), Some("abc-123"));
+            }
+            _ => panic!("expected Knowledge command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_knowledge_delete() {
+        let cli = Cli::try_parse_from(["pulpo", "knowledge", "--delete", "abc-123"]).unwrap();
+        match &cli.command {
+            Commands::Knowledge { delete, .. } => {
+                assert_eq!(delete.as_deref(), Some("abc-123"));
+            }
+            _ => panic!("expected Knowledge command"),
+        }
+    }
+
+    #[test]
+    fn test_cli_parse_knowledge_push() {
+        let cli = Cli::try_parse_from(["pulpo", "knowledge", "--push"]).unwrap();
+        match &cli.command {
+            Commands::Knowledge { push, .. } => {
+                assert!(*push);
+            }
+            _ => panic!("expected Knowledge command"),
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use pulpo_common::knowledge::{Knowledge, KnowledgeKind};
 use tokio::process::Command;
 use tracing::{debug, warn};
@@ -221,6 +221,75 @@ impl KnowledgeRepo {
 
         self.fire_and_forget_push();
         Ok(count)
+    }
+
+    /// Get a single knowledge item by ID.
+    pub fn get_by_id(&self, id: &str) -> Result<Option<Knowledge>> {
+        let path = self.find_by_id(id)?;
+        let Some(path) = path else {
+            return Ok(None);
+        };
+        let content = std::fs::read_to_string(&path)?;
+        let item: Knowledge = serde_json::from_str(&content)?;
+        Ok(Some(item))
+    }
+
+    /// Update a knowledge item. Only non-`None` fields are patched.
+    pub async fn update(
+        &self,
+        id: &str,
+        title: Option<&str>,
+        body: Option<&str>,
+        tags: Option<&[String]>,
+        relevance: Option<f64>,
+    ) -> Result<bool> {
+        let path = self.find_by_id(id)?;
+        let Some(path) = path else {
+            return Ok(false);
+        };
+        let content = std::fs::read_to_string(&path)?;
+        let mut item: Knowledge = serde_json::from_str(&content)?;
+
+        if let Some(t) = title {
+            item.title = t.to_owned();
+        }
+        if let Some(b) = body {
+            item.body = b.to_owned();
+        }
+        if let Some(t) = tags {
+            item.tags = t.to_vec();
+        }
+        if let Some(r) = relevance {
+            item.relevance = r;
+        }
+
+        let json = serde_json::to_string_pretty(&item)?;
+        std::fs::write(&path, json)?;
+
+        let rel = path
+            .strip_prefix(&self.root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        run_git(&self.root, &["add", &rel]).await?;
+        run_git(
+            &self.root,
+            &["commit", "-m", &format!("knowledge: update {id}")],
+        )
+        .await?;
+
+        self.fire_and_forget_push();
+        Ok(true)
+    }
+
+    /// Explicitly push all local commits to the remote.
+    /// Returns an error if no remote is configured or push fails.
+    pub async fn push(&self) -> Result<()> {
+        let Some(ref _url) = self.remote else {
+            bail!("no remote configured for knowledge repo");
+        };
+        run_git(&self.root, &["push", "origin", "main"]).await?;
+        Ok(())
     }
 
     /// The root path of the knowledge repo.
@@ -898,6 +967,124 @@ mod tests {
         };
         let debug = format!("{repo:?}");
         assert!(debug.contains("KnowledgeRepo"));
+    }
+
+    #[tokio::test]
+    async fn test_get_by_id() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_knowledge("findme", Some("/tmp/repo"), None);
+        let id = k.id.to_string();
+        repo.save(&k).await.unwrap();
+
+        let found = repo.get_by_id(&id).unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().title, "findme");
+    }
+
+    #[tokio::test]
+    async fn test_get_by_id_not_found() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let found = repo.get_by_id("nonexistent").unwrap();
+        assert!(found.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_knowledge("original", Some("/tmp/repo"), None);
+        let id = k.id.to_string();
+        repo.save(&k).await.unwrap();
+
+        let updated = repo
+            .update(&id, Some("new title"), Some("new body"), None, Some(0.9))
+            .await
+            .unwrap();
+        assert!(updated);
+
+        let item = repo.get_by_id(&id).unwrap().unwrap();
+        assert_eq!(item.title, "new title");
+        assert_eq!(item.body, "new body");
+        assert!((item.relevance - 0.9).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_update_tags() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_knowledge("tagged", Some("/tmp/repo"), None);
+        let id = k.id.to_string();
+        repo.save(&k).await.unwrap();
+
+        let tags = vec!["new-tag".to_string(), "another".to_string()];
+        repo.update(&id, None, None, Some(&tags), None)
+            .await
+            .unwrap();
+
+        let item = repo.get_by_id(&id).unwrap().unwrap();
+        assert_eq!(item.tags, vec!["new-tag", "another"]);
+    }
+
+    #[tokio::test]
+    async fn test_update_not_found() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let updated = repo
+            .update("nonexistent", Some("title"), None, None, None)
+            .await
+            .unwrap();
+        assert!(!updated);
+    }
+
+    #[tokio::test]
+    async fn test_update_creates_git_commit() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_knowledge("commit-test", Some("/tmp/repo"), None);
+        let id = k.id.to_string();
+        repo.save(&k).await.unwrap();
+        repo.update(&id, Some("changed"), None, None, None)
+            .await
+            .unwrap();
+
+        let log = run_git(repo.root(), &["log", "--oneline"]).await.unwrap();
+        assert!(log.contains("update"));
+    }
+
+    #[tokio::test]
+    async fn test_push_no_remote() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let err = repo.push().await;
+        assert!(err.is_err());
+        assert!(
+            err.unwrap_err()
+                .to_string()
+                .contains("no remote configured")
+        );
     }
 
     #[tokio::test]
