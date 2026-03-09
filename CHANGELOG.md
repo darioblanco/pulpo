@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.10](https://github.com/darioblanco/pulpo/compare/v0.0.9...v0.0.10) (2026-03-09)
+
+
+### Bug Fixes
+
+* **cli:** correct --name help text to say auto-generated ([f232208](https://github.com/darioblanco/pulpo/commit/f232208eb57b3c860f4a749ee39240735b27d757))
+* **cli:** deserialize CreateSessionResponse wrapper from spawn API ([d63d820](https://github.com/darioblanco/pulpo/commit/d63d820bd0c7572af5b01c79fffde58f52b8a3ef))
+* **web:** add proper padding to session input bar ([6b80325](https://github.com/darioblanco/pulpo/commit/6b8032540d9146369b6bfc915acb5804dd6c3bf2))
+
 ## [0.0.9](https://github.com/darioblanco/pulpo/compare/v0.0.8...v0.0.9) (2026-03-08)
 
 
