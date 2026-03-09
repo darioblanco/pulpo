@@ -52,7 +52,7 @@ pub enum Commands {
         #[arg(long)]
         workdir: Option<String>,
 
-        /// Session name (auto-derived from workdir if omitted)
+        /// Session name (auto-generated if omitted)
         #[arg(long)]
         name: Option<String>,
 
