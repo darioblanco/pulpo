@@ -844,7 +844,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
 
     match &cli.command {
         Commands::Attach { name } => {
-            // Fetch session to get actual backend_session_id
+            // Fetch session to get status and backend_session_id
             let resp = authed_get(
                 &client,
                 format!("{url}/api/v1/sessions/{name}"),
@@ -855,6 +855,20 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             .map_err(|e| friendly_error(&e, node))?;
             let text = ok_or_api_error(resp).await?;
             let session: Session = serde_json::from_str(&text)?;
+            match session.status.to_string().as_str() {
+                "stale" => {
+                    anyhow::bail!(
+                        "Session \"{name}\" is stale (agent process died). Resume it first:\n  pulpo resume {name}"
+                    );
+                }
+                "completed" | "dead" => {
+                    anyhow::bail!(
+                        "Session \"{name}\" is {} — cannot attach to a finished session.",
+                        session.status
+                    );
+                }
+                _ => {}
+            }
             let backend_id = session.backend_session_id.unwrap_or_else(|| name.clone());
             attach_session(&backend_id)?;
             Ok(format!("Detached from session {name}."))
@@ -2690,6 +2704,56 @@ mod tests {
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
         assert!(err.contains("session not found"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_attach_stale_session() {
+        use axum::{Router, routing::get};
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"stale-sess","workdir":"/tmp","provider":"claude","prompt":"test","status":"stale","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"stale-sess","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}",
+            get(move || async move { session_json.to_owned() }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+
+        let cli = Cli {
+            node: format!("127.0.0.1:{}", addr.port()),
+            token: None,
+            command: Commands::Attach {
+                name: "stale-sess".into(),
+            },
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("stale"));
+        assert!(err.contains("pulpo resume"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_attach_dead_session() {
+        use axum::{Router, routing::get};
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","provider":"claude","prompt":"test","status":"dead","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}",
+            get(move || async move { session_json.to_owned() }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+
+        let cli = Cli {
+            node: format!("127.0.0.1:{}", addr.port()),
+            token: None,
+            command: Commands::Attach {
+                name: "dead-sess".into(),
+            },
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("dead"));
+        assert!(err.contains("cannot attach"));
     }
 
     // -- Alias parse tests --
