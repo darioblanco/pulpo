@@ -64,19 +64,19 @@ pub enum Commands {
         #[arg(long)]
         auto: bool,
 
-        /// Disable all safety guardrails
+        /// Disable all safety guardrails (Claude, Gemini)
         #[arg(long)]
         unrestricted: bool,
 
-        /// Model override (e.g. opus, sonnet)
+        /// Model override, e.g. opus, sonnet (Claude, Codex, Gemini)
         #[arg(long)]
         model: Option<String>,
 
-        /// System prompt to append
+        /// System prompt to append (Claude only)
         #[arg(long)]
         system_prompt: Option<String>,
 
-        /// Explicit allowed tools (comma-separated)
+        /// Explicit allowed tools, comma-separated (Claude only)
         #[arg(long, value_delimiter = ',')]
         allowed_tools: Option<Vec<String>>,
 
@@ -84,15 +84,15 @@ pub enum Commands {
         #[arg(long)]
         ink: Option<String>,
 
-        /// Maximum agent turns before stopping
+        /// Maximum agent turns before stopping (Claude only)
         #[arg(long)]
         max_turns: Option<u32>,
 
-        /// Maximum budget in USD before stopping
+        /// Maximum budget in USD before stopping (Claude only)
         #[arg(long)]
         max_budget: Option<f64>,
 
-        /// Output format (e.g. json, stream-json)
+        /// Output format, e.g. json, stream-json (Claude, Gemini, opencode)
         #[arg(long)]
         output_format: Option<String>,
 
