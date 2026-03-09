@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use pulpo_common::api::{
-    AuthTokenResponse, InterventionEventResponse, KnowledgeDeleteResponse, KnowledgeItemResponse,
-    KnowledgePushResponse, KnowledgeResponse, PeersResponse,
+    AuthTokenResponse, CreateSessionResponse, InterventionEventResponse, KnowledgeDeleteResponse,
+    KnowledgeItemResponse, KnowledgePushResponse, KnowledgeResponse, PeersResponse,
 };
 use pulpo_common::knowledge::Knowledge;
 use pulpo_common::session::Session;
@@ -957,11 +957,16 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 .await
                 .map_err(|e| friendly_error(&e, node))?;
             let text = ok_or_api_error(resp).await?;
-            let session: Session = serde_json::from_str(&text)?;
-            Ok(format!(
+            let resp: CreateSessionResponse = serde_json::from_str(&text)?;
+            let mut msg = format!(
                 "Created session \"{}\" ({})",
-                session.name, session.id
-            ))
+                resp.session.name, resp.session.id
+            );
+            for w in &resp.warnings {
+                use std::fmt::Write;
+                let _ = write!(msg, "\n  Warning: {w}");
+            }
+            Ok(msg)
         }
         Commands::Kill { name } => {
             let resp = authed_post(
@@ -1409,6 +1414,11 @@ mod tests {
     /// A valid Session JSON for test responses.
     const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","provider":"claude","prompt":"Fix bug","status":"running","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
 
+    /// A valid `CreateSessionResponse` JSON wrapping the session.
+    fn test_create_response_json() -> String {
+        format!(r#"{{"session":{TEST_SESSION_JSON}}}"#)
+    }
+
     /// Start a lightweight test HTTP server and return its address.
     async fn start_test_server() -> String {
         use axum::http::StatusCode;
@@ -1417,18 +1427,18 @@ mod tests {
             routing::{get, post},
         };
 
-        let session_json = TEST_SESSION_JSON;
+        let create_json = test_create_response_json();
 
         let app = Router::new()
             .route(
                 "/api/v1/sessions",
                 get(|| async { Json::<Vec<()>>(vec![]) }).post(move || async move {
-                    (StatusCode::CREATED, session_json.to_owned())
+                    (StatusCode::CREATED, create_json.clone())
                 }),
             )
             .route(
                 "/api/v1/sessions/{id}",
-                get(move || async move { session_json.to_owned() })
+                get(|| async { TEST_SESSION_JSON.to_owned() })
                     .delete(|| async { StatusCode::NO_CONTENT }),
             )
             .route(
@@ -1447,7 +1457,7 @@ mod tests {
             )
             .route(
                 "/api/v1/sessions/{id}/resume",
-                axum::routing::post(move || async move { session_json.to_owned() }),
+                axum::routing::post(|| async { TEST_SESSION_JSON.to_owned() }),
             )
             .route(
                 "/api/v1/sessions/{id}/interventions",

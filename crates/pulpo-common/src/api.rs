@@ -27,10 +27,10 @@ pub struct CreateSessionRequest {
 }
 
 /// Response from session creation, includes the session and any capability warnings.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CreateSessionResponse {
     pub session: Session,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
 }
 
