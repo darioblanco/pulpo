@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.12](https://github.com/darioblanco/pulpo/compare/v0.0.11...v0.0.12) (2026-03-09)
+
+
+### Bug Fixes
+
+* only set worktree flag for providers that support it ([33b194b](https://github.com/darioblanco/pulpo/commit/33b194ba6ea1fe69d22e4ff2dd68a00867b70559))
+
 ## [0.0.11](https://github.com/darioblanco/pulpo/compare/v0.0.10...v0.0.11) (2026-03-09)
 
 
