@@ -62,7 +62,7 @@ export function OutputView({ sessionId, sessionStatus }: OutputViewProps) {
       </div>
 
       {canSendInput && (
-        <div className="mt-2 flex gap-2">
+        <div className="flex gap-2 px-3 pb-3 pt-2">
           <Input
             data-testid="output-input"
             placeholder="Send input to session..."
