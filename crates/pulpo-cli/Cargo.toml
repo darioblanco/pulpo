@@ -19,7 +19,7 @@ name = "pulpo"
 path = "src/main.rs"
 
 [dependencies]
-pulpo-common = { path = "../pulpo-common", version = "0.0.9" }
+pulpo-common = { path = "../pulpo-common", version = "0.0.10" }
 tokio.workspace = true
 reqwest.workspace = true
 clap.workspace = true
