@@ -15,7 +15,7 @@ use tracing::{debug, warn};
 
 use crate::backend::Backend;
 use crate::config::InkConfig;
-use crate::guard::check_capability_warnings;
+use crate::guard::{check_capability_warnings, provider_capabilities};
 use crate::knowledge;
 use crate::knowledge::repo::KnowledgeRepo;
 use crate::store::Store;
@@ -149,7 +149,9 @@ impl SessionManager {
             req.max_budget_usd,
             req.output_format.as_deref(),
         );
-        spawn_params.worktree = Some(name.clone());
+        if provider_capabilities(provider).worktree {
+            spawn_params.worktree = Some(name.clone());
+        }
         let warnings = check_capability_warnings(provider, &spawn_params);
         let command = build_command(provider, mode, &spawn_params);
 
@@ -465,7 +467,9 @@ impl SessionManager {
                 session.max_budget_usd,
                 session.output_format.as_deref(),
             );
-            spawn_params.worktree = Some(session.name.clone());
+            if provider_capabilities(session.provider).worktree {
+                spawn_params.worktree = Some(session.name.clone());
+            }
             spawn_params
                 .conversation_id
                 .clone_from(&session.conversation_id);
