@@ -13,7 +13,7 @@
 
 Self-hosted control plane for coding agents on your own machines.
 
-Pulpo runs as a daemon (`pulpod`) with a CLI (`pulpo`) and embedded web UI. It manages agent sessions (Claude Code, Codex) over `tmux`, persists lifecycle state in SQLite, and supports recovery after restarts/reboots.
+Pulpo runs as a daemon (`pulpod`) with a CLI (`pulpo`) and embedded web UI. It manages agent sessions (Claude Code, Codex, Gemini CLI, OpenCode) over `tmux`, persists lifecycle state in SQLite, and supports recovery after restarts/reboots.
 
 ## Why Pulpo
 
@@ -66,7 +66,7 @@ npm install -g @anthropic-ai/claude-code
 claude login
 ```
 
-Codex also works if installed/authenticated in your environment.
+Codex, Gemini CLI, and OpenCode also work if installed/authenticated in your environment.
 
 ### 3. Start daemon
 
@@ -104,7 +104,7 @@ pulpo logs my-api --follow
 ## CLI At A Glance
 
 ```bash
-pulpo spawn --workdir <PATH> [PROMPT...]
+pulpo spawn [OPTIONS] [PROMPT...]
 pulpo list
 pulpo logs <NAME> [--follow]
 pulpo attach <NAME>
@@ -112,12 +112,30 @@ pulpo input <NAME> [TEXT]
 pulpo kill <NAME>
 pulpo resume <NAME>
 pulpo interventions <NAME>
+pulpo knowledge [--context] [--get ID] [--delete ID] [--push]
 pulpo nodes
 pulpo schedule <install|list|pause|resume|remove>
 pulpo ui
 ```
 
 For full options, run `pulpo --help` and `pulpo <command> --help`.
+
+### Worktree isolation
+
+When running multiple agents on the same repo, use `--worktree` to give each session its own git worktree (Claude only):
+
+```bash
+pulpo spawn --worktree --workdir ~/myproject "add caching layer"
+pulpo spawn --worktree --workdir ~/myproject "refactor auth module"
+```
+
+Each agent works on an isolated branch at `<repo>/.claude/worktrees/<session-name>`. Other providers can use a worktree created by Claude via `--workdir`:
+
+```bash
+pulpo spawn --provider codex --workdir ~/myproject/.claude/worktrees/<session-name> "write tests"
+```
+
+Without `--worktree`, agents work directly in your working tree (fine for single sessions).
 
 ## Configuration
 
