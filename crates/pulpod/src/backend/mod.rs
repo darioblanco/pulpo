@@ -5,7 +5,7 @@ use anyhow::Result;
 /// Backend trait — abstracts the terminal session runtime (tmux, Docker, etc.).
 ///
 /// All methods that operate on a session take `backend_id` — the backend-specific
-/// session identifier (e.g. `pulpo-my-session` for tmux). This ID is created once
+/// session identifier (e.g. `my-session` for tmux). This ID is created once
 /// via `session_id()` at session creation time, stored in the database, and passed
 /// to all subsequent backend calls. Callers must never pass the human-friendly
 /// session name directly.
@@ -13,7 +13,7 @@ use anyhow::Result;
 pub trait Backend: Send + Sync {
     /// Create the backend-specific session identifier from a human-friendly session name.
     /// Called once at session creation; the result is stored as `backend_session_id`.
-    /// For tmux this is `pulpo-{name}`; other backends may use different schemes.
+    /// For tmux this returns the session name as-is; other backends may use different schemes.
     /// Default returns the name as-is (useful for test stubs).
     fn session_id(&self, name: &str) -> String {
         name.to_owned()

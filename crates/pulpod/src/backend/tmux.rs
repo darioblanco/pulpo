@@ -9,7 +9,7 @@ use super::Backend;
 
 #[cfg_attr(coverage, allow(dead_code))]
 fn tmux_session_name(name: &str) -> String {
-    format!("pulpo-{name}")
+    name.to_owned()
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
@@ -248,8 +248,8 @@ mod tests {
 
     #[test]
     fn test_tmux_session_name() {
-        assert_eq!(tmux_session_name("my-api"), "pulpo-my-api");
-        assert_eq!(tmux_session_name("test"), "pulpo-test");
+        assert_eq!(tmux_session_name("my-api"), "my-api");
+        assert_eq!(tmux_session_name("indigo-wave"), "indigo-wave");
     }
 
     #[test]

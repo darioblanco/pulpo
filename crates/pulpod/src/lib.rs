@@ -32,7 +32,7 @@ struct CoverageBackend;
 #[cfg(coverage)]
 impl backend::Backend for CoverageBackend {
     fn session_id(&self, name: &str) -> String {
-        format!("pulpo-{name}")
+        name.to_owned()
     }
     fn create_session(&self, _: &str, _: &str, _: &str) -> anyhow::Result<()> {
         Ok(())
@@ -952,7 +952,7 @@ bind = "public"
     fn test_coverage_backend_session_id() {
         use backend::Backend;
         let b = CoverageBackend;
-        assert_eq!(b.session_id("my-session"), "pulpo-my-session");
+        assert_eq!(b.session_id("my-session"), "my-session");
     }
 
     #[tokio::test]

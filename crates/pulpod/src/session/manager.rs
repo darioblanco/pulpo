@@ -1395,7 +1395,7 @@ mod tests {
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-legacy".into()),
+            backend_session_id: Some("legacy".into()),
             output_snapshot: None,
             guard_config: None,
             model: None,

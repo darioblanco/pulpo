@@ -549,7 +549,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some(format!("pulpo-{name}")),
+            backend_session_id: Some(name.to_owned()),
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -581,7 +581,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some(format!("pulpo-{name}")),
+            backend_session_id: Some(name.to_owned()),
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -770,7 +770,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"pulpo-oom-session".to_owned())
+                .contains(&"oom-session".to_owned())
         );
 
         // Session should be dead with intervention reason
@@ -907,7 +907,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"pulpo-cap-fail".to_owned())
+                .contains(&"cap-fail".to_owned())
         );
 
         let fetched = store
@@ -1187,7 +1187,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"pulpo-snap-err".to_owned())
+                .contains(&"snap-err".to_owned())
         );
     }
 
@@ -1219,7 +1219,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"pulpo-rec-err".to_owned())
+                .contains(&"rec-err".to_owned())
         );
     }
 
@@ -1309,7 +1309,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-idle-session".into()),
+            backend_session_id: Some("idle-session".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1367,7 +1367,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-kill-idle".into()),
+            backend_session_id: Some("kill-idle".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1413,7 +1413,7 @@ mod tests {
                 .kill_calls
                 .lock()
                 .unwrap()
-                .contains(&"pulpo-kill-idle".to_owned())
+                .contains(&"kill-idle".to_owned())
         );
     }
 
@@ -1433,7 +1433,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-active-again".into()),
+            backend_session_id: Some("active-again".into()),
             output_snapshot: Some("old output".into()), // different from "test output"
             guard_config: None,
             model: None,
@@ -1564,7 +1564,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-recent-session".into()),
+            backend_session_id: Some("recent-session".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1620,7 +1620,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-already-idle".into()),
+            backend_session_id: Some("already-idle".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1675,7 +1675,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-kill-fail-idle".into()),
+            backend_session_id: Some("kill-fail-idle".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1752,7 +1752,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-no-output-ts".into()),
+            backend_session_id: Some("no-output-ts".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1831,7 +1831,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-loop-idle".into()),
+            backend_session_id: Some("loop-idle".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1905,7 +1905,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-clear-fail".into()),
+            backend_session_id: Some("clear-fail".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1949,7 +1949,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-not-idle".into()),
+            backend_session_id: Some("not-idle".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -1988,7 +1988,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-alert-fail".into()),
+            backend_session_id: Some("alert-fail".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -2051,7 +2051,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
-            backend_session_id: Some("pulpo-kill-record-fail".into()),
+            backend_session_id: Some("kill-record-fail".into()),
             output_snapshot: Some("test output".into()),
             guard_config: None,
             model: None,
@@ -2104,7 +2104,7 @@ mod tests {
         let backend = Arc::new(MockBackend::new());
         let store = test_store().await;
 
-        // Session with backend_session_id = None (falls back to "pulpo-{name}")
+        // Session with backend_session_id = None (falls back to session name)
         let session = Session {
             id: uuid::Uuid::new_v4(),
             name: "no-tmux".into(),

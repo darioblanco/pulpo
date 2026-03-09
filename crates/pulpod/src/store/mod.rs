@@ -584,7 +584,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: Some("conv-123".into()),
             exit_code: None,
-            backend_session_id: Some(format!("pulpo-{name}")),
+            backend_session_id: Some(name.to_owned()),
             output_snapshot: None,
             guard_config: None,
             model: None,
@@ -679,10 +679,7 @@ mod tests {
         assert_eq!(fetched.mode, SessionMode::Interactive);
         assert_eq!(fetched.conversation_id, Some("conv-123".into()));
         assert_eq!(fetched.exit_code, None);
-        assert_eq!(
-            fetched.backend_session_id,
-            Some("pulpo-test-roundtrip".into())
-        );
+        assert_eq!(fetched.backend_session_id, Some("test-roundtrip".into()));
     }
 
     #[tokio::test]

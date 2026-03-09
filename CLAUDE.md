@@ -181,7 +181,7 @@ describe('api', () => {
 
 - **Error handling**: Use `anyhow::Result` for application errors, `thiserror` for library errors in `pulpo-common`.
 - **Async**: All I/O is async via `tokio`. Backend trait methods are sync (tmux commands are fast) but called from async context via `tokio::task::spawn_blocking` when needed.
-- **Naming**: Session names are kebab-case. tmux sessions are prefixed with `pulpo-` (e.g., `pulpo-my-api`).
+- **Naming**: Session names are kebab-case, auto-generated (e.g., `indigo-wave`). tmux sessions use the session name directly.
 - **Database**: SQLite via `sqlx`. Migrations are inline in `store/mod.rs` for now. Use `sqlx::query!` macro for compile-time checked queries when possible.
 - **Config**: TOML config at `~/.pulpo/config.toml`. All fields have sensible defaults — pulpod runs with zero config.
 - **Logging**: Use `tracing` macros (`info!`, `warn!`, `error!`, `debug!`). Set level via `RUST_LOG` env var.

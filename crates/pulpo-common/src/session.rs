@@ -157,7 +157,7 @@ mod tests {
             mode: SessionMode::Interactive,
             conversation_id: Some("conv-123".into()),
             exit_code: None,
-            backend_session_id: Some("pulpo-test".into()),
+            backend_session_id: Some("test-session".into()),
 
             output_snapshot: Some("some output".into()),
             guard_config: None,
