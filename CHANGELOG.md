@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.11](https://github.com/darioblanco/pulpo/compare/v0.0.10...v0.0.11) (2026-03-09)
+
+
+### Bug Fixes
+
+* remove pulpo- prefix from tmux session names ([a38be0f](https://github.com/darioblanco/pulpo/commit/a38be0f78d56fa2f109fb97d37e82244f52a5971))
+
 ## [0.0.10](https://github.com/darioblanco/pulpo/compare/v0.0.9...v0.0.10) (2026-03-09)
 
 
