@@ -96,6 +96,10 @@ pub enum Commands {
         #[arg(long)]
         output_format: Option<String>,
 
+        /// Use git worktree isolation (Claude only)
+        #[arg(long)]
+        worktree: bool,
+
         /// Task prompt
         prompt: Vec<String>,
     },
@@ -901,6 +905,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             max_turns,
             max_budget,
             output_format,
+            worktree,
             prompt,
         } => {
             let prompt_text = prompt.join(" ");
@@ -948,6 +953,9 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             if let Some(of) = output_format {
                 body["output_format"] = serde_json::json!(of);
+            }
+            if *worktree {
+                body["worktree"] = serde_json::json!(true);
             }
             let resp = authed_post(&client, format!("{url}/api/v1/sessions"), token.as_deref())
                 .json(&body)
@@ -1517,6 +1525,7 @@ mod tests {
                 max_turns: None,
                 max_budget: None,
                 output_format: None,
+                worktree: false,
                 prompt: vec!["Fix".into(), "bug".into()],
             },
         };
@@ -1544,6 +1553,7 @@ mod tests {
                 max_turns: Some(5),
                 max_budget: Some(2.5),
                 output_format: Some("json".into()),
+                worktree: false,
                 prompt: vec!["Fix".into(), "bug".into()],
             },
         };
@@ -1570,6 +1580,7 @@ mod tests {
                 max_turns: None,
                 max_budget: None,
                 output_format: None,
+                worktree: false,
                 prompt: vec!["Do it".into()],
             },
         };
@@ -1596,6 +1607,7 @@ mod tests {
                 max_turns: None,
                 max_budget: None,
                 output_format: None,
+                worktree: false,
                 prompt: vec!["Fix".into(), "bug".into()],
             },
         };
@@ -1827,6 +1839,7 @@ mod tests {
                 max_turns: None,
                 max_budget: None,
                 output_format: None,
+                worktree: false,
                 prompt: vec!["test".into()],
             },
         };
@@ -2197,6 +2210,7 @@ mod tests {
                 max_turns: None,
                 max_budget: None,
                 output_format: None,
+                worktree: false,
                 prompt: vec!["test".into()],
             },
         };

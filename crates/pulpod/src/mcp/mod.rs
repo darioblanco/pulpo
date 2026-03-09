@@ -56,6 +56,8 @@ pub struct SpawnSessionParams {
     pub ink: Option<String>,
     /// Model override (e.g. "opus", "sonnet").
     pub model: Option<String>,
+    /// Use git worktree isolation (Claude only).
+    pub worktree: Option<bool>,
     /// Target node name. If omitted, runs locally.
     pub node: Option<String>,
 }
@@ -453,6 +455,7 @@ impl PulpoMcp {
                 max_turns: None,
                 max_budget_usd: None,
                 output_format: None,
+                worktree: None,
             };
             self.session_manager
                 .create_session(req)
@@ -537,6 +540,7 @@ impl PulpoMcp {
                 max_turns: None,
                 max_budget_usd: None,
                 output_format: None,
+                worktree: params.worktree,
             };
             self.session_manager
                 .create_session(req)
@@ -1147,6 +1151,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -1167,6 +1172,7 @@ mod tests {
             name: Some("custom-name".into()),
             ink: None,
             model: None,
+            worktree: None,
             node: Some("test-node".into()), // matches local
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -1186,6 +1192,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: Some("unknown-node".into()),
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -1220,6 +1227,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1283,6 +1291,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1322,6 +1331,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1372,6 +1382,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1409,6 +1420,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1448,6 +1460,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1474,6 +1487,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1526,6 +1540,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1601,6 +1616,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1638,6 +1654,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1716,6 +1733,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let debug = format!("{params:?}");
@@ -2144,6 +2162,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -2354,6 +2373,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: Some("remote".into()),
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -2539,6 +2559,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: Some("remote".into()),
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -2602,6 +2623,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -3168,6 +3190,7 @@ mod tests {
                 name: None,
                 ink: None,
                 model: None,
+                worktree: None,
                 node: None,
             }))
             .await;
@@ -3204,6 +3227,7 @@ mod tests {
             name: None,
             ink: None,
             model: None,
+            worktree: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;

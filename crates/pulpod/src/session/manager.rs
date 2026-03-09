@@ -15,7 +15,7 @@ use tracing::{debug, warn};
 
 use crate::backend::Backend;
 use crate::config::InkConfig;
-use crate::guard::{check_capability_warnings, provider_capabilities};
+use crate::guard::check_capability_warnings;
 use crate::knowledge;
 use crate::knowledge::repo::KnowledgeRepo;
 use crate::store::Store;
@@ -149,7 +149,7 @@ impl SessionManager {
             req.max_budget_usd,
             req.output_format.as_deref(),
         );
-        if provider_capabilities(provider).worktree {
+        if req.worktree.unwrap_or(false) {
             spawn_params.worktree = Some(name.clone());
         }
         let warnings = check_capability_warnings(provider, &spawn_params);
@@ -467,9 +467,7 @@ impl SessionManager {
                 session.max_budget_usd,
                 session.output_format.as_deref(),
             );
-            if provider_capabilities(session.provider).worktree {
-                spawn_params.worktree = Some(session.name.clone());
-            }
+            // Worktree is inherited by --resume, no need to re-set it
             spawn_params
                 .conversation_id
                 .clone_from(&session.conversation_id);
@@ -793,6 +791,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            worktree: None,
         }
     }
 
@@ -839,6 +838,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            worktree: None,
         };
         let result = mgr.apply_defaults(req);
         assert!(result.workdir.is_some(), "workdir should be filled");
@@ -864,6 +864,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            worktree: None,
         };
         let result = mgr.apply_defaults(req);
         assert_eq!(result.workdir.as_deref(), Some("/my/dir"));
@@ -890,6 +891,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            worktree: None,
         };
         let result = mgr.apply_defaults(req);
         assert_eq!(result.provider, Some(Provider::Codex));
@@ -913,6 +915,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            worktree: None,
         };
         let (session, _) = mgr.create_session(req).await.unwrap();
         assert_eq!(session.provider, Provider::Claude);

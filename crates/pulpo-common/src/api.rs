@@ -24,6 +24,7 @@ pub struct CreateSessionRequest {
     pub max_turns: Option<u32>,
     pub max_budget_usd: Option<f64>,
     pub output_format: Option<String>,
+    pub worktree: Option<bool>,
 }
 
 /// Response from session creation, includes the session and any capability warnings.
@@ -632,6 +633,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            worktree: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("/tmp"));

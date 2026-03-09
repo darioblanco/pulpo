@@ -220,6 +220,7 @@ export interface CreateSessionRequest {
   max_turns?: number;
   max_budget_usd?: number;
   output_format?: string;
+  worktree?: boolean;
 }
 
 export interface CreateSessionResponse {
