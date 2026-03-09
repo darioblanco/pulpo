@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.13](https://github.com/darioblanco/pulpo/compare/v0.0.12...v0.0.13) (2026-03-09)
+
+
+### Features
+
+* **cli:** add --worktree flag for opt-in git worktree isolation ([c9ec272](https://github.com/darioblanco/pulpo/commit/c9ec272c584f7f337b6a1e2db95ead540aecda2a))
+
+
+### Bug Fixes
+
+* **cli:** reject attach on stale/dead sessions with helpful message ([cf7e55f](https://github.com/darioblanco/pulpo/commit/cf7e55f1e0d7088c65ac51d2864ee2045c9cb116))
+
 ## [0.0.12](https://github.com/darioblanco/pulpo/compare/v0.0.11...v0.0.12) (2026-03-09)
 
 
