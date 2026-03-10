@@ -559,22 +559,67 @@ fn build_spawn_params(
     }
 }
 
+/// Resolve a provider binary name to its absolute path.
+///
+/// When pulpod runs as a service (launchd/systemd), the PATH is restricted and
+/// may not include directories like `~/.local/bin` where agent CLIs live.
+/// This function searches common user binary locations beyond the process PATH.
+fn resolve_binary(name: &str) -> String {
+    // First try the process PATH via `which`
+    if let Some(path) = which_binary(name) {
+        return path;
+    }
+    // Then try common user binary directories
+    if let Some(home) = dirs::home_dir() {
+        let candidates = [
+            home.join(".local/bin").join(name),
+            home.join(".cargo/bin").join(name),
+            home.join("bin").join(name),
+            home.join(".npm-global/bin").join(name),
+        ];
+        for candidate in &candidates {
+            if candidate.exists() {
+                return candidate.to_string_lossy().into_owned();
+            }
+        }
+    }
+    // Also check common system locations not always in service PATH
+    let system_dirs = ["/usr/local/bin", "/opt/homebrew/bin"];
+    for dir in &system_dirs {
+        let candidate = std::path::Path::new(dir).join(name);
+        if candidate.exists() {
+            return candidate.to_string_lossy().into_owned();
+        }
+    }
+    name.to_owned()
+}
+
+fn which_binary(name: &str) -> Option<String> {
+    std::process::Command::new("which")
+        .arg(name)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .filter(|s| !s.is_empty())
+}
+
 pub(crate) fn build_command(
     provider: Provider,
     mode: SessionMode,
     params: &crate::guard::SpawnParams,
 ) -> String {
-    let binary = provider.to_string();
+    let binary = resolve_binary(&provider.to_string());
     let flags = crate::guard::build_flags(provider, mode, params);
-    match mode {
-        SessionMode::Interactive => {
-            format!("{binary} {}", flags.join(" "))
-        }
-        SessionMode::Autonomous => {
-            let inner = format!("{binary} {}", flags.join(" "));
-            format!("bash -c '{inner}; echo \"[pulpo] Agent exited ($?)\"; exec bash'")
-        }
-    }
+    let inner = format!("{binary} {}", flags.join(" "));
+    // Wrap in bash so the tmux session survives if the agent exits.
+    // Use double quotes for `bash -c` to avoid conflicts with single-quoted
+    // shell_escape() values inside the flags (prompts, system_prompt, etc.).
+    let escaped = inner
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('$', "\\$");
+    format!("bash -c \"{escaped}; echo '[pulpo] Agent exited'; exec bash\"")
 }
 
 use pulpo_common::knowledge::Knowledge;
@@ -812,8 +857,9 @@ mod tests {
 
         let calls = backend.calls.lock().unwrap();
         let name = &session.name;
-        // Interactive Claude: create session with prompt as positional arg, then setup logging
-        assert!(calls[0].contains(&format!("create:{name}:/tmp:claude")));
+        // All commands wrapped in bash -c for session survival
+        assert!(calls[0].contains(&format!("create:{name}:/tmp:bash -c")));
+        assert!(calls[0].contains("claude"));
         assert!(calls[0].contains("Fix the bug"));
         assert!(calls[1].starts_with(&format!("setup_logging:{name}:")));
         assert_eq!(calls.len(), 2);
@@ -1488,6 +1534,7 @@ mod tests {
             ..crate::guard::SpawnParams::default()
         };
         let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
+        assert!(cmd.contains("bash -c"));
         assert!(cmd.contains("claude --resume conv-123"));
         assert!(cmd.contains("--allowedTools"));
     }
@@ -1518,6 +1565,7 @@ mod tests {
             ..crate::guard::SpawnParams::default()
         };
         let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
+        assert!(cmd.contains("bash -c"));
         assert!(cmd.contains("claude --resume conv-123"));
         assert!(cmd.contains("--model sonnet"));
     }
@@ -1558,7 +1606,8 @@ mod tests {
             SessionMode::Interactive,
             &params_interactive,
         );
-        assert!(cmd_interactive.starts_with("codex "));
+        assert!(cmd_interactive.contains("bash -c"));
+        assert!(cmd_interactive.contains("codex"));
         assert!(cmd_interactive.contains("resume conv-codex"));
 
         let params_autonomous = crate::guard::SpawnParams {
@@ -1582,8 +1631,9 @@ mod tests {
             ..crate::guard::SpawnParams::default()
         };
         let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
-        // Interactive Claude passes the prompt as a positional arg (shell-escaped)
-        assert!(cmd.starts_with("claude "));
+        // All commands now wrapped in bash -c for session survival
+        assert!(cmd.contains("bash -c"));
+        assert!(cmd.contains("claude"));
         assert!(cmd.contains("'test'"));
     }
 
@@ -1597,7 +1647,8 @@ mod tests {
         };
         let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
         // Empty prompt should not produce a bare '' arg that makes Claude exit
-        assert!(cmd.starts_with("claude "));
+        assert!(cmd.contains("bash -c"));
+        assert!(cmd.contains("claude"));
         assert!(!cmd.contains("''"));
     }
 
@@ -1642,8 +1693,9 @@ mod tests {
             SessionMode::Interactive,
             &params_interactive,
         );
-        // Interactive Codex passes prompt as positional arg
-        assert!(cmd_interactive.starts_with("codex "));
+        // All commands wrapped in bash -c for session survival
+        assert!(cmd_interactive.contains("bash -c"));
+        assert!(cmd_interactive.contains("codex"));
         assert!(cmd_interactive.contains("'test'"));
 
         let params_autonomous = crate::guard::SpawnParams {
@@ -1653,7 +1705,6 @@ mod tests {
         };
         let cmd_autonomous =
             build_command(Provider::Codex, SessionMode::Autonomous, &params_autonomous);
-        // Autonomous Codex wraps in bash -c '...'
         assert!(cmd_autonomous.contains("bash -c"));
         assert!(cmd_autonomous.contains("codex "));
     }
@@ -1668,6 +1719,7 @@ mod tests {
             ..crate::guard::SpawnParams::default()
         };
         let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
+        assert!(cmd.contains("bash -c"));
         assert!(cmd.contains("--model"));
         assert!(cmd.contains("opus"));
         assert!(cmd.contains("'test'"));
@@ -1692,6 +1744,23 @@ mod tests {
         assert!(cmd.contains("Read,Grep"));
         assert!(cmd.contains("--append-system-prompt"));
         assert!(cmd.contains("Be concise"));
+    }
+
+    #[test]
+    fn test_resolve_binary_falls_back_to_name() {
+        // For a non-existent binary, resolve_binary should return the bare name
+        let result = resolve_binary("definitely-not-a-real-binary-xyz");
+        assert_eq!(result, "definitely-not-a-real-binary-xyz");
+    }
+
+    #[test]
+    fn test_resolve_binary_finds_system_binary() {
+        // `ls` should be found in standard system paths
+        let result = resolve_binary("ls");
+        assert!(
+            result.starts_with('/'),
+            "Expected absolute path, got: {result}"
+        );
     }
 
     #[tokio::test]
