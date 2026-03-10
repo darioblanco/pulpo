@@ -23,6 +23,7 @@ export function OceanPage() {
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [peerSessions, setPeerSessions] = useState<Record<string, Session[]>>({});
   const [sprites, setSprites] = useState<Sprites | null>(null);
+  const [focusedNode, setFocusedNode] = useState<string | null>(null);
 
   // Load shared sprites once
   useEffect(() => {
@@ -79,7 +80,7 @@ export function OceanPage() {
         isLocal: false,
         nodeStatus: peers[i].status,
         sessions: peerSessions[peers[i].name] ?? [],
-        backgroundIndex: (i % 3) + 2, // cycles through 2, 3, 4
+        backgroundIndex: 1,
         nodeColor: NODE_COLORS[(i + 1) % NODE_COLORS.length],
       });
     }
@@ -119,6 +120,9 @@ export function OceanPage() {
         ? 'grid-cols-1 md:grid-cols-2'
         : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3';
 
+  const showExpand = pools.length > 1;
+  const visiblePools = focusedNode ? pools.filter((p) => p.nodeName === focusedNode) : pools;
+
   return (
     <div data-testid="ocean-page">
       <AppHeader title="The Ocean" />
@@ -129,8 +133,11 @@ export function OceanPage() {
           </div>
         ) : (
           <>
-            <div className={`grid ${gridCols} gap-4`} data-testid="tide-pool-grid">
-              {pools.map((pool) => (
+            <div
+              className={`grid ${focusedNode ? 'grid-cols-1' : gridCols} gap-4`}
+              data-testid="tide-pool-grid"
+            >
+              {visiblePools.map((pool) => (
                 <TidePool
                   key={pool.nodeName}
                   nodeName={pool.nodeName}
@@ -140,12 +147,19 @@ export function OceanPage() {
                   backgroundIndex={pool.backgroundIndex}
                   nodeColor={pool.nodeColor}
                   sprites={sprites}
+                  expanded={focusedNode === pool.nodeName}
+                  onToggleExpand={
+                    showExpand
+                      ? () =>
+                          setFocusedNode((prev) => (prev === pool.nodeName ? null : pool.nodeName))
+                      : undefined
+                  }
                   onKillSession={pool.isLocal ? handleKill : undefined}
                   onDeleteSession={pool.isLocal ? handleDelete : undefined}
                 />
               ))}
             </div>
-            {pools.length > 1 && (
+            {pools.length > 1 && !focusedNode && (
               <div
                 className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground"
                 data-testid="knowledge-current"

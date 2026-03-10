@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Maximize2, Minimize2 } from 'lucide-react';
 import type { Session } from '@/api/types';
 import { loadBackgroundSet, type Sprites, type BackgroundSprites } from './engine/sprites';
 import {
@@ -25,6 +26,8 @@ interface TidePoolProps {
   backgroundIndex: number;
   nodeColor: string;
   sprites: Sprites | null;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
   onKillSession?: (sessionName: string) => void;
   onDeleteSession?: (sessionName: string) => void;
 }
@@ -37,6 +40,8 @@ export function TidePool({
   backgroundIndex,
   nodeColor,
   sprites,
+  expanded,
+  onToggleExpand,
   onKillSession,
   onDeleteSession,
 }: TidePoolProps) {
@@ -45,6 +50,8 @@ export function TidePool({
   const worldRef = useRef<WorldState | null>(null);
   const bgRef = useRef<BackgroundSprites | null>(null);
   const rafRef = useRef<number>(0);
+  // Random hue shift within blue range: -30 (teal) to +30 (indigo)
+  const [hueRotate] = useState(() => Math.floor(Math.random() * 61) - 30);
 
   const [selectedOctopus, setSelectedOctopus] = useState<{
     entity: OctopusEntity;
@@ -131,7 +138,7 @@ export function TidePool({
           const dpr = window.devicePixelRatio || 1;
           ctx.save();
           ctx.scale(dpr, dpr);
-          render(ctx, world, sprites, now, bgRef.current ?? undefined);
+          render(ctx, world, sprites, now, bgRef.current ?? undefined, hueRotate, hueRotate + 1000);
           ctx.restore();
         }
       }
@@ -141,7 +148,7 @@ export function TidePool({
 
     rafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [bgLoading, sprites]);
+  }, [bgLoading, sprites, hueRotate]);
 
   // Click -> hit test -> profile card / node card
   const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -221,13 +228,24 @@ export function TidePool({
         <span className="text-xs text-muted-foreground">
           {sessions.length} session{sessions.length !== 1 ? 's' : ''}
         </span>
+        {onToggleExpand && (
+          <button
+            onClick={onToggleExpand}
+            className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground cursor-pointer hover:text-white hover:bg-white/10 transition-colors"
+            data-testid="tide-pool-expand-toggle"
+            title={expanded ? 'Show all nodes' : 'Focus this node'}
+          >
+            {expanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            <span>{expanded ? 'Minimize' : 'Expand'}</span>
+          </button>
+        )}
       </div>
 
       {/* Canvas container */}
       <div
         ref={containerRef}
         className="relative w-full border border-border rounded-lg overflow-hidden"
-        style={{ aspectRatio: '16 / 9' }}
+        style={{ aspectRatio: expanded ? '21 / 9' : '16 / 9' }}
         data-testid="tide-pool-canvas-container"
       >
         <canvas
