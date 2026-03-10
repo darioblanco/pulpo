@@ -22,7 +22,7 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 
 [workspace.package]
-version = "0.0.13"
+version = "0.0.14"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/darioblanco/pulpo"

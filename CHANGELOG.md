@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.14](https://github.com/darioblanco/pulpo/compare/v0.0.13...v0.0.14) (2026-03-10)
+
+
+### Features
+
+* **ocean:** replace SVG with pixel-art Canvas game engine ([22ed115](https://github.com/darioblanco/pulpo/commit/22ed115f200d3467efa4f7916f1f315452c506eb))
+
+
+### Bug Fixes
+
+* **daemon:** skip empty prompt arg in interactive mode to prevent immediate exit ([d200812](https://github.com/darioblanco/pulpo/commit/d200812745c20b4e9eabb5f52bde3aa3f493228c))
+* prettier formatting for index.css and pre-commit hook cd leaking ([c2f4be3](https://github.com/darioblanco/pulpo/commit/c2f4be3eeb73f09f920aea0713533ac10ddfb454))
+
 ## [0.0.13](https://github.com/darioblanco/pulpo/compare/v0.0.12...v0.0.13) (2026-03-09)
 
 
