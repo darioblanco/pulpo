@@ -254,7 +254,10 @@ pub fn build_claude_interactive_flags(params: &SpawnParams) -> Vec<String> {
         flags.extend(claude_permission_flags(params));
         return flags;
     }
-    let mut flags = vec![shell_escape(&params.prompt)];
+    let mut flags = Vec::new();
+    if !params.prompt.is_empty() {
+        flags.push(shell_escape(&params.prompt));
+    }
     flags.extend(claude_permission_flags(params));
     flags.extend(claude_common_flags(params));
     flags.extend(claude_system_prompt_flags(params));
@@ -618,6 +621,15 @@ mod tests {
         let flags = build_claude_interactive_flags(&p);
         assert!(!flags.contains(&"-p".into()));
         assert!(flags.contains(&"'Fix bug'".into()));
+        assert!(flags.contains(&"--allowedTools".into()));
+    }
+
+    #[test]
+    fn test_claude_interactive_flags_empty_prompt() {
+        let p = params("", restricted_guards());
+        let flags = build_claude_interactive_flags(&p);
+        // Empty prompt should NOT produce a positional arg (avoids claude '' exiting immediately)
+        assert!(!flags.contains(&"''".into()));
         assert!(flags.contains(&"--allowedTools".into()));
     }
 

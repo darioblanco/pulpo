@@ -1588,6 +1588,20 @@ mod tests {
     }
 
     #[test]
+    fn test_build_command_interactive_claude_empty_prompt() {
+        let guards = GuardConfig::default();
+        let params = crate::guard::SpawnParams {
+            prompt: String::new(),
+            guards,
+            ..crate::guard::SpawnParams::default()
+        };
+        let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
+        // Empty prompt should not produce a bare '' arg that makes Claude exit
+        assert!(cmd.starts_with("claude "));
+        assert!(!cmd.contains("''"));
+    }
+
+    #[test]
     fn test_build_command_autonomous_claude_standard() {
         let guards = GuardConfig::default();
         let params = crate::guard::SpawnParams {
