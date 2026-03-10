@@ -29,6 +29,8 @@ const mockCtx = {
   arc: vi.fn(),
   fill: vi.fn(),
   stroke: vi.fn(),
+  ellipse: vi.fn(),
+  setLineDash: vi.fn(),
   createLinearGradient: vi.fn().mockReturnValue({
     addColorStop: vi.fn(),
   }),

@@ -7,7 +7,21 @@ const NODE_SPACING = 250;
 const SWIM_ZONE_TOP = 50;
 const SWIM_ZONE_BOTTOM = 190;
 const SEABED_Y = 230;
-const NODE_Y = 200;
+const NODE_Y = SEABED_Y;
+
+// --- Node color palette ---
+export const NODE_COLORS = [
+  '#f472b6', // coral pink
+  '#2dd4bf', // ocean teal
+  '#fbbf24', // amber gold
+  '#a78bfa', // lavender
+  '#34d399', // emerald
+  '#60a5fa', // sky blue
+  '#fb923c', // tangerine
+  '#e879f9', // fuchsia
+  '#4ade80', // lime
+  '#38bdf8', // cyan
+];
 
 // --- Entity types ---
 
@@ -17,6 +31,14 @@ export interface OctopusEntity {
   status: string;
   provider: string;
   ink: string | null;
+  model: string | null;
+  mode: string;
+  workdir: string;
+  unrestricted: boolean;
+  createdAt: string;
+  lastOutputAt: string | null;
+  interventionReason: string | null;
+  prompt: string;
   waitingForInput: boolean;
   nodeName: string;
   x: number;
@@ -39,6 +61,8 @@ export interface NodeLandmark {
   status: 'online' | 'offline' | 'unknown';
   x: number;
   y: number;
+  color: string;
+  sessionCount: number;
 }
 
 export interface Decoration {
@@ -130,6 +154,95 @@ function assignHome(nodeX: number, index: number, total: number): [number, numbe
   return [x, y];
 }
 
+// --- Sync a single node into a tide pool world ---
+
+export function syncSingleNode(
+  world: WorldState,
+  nodeName: string,
+  isLocal: boolean,
+  status: 'online' | 'offline' | 'unknown',
+  sessions: Session[],
+  nodeColor: string,
+): void {
+  const newNode: NodeLandmark = {
+    name: nodeName,
+    isLocal,
+    status,
+    x: 0,
+    y: NODE_Y,
+    color: nodeColor,
+    sessionCount: sessions.length,
+  };
+
+  const nodesChanged = world.nodes.length !== 1 || world.nodes[0]?.name !== nodeName;
+
+  world.nodes = [newNode];
+
+  if (nodesChanged || world.decorations.length === 0) {
+    world.decorations = generateDecorations([newNode]);
+  }
+
+  fitCamera(world.camera, [newNode]);
+
+  // Diff octopuses
+  const existingById = new Map(world.octopuses.map((o) => [o.sessionId, o]));
+  const newOctopuses: OctopusEntity[] = [];
+
+  for (let i = 0; i < sessions.length; i++) {
+    const session = sessions[i];
+    const existing = existingById.get(session.id);
+
+    if (existing) {
+      existing.status = session.status;
+      existing.waitingForInput = session.waiting_for_input;
+      existing.ink = session.ink;
+      existing.model = session.model;
+      existing.mode = session.mode;
+      existing.workdir = session.workdir;
+      existing.unrestricted = session.guard_config?.unrestricted ?? false;
+      existing.createdAt = session.created_at;
+      existing.lastOutputAt = session.last_output_at;
+      existing.interventionReason = session.intervention_reason;
+      existing.prompt = session.prompt;
+      existing.nodeName = nodeName;
+      newOctopuses.push(existing);
+    } else {
+      const [hx, hy] = assignHome(0, i, sessions.length);
+      newOctopuses.push({
+        sessionId: session.id,
+        name: session.name,
+        status: session.status,
+        provider: session.provider,
+        ink: session.ink,
+        model: session.model,
+        mode: session.mode,
+        workdir: session.workdir,
+        unrestricted: session.guard_config?.unrestricted ?? false,
+        createdAt: session.created_at,
+        lastOutputAt: session.last_output_at,
+        interventionReason: session.intervention_reason,
+        prompt: session.prompt,
+        waitingForInput: session.waiting_for_input,
+        nodeName: nodeName,
+        x: hx + randomBetween(-10, 10),
+        y: hy + randomBetween(-10, 10),
+        homeX: hx,
+        homeY: hy,
+        vx: 0,
+        vy: 0,
+        animFrame: 0,
+        animTimer: 0,
+        isSwimming: false,
+        wanderTimer: randomBetween(1, 3),
+        wanderTargetX: hx,
+        wanderTargetY: hy,
+      });
+    }
+  }
+
+  world.octopuses = newOctopuses;
+}
+
 // --- Sync React data into world state ---
 
 export function syncData(
@@ -139,9 +252,24 @@ export function syncData(
   peers: PeerInfo[],
   peerSessions: Record<string, Session[]>,
 ): void {
+  // Map sessions to nodes (needed for session counts)
+  const sessionsByNode: Record<string, Session[]> = {};
+  sessionsByNode[localNode.name] = localSessions;
+  for (const peer of peers) {
+    sessionsByNode[peer.name] = peerSessions[peer.name] ?? [];
+  }
+
   // Build node list
   const newNodes: NodeLandmark[] = [
-    { name: localNode.name, isLocal: true, status: 'online', x: 0, y: NODE_Y },
+    {
+      name: localNode.name,
+      isLocal: true,
+      status: 'online',
+      x: 0,
+      y: NODE_Y,
+      color: NODE_COLORS[0 % NODE_COLORS.length],
+      sessionCount: (sessionsByNode[localNode.name] ?? []).length,
+    },
   ];
 
   for (let i = 0; i < peers.length; i++) {
@@ -151,6 +279,8 @@ export function syncData(
       status: peers[i].status,
       x: (i + 1) * NODE_SPACING,
       y: NODE_Y,
+      color: NODE_COLORS[(i + 1) % NODE_COLORS.length],
+      sessionCount: (sessionsByNode[peers[i].name] ?? []).length,
     });
   }
 
@@ -167,13 +297,6 @@ export function syncData(
 
   fitCamera(world.camera, newNodes);
 
-  // Map sessions to nodes
-  const sessionsByNode: Record<string, Session[]> = {};
-  sessionsByNode[localNode.name] = localSessions;
-  for (const peer of peers) {
-    sessionsByNode[peer.name] = peerSessions[peer.name] ?? [];
-  }
-
   // Diff octopuses: keep existing (preserve animation), add new, remove gone
   const existingById = new Map(world.octopuses.map((o) => [o.sessionId, o]));
   const newOctopuses: OctopusEntity[] = [];
@@ -189,6 +312,14 @@ export function syncData(
         existing.status = session.status;
         existing.waitingForInput = session.waiting_for_input;
         existing.ink = session.ink;
+        existing.model = session.model;
+        existing.mode = session.mode;
+        existing.workdir = session.workdir;
+        existing.unrestricted = session.guard_config?.unrestricted ?? false;
+        existing.createdAt = session.created_at;
+        existing.lastOutputAt = session.last_output_at;
+        existing.interventionReason = session.intervention_reason;
+        existing.prompt = session.prompt;
         existing.nodeName = node.name;
         newOctopuses.push(existing);
       } else {
@@ -200,6 +331,14 @@ export function syncData(
           status: session.status,
           provider: session.provider,
           ink: session.ink,
+          model: session.model,
+          mode: session.mode,
+          workdir: session.workdir,
+          unrestricted: session.guard_config?.unrestricted ?? false,
+          createdAt: session.created_at,
+          lastOutputAt: session.last_output_at,
+          interventionReason: session.intervention_reason,
+          prompt: session.prompt,
           waitingForInput: session.waiting_for_input,
           nodeName: node.name,
           x: hx + randomBetween(-10, 10),
@@ -260,9 +399,9 @@ export function update(world: WorldState, dt: number): void {
     // Swimming if moving horizontally fast enough
     oct.isSwimming = Math.abs(oct.vx) > 0.3;
 
-    // Frame animation
+    // Frame animation (slower for smoother feel)
     oct.animTimer += cappedDt;
-    const fps = oct.isSwimming ? 10 : 6;
+    const fps = oct.isSwimming ? 5 : 3;
     if (oct.animTimer >= 1 / fps) {
       oct.animTimer = 0;
       oct.animFrame = (oct.animFrame + 1) % 4;
@@ -314,6 +453,26 @@ export function hitTest(world: WorldState, worldX: number, worldY: number): Octo
     const dy = worldY - oct.y;
     if (dx * dx + dy * dy < HIT_RADIUS * HIT_RADIUS) {
       return oct;
+    }
+  }
+  return null;
+}
+
+// --- Node hit testing ---
+
+const NODE_HIT_RX = 60;
+const NODE_HIT_RY = 25;
+
+export function hitTestNode(
+  world: WorldState,
+  worldX: number,
+  worldY: number,
+): NodeLandmark | null {
+  for (const node of world.nodes) {
+    const dx = (worldX - node.x) / NODE_HIT_RX;
+    const dy = (worldY - node.y) / NODE_HIT_RY;
+    if (dx * dx + dy * dy <= 1) {
+      return node;
     }
   }
   return null;

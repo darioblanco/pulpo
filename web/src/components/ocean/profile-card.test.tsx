@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { ProfileCard } from './profile-card';
@@ -11,6 +11,14 @@ function makeOctopus(overrides: Partial<OctopusEntity> = {}): OctopusEntity {
     status: 'running',
     provider: 'claude',
     ink: null,
+    model: null,
+    mode: 'autonomous',
+    workdir: '/home/user/projects/pulpo/web',
+    unrestricted: false,
+    createdAt: '2026-01-01T00:00:00Z',
+    lastOutputAt: null,
+    interventionReason: null,
+    prompt: 'Fix the auth bug',
     waitingForInput: false,
     nodeName: 'mac-studio',
     x: 100,
@@ -28,6 +36,15 @@ function makeOctopus(overrides: Partial<OctopusEntity> = {}): OctopusEntity {
     ...overrides,
   };
 }
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-01-01T00:12:00Z'));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('ProfileCard', () => {
   it('renders octopus name', () => {
@@ -113,15 +130,19 @@ describe('ProfileCard', () => {
     expect(screen.getByText('mac-studio')).toBeInTheDocument();
   });
 
-  it('renders View Logs link', () => {
+  it('renders Open Session button when onAttach provided', () => {
     render(
       <MemoryRouter>
-        <ProfileCard octopus={makeOctopus()} screenX={400} screenY={300} onClose={vi.fn()} />
+        <ProfileCard
+          octopus={makeOctopus()}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onAttach={vi.fn()}
+        />
       </MemoryRouter>,
     );
-    const link = screen.getByText('View Logs');
-    expect(link).toBeInTheDocument();
-    expect(link.closest('a')).toHaveAttribute('href', '/session/worker-alpha');
+    expect(screen.getByText('Open Session')).toBeInTheDocument();
   });
 
   it('calls onClose when clicking backdrop', () => {
@@ -157,5 +178,253 @@ describe('ProfileCard', () => {
     const top = parseInt(card.style.top);
     expect(left).toBeLessThanOrEqual(window.innerWidth);
     expect(top).toBeLessThanOrEqual(window.innerHeight);
+  });
+
+  // --- New field tests ---
+
+  it('renders shortened model when present', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ model: 'claude-sonnet-4-20250514' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('profile-model')).toHaveTextContent('sonnet-4');
+  });
+
+  it('does not render model when null', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ model: null })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('profile-model')).not.toBeInTheDocument();
+  });
+
+  it('renders mode', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ mode: 'chat' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('chat')).toBeInTheDocument();
+  });
+
+  it('renders truncated workdir', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard octopus={makeOctopus()} screenX={400} screenY={300} onClose={vi.fn()} />
+      </MemoryRouter>,
+    );
+    const el = screen.getByTestId('profile-workdir');
+    expect(el).toHaveTextContent('…/pulpo/web');
+  });
+
+  it('renders short workdir without truncation', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ workdir: '/tmp/repo' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    const el = screen.getByTestId('profile-workdir');
+    expect(el).toHaveTextContent('/tmp/repo');
+  });
+
+  it('renders duration', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard octopus={makeOctopus()} screenX={400} screenY={300} onClose={vi.fn()} />
+      </MemoryRouter>,
+    );
+    const el = screen.getByTestId('profile-duration');
+    expect(el).toHaveTextContent('running for 12m');
+  });
+
+  it('shows completed duration for terminal statuses', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'completed' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    const el = screen.getByTestId('profile-duration');
+    expect(el).toHaveTextContent('completed after 12m');
+  });
+
+  it('renders last active when present', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ lastOutputAt: '2026-01-01T00:10:00Z' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    const el = screen.getByTestId('profile-last-active');
+    expect(el).toHaveTextContent('2m ago');
+  });
+
+  it('does not render last active when null', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard octopus={makeOctopus()} screenX={400} screenY={300} onClose={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('profile-last-active')).not.toBeInTheDocument();
+  });
+
+  it('shows unrestricted badge when true', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ unrestricted: true })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('unrestricted-badge')).toBeInTheDocument();
+  });
+
+  it('hides unrestricted badge when false', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard octopus={makeOctopus()} screenX={400} screenY={300} onClose={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('unrestricted-badge')).not.toBeInTheDocument();
+  });
+
+  it('shows intervention reason when present', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ interventionReason: 'Memory limit exceeded' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    const el = screen.getByTestId('profile-intervention');
+    expect(el).toHaveTextContent('Memory limit exceeded');
+  });
+
+  it('hides intervention reason when null', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard octopus={makeOctopus()} screenX={400} screenY={300} onClose={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('profile-intervention')).not.toBeInTheDocument();
+  });
+
+  it('renders Attach button when onAttach is provided', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus()}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onAttach={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('attach-button')).toBeInTheDocument();
+  });
+
+  it('does not render Attach button when onAttach is not provided', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard octopus={makeOctopus()} screenX={400} screenY={300} onClose={vi.fn()} />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('attach-button')).not.toBeInTheDocument();
+  });
+
+  it('calls onAttach with session name when Attach is clicked', () => {
+    const onAttach = vi.fn();
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus()}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onAttach={onAttach}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByTestId('attach-button'));
+    expect(onAttach).toHaveBeenCalledWith('worker-alpha');
+  });
+
+  it('renders last active as just now for recent output', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ lastOutputAt: '2026-01-01T00:11:55Z' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('profile-last-active')).toHaveTextContent('just now');
+  });
+
+  it('renders last active in hours for old output', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ lastOutputAt: '2025-12-31T22:00:00Z' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('profile-last-active')).toHaveTextContent('2h ago');
+  });
+
+  it('renders non-claude model without shortening', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ model: 'gpt-4o-mini' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('profile-model')).toHaveTextContent('gpt-4o-mini');
   });
 });

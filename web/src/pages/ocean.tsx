@@ -1,16 +1,37 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppHeader } from '@/components/layout/app-header';
-import { OceanCanvas } from '@/components/ocean/ocean-canvas';
+import { TidePool } from '@/components/ocean/tide-pool';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getPeers, getRemoteSessions } from '@/api/client';
+import { loadAllSprites, type Sprites } from '@/components/ocean/engine/sprites';
+import { NODE_COLORS } from '@/components/ocean/engine/world';
 import { useSSE } from '@/hooks/use-sse';
 import type { NodeInfo, PeerInfo, Session } from '@/api/types';
+
+interface TidePoolEntry {
+  nodeName: string;
+  isLocal: boolean;
+  nodeStatus: 'online' | 'offline' | 'unknown';
+  sessions: Session[];
+  backgroundIndex: number;
+  nodeColor: string;
+}
 
 export function OceanPage() {
   const { sessions } = useSSE();
   const [localNode, setLocalNode] = useState<NodeInfo | null>(null);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [peerSessions, setPeerSessions] = useState<Record<string, Session[]>>({});
+  const [sprites, setSprites] = useState<Sprites | null>(null);
+
+  // Load shared sprites once
+  useEffect(() => {
+    loadAllSprites()
+      .then((s) => setSprites(s))
+      .catch(() => {
+        /* sprites will be null — pools render gradient fallback */
+      });
+  }, []);
 
   const fetchPeers = useCallback(async () => {
     try {
@@ -41,6 +62,37 @@ export function OceanPage() {
     return () => clearInterval(interval);
   }, [fetchPeers]);
 
+  // Build tide pool entries
+  const pools: TidePoolEntry[] = [];
+  if (localNode) {
+    pools.push({
+      nodeName: localNode.name,
+      isLocal: true,
+      nodeStatus: 'online',
+      sessions,
+      backgroundIndex: 1,
+      nodeColor: NODE_COLORS[0 % NODE_COLORS.length],
+    });
+    for (let i = 0; i < peers.length; i++) {
+      pools.push({
+        nodeName: peers[i].name,
+        isLocal: false,
+        nodeStatus: peers[i].status,
+        sessions: peerSessions[peers[i].name] ?? [],
+        backgroundIndex: (i % 3) + 2, // cycles through 2, 3, 4
+        nodeColor: NODE_COLORS[(i + 1) % NODE_COLORS.length],
+      });
+    }
+  }
+
+  // Grid columns based on pool count
+  const gridCols =
+    pools.length <= 1
+      ? 'grid-cols-1'
+      : pools.length <= 4
+        ? 'grid-cols-1 md:grid-cols-2'
+        : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3';
+
   return (
     <div data-testid="ocean-page">
       <AppHeader title="The Ocean" />
@@ -50,12 +102,32 @@ export function OceanPage() {
             <Skeleton className="h-[400px] w-full rounded-lg" />
           </div>
         ) : (
-          <OceanCanvas
-            localNode={localNode}
-            localSessions={sessions}
-            peers={peers}
-            peerSessions={peerSessions}
-          />
+          <>
+            <div className={`grid ${gridCols} gap-4`} data-testid="tide-pool-grid">
+              {pools.map((pool) => (
+                <TidePool
+                  key={pool.nodeName}
+                  nodeName={pool.nodeName}
+                  isLocal={pool.isLocal}
+                  nodeStatus={pool.nodeStatus}
+                  sessions={pool.sessions}
+                  backgroundIndex={pool.backgroundIndex}
+                  nodeColor={pool.nodeColor}
+                  sprites={sprites}
+                />
+              ))}
+            </div>
+            {pools.length > 1 && (
+              <div
+                className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground"
+                data-testid="knowledge-current"
+              >
+                <span className="h-px flex-1 bg-border" />
+                <span>Knowledge: shared ocean</span>
+                <span className="h-px flex-1 bg-border" />
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

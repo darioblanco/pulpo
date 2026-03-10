@@ -1,129 +1,143 @@
-import type { Sprites } from './sprites';
+import type { Sprites, BackgroundSprites } from './sprites';
 import type { WorldState, OctopusEntity } from './world';
 import { worldToScreen } from './camera';
 
-const BG_TOP = '#0c1929';
-const BG_BOTTOM = '#050e1a';
-const SEABED_SURFACE = '#0f1d2d';
-const SEABED_DEEP = '#0a1420';
+// Parallax scroll factors (0 = static, 1 = moves with camera)
+const PARALLAX: Record<string, number> = {
+  'water-surface': 0.1,
+  fish: 0.3,
+  rocks: 0.8,
+  sand: 0.9,
+  'coral-foreground': 1.0,
+};
+
+/** Draw a parallax background layer, tiled horizontally. */
+function drawParallaxLayer(
+  ctx: CanvasRenderingContext2D,
+  sprite: HTMLImageElement | undefined,
+  camera: { x: number; width: number; height: number; zoom: number },
+  parallaxFactor: number,
+  time: number,
+): void {
+  if (!sprite) return;
+
+  const scale = camera.height / sprite.height;
+  const tileW = Math.ceil(sprite.width * scale);
+  const tileH = camera.height;
+
+  const drift = time * 0.008 * (1 - parallaxFactor);
+  const cameraOffset = camera.x * camera.zoom * parallaxFactor;
+  const rawOffset = -(cameraOffset + drift);
+  const offset = ((rawOffset % tileW) + tileW) % tileW;
+
+  for (let x = offset - tileW; x < camera.width; x += tileW) {
+    ctx.drawImage(sprite, 0, 0, sprite.width, sprite.height, x, 0, tileW, tileH);
+  }
+}
+
+/**
+ * Draw a parallax layer clipped to the region below `clipY`.
+ */
+function drawGroundLayer(
+  ctx: CanvasRenderingContext2D,
+  sprite: HTMLImageElement | undefined,
+  camera: { x: number; width: number; height: number; zoom: number },
+  parallaxFactor: number,
+  time: number,
+  clipY: number,
+): void {
+  if (!sprite) return;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, clipY, camera.width, camera.height - clipY);
+  ctx.clip();
+
+  drawParallaxLayer(ctx, sprite, camera, parallaxFactor, time);
+
+  ctx.restore();
+}
+
+/** Draw a pixel-art style bubble. */
+function drawPixelBubble(
+  ctx: CanvasRenderingContext2D,
+  sx: number,
+  sy: number,
+  sr: number,
+  alpha: number,
+): void {
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = '#8ecae6';
+  ctx.lineWidth = Math.max(1, sr * 0.3);
+  ctx.beginPath();
+  ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(142, 202, 230, 0.15)';
+  ctx.fill();
+  ctx.fillStyle = '#c7ecff';
+  const hlSize = Math.max(1, sr * 0.35);
+  ctx.fillRect(sx - sr * 0.35, sy - sr * 0.45, hlSize, hlSize);
+  ctx.globalAlpha = 1;
+}
 
 export function render(
   ctx: CanvasRenderingContext2D,
   world: WorldState,
   sprites: Sprites,
   time: number,
+  background?: BackgroundSprites,
 ): void {
   const { camera } = world;
   const { width, height } = camera;
 
   ctx.imageSmoothingEnabled = false;
 
-  // --- Background gradient ---
-  const grad = ctx.createLinearGradient(0, 0, 0, height);
-  grad.addColorStop(0, BG_TOP);
-  grad.addColorStop(1, BG_BOTTOM);
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, width, height);
+  const bg = background;
+  const hasBg = bg && Object.keys(bg).length > 0;
 
-  // --- Caustic light blobs ---
-  ctx.globalAlpha = 0.03;
-  ctx.fillStyle = '#4488cc';
-  for (let i = 0; i < 10; i++) {
-    const cx = (Math.sin(time * 0.0003 + i * 1.7) * 0.5 + 0.5) * width;
-    const cy = (Math.cos(time * 0.0002 + i * 2.3) * 0.3 + 0.35) * height;
-    const cr = 50 + Math.sin(time * 0.001 + i) * 20;
-    ctx.beginPath();
-    ctx.arc(cx, cy, cr, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
+  if (hasBg) {
+    // Atmosphere layers (full viewport)
+    drawParallaxLayer(ctx, bg['water-surface'], camera, PARALLAX['water-surface'], time);
+    drawParallaxLayer(ctx, bg['fish'], camera, PARALLAX['fish'], time);
 
-  // --- Seabed ---
-  const [, seabedScreenY] = worldToScreen(camera, 0, 220);
-  if (seabedScreenY < height) {
-    const seabedGrad = ctx.createLinearGradient(0, seabedScreenY, 0, height);
-    seabedGrad.addColorStop(0, SEABED_SURFACE);
-    seabedGrad.addColorStop(1, SEABED_DEEP);
-    ctx.fillStyle = seabedGrad;
-    ctx.fillRect(0, seabedScreenY, width, height - seabedScreenY);
-  }
-
-  // --- Water surface ---
-  const [, surfaceY] = worldToScreen(camera, 0, 0);
-  if (surfaceY > 0 && surfaceY < height) {
-    ctx.strokeStyle = '#1e3a5f';
-    ctx.globalAlpha = 0.3;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, surfaceY);
-    for (let x = 0; x <= width; x += 20) {
-      ctx.lineTo(x, surfaceY + Math.sin(x * 0.02 + time * 0.001) * 3);
-    }
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-  }
-
-  // --- Decorations ---
-  for (const deco of world.decorations) {
-    const sprite = sprites.decor[deco.type];
-    if (!sprite) continue;
-    const [sx, sy] = worldToScreen(camera, deco.x, deco.y);
-    const sw = sprite.width * camera.zoom * 0.5;
-    const sh = sprite.height * camera.zoom * 0.5;
-    ctx.drawImage(sprite, sx - sw / 2, sy - sh, sw, sh);
-  }
-
-  // --- Node landmarks ---
-  for (const node of world.nodes) {
-    const spriteKey = node.isLocal
-      ? 'coral-reef'
-      : node.status === 'online'
-        ? 'sunken-ship'
-        : 'shipwreck';
-    const sprite = sprites.nodes[spriteKey];
-    if (!sprite) continue;
-
-    const [sx, sy] = worldToScreen(camera, node.x, node.y);
-    const sw = sprite.width * camera.zoom * 0.8;
-    const sh = sprite.height * camera.zoom * 0.8;
-    ctx.drawImage(sprite, sx - sw / 2, sy - sh, sw, sh);
-
-    // Node name
-    const fontSize = Math.max(10, 12 * (camera.zoom / 2));
-    ctx.font = `bold ${fontSize}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.fillStyle = node.status === 'online' ? '#7dd3fc' : '#64748b';
-    ctx.fillText(node.name, sx, sy + fontSize + 4);
-
-    // Status dot
-    const dotR = Math.max(2, 3 * (camera.zoom / 2));
-    ctx.beginPath();
-    ctx.arc(sx + sw / 2 - dotR * 2, sy - sh + dotR * 2, dotR, 0, Math.PI * 2);
-    ctx.fillStyle =
-      node.status === 'online' ? '#34d399' : node.status === 'offline' ? '#f87171' : '#94a3b8';
-    ctx.fill();
+    // Ground layers clipped to seabed region
+    const [, seabedScreenY] = worldToScreen(camera, 0, 190);
+    drawGroundLayer(ctx, bg['rocks'], camera, PARALLAX['rocks'], time, seabedScreenY);
+    drawGroundLayer(ctx, bg['sand'], camera, PARALLAX['sand'], time, seabedScreenY);
+    drawGroundLayer(
+      ctx,
+      bg['coral-foreground'],
+      camera,
+      PARALLAX['coral-foreground'],
+      time,
+      seabedScreenY,
+    );
+  } else {
+    const grad = ctx.createLinearGradient(0, 0, 0, height);
+    grad.addColorStop(0, '#1478a7');
+    grad.addColorStop(1, '#0a4f7a');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
   }
 
   // --- Octopuses ---
+  const nodeByName = new Map(world.nodes.map((n) => [n.name, n]));
   for (const oct of world.octopuses) {
-    drawOctopus(ctx, oct, sprites, world, time);
+    drawOctopus(ctx, oct, sprites, world, time, nodeByName);
   }
 
   // --- Bubbles ---
   for (const bubble of world.bubbles) {
     const [sx, sy] = worldToScreen(camera, bubble.x, bubble.y);
     const sr = bubble.radius * camera.zoom;
-    ctx.beginPath();
-    ctx.arc(sx, sy, sr, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(120, 200, 255, ${bubble.alpha})`;
-    ctx.fill();
+    drawPixelBubble(ctx, sx, sy, sr, bubble.alpha);
   }
 
   // --- Empty state ---
   if (world.octopuses.length === 0) {
     ctx.font = '14px monospace';
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#64748b';
+    ctx.fillStyle = '#c8dce8';
     ctx.fillText('No active sessions \u2014 the ocean is calm', width / 2, height / 2);
   }
 }
@@ -134,6 +148,7 @@ function drawOctopus(
   sprites: Sprites,
   world: WorldState,
   time: number,
+  nodeByName: Map<string, { color: string }>,
 ): void {
   const { camera } = world;
   const anim = oct.isSwimming ? 'swim' : 'idle';
@@ -144,45 +159,97 @@ function drawOctopus(
   const FRAME_W = 32;
   const FRAME_H = 32;
   const frameCount = Math.max(1, Math.floor(sheet.width / FRAME_W));
-  const frame = oct.animFrame % frameCount;
+  const currentFrame = oct.animFrame % frameCount;
+  const nextFrame = (oct.animFrame + 1) % frameCount;
+
+  // Cross-fade progress
+  const fps = oct.isSwimming ? 5 : 3;
+  const frameDuration = 1 / fps;
+  const crossfade = Math.min(oct.animTimer / frameDuration, 1);
 
   const [sx, sy] = worldToScreen(camera, oct.x, oct.y);
   const size = FRAME_W * camera.zoom;
 
-  // Flip sprite when moving left
+  // Gentle vertical bob
+  const bobSpeed = oct.status === 'dead' ? 0.5 : oct.status === 'stale' ? 1.0 : 1.5;
+  const bobAmount = oct.status === 'dead' ? 1 : 2;
+  const bob = Math.sin(time * 0.002 * bobSpeed + oct.x * 0.3) * bobAmount * camera.zoom;
+
+  // Subtle breathing squash/stretch
+  const breathe = Math.sin(time * 0.003 + oct.y * 0.2) * 0.03;
+  const scaleX = 1.0 - breathe;
+  const scaleY = 1.0 + breathe;
+
+  const drawY = sy + bob;
+  const flipX = oct.vx < -0.1;
+
   ctx.save();
-  if (oct.vx < -0.1) {
-    ctx.translate(sx, sy);
-    ctx.scale(-1, 1);
-    ctx.drawImage(sheet, frame * FRAME_W, 0, FRAME_W, FRAME_H, -size / 2, -size / 2, size, size);
-  } else {
+  ctx.translate(sx, drawY);
+  ctx.scale(flipX ? -scaleX : scaleX, scaleY);
+
+  ctx.drawImage(
+    sheet,
+    currentFrame * FRAME_W,
+    0,
+    FRAME_W,
+    FRAME_H,
+    -size / 2,
+    -size / 2,
+    size,
+    size,
+  );
+  if (crossfade > 0.3 && currentFrame !== nextFrame) {
+    const blendAlpha = (crossfade - 0.3) / 0.7;
+    ctx.globalAlpha = blendAlpha;
     ctx.drawImage(
       sheet,
-      frame * FRAME_W,
+      nextFrame * FRAME_W,
       0,
       FRAME_W,
       FRAME_H,
-      sx - size / 2,
-      sy - size / 2,
+      -size / 2,
+      -size / 2,
       size,
       size,
     );
+    ctx.globalAlpha = 1;
   }
   ctx.restore();
 
-  // Name label
+  // Name + provider badges — centered below octopus
+  const nodeColor = nodeByName.get(oct.nodeName)?.color ?? '#d4e4ef';
   const fontSize = Math.max(8, 9 * (camera.zoom / 2));
+  const padX = 4;
+  const padY = 2;
+  const gap = 2;
+  ctx.textAlign = 'left';
+  let badgeY = drawY + size / 2 + 4;
+
+  // Name badge
   ctx.font = `${fontSize}px monospace`;
-  ctx.textAlign = 'center';
-  ctx.fillStyle = '#94a3b8';
-  const label = oct.name.length > 12 ? `${oct.name.slice(0, 11)}\u2026` : oct.name;
-  ctx.fillText(label, sx, sy + size / 2 + fontSize + 2);
+  const nameTextW = ctx.measureText(oct.name).width;
+  const nameW = nameTextW + padX * 2;
+  const nameH = fontSize + padY * 2;
+  const nameX = Math.round(sx - nameW / 2);
+  const nameY = Math.round(badgeY);
+  ctx.fillStyle = 'rgba(8, 18, 30, 0.7)';
+  ctx.fillRect(nameX, nameY, nameW, nameH);
+  ctx.fillStyle = nodeColor;
+  ctx.fillText(oct.name, nameX + padX, nameY + padY + fontSize - 1);
+  badgeY += nameH + gap;
 
   // Provider badge
   if (oct.provider) {
     ctx.font = `${fontSize - 1}px monospace`;
-    ctx.fillStyle = '#64748b';
-    ctx.fillText(oct.provider, sx, sy + size / 2 + fontSize * 2 + 4);
+    const provTextW = ctx.measureText(oct.provider).width;
+    const provW = provTextW + padX * 2;
+    const provH = fontSize - 1 + padY * 2;
+    const provX = Math.round(sx - provW / 2);
+    const provY = Math.round(badgeY);
+    ctx.fillStyle = 'rgba(8, 18, 30, 0.5)';
+    ctx.fillRect(provX, provY, provW, provH);
+    ctx.fillStyle = '#94b8d0';
+    ctx.fillText(oct.provider, provX + padX, provY + padY + fontSize - 2);
   }
 
   // Speech bubble for waiting-for-input
@@ -191,7 +258,7 @@ function drawOctopus(
     if (bubble) {
       const bSize = 16 * camera.zoom;
       const bounce = Math.sin(time * 0.004) * 3;
-      ctx.drawImage(bubble, sx + size / 4, sy - size / 2 - bSize + bounce, bSize, bSize);
+      ctx.drawImage(bubble, sx + size / 4, drawY - size / 2 - bSize + bounce, bSize, bSize);
     }
   }
 }

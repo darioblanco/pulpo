@@ -6,13 +6,16 @@ import {
   syncData,
   update,
   hitTest,
+  hitTestNode,
   type WorldState,
   type OctopusEntity,
+  type NodeLandmark,
 } from './engine/world';
 import { render } from './engine/renderer';
 import { screenToWorld } from './engine/camera';
 import { fitCamera } from './engine/camera';
 import { ProfileCard } from './profile-card';
+import { NodeCard } from './node-card';
 
 interface OceanCanvasProps {
   localNode: NodeInfo;
@@ -30,6 +33,11 @@ export function OceanCanvas({ localNode, localSessions, peers, peerSessions }: O
 
   const [selectedOctopus, setSelectedOctopus] = useState<{
     entity: OctopusEntity;
+    screenX: number;
+    screenY: number;
+  } | null>(null);
+  const [selectedNode, setSelectedNode] = useState<{
+    entity: NodeLandmark;
     screenX: number;
     screenY: number;
   } | null>(null);
@@ -130,8 +138,15 @@ export function OceanCanvas({ localNode, localSessions, peers, peerSessions }: O
 
     if (oct) {
       setSelectedOctopus({ entity: oct, screenX: e.clientX, screenY: e.clientY });
+      setSelectedNode(null);
     } else {
       setSelectedOctopus(null);
+      const node = hitTestNode(world, wx, wy);
+      if (node) {
+        setSelectedNode({ entity: node, screenX: e.clientX, screenY: e.clientY });
+      } else {
+        setSelectedNode(null);
+      }
     }
   }, []);
 
@@ -154,6 +169,14 @@ export function OceanCanvas({ localNode, localSessions, peers, peerSessions }: O
           screenX={selectedOctopus.screenX}
           screenY={selectedOctopus.screenY}
           onClose={() => setSelectedOctopus(null)}
+        />
+      )}
+      {selectedNode && (
+        <NodeCard
+          node={selectedNode.entity}
+          screenX={selectedNode.screenX}
+          screenY={selectedNode.screenY}
+          onClose={() => setSelectedNode(null)}
         />
       )}
       {loading && (

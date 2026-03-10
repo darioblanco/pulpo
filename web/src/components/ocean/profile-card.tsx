@@ -1,10 +1,13 @@
+import { useMemo } from 'react';
 import type { OctopusEntity } from './engine/world';
+import { formatDuration } from '@/lib/utils';
 
 interface ProfileCardProps {
   octopus: OctopusEntity;
   screenX: number;
   screenY: number;
   onClose: () => void;
+  onAttach?: (sessionName: string) => void;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -15,12 +18,49 @@ const STATUS_COLORS: Record<string, string> = {
   dead: '#f87171',
 };
 
-export function ProfileCard({ octopus, screenX, screenY, onClose }: ProfileCardProps) {
+const ENDED_STATUSES = ['completed', 'dead'];
+
+function shortenModel(model: string): string {
+  // e.g. "claude-sonnet-4-20250514" -> "sonnet-4"
+  // e.g. "gpt-4o-mini" -> "gpt-4o-mini"
+  const parts = model.split('-');
+  // Drop "claude-" prefix and date suffix (8+ digits)
+  const filtered = parts.filter((p) => p !== 'claude' && !/^\d{8,}$/.test(p));
+  return filtered.join('-') || model;
+}
+
+function truncateWorkdir(workdir: string): string {
+  const segments = workdir.split('/').filter(Boolean);
+  if (segments.length <= 2) return workdir;
+  return `…/${segments.slice(-2).join('/')}`;
+}
+
+function relativeTime(iso: string): string {
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (diff < 10) return 'just now';
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  const hours = Math.floor(diff / 3600);
+  return `${hours}h ago`;
+}
+
+export function ProfileCard({ octopus, screenX, screenY, onClose, onAttach }: ProfileCardProps) {
   const color = STATUS_COLORS[octopus.status] ?? '#94a3b8';
+  const isEnded = ENDED_STATUSES.includes(octopus.status);
+
+  const duration = useMemo(() => {
+    const dur = formatDuration(octopus.createdAt);
+    return isEnded ? `completed after ${dur}` : `running for ${dur}`;
+  }, [octopus.createdAt, isEnded]);
+
+  const lastActive = useMemo(() => {
+    if (!octopus.lastOutputAt) return null;
+    return relativeTime(octopus.lastOutputAt);
+  }, [octopus.lastOutputAt]);
 
   // Position card near click, clamped to viewport
-  const cardW = 240;
-  const cardH = 220;
+  const cardW = 260;
+  const cardH = 320;
   const left = Math.max(10, Math.min(screenX + 12, window.innerWidth - cardW - 10));
   const top = Math.max(10, Math.min(screenY - cardH / 2, window.innerHeight - cardH - 10));
 
@@ -50,6 +90,15 @@ export function ProfileCard({ octopus, screenX, screenY, onClose }: ProfileCardP
               style={{ imageRendering: 'pixelated' }}
             />
             <span className="truncate font-bold text-white">{octopus.name}</span>
+            {octopus.unrestricted && (
+              <span
+                className="ml-auto rounded px-1 py-0.5 text-[10px] font-bold leading-none text-amber-300"
+                style={{ backgroundColor: 'rgba(251, 191, 36, 0.15)' }}
+                data-testid="unrestricted-badge"
+              >
+                unrestricted
+              </span>
+            )}
           </div>
 
           {/* Status */}
@@ -71,6 +120,14 @@ export function ProfileCard({ octopus, screenX, screenY, onClose }: ProfileCardP
             <div>
               Provider: <span className="text-slate-300">{octopus.provider}</span>
             </div>
+            {octopus.model && (
+              <div data-testid="profile-model">
+                Model: <span className="text-slate-300">{shortenModel(octopus.model)}</span>
+              </div>
+            )}
+            <div>
+              Mode: <span className="text-slate-300">{octopus.mode}</span>
+            </div>
             {octopus.ink && (
               <div>
                 Ink: <span style={{ color }}>{octopus.ink}</span>
@@ -79,16 +136,36 @@ export function ProfileCard({ octopus, screenX, screenY, onClose }: ProfileCardP
             <div>
               Node: <span className="text-slate-300">{octopus.nodeName}</span>
             </div>
+            <div data-testid="profile-workdir">
+              Workdir: <span className="text-slate-300">{truncateWorkdir(octopus.workdir)}</span>
+            </div>
+            <div data-testid="profile-duration">
+              <span className="text-slate-300">{duration}</span>
+            </div>
+            {lastActive && (
+              <div data-testid="profile-last-active">
+                Last active: <span className="text-slate-300">{lastActive}</span>
+              </div>
+            )}
+            {octopus.interventionReason && (
+              <div data-testid="profile-intervention" className="text-yellow-400">
+                Intervention: {octopus.interventionReason}
+              </div>
+            )}
           </div>
 
           {/* Actions */}
           <div className="mt-4 flex gap-2">
-            <a
-              href={`/session/${octopus.name}`}
-              className="rounded bg-slate-700 px-2.5 py-1 text-xs text-slate-200 hover:bg-slate-600"
-            >
-              View Logs
-            </a>
+            {onAttach && (
+              <button
+                onClick={() => onAttach(octopus.name)}
+                className="rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+                style={{ backgroundColor: '#2563eb' }}
+                data-testid="attach-button"
+              >
+                Open Session
+              </button>
+            )}
           </div>
         </div>
       </div>

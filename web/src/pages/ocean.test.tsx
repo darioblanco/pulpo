@@ -26,6 +26,7 @@ vi.mock('@/components/ocean/engine/sprites', () => ({
     status: {},
     decor: {},
   }),
+  loadBackgroundSet: vi.fn().mockResolvedValue({}),
 }));
 
 // Mock canvas getContext
@@ -83,10 +84,12 @@ vi.stubGlobal(
 
 const mockGetPeers = vi.mocked(api.getPeers);
 const mockGetSessions = vi.mocked(api.getSessions);
+const mockGetRemoteSessions = vi.mocked(api.getRemoteSessions);
 
 beforeEach(() => {
   mockGetPeers.mockReset();
   mockGetSessions.mockReset();
+  mockGetRemoteSessions.mockReset();
   mockGetPeers.mockResolvedValue({
     local: {
       name: 'mac-studio',
@@ -131,17 +134,106 @@ describe('OceanPage', () => {
     expect(screen.getByTestId('loading-skeleton')).toBeInTheDocument();
   });
 
-  it('shows the ocean canvas after peers load', async () => {
+  it('shows the tide pool grid after peers load', async () => {
     renderOcean();
     await waitFor(() => {
-      expect(screen.getByTestId('ocean-canvas')).toBeInTheDocument();
+      expect(screen.getByTestId('tide-pool-grid')).toBeInTheDocument();
     });
   });
 
-  it('shows canvas container after data loads', async () => {
+  it('renders a tide pool for the local node', async () => {
     renderOcean();
     await waitFor(() => {
-      expect(screen.getByTestId('ocean-canvas-container')).toBeInTheDocument();
+      expect(screen.getByTestId('tide-pool')).toBeInTheDocument();
+    });
+  });
+
+  it('renders tide pool canvas', async () => {
+    renderOcean();
+    await waitFor(() => {
+      expect(screen.getByTestId('tide-pool-canvas')).toBeInTheDocument();
+    });
+  });
+
+  it('renders tide pool canvas container', async () => {
+    renderOcean();
+    await waitFor(() => {
+      expect(screen.getByTestId('tide-pool-canvas-container')).toBeInTheDocument();
+    });
+  });
+
+  it('renders multiple tide pools for peers', async () => {
+    mockGetPeers.mockResolvedValue({
+      local: {
+        name: 'mac-studio',
+        hostname: 'mac-studio.local',
+        os: 'macos',
+        arch: 'aarch64',
+        cpus: 12,
+        memory_mb: 32768,
+        gpu: null,
+      },
+      peers: [
+        {
+          name: 'linux-box',
+          address: '10.0.0.2:7433',
+          status: 'online',
+          node_info: null,
+          session_count: null,
+        },
+      ],
+    });
+    mockGetRemoteSessions.mockResolvedValue([]);
+
+    renderOcean();
+    await waitFor(() => {
+      const pools = screen.getAllByTestId('tide-pool');
+      expect(pools).toHaveLength(2);
+    });
+  });
+
+  it('shows knowledge current when multiple nodes exist', async () => {
+    mockGetPeers.mockResolvedValue({
+      local: {
+        name: 'mac-studio',
+        hostname: 'mac-studio.local',
+        os: 'macos',
+        arch: 'aarch64',
+        cpus: 12,
+        memory_mb: 32768,
+        gpu: null,
+      },
+      peers: [
+        {
+          name: 'linux-box',
+          address: '10.0.0.2:7433',
+          status: 'online',
+          node_info: null,
+          session_count: null,
+        },
+      ],
+    });
+    mockGetRemoteSessions.mockResolvedValue([]);
+
+    renderOcean();
+    await waitFor(() => {
+      expect(screen.getByTestId('knowledge-current')).toBeInTheDocument();
+      expect(screen.getByText('Knowledge: shared ocean')).toBeInTheDocument();
+    });
+  });
+
+  it('does not show knowledge current with single node', async () => {
+    renderOcean();
+    await waitFor(() => {
+      expect(screen.getByTestId('tide-pool-grid')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('knowledge-current')).not.toBeInTheDocument();
+  });
+
+  it('shows node name in tide pool header', async () => {
+    renderOcean();
+    await waitFor(() => {
+      expect(screen.getByText('mac-studio')).toBeInTheDocument();
     });
   });
 });

@@ -7,6 +7,8 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
+export type BackgroundSprites = Record<string, HTMLImageElement>;
+
 export interface Sprites {
   octopus: Record<string, HTMLImageElement>;
   nodes: Record<string, HTMLImageElement>;
@@ -34,6 +36,8 @@ const MANIFEST: Record<string, string[]> = {
   decor: ['seaweed-1', 'seaweed-2', 'shell-1', 'shell-2', 'starfish'],
 };
 
+const BACKGROUND_LAYERS = ['water-surface', 'fish', 'rocks', 'sand', 'coral-foreground'];
+
 export async function loadAllSprites(): Promise<Sprites> {
   const sprites: Sprites = { octopus: {}, nodes: {}, ui: {}, status: {}, decor: {} };
   const promises: Promise<void>[] = [];
@@ -54,4 +58,24 @@ export async function loadAllSprites(): Promise<Sprites> {
 
   await Promise.all(promises);
   return sprites;
+}
+
+export async function loadBackgroundSet(index: number): Promise<BackgroundSprites> {
+  const bg: BackgroundSprites = {};
+  const promises: Promise<void>[] = [];
+
+  for (const name of BACKGROUND_LAYERS) {
+    promises.push(
+      loadImage(`/sprites/background-${index}/${name}.png`)
+        .then((img) => {
+          bg[name] = img;
+        })
+        .catch(() => {
+          /* skip missing layer — not all backgrounds have every layer */
+        }),
+    );
+  }
+
+  await Promise.all(promises);
+  return bg;
 }
