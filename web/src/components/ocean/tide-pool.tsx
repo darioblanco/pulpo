@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import type { Session } from '@/api/types';
-import { loadBackgroundSet, type Sprites, type BackgroundSprites } from './engine/sprites';
+import { loadBackground, type Sprites, type BackgroundSprites } from './engine/sprites';
 import {
   createWorld,
   syncSingleNode,
@@ -12,7 +12,7 @@ import {
   type OctopusEntity,
   type NodeLandmark,
 } from './engine/world';
-import { render } from './engine/renderer';
+import { render, hitTestLandmark } from './engine/renderer';
 import { screenToWorld, fitCamera } from './engine/camera';
 import { ProfileCard } from './profile-card';
 import { NodeCard } from './node-card';
@@ -23,7 +23,6 @@ interface TidePoolProps {
   isLocal: boolean;
   nodeStatus: 'online' | 'offline' | 'unknown';
   sessions: Session[];
-  backgroundIndex: number;
   nodeColor: string;
   sprites: Sprites | null;
   expanded?: boolean;
@@ -37,7 +36,6 @@ export function TidePool({
   isLocal,
   nodeStatus,
   sessions,
-  backgroundIndex,
   nodeColor,
   sprites,
   expanded,
@@ -72,13 +70,13 @@ export function TidePool({
 
   // Load background sprites for this pool
   useEffect(() => {
-    loadBackgroundSet(backgroundIndex)
+    loadBackground()
       .then((bg) => {
         bgRef.current = bg;
         setBgLoading(false);
       })
       .catch(() => setBgLoading(false));
-  }, [backgroundIndex]);
+  }, []);
 
   // Initialize canvas + resize handler
   useEffect(() => {
@@ -167,7 +165,9 @@ export function TidePool({
       setSelectedNode(null);
     } else {
       setSelectedOctopus(null);
-      const node = hitTestNode(world, wx, wy);
+      // Check ship landmark (screen-space) or world-space node hit
+      const landmarkHit = hitTestLandmark(sx, sy);
+      const node = landmarkHit ? world.nodes[0] : hitTestNode(world, wx, wy);
       if (node) {
         setSelectedNode({ entity: node, screenX: e.clientX, screenY: e.clientY });
       } else {
@@ -245,7 +245,17 @@ export function TidePool({
       <div
         ref={containerRef}
         className="relative w-full border border-border rounded-lg overflow-hidden"
-        style={{ aspectRatio: expanded ? '21 / 9' : '16 / 9' }}
+        style={{
+          aspectRatio: expanded ? undefined : '16 / 9',
+          ...(expanded
+            ? {
+                height: 'calc(100dvh - 10rem)',
+                maxHeight: '1080px',
+                maxWidth: '1920px',
+                margin: '0 auto',
+              }
+            : {}),
+        }}
         data-testid="tide-pool-canvas-container"
       >
         <canvas

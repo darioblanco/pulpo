@@ -41,6 +41,8 @@ const mockCtx = {
   set font(_v: string) {},
   set textAlign(_v: string) {},
   set imageSmoothingEnabled(_v: boolean) {},
+  set imageSmoothingQuality(_v: string) {},
+  set filter(_v: string) {},
 };
 
 HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue(mockCtx) as never;

@@ -13,7 +13,6 @@ interface TidePoolEntry {
   isLocal: boolean;
   nodeStatus: 'online' | 'offline' | 'unknown';
   sessions: Session[];
-  backgroundIndex: number;
   nodeColor: string;
 }
 
@@ -71,7 +70,6 @@ export function OceanPage() {
       isLocal: true,
       nodeStatus: 'online',
       sessions,
-      backgroundIndex: 1,
       nodeColor: NODE_COLORS[0 % NODE_COLORS.length],
     });
     for (let i = 0; i < peers.length; i++) {
@@ -80,7 +78,6 @@ export function OceanPage() {
         isLocal: false,
         nodeStatus: peers[i].status,
         sessions: peerSessions[peers[i].name] ?? [],
-        backgroundIndex: 1,
         nodeColor: NODE_COLORS[(i + 1) % NODE_COLORS.length],
       });
     }
@@ -126,7 +123,7 @@ export function OceanPage() {
   return (
     <div data-testid="ocean-page">
       <AppHeader title="The Ocean" />
-      <div className="p-4 sm:p-6">
+      <div className={`p-4 sm:p-6 ${focusedNode ? 'overflow-hidden' : ''}`}>
         {!localNode ? (
           <div data-testid="loading-skeleton">
             <Skeleton className="h-[400px] w-full rounded-lg" />
@@ -144,7 +141,6 @@ export function OceanPage() {
                   isLocal={pool.isLocal}
                   nodeStatus={pool.nodeStatus}
                   sessions={pool.sessions}
-                  backgroundIndex={pool.backgroundIndex}
                   nodeColor={pool.nodeColor}
                   sprites={sprites}
                   expanded={focusedNode === pool.nodeName}

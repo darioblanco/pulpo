@@ -25,8 +25,9 @@ vi.mock('@/components/ocean/engine/sprites', () => ({
     ui: {},
     status: {},
     decor: {},
+    fauna: {},
   }),
-  loadBackgroundSet: vi.fn().mockResolvedValue({}),
+  loadBackground: vi.fn().mockResolvedValue({}),
 }));
 
 // Mock canvas getContext
@@ -52,6 +53,8 @@ HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue({
   set font(_v: string) {},
   set textAlign(_v: string) {},
   set imageSmoothingEnabled(_v: boolean) {},
+  set imageSmoothingQuality(_v: string) {},
+  set filter(_v: string) {},
 }) as never;
 
 vi.stubGlobal(

@@ -7,7 +7,7 @@ import type { Sprites } from './engine/sprites';
 
 // Mock sprite loading
 vi.mock('./engine/sprites', () => ({
-  loadBackgroundSet: vi.fn().mockResolvedValue({}),
+  loadBackground: vi.fn().mockResolvedValue({}),
 }));
 
 // Mock canvas getContext
@@ -37,6 +37,8 @@ const mockCtx = {
   set font(_v: string) {},
   set textAlign(_v: string) {},
   set imageSmoothingEnabled(_v: boolean) {},
+  set imageSmoothingQuality(_v: string) {},
+  set filter(_v: string) {},
 };
 
 HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue(mockCtx) as never;
@@ -94,6 +96,7 @@ const mockSprites: Sprites = {
   ui: {},
   status: {},
   decor: {},
+  fauna: {},
 };
 
 const defaultProps: {
@@ -101,7 +104,6 @@ const defaultProps: {
   isLocal: boolean;
   nodeStatus: 'online' | 'offline' | 'unknown';
   sessions: Session[];
-  backgroundIndex: number;
   nodeColor: string;
   sprites: Sprites | null;
 } = {
@@ -109,7 +111,6 @@ const defaultProps: {
   isLocal: true,
   nodeStatus: 'online',
   sessions: [],
-  backgroundIndex: 1,
   nodeColor: '#f472b6',
   sprites: mockSprites,
 };

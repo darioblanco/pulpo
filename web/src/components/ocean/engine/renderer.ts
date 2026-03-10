@@ -2,15 +2,6 @@ import type { Sprites, BackgroundSprites } from './sprites';
 import type { WorldState, OctopusEntity } from './world';
 import { worldToScreen } from './camera';
 
-// Parallax scroll factors (0 = static, 1 = moves with camera)
-const PARALLAX: Record<string, number> = {
-  'water-surface': 0.1,
-  fish: 0.3,
-  rocks: 0.8,
-  sand: 0.9,
-  'coral-foreground': 1.0,
-};
-
 // --- Ambient effects (seeded per pool, deterministic from seed) ---
 
 interface AmbientState {
@@ -18,7 +9,6 @@ interface AmbientState {
   plankton: { x: number; y: number; dx: number; dy: number; size: number; alpha: number }[];
 }
 
-/** Seeded pseudo-random for deterministic ambient placement. */
 function seededRandom(seed: number): () => number {
   let s = seed;
   return () => {
@@ -35,7 +25,6 @@ function getAmbient(seed: number, width: number, height: number): AmbientState {
 
   const rng = seededRandom(seed);
 
-  // 3-5 light rays from above
   const rayCount = 3 + Math.floor(rng() * 3);
   const lightRays = [];
   for (let i = 0; i < rayCount; i++) {
@@ -48,7 +37,6 @@ function getAmbient(seed: number, width: number, height: number): AmbientState {
     });
   }
 
-  // 20-35 drifting plankton particles
   const planktonCount = 20 + Math.floor(rng() * 16);
   const plankton = [];
   for (let i = 0; i < planktonCount; i++) {
@@ -67,7 +55,6 @@ function getAmbient(seed: number, width: number, height: number): AmbientState {
   return state;
 }
 
-/** Draw subtle light rays from the surface. */
 function drawLightRays(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -104,7 +91,6 @@ function drawLightRays(
   }
 }
 
-/** Draw tiny drifting plankton/dust particles. */
 function drawPlankton(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -116,7 +102,6 @@ function drawPlankton(
   const t = time * 0.001;
 
   for (const p of ambient.plankton) {
-    // Slow looping drift
     const x = (((p.x + p.dx * t * 60 + Math.sin(t * 0.5 + p.y) * 8) % width) + width) % width;
     const y = (((p.y + p.dy * t * 60 + Math.cos(t * 0.3 + p.x) * 4) % height) + height) % height;
     const pulse = 0.6 + 0.4 * Math.sin(t * 2 + p.x * 0.1);
@@ -126,53 +111,6 @@ function drawPlankton(
     ctx.fillRect(Math.round(x), Math.round(y), Math.round(p.size), Math.round(p.size));
   }
   ctx.globalAlpha = 1;
-}
-
-/** Draw a parallax background layer, tiled horizontally. */
-function drawParallaxLayer(
-  ctx: CanvasRenderingContext2D,
-  sprite: HTMLImageElement | undefined,
-  camera: { x: number; width: number; height: number; zoom: number },
-  parallaxFactor: number,
-  time: number,
-): void {
-  if (!sprite) return;
-
-  const scale = camera.height / sprite.height;
-  const tileW = Math.ceil(sprite.width * scale);
-  const tileH = camera.height;
-
-  const drift = time * 0.008 * (1 - parallaxFactor);
-  const cameraOffset = camera.x * camera.zoom * parallaxFactor;
-  const rawOffset = -(cameraOffset + drift);
-  const offset = ((rawOffset % tileW) + tileW) % tileW;
-
-  for (let x = offset - tileW; x < camera.width; x += tileW) {
-    ctx.drawImage(sprite, 0, 0, sprite.width, sprite.height, x, 0, tileW, tileH);
-  }
-}
-
-/**
- * Draw a parallax layer clipped to the region below `clipY`.
- */
-function drawGroundLayer(
-  ctx: CanvasRenderingContext2D,
-  sprite: HTMLImageElement | undefined,
-  camera: { x: number; width: number; height: number; zoom: number },
-  parallaxFactor: number,
-  time: number,
-  clipY: number,
-): void {
-  if (!sprite) return;
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, clipY, camera.width, camera.height - clipY);
-  ctx.clip();
-
-  drawParallaxLayer(ctx, sprite, camera, parallaxFactor, time);
-
-  ctx.restore();
 }
 
 /** Draw a pixel-art style bubble. */
@@ -197,6 +135,134 @@ function drawPixelBubble(
   ctx.globalAlpha = 1;
 }
 
+/** Draw fauna creatures behind octopuses. */
+function drawFauna(
+  ctx: CanvasRenderingContext2D,
+  world: WorldState,
+  sprites: Sprites,
+  time: number,
+): void {
+  const { camera } = world;
+
+  for (const f of world.fauna) {
+    const sprite = sprites.fauna[f.type];
+    if (!sprite) continue;
+
+    const [sx, sy] = worldToScreen(camera, f.x, f.y);
+    if (sx < -200 || sx > camera.width + 200) continue;
+
+    const size = f.size * camera.zoom;
+    const bob = Math.sin(time * 0.001 + f.x * 0.2) * 3 * camera.zoom;
+
+    // Draw full sprite as a single frame (no sprite sheet splitting)
+    const aspect = sprite.height / sprite.width;
+    const drawW = size;
+    const drawH = size * aspect;
+
+    ctx.save();
+    ctx.globalAlpha = f.alpha;
+    ctx.translate(sx, sy + bob);
+    if (f.vx < 0) ctx.scale(-1, 1);
+
+    ctx.drawImage(sprite, -drawW / 2, -drawH / 2, drawW, drawH);
+    ctx.restore();
+  }
+}
+
+/** Map node colors to hue-rotate degrees to tint the landmark sprite. */
+function colorToHue(color: string): number {
+  const hues: Record<string, number> = {
+    '#f472b6': 0, // coral pink — base hue of the sprite is already bluish, shift to pink
+    '#2dd4bf': 120, // teal
+    '#fbbf24': 40, // amber
+    '#a78bfa': 220, // lavender
+    '#34d399': 100, // emerald
+    '#60a5fa': 180, // sky blue
+    '#fb923c': 20, // tangerine
+    '#e879f9': 260, // fuchsia
+    '#4ade80': 90, // lime
+    '#38bdf8': 160, // cyan
+  };
+  return hues[color] ?? 0;
+}
+
+/** Screen-space bounds of the node landmark (for click hit testing). */
+export interface LandmarkBounds {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** Last rendered landmark bounds per node index. */
+let lastLandmarkBounds: LandmarkBounds | null = null;
+
+/** Check if a screen-space click hits the node landmark. */
+export function hitTestLandmark(screenX: number, screenY: number): boolean {
+  if (!lastLandmarkBounds) return false;
+  const b = lastLandmarkBounds;
+  return screenX >= b.x && screenX <= b.x + b.w && screenY >= b.y && screenY <= b.y + b.h;
+}
+
+/** Draw node landmark in the bottom-left corner of the canvas. */
+function drawNodeLandmarks(
+  ctx: CanvasRenderingContext2D,
+  world: WorldState,
+  sprites: Sprites,
+): void {
+  const { camera } = world;
+  const sprite = sprites.nodes['sunken-ship'] ?? sprites.nodes['shipwreck'];
+  if (!sprite || world.nodes.length === 0) {
+    lastLandmarkBounds = null;
+    return;
+  }
+
+  const node = world.nodes[0];
+
+  // Landmark in the bottom-left corner, sized relative to canvas
+  const drawH = Math.round(camera.height * 0.45);
+  const drawW = Math.round((sprite.width / sprite.height) * drawH);
+  const margin = 12;
+  const x = margin;
+  const y = camera.height - drawH - 2;
+
+  // Store bounds for hit testing
+  lastLandmarkBounds = { x, y, w: drawW, h: drawH };
+
+  // Enable smoothing for the landmark so it doesn't look blocky when scaled up
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  // Tint per node color
+  const hue = colorToHue(node.color);
+  if (hue !== 0) ctx.filter = `hue-rotate(${hue}deg)`;
+  ctx.globalAlpha = 0.85;
+  ctx.drawImage(sprite, x, y, drawW, drawH);
+  ctx.filter = 'none';
+  ctx.globalAlpha = 1;
+
+  // Restore pixel-art rendering for everything else
+  ctx.imageSmoothingEnabled = false;
+
+  // Node name label centered on the ship
+  const fontSize = Math.max(10, Math.round(drawH * 0.09));
+  ctx.font = `bold ${fontSize}px monospace`;
+  ctx.textAlign = 'center';
+  const label = node.name;
+  const textW = ctx.measureText(label).width;
+  const padX = 6;
+  const padY = 3;
+  const labelW = textW + padX * 2;
+  const labelH = fontSize + padY * 2;
+  const labelX = Math.round(x + drawW / 2 - labelW / 2);
+  const labelY = Math.round(y + drawH - labelH - 4);
+
+  ctx.fillStyle = 'rgba(8, 18, 30, 0.7)';
+  ctx.fillRect(labelX, labelY, labelW, labelH);
+  ctx.fillStyle = node.color;
+  ctx.fillText(label, x + drawW / 2, labelY + padY + fontSize - 1);
+}
+
 export function render(
   ctx: CanvasRenderingContext2D,
   world: WorldState,
@@ -215,30 +281,13 @@ export function render(
   const hasBg = bg && Object.keys(bg).length > 0;
 
   if (hasBg) {
-    // Apply hue rotation for color variation
-    if (hueRotate !== 0) {
-      ctx.filter = `hue-rotate(${hueRotate}deg)`;
+    // --- Single full-canvas background ---
+    const bgSprite = bg['sea-background'] ?? bg['water-surface'];
+    if (bgSprite) {
+      if (hueRotate !== 0) ctx.filter = `hue-rotate(${hueRotate}deg)`;
+      ctx.drawImage(bgSprite, 0, 0, bgSprite.width, bgSprite.height, 0, 0, width, height);
+      ctx.filter = 'none';
     }
-
-    // Atmosphere layers (full viewport)
-    drawParallaxLayer(ctx, bg['water-surface'], camera, PARALLAX['water-surface'], time);
-    drawParallaxLayer(ctx, bg['fish'], camera, PARALLAX['fish'], time);
-
-    // Ground layers clipped to seabed region
-    const [, seabedScreenY] = worldToScreen(camera, 0, 190);
-    drawGroundLayer(ctx, bg['rocks'], camera, PARALLAX['rocks'], time, seabedScreenY);
-    drawGroundLayer(ctx, bg['sand'], camera, PARALLAX['sand'], time, seabedScreenY);
-    drawGroundLayer(
-      ctx,
-      bg['coral-foreground'],
-      camera,
-      PARALLAX['coral-foreground'],
-      time,
-      seabedScreenY,
-    );
-
-    // Reset filter before drawing octopuses/text
-    ctx.filter = 'none';
   } else {
     const grad = ctx.createLinearGradient(0, 0, 0, height);
     grad.addColorStop(0, '#1478a7');
@@ -247,9 +296,18 @@ export function render(
     ctx.fillRect(0, 0, width, height);
   }
 
-  // --- Ambient effects (behind octopuses) ---
+  // Ensure no CSS filter bleeds into subsequent draws
+  ctx.filter = 'none';
+
+  // --- Ambient effects ---
   drawLightRays(ctx, width, height, time, ambientSeed);
   drawPlankton(ctx, width, height, time, ambientSeed);
+
+  // --- Fauna ---
+  drawFauna(ctx, world, sprites, time);
+
+  // --- Node landmarks ---
+  drawNodeLandmarks(ctx, world, sprites);
 
   // --- Octopuses ---
   const nodeByName = new Map(world.nodes.map((n) => [n.name, n]));
@@ -297,26 +355,21 @@ function drawOctopus(
   const sheet = sprites.octopus[spriteKey] ?? sprites.octopus['running-idle'];
   if (!sheet) return;
 
-  const FRAME_W = 32;
-  const FRAME_H = 32;
+  // Square frames: height = frame size, width = N * height
+  const FRAME_H = sheet.height;
+  const FRAME_W = FRAME_H;
   const frameCount = Math.max(1, Math.floor(sheet.width / FRAME_W));
   const currentFrame = oct.animFrame % frameCount;
-  const nextFrame = (oct.animFrame + 1) % frameCount;
-
-  // Cross-fade progress
-  const fps = oct.isSwimming ? 5 : 3;
-  const frameDuration = 1 / fps;
-  const crossfade = Math.min(oct.animTimer / frameDuration, 1);
 
   const [sx, sy] = worldToScreen(camera, oct.x, oct.y);
-  const size = FRAME_W * camera.zoom;
+  const size = 160 * (camera.zoom / 2);
+  const drawW = size;
+  const drawH = size;
 
-  // Gentle vertical bob
   const bobSpeed = oct.status === 'dead' ? 0.5 : oct.status === 'stale' ? 1.0 : 1.5;
   const bobAmount = oct.status === 'dead' ? 1 : 2;
   const bob = Math.sin(time * 0.002 * bobSpeed + oct.x * 0.3) * bobAmount * camera.zoom;
 
-  // Subtle breathing squash/stretch
   const breathe = Math.sin(time * 0.003 + oct.y * 0.2) * 0.03;
   const scaleX = 1.0 - breathe;
   const scaleY = 1.0 + breathe;
@@ -325,6 +378,8 @@ function drawOctopus(
   const flipX = oct.vx < -0.1;
 
   ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
   ctx.translate(sx, drawY);
   ctx.scale(flipX ? -scaleX : scaleX, scaleY);
 
@@ -334,39 +389,23 @@ function drawOctopus(
     0,
     FRAME_W,
     FRAME_H,
-    -size / 2,
-    -size / 2,
-    size,
-    size,
+    -drawW / 2,
+    -drawH / 2,
+    drawW,
+    drawH,
   );
-  if (crossfade > 0.3 && currentFrame !== nextFrame) {
-    const blendAlpha = (crossfade - 0.3) / 0.7;
-    ctx.globalAlpha = blendAlpha;
-    ctx.drawImage(
-      sheet,
-      nextFrame * FRAME_W,
-      0,
-      FRAME_W,
-      FRAME_H,
-      -size / 2,
-      -size / 2,
-      size,
-      size,
-    );
-    ctx.globalAlpha = 1;
-  }
+  ctx.imageSmoothingEnabled = false;
   ctx.restore();
 
-  // Name + provider badges — centered below octopus
+  // Name + provider badges
   const nodeColor = nodeByName.get(oct.nodeName)?.color ?? '#d4e4ef';
   const fontSize = Math.max(8, 9 * (camera.zoom / 2));
   const padX = 4;
   const padY = 2;
   const gap = 2;
   ctx.textAlign = 'left';
-  let badgeY = drawY + size / 2 + 4;
+  let badgeY = drawY + drawH * 0.28 + 4;
 
-  // Name badge
   ctx.font = `${fontSize}px monospace`;
   const nameTextW = ctx.measureText(oct.name).width;
   const nameW = nameTextW + padX * 2;
@@ -379,7 +418,6 @@ function drawOctopus(
   ctx.fillText(oct.name, nameX + padX, nameY + padY + fontSize - 1);
   badgeY += nameH + gap;
 
-  // Provider badge
   if (oct.provider) {
     ctx.font = `${fontSize - 1}px monospace`;
     const provTextW = ctx.measureText(oct.provider).width;
@@ -393,7 +431,6 @@ function drawOctopus(
     ctx.fillText(oct.provider, provX + padX, provY + padY + fontSize - 2);
   }
 
-  // Speech bubble for waiting-for-input
   if (oct.waitingForInput) {
     const bubble = sprites.ui['speech-bubble'];
     if (bubble) {

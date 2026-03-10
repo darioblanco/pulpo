@@ -79,12 +79,22 @@ export interface Bubble {
   alpha: number;
 }
 
+export interface FaunaEntity {
+  type: string;
+  x: number;
+  y: number;
+  vx: number;
+  size: number;
+  alpha: number;
+}
+
 export interface WorldState {
   camera: Camera;
   nodes: NodeLandmark[];
   octopuses: OctopusEntity[];
   decorations: Decoration[];
   bubbles: Bubble[];
+  fauna: FaunaEntity[];
 }
 
 // --- Behavior config per status ---
@@ -110,6 +120,37 @@ function randomBetween(min: number, max: number): number {
 
 // --- Create world ---
 
+// Fauna types: small fish swim fast in the mid-water, larger creatures are slower/deeper
+const FAUNA_TYPES = [
+  'angelfish',
+  'clownfish',
+  'fish-gold',
+  'silverfish',
+  'tang',
+  'jellyfish',
+  'turtle',
+];
+
+function generateFauna(width: number): FaunaEntity[] {
+  const count = 6 + Math.floor(Math.random() * 5); // 6-10 creatures
+  const fauna: FaunaEntity[] = [];
+  const worldW = Math.max(width, 600);
+
+  for (let i = 0; i < count; i++) {
+    const type = FAUNA_TYPES[Math.floor(Math.random() * FAUNA_TYPES.length)];
+    const isLarge = type === 'turtle' || type === 'jellyfish';
+    fauna.push({
+      type,
+      x: randomBetween(-worldW * 0.5, worldW * 1.5),
+      y: randomBetween(SWIM_ZONE_TOP + 20, SWIM_ZONE_BOTTOM - 10),
+      vx: randomBetween(5, 15) * (Math.random() > 0.5 ? 1 : -1) * (isLarge ? 0.5 : 1),
+      size: isLarge ? randomBetween(24, 36) : randomBetween(16, 24),
+      alpha: randomBetween(0.6, 0.85),
+    });
+  }
+  return fauna;
+}
+
 export function createWorld(width: number, height: number): WorldState {
   return {
     camera: createCamera(width, height),
@@ -117,6 +158,7 @@ export function createWorld(width: number, height: number): WorldState {
     octopuses: [],
     decorations: [],
     bubbles: [],
+    fauna: generateFauna(width),
   };
 }
 
@@ -441,6 +483,16 @@ export function update(world: WorldState, dt: number): void {
       speed: randomBetween(15, 30),
       alpha: randomBetween(0.3, 0.7),
     });
+  }
+
+  // Update fauna — simple horizontal drift, wrap around
+  const camLeft = world.camera.x - 400;
+  const camRight = world.camera.x + world.camera.width / world.camera.zoom + 400;
+  for (const f of world.fauna) {
+    f.x += f.vx * cappedDt;
+    // Wrap around when offscreen
+    if (f.vx > 0 && f.x > camRight) f.x = camLeft - 50;
+    if (f.vx < 0 && f.x < camLeft) f.x = camRight + 50;
   }
 }
 
