@@ -3,17 +3,17 @@ set -euo pipefail
 
 echo "==> Pre-commit: checking formatting..."
 cargo fmt --all -- --check
-cd web && npx prettier --check . && cd ..
+(cd web && npx prettier --check .)
 
 echo "==> Pre-commit: running clippy..."
 cargo clippy --workspace --all-targets -- -D warnings
 
 echo "==> Pre-commit: running ESLint + TypeScript check..."
-cd web && npx eslint . && npx tsc --noEmit && cd ..
+(cd web && npx eslint . && npx tsc --noEmit)
 
 echo "==> Pre-commit: running tests..."
 cargo test --workspace
-cd web && npx vitest run --passWithNoTests && cd ..
+(cd web && npx vitest run --passWithNoTests)
 
 echo "==> Pre-commit: checking coverage (100% line coverage required)..."
 # Note: --fail-under-lines uses region-aware line counts in cargo-llvm-cov 0.8+,
