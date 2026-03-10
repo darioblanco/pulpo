@@ -25,6 +25,8 @@ interface TidePoolProps {
   backgroundIndex: number;
   nodeColor: string;
   sprites: Sprites | null;
+  onKillSession?: (sessionName: string) => void;
+  onDeleteSession?: (sessionName: string) => void;
 }
 
 export function TidePool({
@@ -35,6 +37,8 @@ export function TidePool({
   backgroundIndex,
   nodeColor,
   sprites,
+  onKillSession,
+  onDeleteSession,
 }: TidePoolProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -177,6 +181,22 @@ export function TidePool({
     [selectedOctopus],
   );
 
+  const handleKill = useCallback(
+    (sessionName: string) => {
+      setSelectedOctopus(null);
+      onKillSession?.(sessionName);
+    },
+    [onKillSession],
+  );
+
+  const handleDelete = useCallback(
+    (sessionName: string) => {
+      setSelectedOctopus(null);
+      onDeleteSession?.(sessionName);
+    },
+    [onDeleteSession],
+  );
+
   const statusColor =
     nodeStatus === 'online' ? '#34d399' : nodeStatus === 'offline' ? '#f87171' : '#94a3b8';
 
@@ -223,6 +243,8 @@ export function TidePool({
             screenY={selectedOctopus.screenY}
             onClose={() => setSelectedOctopus(null)}
             onAttach={handleAttach}
+            onKill={onKillSession ? handleKill : undefined}
+            onDelete={onDeleteSession ? handleDelete : undefined}
           />
         )}
         {selectedNode && (

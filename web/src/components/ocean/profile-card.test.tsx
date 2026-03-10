@@ -427,4 +427,173 @@ describe('ProfileCard', () => {
     );
     expect(screen.getByTestId('profile-model')).toHaveTextContent('gpt-4o-mini');
   });
+
+  // --- Kill / Delete action tests ---
+
+  it('shows Kill button for running sessions when onKill provided', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'running' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onKill={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('kill-button')).toBeInTheDocument();
+  });
+
+  it('shows Kill button for creating sessions', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'creating' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onKill={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('kill-button')).toBeInTheDocument();
+  });
+
+  it('does not show Kill button for completed sessions', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'completed' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onKill={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('kill-button')).not.toBeInTheDocument();
+  });
+
+  it('does not show Kill button when onKill not provided', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'running' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('kill-button')).not.toBeInTheDocument();
+  });
+
+  it('calls onKill with session name when Kill clicked', () => {
+    const onKill = vi.fn();
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'running' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onKill={onKill}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByTestId('kill-button'));
+    expect(onKill).toHaveBeenCalledWith('worker-alpha');
+  });
+
+  it('shows Delete button for stale sessions when onDelete provided', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'stale' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('delete-button')).toBeInTheDocument();
+  });
+
+  it('shows Delete button for dead sessions', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'dead' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('delete-button')).toBeInTheDocument();
+  });
+
+  it('shows Delete button for completed sessions', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'completed' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('delete-button')).toBeInTheDocument();
+  });
+
+  it('does not show Delete button for running sessions', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'running' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onDelete={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('delete-button')).not.toBeInTheDocument();
+  });
+
+  it('does not show Delete button when onDelete not provided', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'stale' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('delete-button')).not.toBeInTheDocument();
+  });
+
+  it('calls onDelete with session name when Delete clicked', () => {
+    const onDelete = vi.fn();
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'dead' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onDelete={onDelete}
+        />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByTestId('delete-button'));
+    expect(onDelete).toHaveBeenCalledWith('worker-alpha');
+  });
 });

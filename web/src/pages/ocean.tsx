@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { AppHeader } from '@/components/layout/app-header';
 import { TidePool } from '@/components/ocean/tide-pool';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getPeers, getRemoteSessions } from '@/api/client';
+import { getPeers, getRemoteSessions, killSession, deleteSession } from '@/api/client';
 import { loadAllSprites, type Sprites } from '@/components/ocean/engine/sprites';
 import { NODE_COLORS } from '@/components/ocean/engine/world';
 import { useSSE } from '@/hooks/use-sse';
@@ -85,6 +85,32 @@ export function OceanPage() {
     }
   }
 
+  const handleKill = useCallback(
+    async (sessionName: string) => {
+      const session = sessions.find((s) => s.name === sessionName);
+      if (!session) return;
+      try {
+        await killSession(session.id);
+      } catch {
+        /* ignore — SSE will update status */
+      }
+    },
+    [sessions],
+  );
+
+  const handleDelete = useCallback(
+    async (sessionName: string) => {
+      const session = sessions.find((s) => s.name === sessionName);
+      if (!session) return;
+      try {
+        await deleteSession(session.id);
+      } catch {
+        /* ignore — SSE will update */
+      }
+    },
+    [sessions],
+  );
+
   // Grid columns based on pool count
   const gridCols =
     pools.length <= 1
@@ -114,6 +140,8 @@ export function OceanPage() {
                   backgroundIndex={pool.backgroundIndex}
                   nodeColor={pool.nodeColor}
                   sprites={sprites}
+                  onKillSession={pool.isLocal ? handleKill : undefined}
+                  onDeleteSession={pool.isLocal ? handleDelete : undefined}
                 />
               ))}
             </div>

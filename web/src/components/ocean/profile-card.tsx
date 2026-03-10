@@ -8,6 +8,8 @@ interface ProfileCardProps {
   screenY: number;
   onClose: () => void;
   onAttach?: (sessionName: string) => void;
+  onKill?: (sessionName: string) => void;
+  onDelete?: (sessionName: string) => void;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -19,6 +21,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const ENDED_STATUSES = ['completed', 'dead'];
+const KILLABLE_STATUSES = ['running', 'creating'];
+const DELETABLE_STATUSES = ['completed', 'dead', 'stale'];
 
 function shortenModel(model: string): string {
   // e.g. "claude-sonnet-4-20250514" -> "sonnet-4"
@@ -44,7 +48,15 @@ function relativeTime(iso: string): string {
   return `${hours}h ago`;
 }
 
-export function ProfileCard({ octopus, screenX, screenY, onClose, onAttach }: ProfileCardProps) {
+export function ProfileCard({
+  octopus,
+  screenX,
+  screenY,
+  onClose,
+  onAttach,
+  onKill,
+  onDelete,
+}: ProfileCardProps) {
   const color = STATUS_COLORS[octopus.status] ?? '#94a3b8';
   const isEnded = ENDED_STATUSES.includes(octopus.status);
 
@@ -164,6 +176,26 @@ export function ProfileCard({ octopus, screenX, screenY, onClose, onAttach }: Pr
                 data-testid="attach-button"
               >
                 Open Session
+              </button>
+            )}
+            {onKill && KILLABLE_STATUSES.includes(octopus.status) && (
+              <button
+                onClick={() => onKill(octopus.name)}
+                className="rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+                style={{ backgroundColor: '#dc2626' }}
+                data-testid="kill-button"
+              >
+                Kill
+              </button>
+            )}
+            {onDelete && DELETABLE_STATUSES.includes(octopus.status) && (
+              <button
+                onClick={() => onDelete(octopus.name)}
+                className="rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+                style={{ backgroundColor: '#6b7280' }}
+                data-testid="delete-button"
+              >
+                Delete
               </button>
             )}
           </div>
