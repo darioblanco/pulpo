@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.0.15](https://github.com/darioblanco/pulpo/compare/v0.0.14...v0.0.15) (2026-03-10)
+
+
+### Features
+
+* **ocean:** tide pool grid, parallax backgrounds, enriched profile cards ([6c15bd1](https://github.com/darioblanco/pulpo/commit/6c15bd186ecb0fdd138d99dc9a204a34287294b9))
+
+
+### Bug Fixes
+
+* **daemon:** resolve agent binaries and wrap all sessions in bash for survival ([c3802eb](https://github.com/darioblanco/pulpo/commit/c3802ebd046d6fcd4e21771ca67782b584f60b44))
+* **ocean:** replace dead octopus sprites with red X-eyed variant ([587678d](https://github.com/darioblanco/pulpo/commit/587678d1576be6f9b42665ce08fb33b76a6ccc2b))
+
 ## [0.0.14](https://github.com/darioblanco/pulpo/compare/v0.0.13...v0.0.14) (2026-03-10)
 
 
