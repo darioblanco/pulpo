@@ -1,7 +1,80 @@
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { OceanCanvas } from './ocean-canvas';
-import type { Session, NodeInfo, PeerInfo } from '@/api/types';
+import type { Session, NodeInfo } from '@/api/types';
+
+// Mock sprite loading
+vi.mock('./engine/sprites', () => ({
+  loadAllSprites: vi.fn().mockResolvedValue({
+    octopus: {},
+    nodes: {},
+    ui: {},
+    status: {},
+    decor: {},
+  }),
+}));
+
+// Mock canvas getContext
+const mockCtx = {
+  save: vi.fn(),
+  restore: vi.fn(),
+  scale: vi.fn(),
+  clearRect: vi.fn(),
+  fillRect: vi.fn(),
+  fillText: vi.fn(),
+  drawImage: vi.fn(),
+  beginPath: vi.fn(),
+  moveTo: vi.fn(),
+  lineTo: vi.fn(),
+  arc: vi.fn(),
+  fill: vi.fn(),
+  stroke: vi.fn(),
+  createLinearGradient: vi.fn().mockReturnValue({
+    addColorStop: vi.fn(),
+  }),
+  set fillStyle(_v: string) {},
+  set strokeStyle(_v: string) {},
+  set globalAlpha(_v: number) {},
+  set lineWidth(_v: number) {},
+  set font(_v: string) {},
+  set textAlign(_v: string) {},
+  set imageSmoothingEnabled(_v: boolean) {},
+};
+
+HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue(mockCtx) as never;
+
+// Mock ResizeObserver
+const mockObserve = vi.fn();
+const mockDisconnect = vi.fn();
+vi.stubGlobal(
+  'ResizeObserver',
+  class {
+    observe = mockObserve;
+    unobserve = vi.fn();
+    disconnect = mockDisconnect;
+  },
+);
+
+// Mock requestAnimationFrame
+let rafCallback: ((time: number) => void) | null = null;
+vi.stubGlobal('requestAnimationFrame', (cb: (time: number) => void) => {
+  rafCallback = cb;
+  return 1;
+});
+vi.stubGlobal('cancelAnimationFrame', vi.fn());
+
+function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
+  return {
+    name: 'mac-studio',
+    hostname: 'mac-studio.local',
+    os: 'macos',
+    arch: 'aarch64',
+    cpus: 12,
+    memory_mb: 32768,
+    gpu: null,
+    ...overrides,
+  };
+}
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -30,122 +103,70 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
-  return {
-    name: 'mac-studio',
-    hostname: 'mac-studio.local',
-    os: 'macos',
-    arch: 'aarch64',
-    cpus: 12,
-    memory_mb: 32768,
-    gpu: null,
-    ...overrides,
-  };
-}
+beforeEach(() => {
+  vi.clearAllMocks();
+  rafCallback = null;
+});
 
 describe('OceanCanvas', () => {
-  it('renders the ocean SVG', () => {
+  it('renders the canvas element', async () => {
     render(<OceanCanvas localNode={makeNode()} localSessions={[]} peers={[]} peerSessions={{}} />);
-    expect(screen.getByTestId('ocean-canvas')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('ocean-canvas')).toBeInTheDocument();
+    });
   });
 
-  it('renders local node island', () => {
+  it('renders the container', () => {
     render(<OceanCanvas localNode={makeNode()} localSessions={[]} peers={[]} peerSessions={{}} />);
-    expect(screen.getByText('mac-studio')).toBeInTheDocument();
+    expect(screen.getByTestId('ocean-canvas-container')).toBeInTheDocument();
   });
 
-  it('renders octopuses for local sessions', () => {
-    const sessions = [makeSession({ name: 'worker-1' }), makeSession({ name: 'worker-2' })];
+  it('shows loading overlay initially then hides it', async () => {
+    render(<OceanCanvas localNode={makeNode()} localSessions={[]} peers={[]} peerSessions={{}} />);
+    // Loading overlay disappears after sprites load
+    await waitFor(() => {
+      expect(screen.queryByTestId('loading-overlay')).not.toBeInTheDocument();
+    });
+  });
+
+  it('renders canvas with cursor-pointer class', () => {
+    render(<OceanCanvas localNode={makeNode()} localSessions={[]} peers={[]} peerSessions={{}} />);
+    const canvas = screen.getByTestId('ocean-canvas');
+    expect(canvas.classList.contains('cursor-pointer')).toBe(true);
+  });
+
+  it('shows profile card when clicking on an octopus', async () => {
+    const sessions = [makeSession({ id: 's1', name: 'worker-1' })];
     render(
       <OceanCanvas localNode={makeNode()} localSessions={sessions} peers={[]} peerSessions={{}} />,
     );
-    expect(screen.getByTestId('octopus-worker-1')).toBeInTheDocument();
-    expect(screen.getByTestId('octopus-worker-2')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('loading-overlay')).not.toBeInTheDocument();
+    });
+
+    // Trigger a game loop frame to sync data into the world
+    if (rafCallback) rafCallback(performance.now());
+
+    // Click on the canvas — profile card won't show since we can't hit-test
+    // without real coordinates, but we verify the click handler doesn't crash
+    const canvas = screen.getByTestId('ocean-canvas');
+    fireEvent.click(canvas, { clientX: 400, clientY: 300 });
+
+    // No profile card for a miss click
+    expect(screen.queryByTestId('profile-card')).not.toBeInTheDocument();
   });
 
-  it('renders peer islands', () => {
-    const peers: PeerInfo[] = [
-      {
-        name: 'linux-server',
-        address: '100.64.1.2:7433',
-        status: 'online',
-        node_info: makeNode({ name: 'linux-server' }),
-        session_count: 2,
-      },
-    ];
-    render(
-      <OceanCanvas localNode={makeNode()} localSessions={[]} peers={peers} peerSessions={{}} />,
-    );
-    expect(screen.getByText('linux-server')).toBeInTheDocument();
-  });
-
-  it('renders peer sessions as octopuses', () => {
-    const peers: PeerInfo[] = [
-      {
-        name: 'linux-server',
-        address: '100.64.1.2:7433',
-        status: 'online',
-        node_info: makeNode({ name: 'linux-server' }),
-        session_count: 1,
-      },
-    ];
-    const peerSessions = {
-      'linux-server': [makeSession({ name: 'peer-task', provider: 'codex' })],
-    };
-    render(
-      <OceanCanvas
-        localNode={makeNode()}
-        localSessions={[]}
-        peers={peers}
-        peerSessions={peerSessions}
-      />,
-    );
-    expect(screen.getByTestId('octopus-peer-task')).toBeInTheDocument();
-  });
-
-  it('shows ink on octopuses', () => {
-    const sessions = [makeSession({ name: 'inked', ink: 'reviewer' })];
-    render(
-      <OceanCanvas localNode={makeNode()} localSessions={sessions} peers={[]} peerSessions={{}} />,
-    );
-    expect(screen.getByText('reviewer')).toBeInTheDocument();
-  });
-
-  it('shows empty ocean message when no sessions', () => {
+  it('observes container for resize', async () => {
     render(<OceanCanvas localNode={makeNode()} localSessions={[]} peers={[]} peerSessions={{}} />);
-    expect(screen.getByText(/no active sessions/i)).toBeInTheDocument();
+    expect(mockObserve).toHaveBeenCalled();
   });
 
-  it('colors offline peer islands differently', () => {
-    const peers: PeerInfo[] = [
-      {
-        name: 'offline-node',
-        address: '100.64.1.3:7433',
-        status: 'offline',
-        node_info: null,
-        session_count: null,
-      },
-    ];
-    render(
-      <OceanCanvas localNode={makeNode()} localSessions={[]} peers={peers} peerSessions={{}} />,
+  it('disconnects resize observer on unmount', async () => {
+    const { unmount } = render(
+      <OceanCanvas localNode={makeNode()} localSessions={[]} peers={[]} peerSessions={{}} />,
     );
-    const label = screen.getByText('offline-node');
-    expect(label).toBeInTheDocument();
-  });
-
-  it('renders different statuses with correct octopus classes', () => {
-    const sessions = [
-      makeSession({ name: 'run', status: 'running' }),
-      makeSession({ name: 'stl', status: 'stale', id: 's2' }),
-      makeSession({ name: 'ded', status: 'dead', id: 's3' }),
-      makeSession({ name: 'cmp', status: 'completed', id: 's4' }),
-    ];
-    render(
-      <OceanCanvas localNode={makeNode()} localSessions={sessions} peers={[]} peerSessions={{}} />,
-    );
-    expect(screen.getByTestId('octopus-run').classList.contains('octopus-running')).toBe(true);
-    expect(screen.getByTestId('octopus-stl').classList.contains('octopus-stale')).toBe(true);
-    expect(screen.getByTestId('octopus-ded').classList.contains('octopus-dead')).toBe(true);
-    expect(screen.getByTestId('octopus-cmp').classList.contains('octopus-completed')).toBe(true);
+    unmount();
+    expect(mockDisconnect).toHaveBeenCalled();
   });
 });

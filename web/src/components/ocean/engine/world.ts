@@ -1,0 +1,320 @@
+import type { Session, NodeInfo, PeerInfo } from '@/api/types';
+import type { Camera } from './camera';
+import { createCamera, fitCamera } from './camera';
+
+// --- Layout constants ---
+const NODE_SPACING = 250;
+const SWIM_ZONE_TOP = 50;
+const SWIM_ZONE_BOTTOM = 190;
+const SEABED_Y = 230;
+const NODE_Y = 200;
+
+// --- Entity types ---
+
+export interface OctopusEntity {
+  sessionId: string;
+  name: string;
+  status: string;
+  provider: string;
+  ink: string | null;
+  waitingForInput: boolean;
+  nodeName: string;
+  x: number;
+  y: number;
+  homeX: number;
+  homeY: number;
+  vx: number;
+  vy: number;
+  animFrame: number;
+  animTimer: number;
+  isSwimming: boolean;
+  wanderTimer: number;
+  wanderTargetX: number;
+  wanderTargetY: number;
+}
+
+export interface NodeLandmark {
+  name: string;
+  isLocal: boolean;
+  status: 'online' | 'offline' | 'unknown';
+  x: number;
+  y: number;
+}
+
+export interface Decoration {
+  type: string;
+  x: number;
+  y: number;
+}
+
+export interface Bubble {
+  x: number;
+  y: number;
+  radius: number;
+  speed: number;
+  alpha: number;
+}
+
+export interface WorldState {
+  camera: Camera;
+  nodes: NodeLandmark[];
+  octopuses: OctopusEntity[];
+  decorations: Decoration[];
+  bubbles: Bubble[];
+}
+
+// --- Behavior config per status ---
+
+interface BehaviorConfig {
+  radius: number;
+  speed: number;
+  intervalMin: number;
+  intervalMax: number;
+}
+
+const BEHAVIOR: Record<string, BehaviorConfig> = {
+  running: { radius: 60, speed: 30, intervalMin: 1.5, intervalMax: 3 },
+  creating: { radius: 30, speed: 15, intervalMin: 2, intervalMax: 4 },
+  stale: { radius: 8, speed: 5, intervalMin: 4, intervalMax: 8 },
+  completed: { radius: 40, speed: 10, intervalMin: 3, intervalMax: 6 },
+  dead: { radius: 5, speed: 2, intervalMin: 5, intervalMax: 10 },
+};
+
+function randomBetween(min: number, max: number): number {
+  return min + Math.random() * (max - min);
+}
+
+// --- Create world ---
+
+export function createWorld(width: number, height: number): WorldState {
+  return {
+    camera: createCamera(width, height),
+    nodes: [],
+    octopuses: [],
+    decorations: [],
+    bubbles: [],
+  };
+}
+
+// --- Generate seabed decorations ---
+
+function generateDecorations(nodes: NodeLandmark[]): Decoration[] {
+  if (nodes.length === 0) return [];
+
+  const minX = Math.min(...nodes.map((n) => n.x)) - 120;
+  const maxX = Math.max(...nodes.map((n) => n.x)) + 120;
+  const types = ['seaweed-1', 'seaweed-2', 'shell-1', 'shell-2', 'starfish'];
+  const count = Math.max(8, nodes.length * 5);
+  const decorations: Decoration[] = [];
+
+  for (let i = 0; i < count; i++) {
+    decorations.push({
+      type: types[Math.floor(Math.random() * types.length)],
+      x: randomBetween(minX, maxX),
+      y: SEABED_Y + randomBetween(-5, 5),
+    });
+  }
+
+  return decorations;
+}
+
+// --- Assign octopus home position near its node ---
+
+function assignHome(nodeX: number, index: number, total: number): [number, number] {
+  const cols = Math.min(total, 4);
+  const col = index % cols;
+  const row = Math.floor(index / cols);
+  const startX = nodeX - ((cols - 1) * 40) / 2;
+  const x = startX + col * 40;
+  const y = SWIM_ZONE_TOP + 40 + row * 50;
+  return [x, y];
+}
+
+// --- Sync React data into world state ---
+
+export function syncData(
+  world: WorldState,
+  localNode: NodeInfo,
+  localSessions: Session[],
+  peers: PeerInfo[],
+  peerSessions: Record<string, Session[]>,
+): void {
+  // Build node list
+  const newNodes: NodeLandmark[] = [
+    { name: localNode.name, isLocal: true, status: 'online', x: 0, y: NODE_Y },
+  ];
+
+  for (let i = 0; i < peers.length; i++) {
+    newNodes.push({
+      name: peers[i].name,
+      isLocal: false,
+      status: peers[i].status,
+      x: (i + 1) * NODE_SPACING,
+      y: NODE_Y,
+    });
+  }
+
+  // Regenerate decorations only when node layout changes
+  const nodesChanged =
+    world.nodes.length !== newNodes.length ||
+    world.nodes.some((n, i) => n.name !== newNodes[i]?.name);
+
+  world.nodes = newNodes;
+
+  if (nodesChanged || world.decorations.length === 0) {
+    world.decorations = generateDecorations(newNodes);
+  }
+
+  fitCamera(world.camera, newNodes);
+
+  // Map sessions to nodes
+  const sessionsByNode: Record<string, Session[]> = {};
+  sessionsByNode[localNode.name] = localSessions;
+  for (const peer of peers) {
+    sessionsByNode[peer.name] = peerSessions[peer.name] ?? [];
+  }
+
+  // Diff octopuses: keep existing (preserve animation), add new, remove gone
+  const existingById = new Map(world.octopuses.map((o) => [o.sessionId, o]));
+  const newOctopuses: OctopusEntity[] = [];
+
+  for (const node of newNodes) {
+    const sessions = sessionsByNode[node.name] ?? [];
+    for (let i = 0; i < sessions.length; i++) {
+      const session = sessions[i];
+      const existing = existingById.get(session.id);
+
+      if (existing) {
+        // Update data fields, keep position and animation state
+        existing.status = session.status;
+        existing.waitingForInput = session.waiting_for_input;
+        existing.ink = session.ink;
+        existing.nodeName = node.name;
+        newOctopuses.push(existing);
+      } else {
+        // New octopus — place near its node
+        const [hx, hy] = assignHome(node.x, i, sessions.length);
+        newOctopuses.push({
+          sessionId: session.id,
+          name: session.name,
+          status: session.status,
+          provider: session.provider,
+          ink: session.ink,
+          waitingForInput: session.waiting_for_input,
+          nodeName: node.name,
+          x: hx + randomBetween(-10, 10),
+          y: hy + randomBetween(-10, 10),
+          homeX: hx,
+          homeY: hy,
+          vx: 0,
+          vy: 0,
+          animFrame: 0,
+          animTimer: 0,
+          isSwimming: false,
+          wanderTimer: randomBetween(1, 3),
+          wanderTargetX: hx,
+          wanderTargetY: hy,
+        });
+      }
+    }
+  }
+
+  world.octopuses = newOctopuses;
+}
+
+// --- Physics / AI update ---
+
+export function update(world: WorldState, dt: number): void {
+  const cappedDt = Math.min(dt, 0.1);
+
+  // Update octopuses
+  for (const oct of world.octopuses) {
+    const behavior = BEHAVIOR[oct.status] ?? BEHAVIOR.running;
+
+    // Wander: pick new target periodically
+    oct.wanderTimer -= cappedDt;
+    if (oct.wanderTimer <= 0) {
+      const angle = Math.random() * Math.PI * 2;
+      oct.wanderTargetX = oct.homeX + Math.cos(angle) * behavior.radius;
+      oct.wanderTargetY = oct.homeY + Math.sin(angle) * behavior.radius * 0.5;
+      oct.wanderTargetY = Math.max(SWIM_ZONE_TOP, Math.min(SWIM_ZONE_BOTTOM, oct.wanderTargetY));
+      oct.wanderTimer = randomBetween(behavior.intervalMin, behavior.intervalMax);
+    }
+
+    // Special status overrides
+    if (oct.status === 'completed') {
+      oct.wanderTargetY = Math.max(SWIM_ZONE_TOP - 20, oct.homeY - 30);
+    } else if (oct.status === 'dead') {
+      oct.wanderTargetY = SWIM_ZONE_BOTTOM + 10;
+    }
+
+    // Smooth movement toward target
+    const dx = oct.wanderTargetX - oct.x;
+    const dy = oct.wanderTargetY - oct.y;
+    const lerpFactor = 2 * cappedDt * (behavior.speed / 30);
+    oct.vx = dx * lerpFactor;
+    oct.vy = dy * lerpFactor;
+    oct.x += oct.vx;
+    oct.y += oct.vy;
+
+    // Swimming if moving horizontally fast enough
+    oct.isSwimming = Math.abs(oct.vx) > 0.3;
+
+    // Frame animation
+    oct.animTimer += cappedDt;
+    const fps = oct.isSwimming ? 10 : 6;
+    if (oct.animTimer >= 1 / fps) {
+      oct.animTimer = 0;
+      oct.animFrame = (oct.animFrame + 1) % 4;
+    }
+  }
+
+  // Update bubbles
+  for (let i = world.bubbles.length - 1; i >= 0; i--) {
+    const b = world.bubbles[i];
+    b.y -= b.speed * cappedDt;
+    b.alpha -= 0.3 * cappedDt;
+    if (b.alpha <= 0 || b.y < -20) {
+      world.bubbles.splice(i, 1);
+    }
+  }
+
+  // Spawn bubbles from octopuses or seabed
+  if (world.nodes.length > 0 && Math.random() < cappedDt * 2) {
+    const fromOctopus = world.octopuses.length > 0 && Math.random() > 0.3;
+    let bx: number;
+    let by: number;
+
+    if (fromOctopus) {
+      const src = world.octopuses[Math.floor(Math.random() * world.octopuses.length)];
+      bx = src.x + randomBetween(-5, 5);
+      by = src.y - 5;
+    } else {
+      const nodeXs = world.nodes.map((n) => n.x);
+      bx = randomBetween(Math.min(...nodeXs) - 50, Math.max(...nodeXs) + 50);
+      by = SEABED_Y;
+    }
+
+    world.bubbles.push({
+      x: bx,
+      y: by,
+      radius: randomBetween(1, 3),
+      speed: randomBetween(15, 30),
+      alpha: randomBetween(0.3, 0.7),
+    });
+  }
+}
+
+// --- Hit testing ---
+
+export function hitTest(world: WorldState, worldX: number, worldY: number): OctopusEntity | null {
+  const HIT_RADIUS = 16;
+  for (const oct of world.octopuses) {
+    const dx = worldX - oct.x;
+    const dy = worldY - oct.y;
+    if (dx * dx + dy * dy < HIT_RADIUS * HIT_RADIUS) {
+      return oct;
+    }
+  }
+  return null;
+}

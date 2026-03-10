@@ -1,5 +1,18 @@
+import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Session, NodeInfo, PeerInfo } from '@/api/types';
-import { Octopus } from './octopus';
+import { loadAllSprites, type Sprites } from './engine/sprites';
+import {
+  createWorld,
+  syncData,
+  update,
+  hitTest,
+  type WorldState,
+  type OctopusEntity,
+} from './engine/world';
+import { render } from './engine/renderer';
+import { screenToWorld } from './engine/camera';
+import { fitCamera } from './engine/camera';
+import { ProfileCard } from './profile-card';
 
 interface OceanCanvasProps {
   localNode: NodeInfo;
@@ -8,181 +21,149 @@ interface OceanCanvasProps {
   peerSessions: Record<string, Session[]>;
 }
 
-const ISLAND_WIDTH = 160;
-const ISLAND_GAP = 40;
-const ISLAND_Y = 60;
-const OCEAN_TOP = 120;
-const OCTOPUS_SPACING_X = 70;
-const OCTOPUS_SPACING_Y = 80;
-const OCTOPUS_PER_ROW = 3;
-const MIN_HEIGHT = 400;
-
-interface Island {
-  name: string;
-  status: 'online' | 'offline' | 'unknown';
-  sessions: Session[];
-  x: number;
-}
-
 export function OceanCanvas({ localNode, localSessions, peers, peerSessions }: OceanCanvasProps) {
-  // Build island list
-  const islands: Island[] = [];
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const worldRef = useRef<WorldState | null>(null);
+  const spritesRef = useRef<Sprites | null>(null);
+  const rafRef = useRef<number>(0);
 
-  // Local node is always first
-  islands.push({
-    name: localNode.name,
-    status: 'online',
-    sessions: localSessions,
-    x: 0,
-  });
+  const [selectedOctopus, setSelectedOctopus] = useState<{
+    entity: OctopusEntity;
+    screenX: number;
+    screenY: number;
+  } | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  // Add peer islands
-  for (const peer of peers) {
-    islands.push({
-      name: peer.name,
-      status: peer.status,
-      sessions: peerSessions[peer.name] ?? [],
-      x: 0,
-    });
-  }
+  // Load sprites once
+  useEffect(() => {
+    loadAllSprites()
+      .then((sprites) => {
+        spritesRef.current = sprites;
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
 
-  // Calculate x positions
-  const totalWidth = islands.length * ISLAND_WIDTH + (islands.length - 1) * ISLAND_GAP;
-  const startX = Math.max(40, 0);
-  for (let i = 0; i < islands.length; i++) {
-    islands[i].x = startX + i * (ISLAND_WIDTH + ISLAND_GAP) + ISLAND_WIDTH / 2;
-  }
+  // Initialize canvas + resize handler
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
 
-  // Calculate canvas dimensions
-  const maxSessions = Math.max(1, ...islands.map((is) => is.sessions.length));
-  const rows = Math.ceil(maxSessions / OCTOPUS_PER_ROW);
-  const canvasHeight = Math.max(MIN_HEIGHT, OCEAN_TOP + rows * OCTOPUS_SPACING_Y + 80);
-  const canvasWidth = Math.max(totalWidth + 80, 400);
+    const resize = () => {
+      const rect = container.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) return;
 
-  const totalSessions = islands.reduce((sum, is) => sum + is.sessions.length, 0);
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      canvas.style.width = `${rect.width}px`;
+      canvas.style.height = `${rect.height}px`;
+
+      if (!worldRef.current) {
+        worldRef.current = createWorld(rect.width, rect.height);
+      } else {
+        worldRef.current.camera.width = rect.width;
+        worldRef.current.camera.height = rect.height;
+        fitCamera(worldRef.current.camera, worldRef.current.nodes);
+      }
+    };
+
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  // Sync React data into world
+  useEffect(() => {
+    if (!worldRef.current) return;
+    syncData(worldRef.current, localNode, localSessions, peers, peerSessions);
+  }, [localNode, localSessions, peers, peerSessions]);
+
+  // Game loop
+  useEffect(() => {
+    if (loading) return;
+
+    let lastTime = performance.now();
+
+    const loop = (now: number) => {
+      const dt = (now - lastTime) / 1000;
+      lastTime = now;
+
+      const world = worldRef.current;
+      const sprites = spritesRef.current;
+      const canvas = canvasRef.current;
+
+      if (world && sprites && canvas) {
+        update(world, dt);
+
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          const dpr = window.devicePixelRatio || 1;
+          ctx.save();
+          ctx.scale(dpr, dpr);
+          render(ctx, world, sprites, now);
+          ctx.restore();
+        }
+      }
+
+      rafRef.current = requestAnimationFrame(loop);
+    };
+
+    rafRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [loading]);
+
+  // Click → hit test → profile card
+  const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+    const world = worldRef.current;
+    const canvas = canvasRef.current;
+    if (!world || !canvas) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const [wx, wy] = screenToWorld(world.camera, sx, sy);
+    const oct = hitTest(world, wx, wy);
+
+    if (oct) {
+      setSelectedOctopus({ entity: oct, screenX: e.clientX, screenY: e.clientY });
+    } else {
+      setSelectedOctopus(null);
+    }
+  }, []);
 
   return (
-    <div className="ocean-container relative w-full overflow-x-auto">
-      <svg
+    <div
+      ref={containerRef}
+      className="relative w-full"
+      style={{ height: 'calc(100dvh - 8rem)' }}
+      data-testid="ocean-canvas-container"
+    >
+      <canvas
+        ref={canvasRef}
         data-testid="ocean-canvas"
-        viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
-        className="w-full"
-        style={{ minHeight: `${Math.min(canvasHeight, 600)}px` }}
-      >
-        {/* Ocean gradient background */}
-        <defs>
-          <linearGradient id="ocean-bg" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#0c1929" />
-            <stop offset="50%" stopColor="#0a1628" />
-            <stop offset="100%" stopColor="#071320" />
-          </linearGradient>
-          <radialGradient id="island-glow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#1e3a5f" stopOpacity={0.4} />
-            <stop offset="100%" stopColor="#0c1929" stopOpacity={0} />
-          </radialGradient>
-        </defs>
-
-        <rect width={canvasWidth} height={canvasHeight} fill="url(#ocean-bg)" />
-
-        {/* Water surface line */}
-        <path
-          d={`M0,${OCEAN_TOP - 10} Q${canvasWidth / 4},${OCEAN_TOP - 20} ${canvasWidth / 2},${OCEAN_TOP - 10} T${canvasWidth},${OCEAN_TOP - 10}`}
-          stroke="#1e3a5f"
-          strokeWidth={1}
-          fill="none"
-          opacity={0.5}
+        className="block w-full h-full cursor-pointer"
+        onClick={handleClick}
+      />
+      {selectedOctopus && (
+        <ProfileCard
+          octopus={selectedOctopus.entity}
+          screenX={selectedOctopus.screenX}
+          screenY={selectedOctopus.screenY}
+          onClose={() => setSelectedOctopus(null)}
         />
-
-        {/* Islands */}
-        {islands.map((island) => (
-          <g key={island.name}>
-            {/* Island glow */}
-            <ellipse
-              cx={island.x}
-              cy={ISLAND_Y}
-              rx={ISLAND_WIDTH / 2}
-              ry={30}
-              fill="url(#island-glow)"
-            />
-
-            {/* Island body */}
-            <ellipse
-              cx={island.x}
-              cy={ISLAND_Y}
-              rx={ISLAND_WIDTH / 2.5}
-              ry={16}
-              fill={island.status === 'online' ? '#1a3550' : '#1a1a2e'}
-              stroke={island.status === 'online' ? '#2a5a80' : '#2a2a3e'}
-              strokeWidth={1}
-            />
-
-            {/* Island label */}
-            <text
-              x={island.x}
-              y={ISLAND_Y + 5}
-              textAnchor="middle"
-              fontSize={11}
-              fontFamily="monospace"
-              fontWeight="bold"
-              fill={island.status === 'online' ? '#7dd3fc' : '#64748b'}
-            >
-              {island.name}
-            </text>
-
-            {/* Status dot */}
-            <circle
-              cx={island.x + ISLAND_WIDTH / 2.5 - 8}
-              cy={ISLAND_Y - 8}
-              r={3}
-              fill={
-                island.status === 'online'
-                  ? '#34d399'
-                  : island.status === 'offline'
-                    ? '#f87171'
-                    : '#94a3b8'
-              }
-            />
-
-            {/* Octopuses for this island */}
-            {island.sessions.map((session, idx) => {
-              const col = idx % OCTOPUS_PER_ROW;
-              const row = Math.floor(idx / OCTOPUS_PER_ROW);
-              const ox =
-                island.x +
-                (col - (Math.min(island.sessions.length, OCTOPUS_PER_ROW) - 1) / 2) *
-                  OCTOPUS_SPACING_X;
-              const oy = OCEAN_TOP + 30 + row * OCTOPUS_SPACING_Y;
-
-              return (
-                <Octopus
-                  key={session.id}
-                  x={ox}
-                  y={oy}
-                  status={session.status}
-                  name={session.name}
-                  provider={session.provider}
-                  ink={session.ink ?? undefined}
-                  waitingForInput={session.waiting_for_input}
-                />
-              );
-            })}
-          </g>
-        ))}
-
-        {/* Empty state */}
-        {totalSessions === 0 && (
-          <text
-            x={canvasWidth / 2}
-            y={canvasHeight / 2}
-            textAnchor="middle"
-            fontSize={14}
-            fill="#64748b"
-            fontFamily="monospace"
-          >
-            No active sessions — the ocean is calm
-          </text>
-        )}
-      </svg>
+      )}
+      {loading && (
+        <div
+          className="absolute inset-0 flex items-center justify-center"
+          data-testid="loading-overlay"
+        >
+          <span className="font-mono text-muted-foreground">Loading sprites...</span>
+        </div>
+      )}
     </div>
   );
 }
