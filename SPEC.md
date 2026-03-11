@@ -50,18 +50,24 @@ Too many layers. And if a machine reboots, you lose your session state.
         │ REST/WS       │ REST          │ REST/SSE
         └───────────────┼───────────────┘
                         │
-     ┌──────────────────┼──────────────────┐
-     │                  │                  │
-  ┌──▼─────────┐  ┌────▼───────┐  ┌───────▼────┐
-  │  mac-mini  │  │  macbook   │  │   server   │
-  │  pulpod    │  │  pulpod    │  │   pulpod   │
-  │  ┌──────┐  │  │  ┌──────┐  │  │  ┌──────┐  │
-  │  │ tmux │  │  │  │ tmux │  │  │  │ tmux │  │
-  │  └──────┘  │  │  └──────┘  │  │  └──────┘  │
-  │  ┌──────┐  │  │  ┌──────┐  │  │  ┌──────┐  │
-  │  │SQLite│  │  │  │SQLite│  │  │  │SQLite│  │
-  │  └──────┘  │  │  └──────┘  │  │  └──────┘  │
-  └────────────┘  └────────────┘  └────────────┘
+     ┌──────────────────┼──────────────────────────┐
+     │                  │                           │
+  ┌──▼─────────┐  ┌────▼───────┐  ┌────────────────▼──────────────┐
+  │  mac-mini  │  │  macbook   │  │  Docker (container worker)    │
+  │  pulpod    │  │  pulpod    │  │  ┌───────────┐ ┌───────────┐  │
+  │  ┌──────┐  │  │  ┌──────┐  │  │  │ tailscale │ │  pulpod   │  │
+  │  │ tmux │  │  │  │ tmux │  │  │  │ sidecar   │ │  agents   │  │
+  │  └──────┘  │  │  └──────┘  │  │  │  :443 ────┼─┤  :7433    │  │
+  │  ┌──────┐  │  │  ┌──────┐  │  │  └───────────┘ │  ┌──────┐ │  │
+  │  │SQLite│  │  │  │SQLite│  │  │   shared netns  │  │ tmux │ │  │
+  │  └──────┘  │  │  └──────┘  │  │                 │  └──────┘ │  │
+  └────────────┘  └────────────┘  │                 │  ┌──────┐ │  │
+                                  │                 │  │SQLite│ │  │
+                                  │                 │  └──────┘ │  │
+                                  │                 └───────────┘  │
+                                  └────────────────────────────────┘
+  ◄─── bare-metal (bind=tailscale) ───►  ◄── container (bind=container) ──►
+       runs TS discovery loop                 sidecar handles tailnet
 ```
 
 ### Components
@@ -751,6 +757,24 @@ previous crash are also cleared on startup.
 Use `public` bind mode only when you need direct LAN access without Tailscale
 (e.g., devices not on the tailnet). Use `container` bind mode for Docker/Podman
 deployments where the container runtime provides network isolation.
+
+### Container Deployment with Tailscale Sidecar
+
+For containerized pulpo nodes on the tailnet, use the Tailscale sidecar pattern
+(see `docker/compose/tailscale.yml`). The agents container uses `bind = "container"`
+(binds `0.0.0.0`, no auth) and shares a network namespace with a
+`tailscale/tailscale` sidecar that handles tailnet identity and `tailscale serve`.
+
+**Why not `bind = "tailscale"` in containers?** The `tailscale` bind mode spawns
+`tailscale status --json` for peer discovery and runs `tailscale serve` for HTTPS
+exposure. In the sidecar pattern, the `tailscale` CLI lives in the sidecar container,
+not the agents container. The sidecar handles networking; the agents container trusts
+its network boundary. Bare-metal pulpod nodes running `bind = "tailscale"` discover
+container peers via their own Tailscale discovery loop — the container doesn't need
+to discover anyone.
+
+See `docker/README.md` for full setup instructions, architecture diagram, and
+troubleshooting guide.
 
 ---
 

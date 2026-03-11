@@ -1,0 +1,66 @@
+services:
+  tailscale:
+    image: tailscale/tailscale:stable
+    container_name: pulpo-tailscale
+    hostname: ${PULPO_NODE_NAME:-pulpo-worker-1}
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:---advertise-tags=tag:pulpo}
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+    configs:
+      - source: ts-serve
+        target: /config/serve.json
+    restart: unless-stopped
+
+  pulpo-agents:
+    build:
+      context: ../..
+      dockerfile: docker/agents/Dockerfile
+      args:
+        BASE_IMAGE: pulpo-base:dev
+        INSTALL_CLAUDE: "1"
+        INSTALL_CODEX: "1"
+    image: pulpo-agents:dev
+    container_name: pulpo-agents
+    network_mode: service:tailscale
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      PULPO_BIND: container
+      PULPO_NODE_NAME: ${PULPO_NODE_NAME:-pulpo-worker-1}
+    volumes:
+      - pulpo-data:/home/pulpo/.pulpo
+    depends_on:
+      - tailscale
+    restart: unless-stopped
+
+configs:
+  ts-serve:
+    content: |
+      {
+        "TCP": {
+          "443": {
+            "HTTPS": true
+          }
+        },
+        "Web": {
+          "${TS_HOSTNAME:-pulpo-worker-1}.${TS_TAILNET}": {
+            "Handlers": {
+              "/": {
+                "Proxy": "http://127.0.0.1:7433"
+              }
+            }
+          }
+        }
+      }
+
+volumes:
+  tailscale-state:
+  pulpo-data:
