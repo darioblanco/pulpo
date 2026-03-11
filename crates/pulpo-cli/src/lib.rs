@@ -3,7 +3,10 @@ use clap::{Parser, Subcommand};
 use pulpo_common::api::{
     AuthTokenResponse, CreateSessionResponse, InterventionEventResponse, KnowledgeDeleteResponse,
     KnowledgeItemResponse, KnowledgePushResponse, KnowledgeResponse, PeersResponse,
+    ProvidersResponse,
 };
+#[cfg(test)]
+use pulpo_common::api::{ProviderCapabilitiesResponse, ProviderInfoResponse};
 use pulpo_common::knowledge::Knowledge;
 use pulpo_common::session::Session;
 
@@ -158,6 +161,10 @@ pub enum Commands {
         /// Session name or ID
         name: String,
     },
+
+    /// List available providers and their capabilities
+    #[command(visible_alias = "p")]
+    Providers,
 
     /// Open the web dashboard in your browser
     Ui,
@@ -345,6 +352,56 @@ fn format_knowledge(items: &[Knowledge]) -> String {
         lines.push(format!(
             "{:<10} {:<40} {:<10} {:<6.2} {}",
             k.kind, title, repo, k.relevance, tags
+        ));
+    }
+    lines.join("\n")
+}
+
+/// Format the providers response as a table.
+fn format_providers(resp: &ProvidersResponse) -> String {
+    let mut lines = vec![format!(
+        "{:<12} {:<10} {:<20} {}",
+        "PROVIDER", "AVAILABLE", "BINARY", "CAPABILITIES"
+    )];
+    for p in &resp.providers {
+        let avail = if p.available { "yes" } else { "no" };
+        let mut caps = Vec::new();
+        let c = &p.capabilities;
+        if c.model {
+            caps.push("model");
+        }
+        if c.system_prompt {
+            caps.push("system-prompt");
+        }
+        if c.allowed_tools {
+            caps.push("allowed-tools");
+        }
+        if c.max_turns {
+            caps.push("max-turns");
+        }
+        if c.max_budget_usd {
+            caps.push("max-budget");
+        }
+        if c.output_format {
+            caps.push("output-format");
+        }
+        if c.worktree {
+            caps.push("worktree");
+        }
+        if c.unrestricted {
+            caps.push("unrestricted");
+        }
+        if c.resume {
+            caps.push("resume");
+        }
+        let caps_str = if caps.is_empty() {
+            "-".to_owned()
+        } else {
+            caps.join(", ")
+        };
+        lines.push(format!(
+            "{:<12} {:<10} {:<20} {}",
+            p.provider, avail, p.binary, caps_str
         ));
     }
     lines.join("\n")
@@ -901,6 +958,15 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let sessions: Vec<Session> = serde_json::from_str(&text)?;
             Ok(format_sessions(&sessions))
         }
+        Commands::Providers => {
+            let resp = authed_get(&client, format!("{url}/api/v1/providers"), token.as_deref())
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let resp: ProvidersResponse = serde_json::from_str(&text)?;
+            Ok(format_providers(&resp))
+        }
         Commands::Nodes => {
             let resp = authed_get(&client, format!("{url}/api/v1/peers"), token.as_deref())
                 .send()
@@ -1169,6 +1235,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pulpo_common::session::Provider;
 
     #[test]
     fn test_base_url() {
@@ -1187,6 +1254,95 @@ mod tests {
     fn test_cli_parse_nodes() {
         let cli = Cli::try_parse_from(["pulpo", "nodes"]).unwrap();
         assert!(matches!(cli.command, Commands::Nodes));
+    }
+
+    #[test]
+    fn test_cli_parse_providers() {
+        let cli = Cli::try_parse_from(["pulpo", "providers"]).unwrap();
+        assert!(matches!(cli.command, Commands::Providers));
+    }
+
+    #[test]
+    fn test_cli_parse_providers_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "p"]).unwrap();
+        assert!(matches!(cli.command, Commands::Providers));
+    }
+
+    #[test]
+    fn test_format_providers_all() {
+        let resp = ProvidersResponse {
+            providers: vec![
+                ProviderInfoResponse {
+                    provider: Provider::Claude,
+                    binary: "claude".into(),
+                    available: true,
+                    capabilities: ProviderCapabilitiesResponse {
+                        model: true,
+                        system_prompt: true,
+                        allowed_tools: true,
+                        max_turns: true,
+                        max_budget_usd: true,
+                        output_format: true,
+                        worktree: true,
+                        unrestricted: true,
+                        resume: true,
+                    },
+                },
+                ProviderInfoResponse {
+                    provider: Provider::Shell,
+                    binary: "bash".into(),
+                    available: true,
+                    capabilities: ProviderCapabilitiesResponse {
+                        model: false,
+                        system_prompt: false,
+                        allowed_tools: false,
+                        max_turns: false,
+                        max_budget_usd: false,
+                        output_format: false,
+                        worktree: false,
+                        unrestricted: false,
+                        resume: false,
+                    },
+                },
+            ],
+        };
+        let output = format_providers(&resp);
+        assert!(output.contains("PROVIDER"));
+        assert!(output.contains("claude"));
+        assert!(output.contains("yes"));
+        assert!(output.contains("shell"));
+        assert!(output.contains("bash"));
+        // Shell has no capabilities
+        assert!(output.contains('-'));
+        // Claude has all capabilities
+        assert!(output.contains("model"));
+        assert!(output.contains("system-prompt"));
+        assert!(output.contains("worktree"));
+    }
+
+    #[test]
+    fn test_format_providers_unavailable() {
+        let resp = ProvidersResponse {
+            providers: vec![ProviderInfoResponse {
+                provider: Provider::Codex,
+                binary: "codex".into(),
+                available: false,
+                capabilities: ProviderCapabilitiesResponse {
+                    model: true,
+                    system_prompt: false,
+                    allowed_tools: false,
+                    max_turns: false,
+                    max_budget_usd: false,
+                    output_format: false,
+                    worktree: false,
+                    unrestricted: false,
+                    resume: true,
+                },
+            }],
+        };
+        let output = format_providers(&resp);
+        assert!(output.contains("no"));
+        assert!(output.contains("codex"));
     }
 
     #[test]

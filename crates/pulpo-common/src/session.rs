@@ -52,6 +52,8 @@ pub enum Provider {
     Codex,
     Gemini,
     OpenCode,
+    /// Bare shell session — no coding agent, just a tmux shell.
+    Shell,
 }
 
 impl fmt::Display for Provider {
@@ -61,6 +63,7 @@ impl fmt::Display for Provider {
             Self::Codex => write!(f, "codex"),
             Self::Gemini => write!(f, "gemini"),
             Self::OpenCode => write!(f, "opencode"),
+            Self::Shell => write!(f, "shell"),
         }
     }
 }
@@ -74,6 +77,7 @@ impl FromStr for Provider {
             "codex" => Ok(Self::Codex),
             "gemini" => Ok(Self::Gemini),
             "opencode" | "open_code" => Ok(Self::OpenCode),
+            "shell" | "bare" => Ok(Self::Shell),
             other => Err(format!("unknown provider: {other}")),
         }
     }
@@ -234,6 +238,10 @@ mod tests {
             serde_json::to_string(&Provider::OpenCode).unwrap(),
             "\"open_code\""
         );
+        assert_eq!(
+            serde_json::to_string(&Provider::Shell).unwrap(),
+            "\"shell\""
+        );
     }
 
     #[test]
@@ -254,6 +262,10 @@ mod tests {
             serde_json::from_str::<Provider>("\"open_code\"").unwrap(),
             Provider::OpenCode
         );
+        assert_eq!(
+            serde_json::from_str::<Provider>("\"shell\"").unwrap(),
+            Provider::Shell
+        );
     }
 
     #[test]
@@ -267,6 +279,7 @@ mod tests {
         assert_eq!(Provider::Codex.to_string(), "codex");
         assert_eq!(Provider::Gemini.to_string(), "gemini");
         assert_eq!(Provider::OpenCode.to_string(), "opencode");
+        assert_eq!(Provider::Shell.to_string(), "shell");
     }
 
     #[test]
@@ -276,6 +289,8 @@ mod tests {
         assert_eq!("gemini".parse::<Provider>().unwrap(), Provider::Gemini);
         assert_eq!("opencode".parse::<Provider>().unwrap(), Provider::OpenCode);
         assert_eq!("open_code".parse::<Provider>().unwrap(), Provider::OpenCode);
+        assert_eq!("shell".parse::<Provider>().unwrap(), Provider::Shell);
+        assert_eq!("bare".parse::<Provider>().unwrap(), Provider::Shell);
     }
 
     #[test]

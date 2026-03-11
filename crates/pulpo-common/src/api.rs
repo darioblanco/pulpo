@@ -51,6 +51,38 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+/// Capability matrix for a single provider.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct ProviderCapabilitiesResponse {
+    pub model: bool,
+    pub system_prompt: bool,
+    pub allowed_tools: bool,
+    pub max_turns: bool,
+    pub max_budget_usd: bool,
+    pub output_format: bool,
+    pub worktree: bool,
+    pub unrestricted: bool,
+    pub resume: bool,
+}
+
+/// Information about a single provider: identity, availability, and capabilities.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderInfoResponse {
+    pub provider: Provider,
+    /// The binary name or path that would be invoked.
+    pub binary: String,
+    /// Whether the binary was found on this node.
+    pub available: bool,
+    pub capabilities: ProviderCapabilitiesResponse,
+}
+
+/// Response from `GET /api/v1/providers`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProvidersResponse {
+    pub providers: Vec<ProviderInfoResponse>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PeersResponse {
     pub local: NodeInfo,
@@ -1743,5 +1775,132 @@ mod tests {
         let cloned = req.clone();
         let debug = format!("{cloned:?}");
         assert!(debug.contains("test.com"));
+    }
+
+    #[test]
+    fn test_provider_capabilities_response_serialize() {
+        let caps = ProviderCapabilitiesResponse {
+            model: true,
+            system_prompt: true,
+            allowed_tools: true,
+            max_turns: true,
+            max_budget_usd: true,
+            output_format: true,
+            worktree: true,
+            unrestricted: true,
+            resume: true,
+        };
+        let json = serde_json::to_string(&caps).unwrap();
+        assert!(json.contains("\"model\":true"));
+        assert!(json.contains("\"resume\":true"));
+    }
+
+    #[test]
+    fn test_provider_capabilities_response_deserialize() {
+        let json = r#"{"model":false,"system_prompt":false,"allowed_tools":false,"max_turns":false,"max_budget_usd":false,"output_format":false,"worktree":false,"unrestricted":false,"resume":false}"#;
+        let caps: ProviderCapabilitiesResponse = serde_json::from_str(json).unwrap();
+        assert!(!caps.model);
+        assert!(!caps.resume);
+    }
+
+    #[test]
+    fn test_provider_capabilities_response_debug_clone() {
+        let caps = ProviderCapabilitiesResponse {
+            model: true,
+            system_prompt: false,
+            allowed_tools: false,
+            max_turns: false,
+            max_budget_usd: false,
+            output_format: false,
+            worktree: false,
+            unrestricted: false,
+            resume: false,
+        };
+        #[allow(clippy::redundant_clone)]
+        let cloned = caps.clone();
+        let debug = format!("{cloned:?}");
+        assert!(debug.contains("model: true"));
+    }
+
+    #[test]
+    fn test_provider_info_response_serialize() {
+        let info = ProviderInfoResponse {
+            provider: Provider::Claude,
+            binary: "claude".into(),
+            available: true,
+            capabilities: ProviderCapabilitiesResponse {
+                model: true,
+                system_prompt: true,
+                allowed_tools: true,
+                max_turns: true,
+                max_budget_usd: true,
+                output_format: true,
+                worktree: true,
+                unrestricted: true,
+                resume: true,
+            },
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"claude\""));
+        assert!(json.contains("\"available\":true"));
+    }
+
+    #[test]
+    fn test_provider_info_response_deserialize() {
+        let json = r#"{"provider":"shell","binary":"bash","available":true,"capabilities":{"model":false,"system_prompt":false,"allowed_tools":false,"max_turns":false,"max_budget_usd":false,"output_format":false,"worktree":false,"unrestricted":false,"resume":false}}"#;
+        let info: ProviderInfoResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(info.provider, Provider::Shell);
+        assert!(info.available);
+        assert_eq!(info.binary, "bash");
+    }
+
+    #[test]
+    fn test_provider_info_response_debug_clone() {
+        let info = ProviderInfoResponse {
+            provider: Provider::Shell,
+            binary: "bash".into(),
+            available: true,
+            capabilities: ProviderCapabilitiesResponse {
+                model: false,
+                system_prompt: false,
+                allowed_tools: false,
+                max_turns: false,
+                max_budget_usd: false,
+                output_format: false,
+                worktree: false,
+                unrestricted: false,
+                resume: false,
+            },
+        };
+        #[allow(clippy::redundant_clone)]
+        let cloned = info.clone();
+        let debug = format!("{cloned:?}");
+        assert!(debug.contains("Shell"));
+    }
+
+    #[test]
+    fn test_providers_response_serialize() {
+        let resp = ProvidersResponse {
+            providers: vec![ProviderInfoResponse {
+                provider: Provider::Shell,
+                binary: "bash".into(),
+                available: true,
+                capabilities: ProviderCapabilitiesResponse {
+                    model: false,
+                    system_prompt: false,
+                    allowed_tools: false,
+                    max_turns: false,
+                    max_budget_usd: false,
+                    output_format: false,
+                    worktree: false,
+                    unrestricted: false,
+                    resume: false,
+                },
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let parsed: ProvidersResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.providers.len(), 1);
+        assert_eq!(parsed.providers[0].provider, Provider::Shell);
     }
 }

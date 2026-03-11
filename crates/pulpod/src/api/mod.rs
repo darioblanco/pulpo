@@ -8,6 +8,7 @@ pub mod knowledge;
 pub mod node;
 pub mod notifications;
 pub mod peers;
+pub mod providers;
 pub mod routes;
 pub mod sessions;
 pub mod static_files;

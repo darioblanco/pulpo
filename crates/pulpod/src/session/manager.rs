@@ -132,6 +132,11 @@ impl SessionManager {
         let prompt = req.prompt.clone().unwrap_or_default();
         let id = Uuid::new_v4();
         let provider = req.provider.unwrap_or(Provider::Claude);
+
+        // Check provider binary is available before creating the session
+        if !is_provider_available(provider) {
+            bail!("provider '{provider}' is not available on this node (binary not found in PATH)");
+        }
         let mode = req.mode.unwrap_or_default();
         let guards = resolve_guard_config(&req, &self.default_guard);
         let name = if let Some(n) = req.name {
@@ -323,6 +328,10 @@ impl SessionManager {
     /// exploration, and instructs the agent to write back discoveries.
     fn inject_knowledge_context(&self, mut req: CreateSessionRequest) -> CreateSessionRequest {
         if !self.inject_knowledge {
+            return req;
+        }
+        // Shell sessions have no agent to read knowledge context
+        if req.provider == Some(Provider::Shell) {
             return req;
         }
         let Some(repo) = &self.knowledge_repo else {
@@ -641,11 +650,37 @@ fn which_binary(name: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Check if a provider's binary is available on this system.
+/// Shell is always available. For agent providers, checks PATH and common locations.
+pub fn is_provider_available(provider: Provider) -> bool {
+    if provider == Provider::Shell {
+        return true;
+    }
+    let name = provider.to_string();
+    let resolved = resolve_binary(&name);
+    // resolve_binary returns the bare name if not found — check if the resolved
+    // path actually differs (was found) or if the bare name exists in PATH
+    resolved != name || which_binary(&name).is_some()
+}
+
+/// Return the binary name/path for a provider.
+/// Shell returns "bash". Agent providers use `resolve_binary`.
+pub fn provider_binary(provider: Provider) -> String {
+    if provider == Provider::Shell {
+        return "bash".to_owned();
+    }
+    resolve_binary(&provider.to_string())
+}
+
 pub(crate) fn build_command(
     provider: Provider,
     mode: SessionMode,
     params: &crate::guard::SpawnParams,
 ) -> String {
+    if provider == Provider::Shell {
+        // Bare shell session — just start bash, no agent command
+        return "bash".to_owned();
+    }
     let binary = resolve_binary(&provider.to_string());
     let flags = crate::guard::build_flags(provider, mode, params);
     let inner = format!("{binary} {}", flags.join(" "));
@@ -1937,6 +1972,79 @@ mod tests {
             result.starts_with('/'),
             "Expected absolute path, got: {result}"
         );
+    }
+
+    #[test]
+    fn test_build_command_shell_bare() {
+        let params = crate::guard::SpawnParams::default();
+        let cmd = build_command(Provider::Shell, SessionMode::Interactive, &params);
+        assert_eq!(cmd, "bash");
+    }
+
+    #[test]
+    fn test_build_command_shell_autonomous() {
+        let params = crate::guard::SpawnParams::default();
+        let cmd = build_command(Provider::Shell, SessionMode::Autonomous, &params);
+        assert_eq!(cmd, "bash");
+    }
+
+    #[test]
+    fn test_is_provider_available_shell() {
+        assert!(is_provider_available(Provider::Shell));
+    }
+
+    #[test]
+    fn test_is_provider_available_nonexistent() {
+        // Provider binaries that don't exist should return false
+        // We can't test for specific providers since they might be installed,
+        // but we can verify the function doesn't panic
+        let _available = is_provider_available(Provider::OpenCode);
+    }
+
+    #[test]
+    fn test_provider_binary_shell() {
+        assert_eq!(provider_binary(Provider::Shell), "bash");
+    }
+
+    #[test]
+    fn test_provider_binary_claude() {
+        let binary = provider_binary(Provider::Claude);
+        // Should return either "claude" or an absolute path to claude
+        assert!(
+            binary == "claude" || binary.contains("claude"),
+            "Expected claude binary, got: {binary}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_session_shell_provider() {
+        let (mgr, _, _) = test_manager(MockBackend::new()).await;
+        let mut req = make_req("shell-test");
+        req.provider = Some(Provider::Shell);
+        let (session, warnings) = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.provider, Provider::Shell);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_inject_knowledge_shell_skipped() {
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            knowledge_repo: None,
+            inject_knowledge: true,
+            store: unsafe_empty_store(),
+            default_guard: GuardConfig::default(),
+            default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
+            inks: HashMap::new(),
+            event_tx: None,
+            node_name: String::new(),
+        };
+        let mut req = make_req("shell-knowledge-test");
+        req.provider = Some(Provider::Shell);
+        let result = mgr.inject_knowledge_context(req);
+        // Shell sessions should skip knowledge injection
+        assert_eq!(result.system_prompt, None);
     }
 
     #[tokio::test]

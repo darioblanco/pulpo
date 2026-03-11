@@ -102,6 +102,17 @@ pub const fn provider_capabilities(provider: Provider) -> ProviderCapabilities {
             unrestricted: false,
             resume: false,
         },
+        Provider::Shell => ProviderCapabilities {
+            model: false,
+            system_prompt: false,
+            allowed_tools: false,
+            max_turns: false,
+            max_budget_usd: false,
+            output_format: false,
+            worktree: false,
+            unrestricted: false,
+            resume: false,
+        },
     }
 }
 
@@ -163,6 +174,7 @@ pub fn build_flags(provider: Provider, mode: SessionMode, params: &SpawnParams) 
         (Provider::Gemini, SessionMode::Interactive) => build_gemini_interactive_flags(params),
         (Provider::OpenCode, SessionMode::Autonomous) => build_opencode_flags(params),
         (Provider::OpenCode, SessionMode::Interactive) => build_opencode_interactive_flags(params),
+        (Provider::Shell, _) => Vec::new(),
     }
 }
 
@@ -1242,6 +1254,52 @@ mod tests {
         assert!(!caps.worktree);
         assert!(!caps.unrestricted);
         assert!(!caps.resume);
+    }
+
+    #[test]
+    fn test_provider_capabilities_shell() {
+        let caps = provider_capabilities(Provider::Shell);
+        assert!(!caps.model);
+        assert!(!caps.system_prompt);
+        assert!(!caps.allowed_tools);
+        assert!(!caps.max_turns);
+        assert!(!caps.max_budget_usd);
+        assert!(!caps.output_format);
+        assert!(!caps.worktree);
+        assert!(!caps.unrestricted);
+        assert!(!caps.resume);
+    }
+
+    #[test]
+    fn test_build_flags_shell_empty() {
+        let params = SpawnParams {
+            prompt: "test".into(),
+            guards: restricted_guards(),
+            ..SpawnParams::default()
+        };
+        let flags = build_flags(Provider::Shell, SessionMode::Interactive, &params);
+        assert!(flags.is_empty());
+        let flags = build_flags(Provider::Shell, SessionMode::Autonomous, &params);
+        assert!(flags.is_empty());
+    }
+
+    #[test]
+    fn test_check_capability_warnings_shell_all_warnings() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: restricted_guards(),
+            model: Some("opus".into()),
+            system_prompt: Some("Be concise".into()),
+            explicit_tools: Some(vec!["Read".into()]),
+            max_turns: Some(10),
+            max_budget_usd: Some(5.0),
+            output_format: Some("json".into()),
+            worktree: Some("ws".into()),
+            conversation_id: Some("conv-1".into()),
+        };
+        let warnings = check_capability_warnings(Provider::Shell, &p);
+        // Shell supports nothing, so every param should generate a warning
+        assert_eq!(warnings.len(), 8);
     }
 
     #[test]

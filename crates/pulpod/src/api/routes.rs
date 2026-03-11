@@ -16,6 +16,7 @@ use super::knowledge;
 use super::node;
 use super::notifications;
 use super::peers;
+use super::providers;
 use super::sessions;
 use super::static_files;
 use super::watchdog;
@@ -70,6 +71,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/sessions/{id}/stream", get(ws::stream))
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
+        .route("/api/v1/providers", get(providers::list))
         .route("/api/v1/inks", get(inks::list))
         .route("/api/v1/knowledge", get(knowledge::list))
         .route("/api/v1/knowledge/context", get(knowledge::context))
@@ -229,6 +231,19 @@ mod tests {
         resp.assert_status_ok();
         let body = resp.text();
         assert!(body.contains("reviewer"));
+    }
+
+    #[tokio::test]
+    async fn test_providers() {
+        let server = test_server().await;
+        let resp = server.get("/api/v1/providers").await;
+        resp.assert_status_ok();
+        let body = resp.text();
+        assert!(body.contains("\"providers\""));
+        assert!(body.contains("\"shell\""));
+        assert!(body.contains("\"claude\""));
+        assert!(body.contains("\"available\""));
+        assert!(body.contains("\"capabilities\""));
     }
 
     #[tokio::test]
