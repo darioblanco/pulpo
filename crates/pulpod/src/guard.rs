@@ -1433,4 +1433,381 @@ mod tests {
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("--conversation-id"));
     }
+
+    // ───────────────────────────────────────────────────────────
+    // Provider adapter contract tests
+    //
+    // These tests pin the exact CLI flag output for each provider
+    // and mode combination. When a provider CLI changes its flags,
+    // these tests will break — that's the point.
+    // ───────────────────────────────────────────────────────────
+
+    /// Standard param set with all fields populated for snapshot testing.
+    fn full_params() -> SpawnParams {
+        SpawnParams {
+            prompt: "Fix the bug".into(),
+            guards: restricted_guards(),
+            explicit_tools: Some(vec!["Read".into(), "Write".into()]),
+            model: Some("test-model".into()),
+            system_prompt: Some("Be concise".into()),
+            max_turns: Some(10),
+            max_budget_usd: Some(5.0),
+            output_format: Some("json".into()),
+            worktree: Some("my-branch".into()),
+            conversation_id: Some("conv-42".into()),
+        }
+    }
+
+    fn full_params_unrestricted() -> SpawnParams {
+        SpawnParams {
+            guards: unrestricted_guards(),
+            ..full_params()
+        }
+    }
+
+    // -- Snapshot tests: pin exact flag vectors per provider × mode --
+
+    #[test]
+    fn contract_claude_autonomous_all_params() {
+        let flags = build_flags(Provider::Claude, SessionMode::Autonomous, &full_params());
+        assert_eq!(
+            flags,
+            vec![
+                "--resume",
+                "conv-42",
+                "-p",
+                "'Fix the bug'",
+                "--allowedTools",
+                "Read,Write",
+                "--worktree",
+                "my-branch",
+                "--model",
+                "test-model",
+                "--max-turns",
+                "10",
+                "--max-budget-usd",
+                "5",
+                "--append-system-prompt",
+                "'Be concise'",
+                "--output-format",
+                "json",
+            ]
+        );
+    }
+
+    #[test]
+    fn contract_claude_autonomous_unrestricted() {
+        // Unrestricted + no explicit_tools → --dangerously-skip-permissions
+        let p = SpawnParams {
+            explicit_tools: None,
+            ..full_params_unrestricted()
+        };
+        let flags = build_flags(Provider::Claude, SessionMode::Autonomous, &p);
+        assert!(flags.contains(&"--dangerously-skip-permissions".into()));
+        assert!(!flags.contains(&"--allowedTools".into()));
+        // But unrestricted + explicit_tools → --allowedTools wins
+        assert!(flags.contains(&"--resume".into()));
+    }
+
+    #[test]
+    fn contract_claude_interactive_all_params() {
+        // With conversation_id → resume mode (skips worktree, max-turns, system-prompt)
+        let flags = build_flags(Provider::Claude, SessionMode::Interactive, &full_params());
+        assert_eq!(
+            flags,
+            vec![
+                "--resume",
+                "conv-42",
+                "--model",
+                "test-model",
+                "--allowedTools",
+                "Read,Write",
+            ]
+        );
+    }
+
+    #[test]
+    fn contract_claude_interactive_no_resume() {
+        let p = SpawnParams {
+            conversation_id: None,
+            ..full_params()
+        };
+        let flags = build_flags(Provider::Claude, SessionMode::Interactive, &p);
+        assert_eq!(
+            flags,
+            vec![
+                "'Fix the bug'",
+                "--allowedTools",
+                "Read,Write",
+                "--worktree",
+                "my-branch",
+                "--model",
+                "test-model",
+                "--max-turns",
+                "10",
+                "--max-budget-usd",
+                "5",
+                "--append-system-prompt",
+                "'Be concise'",
+            ]
+        );
+        // No -p in interactive, no --output-format in interactive
+        assert!(!flags.contains(&"-p".into()));
+        assert!(!flags.contains(&"--output-format".into()));
+    }
+
+    #[test]
+    fn contract_codex_autonomous_all_params() {
+        let flags = build_flags(Provider::Codex, SessionMode::Autonomous, &full_params());
+        // Resume mode: exec resume <id> <prompt> [--model]
+        assert_eq!(
+            flags,
+            vec![
+                "exec",
+                "resume",
+                "conv-42",
+                "'Fix the bug'",
+                "--model",
+                "test-model",
+            ]
+        );
+    }
+
+    #[test]
+    fn contract_codex_autonomous_no_resume() {
+        let p = SpawnParams {
+            conversation_id: None,
+            ..full_params()
+        };
+        let flags = build_flags(Provider::Codex, SessionMode::Autonomous, &p);
+        assert_eq!(flags, vec!["-q", "'Fix the bug'", "--model", "test-model"]);
+        // Codex ignores: system_prompt, allowed_tools, max_turns, budget, output_format, worktree
+        assert!(!flags.contains(&"--append-system-prompt".into()));
+        assert!(!flags.contains(&"--allowedTools".into()));
+        assert!(!flags.contains(&"--max-turns".into()));
+        assert!(!flags.contains(&"--max-budget-usd".into()));
+        assert!(!flags.contains(&"--output-format".into()));
+        assert!(!flags.contains(&"--worktree".into()));
+    }
+
+    #[test]
+    fn contract_codex_interactive_all_params() {
+        let flags = build_flags(Provider::Codex, SessionMode::Interactive, &full_params());
+        // Resume mode: resume <id> [--model]
+        assert_eq!(flags, vec!["resume", "conv-42", "--model", "test-model"]);
+    }
+
+    #[test]
+    fn contract_codex_interactive_no_resume() {
+        let p = SpawnParams {
+            conversation_id: None,
+            ..full_params()
+        };
+        let flags = build_flags(Provider::Codex, SessionMode::Interactive, &p);
+        assert_eq!(
+            flags,
+            vec!["--full-auto", "'Fix the bug'", "--model", "test-model"]
+        );
+    }
+
+    #[test]
+    fn contract_gemini_autonomous_all_params() {
+        let flags = build_flags(Provider::Gemini, SessionMode::Autonomous, &full_params());
+        // Resume mode: --resume <id> + common flags
+        assert_eq!(
+            flags,
+            vec![
+                "--resume",
+                "conv-42",
+                "--model",
+                "test-model",
+                "--approval-mode",
+                "plan",
+            ]
+        );
+    }
+
+    #[test]
+    fn contract_gemini_autonomous_no_resume() {
+        let p = SpawnParams {
+            conversation_id: None,
+            ..full_params()
+        };
+        let flags = build_flags(Provider::Gemini, SessionMode::Autonomous, &p);
+        assert_eq!(
+            flags,
+            vec![
+                "-p",
+                "'Fix the bug'",
+                "--model",
+                "test-model",
+                "--approval-mode",
+                "plan",
+                "--output-format",
+                "json",
+            ]
+        );
+        // Gemini ignores: system_prompt, allowed_tools, max_turns, budget, worktree
+        assert!(!flags.contains(&"--append-system-prompt".into()));
+        assert!(!flags.contains(&"--allowedTools".into()));
+        assert!(!flags.contains(&"--max-turns".into()));
+        assert!(!flags.contains(&"--max-budget-usd".into()));
+        assert!(!flags.contains(&"--worktree".into()));
+    }
+
+    #[test]
+    fn contract_gemini_autonomous_unrestricted() {
+        let p = SpawnParams {
+            conversation_id: None,
+            ..full_params_unrestricted()
+        };
+        let flags = build_flags(Provider::Gemini, SessionMode::Autonomous, &p);
+        assert!(flags.contains(&"yolo".into()));
+        assert!(!flags.contains(&"plan".into()));
+    }
+
+    #[test]
+    fn contract_gemini_interactive_all_params() {
+        let flags = build_flags(Provider::Gemini, SessionMode::Interactive, &full_params());
+        assert_eq!(
+            flags,
+            vec![
+                "--resume",
+                "conv-42",
+                "--model",
+                "test-model",
+                "--approval-mode",
+                "plan",
+            ]
+        );
+    }
+
+    #[test]
+    fn contract_gemini_interactive_no_resume() {
+        let p = SpawnParams {
+            conversation_id: None,
+            ..full_params()
+        };
+        let flags = build_flags(Provider::Gemini, SessionMode::Interactive, &p);
+        assert_eq!(
+            flags,
+            vec![
+                "-i",
+                "'Fix the bug'",
+                "--model",
+                "test-model",
+                "--approval-mode",
+                "plan",
+            ]
+        );
+        // Interactive Gemini ignores output_format
+        assert!(!flags.contains(&"--output-format".into()));
+    }
+
+    #[test]
+    fn contract_opencode_autonomous_all_params() {
+        let flags = build_flags(Provider::OpenCode, SessionMode::Autonomous, &full_params());
+        // OpenCode ignores everything except prompt and output_format
+        assert_eq!(flags, vec!["-p", "'Fix the bug'", "-f", "json"]);
+    }
+
+    #[test]
+    fn contract_opencode_interactive_all_params() {
+        let flags = build_flags(Provider::OpenCode, SessionMode::Interactive, &full_params());
+        // Interactive OpenCode only passes output format
+        assert_eq!(flags, vec!["-f", "json"]);
+    }
+
+    #[test]
+    fn contract_opencode_minimal() {
+        let p = params("hello", restricted_guards());
+        let auto_flags = build_flags(Provider::OpenCode, SessionMode::Autonomous, &p);
+        assert_eq!(auto_flags, vec!["-p", "'hello'"]);
+        let inter_flags = build_flags(Provider::OpenCode, SessionMode::Interactive, &p);
+        assert!(inter_flags.is_empty());
+    }
+
+    // -- Table-driven: verify warnings align with flag absence --
+
+    #[test]
+    fn contract_warnings_match_flag_absence() {
+        // For every provider, params that trigger warnings should NOT appear in flags.
+        let providers = [
+            Provider::Claude,
+            Provider::Codex,
+            Provider::Gemini,
+            Provider::OpenCode,
+        ];
+        let p = full_params();
+        for &provider in &providers {
+            let warnings = check_capability_warnings(provider, &p);
+            let auto_flags = build_flags(provider, SessionMode::Autonomous, &p);
+            let inter_flags = build_flags(provider, SessionMode::Interactive, &p);
+            let all_flags: Vec<&str> = auto_flags
+                .iter()
+                .chain(inter_flags.iter())
+                .map(String::as_str)
+                .collect();
+
+            for warning in &warnings {
+                if warning.contains("--model") {
+                    assert!(
+                        !all_flags.contains(&"--model"),
+                        "{provider}: --model warned but present in flags"
+                    );
+                }
+                if warning.contains("--worktree") {
+                    assert!(
+                        !all_flags.contains(&"--worktree"),
+                        "{provider}: --worktree warned but present in flags"
+                    );
+                }
+                if warning.contains("--max-turns") {
+                    assert!(
+                        !all_flags.contains(&"--max-turns"),
+                        "{provider}: --max-turns warned but present in flags"
+                    );
+                }
+                if warning.contains("--max-budget-usd") {
+                    assert!(
+                        !all_flags.contains(&"--max-budget-usd"),
+                        "{provider}: --max-budget-usd warned but present in flags"
+                    );
+                }
+            }
+        }
+    }
+
+    // -- Table-driven: minimal params produce valid flags for every provider × mode --
+
+    #[test]
+    fn contract_minimal_params_all_providers() {
+        let providers = [
+            Provider::Claude,
+            Provider::Codex,
+            Provider::Gemini,
+            Provider::OpenCode,
+        ];
+        let modes = [SessionMode::Autonomous, SessionMode::Interactive];
+        let p = params("hello", restricted_guards());
+
+        for &provider in &providers {
+            for &mode in &modes {
+                let flags = build_flags(provider, mode, &p);
+                // No panics, no empty-string flags
+                for flag in &flags {
+                    assert!(
+                        !flag.is_empty(),
+                        "{provider}/{mode:?}: empty flag in output"
+                    );
+                }
+                // Warnings should be empty for minimal params
+                let warnings = check_capability_warnings(provider, &p);
+                assert!(
+                    warnings.is_empty(),
+                    "{provider}/{mode:?}: unexpected warnings for minimal params: {warnings:?}"
+                );
+            }
+        }
+    }
 }
