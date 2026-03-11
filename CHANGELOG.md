@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.18](https://github.com/darioblanco/pulpo/compare/v0.0.17...v0.0.18) (2026-03-11)
+
+
+### Features
+
+* allow passing conversation_id at spawn to resume conversations ([0f2e6e1](https://github.com/darioblanco/pulpo/commit/0f2e6e1c97e1b08db7d70be3059643fda1139e58))
+
+
+### Bug Fixes
+
+* **ocean:** anchor seabed decorations to canvas bottom and scatter evenly ([4f0cc37](https://github.com/darioblanco/pulpo/commit/4f0cc375a1b36cc4aff50fb59c4161bcf804ca09))
+
 ## [0.0.17](https://github.com/darioblanco/pulpo/compare/v0.0.16...v0.0.17) (2026-03-11)
 
 
