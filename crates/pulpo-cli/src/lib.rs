@@ -100,6 +100,10 @@ pub enum Commands {
         #[arg(long)]
         worktree: bool,
 
+        /// Resume an existing conversation by ID (Claude, Codex, Gemini)
+        #[arg(long)]
+        conversation_id: Option<String>,
+
         /// Task prompt
         prompt: Vec<String>,
     },
@@ -920,6 +924,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             max_budget,
             output_format,
             worktree,
+            conversation_id,
             prompt,
         } => {
             let prompt_text = prompt.join(" ");
@@ -970,6 +975,9 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             if *worktree {
                 body["worktree"] = serde_json::json!(true);
+            }
+            if let Some(cid) = conversation_id {
+                body["conversation_id"] = serde_json::json!(cid);
             }
             let resp = authed_post(&client, format!("{url}/api/v1/sessions"), token.as_deref())
                 .json(&body)
@@ -1309,6 +1317,35 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_spawn_with_conversation_id() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "spawn",
+            "--workdir",
+            "/tmp/repo",
+            "--conversation-id",
+            "conv-abc-123",
+            "Fix it",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { conversation_id, .. }
+                if conversation_id.as_deref() == Some("conv-abc-123")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_without_conversation_id() {
+        let cli =
+            Cli::try_parse_from(["pulpo", "spawn", "--workdir", "/tmp/repo", "Fix it"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { conversation_id, .. } if conversation_id.is_none()
+        ));
+    }
+
+    #[test]
     fn test_cli_parse_logs() {
         let cli = Cli::try_parse_from(["pulpo", "logs", "my-session"]).unwrap();
         assert!(matches!(
@@ -1540,6 +1577,7 @@ mod tests {
                 max_budget: None,
                 output_format: None,
                 worktree: false,
+                conversation_id: None,
                 prompt: vec!["Fix".into(), "bug".into()],
             },
         };
@@ -1568,6 +1606,7 @@ mod tests {
                 max_budget: Some(2.5),
                 output_format: Some("json".into()),
                 worktree: false,
+                conversation_id: None,
                 prompt: vec!["Fix".into(), "bug".into()],
             },
         };
@@ -1595,6 +1634,7 @@ mod tests {
                 max_budget: None,
                 output_format: None,
                 worktree: false,
+                conversation_id: None,
                 prompt: vec!["Do it".into()],
             },
         };
@@ -1622,6 +1662,7 @@ mod tests {
                 max_budget: None,
                 output_format: None,
                 worktree: false,
+                conversation_id: None,
                 prompt: vec!["Fix".into(), "bug".into()],
             },
         };
@@ -1854,6 +1895,7 @@ mod tests {
                 max_budget: None,
                 output_format: None,
                 worktree: false,
+                conversation_id: None,
                 prompt: vec!["test".into()],
             },
         };
@@ -2225,6 +2267,7 @@ mod tests {
                 max_budget: None,
                 output_format: None,
                 worktree: false,
+                conversation_id: None,
                 prompt: vec!["test".into()],
             },
         };

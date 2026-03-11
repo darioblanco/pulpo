@@ -305,6 +305,7 @@ mod tests {
             ink: None,
             model: None,
             worktree: None,
+            conversation_id: None,
             node: None,
         };
         mcp.spawn_session(Parameters(params)).await;
@@ -338,6 +339,7 @@ mod tests {
             ink: None,
             model: None,
             worktree: None,
+            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(params)).await;
@@ -431,6 +433,7 @@ mod tests {
             ink: None,
             model: None,
             worktree: None,
+            conversation_id: None,
             node: None,
         };
         mcp.spawn_session(Parameters(params)).await;
@@ -455,6 +458,7 @@ mod tests {
             ink: None,
             model: None,
             worktree: None,
+            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(params)).await;
@@ -487,6 +491,7 @@ mod tests {
             ink: None,
             model: None,
             worktree: None,
+            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(params)).await;

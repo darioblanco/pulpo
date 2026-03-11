@@ -370,6 +370,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let _ = create(State(state.clone()), Json(req)).await.unwrap();
 
@@ -417,6 +418,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_ok());
@@ -453,6 +455,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -480,6 +483,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -520,6 +524,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -670,6 +675,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -700,6 +706,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -762,6 +769,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_err());
@@ -788,6 +796,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -819,6 +828,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -886,6 +896,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -917,6 +928,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1012,6 +1024,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1092,6 +1105,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1133,6 +1147,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1163,6 +1178,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1191,6 +1207,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1259,6 +1276,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1356,6 +1374,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1473,6 +1492,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1506,6 +1526,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1536,6 +1557,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;

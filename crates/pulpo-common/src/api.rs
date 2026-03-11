@@ -25,6 +25,7 @@ pub struct CreateSessionRequest {
     pub max_budget_usd: Option<f64>,
     pub output_format: Option<String>,
     pub worktree: Option<bool>,
+    pub conversation_id: Option<String>,
 }
 
 /// Response from session creation, includes the session and any capability warnings.
@@ -634,9 +635,24 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("/tmp"));
+    }
+
+    #[test]
+    fn test_create_session_request_with_conversation_id() {
+        let json = r#"{"workdir":"/repo","prompt":"test","conversation_id":"conv-abc"}"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.conversation_id.as_deref(), Some("conv-abc"));
+    }
+
+    #[test]
+    fn test_create_session_request_without_conversation_id() {
+        let json = r#"{"workdir":"/repo","prompt":"test"}"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert!(req.conversation_id.is_none());
     }
 
     #[test]

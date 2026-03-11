@@ -221,6 +221,7 @@ export interface CreateSessionRequest {
   max_budget_usd?: number;
   output_format?: string;
   worktree?: boolean;
+  conversation_id?: string;
 }
 
 export interface CreateSessionResponse {

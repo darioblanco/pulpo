@@ -148,6 +148,7 @@ impl SessionManager {
             req.max_turns,
             req.max_budget_usd,
             req.output_format.as_deref(),
+            req.conversation_id.as_deref(),
         );
         if req.worktree.unwrap_or(false) {
             spawn_params.worktree = Some(name.clone());
@@ -466,6 +467,7 @@ impl SessionManager {
                 session.max_turns,
                 session.max_budget_usd,
                 session.output_format.as_deref(),
+                session.conversation_id.as_deref(),
             );
             // Worktree is inherited by --resume, no need to re-set it
             spawn_params
@@ -535,6 +537,7 @@ fn resolve_guard_config(req: &CreateSessionRequest, default: &GuardConfig) -> Gu
         .map_or_else(|| default.clone(), |u| GuardConfig { unrestricted: u })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_spawn_params(
     prompt: &str,
     guards: &GuardConfig,
@@ -544,6 +547,7 @@ fn build_spawn_params(
     max_turns: Option<u32>,
     max_budget_usd: Option<f64>,
     output_format: Option<&str>,
+    conversation_id: Option<&str>,
 ) -> crate::guard::SpawnParams {
     crate::guard::SpawnParams {
         prompt: prompt.into(),
@@ -555,7 +559,7 @@ fn build_spawn_params(
         max_budget_usd,
         output_format: output_format.map(Into::into),
         worktree: None,
-        conversation_id: None,
+        conversation_id: conversation_id.map(Into::into),
     }
 }
 
@@ -837,6 +841,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         }
     }
 
@@ -885,6 +890,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let result = mgr.apply_defaults(req);
         assert!(result.workdir.is_some(), "workdir should be filled");
@@ -911,6 +917,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let result = mgr.apply_defaults(req);
         assert_eq!(result.workdir.as_deref(), Some("/my/dir"));
@@ -938,6 +945,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let result = mgr.apply_defaults(req);
         assert_eq!(result.provider, Some(Provider::Codex));
@@ -962,6 +970,7 @@ mod tests {
             max_budget_usd: None,
             output_format: None,
             worktree: None,
+            conversation_id: None,
         };
         let (session, _) = mgr.create_session(req).await.unwrap();
         assert_eq!(session.provider, Provider::Claude);
@@ -1522,6 +1531,30 @@ mod tests {
         let result = resolve_guard_config(&req, &default);
         // Explicit unrestricted=false wins over unrestricted default
         assert!(!result.unrestricted);
+    }
+
+    #[test]
+    fn test_build_spawn_params_with_conversation_id() {
+        let guards = GuardConfig::default();
+        let params = build_spawn_params(
+            "test",
+            &guards,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("conv-abc-123"),
+        );
+        assert_eq!(params.conversation_id.as_deref(), Some("conv-abc-123"));
+    }
+
+    #[test]
+    fn test_build_spawn_params_without_conversation_id() {
+        let guards = GuardConfig::default();
+        let params = build_spawn_params("test", &guards, None, None, None, None, None, None, None);
+        assert!(params.conversation_id.is_none());
     }
 
     #[test]

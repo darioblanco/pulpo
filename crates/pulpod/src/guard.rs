@@ -143,6 +143,11 @@ pub fn check_capability_warnings(provider: Provider, params: &SpawnParams) -> Ve
     if !caps.worktree && params.worktree.is_some() {
         warnings.push(format!("{name} does not support --worktree; value ignored"));
     }
+    if !caps.resume && params.conversation_id.is_some() {
+        warnings.push(format!(
+            "{name} does not support --conversation-id; value ignored"
+        ));
+    }
 
     warnings
 }
@@ -1347,16 +1352,18 @@ mod tests {
             max_budget_usd: Some(5.0),
             worktree: Some("ws".into()),
             explicit_tools: Some(vec!["Read".into()]),
+            conversation_id: Some("conv-123".into()),
             ..SpawnParams::default()
         };
         let warnings = check_capability_warnings(Provider::OpenCode, &p);
-        assert_eq!(warnings.len(), 6);
+        assert_eq!(warnings.len(), 7);
         assert!(warnings.iter().any(|w| w.contains("--model")));
         assert!(warnings.iter().any(|w| w.contains("--system-prompt")));
         assert!(warnings.iter().any(|w| w.contains("--max-turns")));
         assert!(warnings.iter().any(|w| w.contains("--max-budget-usd")));
         assert!(warnings.iter().any(|w| w.contains("--worktree")));
         assert!(warnings.iter().any(|w| w.contains("--allowed-tools")));
+        assert!(warnings.iter().any(|w| w.contains("--conversation-id")));
     }
 
     #[test]
@@ -1376,5 +1383,54 @@ mod tests {
         let p = params("test", restricted_guards());
         let warnings = check_capability_warnings(Provider::OpenCode, &p);
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_check_capability_warnings_conversation_id_claude_ok() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: restricted_guards(),
+            conversation_id: Some("conv-abc".into()),
+            ..SpawnParams::default()
+        };
+        let warnings = check_capability_warnings(Provider::Claude, &p);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_check_capability_warnings_conversation_id_codex_ok() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: restricted_guards(),
+            conversation_id: Some("conv-abc".into()),
+            ..SpawnParams::default()
+        };
+        let warnings = check_capability_warnings(Provider::Codex, &p);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_check_capability_warnings_conversation_id_gemini_ok() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: restricted_guards(),
+            conversation_id: Some("conv-abc".into()),
+            ..SpawnParams::default()
+        };
+        let warnings = check_capability_warnings(Provider::Gemini, &p);
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn test_check_capability_warnings_conversation_id_opencode_warns() {
+        let p = SpawnParams {
+            prompt: "test".into(),
+            guards: restricted_guards(),
+            conversation_id: Some("conv-abc".into()),
+            ..SpawnParams::default()
+        };
+        let warnings = check_capability_warnings(Provider::OpenCode, &p);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("--conversation-id"));
     }
 }

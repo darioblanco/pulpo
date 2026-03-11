@@ -25,6 +25,7 @@ export interface CreateSessionRequest {
   model?: string;
   system_prompt?: string;
   metadata?: Record<string, string>;
+  conversation_id?: string;
 }
 
 export interface InkConfig {
