@@ -324,8 +324,8 @@ impl SessionManager {
     }
 
     /// Inject culture context into the request `prompt`/`system_prompt`.
-    /// Adds a compact summary of past findings plus the repo path for deeper
-    /// exploration, and instructs the agent to write back discoveries.
+    /// Reads the compiled AGENTS.md files (global + repo + ink scopes) and
+    /// merges them into the session prompt, along with write-back instructions.
     fn inject_culture_context(&self, mut req: CreateSessionRequest) -> CreateSessionRequest {
         if !self.inject_culture {
             return req;
@@ -339,12 +339,8 @@ impl SessionManager {
         };
 
         let workdir = req.workdir.as_deref().unwrap_or_default();
-        let items = repo
-            .query_context(Some(workdir), req.ink.as_deref(), 5)
-            .unwrap_or_default();
-
-        let root = repo.root().display();
-        let context = build_culture_context(&items, &root.to_string(), workdir);
+        let root = repo.root().display().to_string();
+        let context = build_culture_context(repo, workdir, req.ink.as_deref(), &root);
 
         let provider = req.provider.unwrap_or(Provider::Claude);
         if crate::guard::provider_capabilities(provider).system_prompt {
@@ -694,73 +690,103 @@ pub(crate) fn build_command(
     format!("bash -c \"{escaped}; echo '[pulpo] Agent exited'; exec bash\"")
 }
 
-use pulpo_common::culture::Culture;
-
-/// Build a culture context block for injection into agent prompts.
+/// Build culture context string for injection into agent sessions.
 ///
-/// Contains three sections:
-/// 1. A compact summary of the most relevant past findings
-/// 2. The culture repo path for deeper exploration
-/// 3. Write-back instructions so the agent documents new discoveries
-fn build_culture_context(items: &[Culture], repo_root: &str, workdir: &str) -> String {
+/// Reads the compiled AGENTS.md files from relevant scopes (global, repo, ink)
+/// and merges them. Includes write-back instructions so the agent can contribute
+/// new learnings.
+fn build_culture_context(
+    repo: &culture::repo::CultureRepo,
+    workdir: &str,
+    ink: Option<&str>,
+    repo_root: &str,
+) -> String {
     use std::fmt::Write;
     let mut ctx = String::new();
 
     ctx.push_str("## Culture from previous sessions\n\n");
 
-    if items.is_empty() {
-        ctx.push_str("No previous findings for this repo/ink.\n");
-    } else {
-        for item in items {
-            let kind = match item.kind {
-                pulpo_common::culture::CultureKind::Summary => "summary",
-                pulpo_common::culture::CultureKind::Failure => "failure",
-            };
-            let _ = writeln!(ctx, "- [{kind}] {}", item.title);
-            // Include body if short enough (max 200 chars)
-            if !item.body.is_empty() && item.body.len() <= 200 {
-                let _ = writeln!(ctx, "  {}", item.body);
-            }
+    // Read compiled AGENTS.md from each applicable scope
+    #[allow(clippy::useless_let_if_seq)]
+    let mut has_content = false;
+
+    // 1. Global culture
+    if let Ok(Some(content)) = repo.read_agents_md("culture")
+        && !is_empty_agents_md(&content)
+    {
+        ctx.push_str("### Global culture\n\n");
+        ctx.push_str(content.trim());
+        ctx.push_str("\n\n");
+        has_content = true;
+    }
+
+    // 2. Repo-scoped culture
+    if !workdir.is_empty() {
+        let slug = std::path::Path::new(workdir)
+            .file_name()
+            .map_or_else(|| workdir.to_owned(), |n| n.to_string_lossy().to_string());
+        let scope = format!("repos/{slug}");
+        if let Ok(Some(content)) = repo.read_agents_md(&scope)
+            && !is_empty_agents_md(&content)
+        {
+            let _ = write!(ctx, "### Repository: {slug}\n\n");
+            ctx.push_str(content.trim());
+            ctx.push_str("\n\n");
+            has_content = true;
         }
     }
 
-    let slug = std::path::Path::new(workdir)
-        .file_name()
-        .map_or_else(|| workdir.to_owned(), |n| n.to_string_lossy().to_string());
+    // 3. Ink-scoped culture
+    if let Some(ink_name) = ink {
+        let scope = format!("inks/{ink_name}");
+        if let Ok(Some(content)) = repo.read_agents_md(&scope)
+            && !is_empty_agents_md(&content)
+        {
+            let _ = write!(ctx, "### Ink: {ink_name}\n\n");
+            ctx.push_str(content.trim());
+            ctx.push_str("\n\n");
+            has_content = true;
+        }
+    }
 
+    if !has_content {
+        ctx.push_str("No previous findings for this repo/ink.\n\n");
+    }
+
+    // Write-back instructions
     let _ = write!(
         ctx,
-        "\n## Culture repo\n\n\
-         Path: {repo_root}\n\
-         Structure:\n\
-         - `repos/{slug}/` — findings specific to this codebase\n\
-         - `inks/<ink>/` — findings specific to a role (reviewer, coder, etc.)\n\
-         - `culture/` — global team culture\n\n\
-         Files are Markdown with YAML frontmatter. When you discover important patterns, \
-         gotchas, or environment requirements, save them as `.md` files:\n\n\
-         ```markdown\n\
-         ---\n\
-         id: <uuid>\n\
-         session_id: <your-session-id>\n\
-         kind: summary\n\
-         scope_repo: \"{workdir}\"\n\
-         title: Short description of the finding\n\
-         tags: []\n\
-         relevance: 0.5\n\
-         created_at: <ISO 8601 timestamp>\n\
-         ---\n\n\
-         Detailed explanation in Markdown.\n\
+        "## Write-back: share your learnings\n\n\
+         When you finish your task, write any non-obvious learnings to:\n\n\
+         ```\n\
+         {repo_root}/pending/<any-name>.md\n\
          ```\n\n\
-         You may also update or remove existing files that are outdated or wrong. \
-         Treat this repo as living documentation that the team curates over time."
+         Use this format:\n\n\
+         ```markdown\n\
+         # <Short title describing the learning>\n\n\
+         <Detailed explanation. Focus on things a future agent couldn't figure out\n\
+         from reading the code — environment quirks, gotchas, non-obvious patterns,\n\
+         commands that don't work as expected, etc.>\n\
+         ```\n\n\
+         Guidelines:\n\
+         - Only write things that are NOT obvious from the code itself\n\
+         - One learning per file (you can create multiple files)\n\
+         - Skip this if you didn't discover anything non-obvious\n\
+         - Pulpo will validate and merge your learnings into the culture repo automatically"
     );
 
     ctx
 }
 
+/// Check if an AGENTS.md file has only the bootstrap template with no actual entries.
+fn is_empty_agents_md(content: &str) -> bool {
+    !content.contains("### [")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pulpo_common::culture::Culture;
     use pulpo_common::event::SessionEvent;
     use std::sync::Mutex;
 
@@ -2739,66 +2765,139 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_build_culture_context_empty() {
-        let ctx = build_culture_context(&[], "/data/culture", "/tmp/repo");
+    #[tokio::test]
+    async fn test_build_culture_context_empty() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let root = repo.root().display().to_string();
+        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root);
         assert!(ctx.contains("No previous findings"));
-        assert!(ctx.contains("Path: /data/culture"));
-        assert!(ctx.contains("repos/repo/"));
-        assert!(ctx.contains("culture/"));
+        assert!(ctx.contains("pending/"));
+        assert!(ctx.contains("Write-back"));
     }
 
-    #[test]
-    fn test_build_culture_context_with_items() {
-        let items = vec![
-            make_culture_item(
-                "Auth race condition",
-                pulpo_common::culture::CultureKind::Failure,
-            ),
-            make_culture_item(
-                "Uses pnpm not npm",
-                pulpo_common::culture::CultureKind::Summary,
-            ),
-        ];
-        let ctx = build_culture_context(&items, "/data/culture", "/tmp/repo");
+    #[tokio::test]
+    async fn test_build_culture_context_with_items() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        repo.save(&make_culture_item(
+            "Auth race condition",
+            pulpo_common::culture::CultureKind::Failure,
+        ))
+        .await
+        .unwrap();
+        repo.save(&make_culture_item(
+            "Uses pnpm not npm",
+            pulpo_common::culture::CultureKind::Summary,
+        ))
+        .await
+        .unwrap();
+
+        let root = repo.root().display().to_string();
+        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root);
         assert!(ctx.contains("[failure] Auth race condition"));
         assert!(ctx.contains("[summary] Uses pnpm not npm"));
-        assert!(ctx.contains("Details here."));
+        assert!(!ctx.contains("No previous findings"));
+    }
+
+    #[tokio::test]
+    async fn test_build_culture_context_includes_repo_root() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let root = repo.root().display().to_string();
+        let ctx = build_culture_context(&repo, "/home/user/my-project", None, &root);
+        assert!(ctx.contains(&root));
+    }
+
+    #[tokio::test]
+    async fn test_build_culture_context_write_back_instructions() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let root = repo.root().display().to_string();
+        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root);
+        assert!(ctx.contains("Write-back: share your learnings"));
+        assert!(ctx.contains("pending/"));
+        assert!(ctx.contains(".md"));
+        assert!(ctx.contains("non-obvious"));
+        assert!(ctx.contains("Pulpo will validate"));
+    }
+
+    #[tokio::test]
+    async fn test_build_culture_context_pending_path_uses_repo_root() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let root = repo.root().display().to_string();
+        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root);
+        // The pending path should reference the culture repo root
+        let expected = format!("{root}/pending/");
+        assert!(ctx.contains(&expected));
+    }
+
+    #[tokio::test]
+    async fn test_build_culture_context_merges_scopes() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        // Add a global culture entry
+        let mut global_item = make_culture_item(
+            "Global convention",
+            pulpo_common::culture::CultureKind::Summary,
+        );
+        global_item.scope_repo = None;
+        repo.save(&global_item).await.unwrap();
+
+        // Add a repo-scoped entry
+        repo.save(&make_culture_item(
+            "Repo finding",
+            pulpo_common::culture::CultureKind::Summary,
+        ))
+        .await
+        .unwrap();
+
+        // Add an ink-scoped entry
+        let mut ink_item =
+            make_culture_item("Ink pattern", pulpo_common::culture::CultureKind::Summary);
+        ink_item.scope_repo = None;
+        ink_item.scope_ink = Some("coder".into());
+        repo.save(&ink_item).await.unwrap();
+
+        let root = repo.root().display().to_string();
+        let ctx = build_culture_context(&repo, "/tmp/repo", Some("coder"), &root);
+
+        // Should contain all three scopes
+        assert!(ctx.contains("Global culture"));
+        assert!(ctx.contains("Global convention"));
+        assert!(ctx.contains("Repository: repo"));
+        assert!(ctx.contains("Repo finding"));
+        assert!(ctx.contains("Ink: coder"));
+        assert!(ctx.contains("Ink pattern"));
         assert!(!ctx.contains("No previous findings"));
     }
 
     #[test]
-    fn test_build_culture_context_long_body_excluded() {
-        let mut item = make_culture_item("Long body", pulpo_common::culture::CultureKind::Summary);
-        item.body = "x".repeat(201);
-        let ctx = build_culture_context(&[item], "/data/culture", "/tmp/repo");
-        assert!(ctx.contains("[summary] Long body"));
-        assert!(!ctx.contains(&"x".repeat(201)));
-    }
-
-    #[test]
-    fn test_build_culture_context_repo_slug() {
-        let ctx = build_culture_context(&[], "/data/culture", "/home/user/my-project");
-        assert!(ctx.contains("repos/my-project/"));
-    }
-
-    #[test]
-    fn test_build_culture_context_write_back_format() {
-        let ctx = build_culture_context(&[], "/data/culture", "/tmp/repo");
-        assert!(ctx.contains("kind: summary"));
-        assert!(ctx.contains("scope_repo:"));
-        assert!(ctx.contains("relevance: 0.5"));
-        assert!(ctx.contains(".md"));
-    }
-
-    #[test]
-    fn test_build_culture_context_culture_repo_structure() {
-        let ctx = build_culture_context(&[], "/data/culture", "/tmp/repo");
-        assert!(ctx.contains("Culture repo"));
-        assert!(ctx.contains("inks/<ink>/"));
-        assert!(ctx.contains("culture/"));
-        assert!(ctx.contains("update or remove"));
-        assert!(ctx.contains("living documentation"));
+    fn test_is_empty_agents_md() {
+        assert!(is_empty_agents_md(
+            "## Session Learnings\n\n<!-- No learnings yet -->\n"
+        ));
+        assert!(is_empty_agents_md(
+            "# Culture\n\n## Commands\n\n## Testing\n"
+        ));
+        assert!(!is_empty_agents_md(
+            "## Session Learnings\n\n### [summary] A finding\n"
+        ));
+        assert!(!is_empty_agents_md("### [failure] Some bug"));
     }
 
     // -- inject_culture_context tests --
@@ -2885,7 +2984,7 @@ mod tests {
         // Claude: culture goes to system_prompt
         let sp = result.system_prompt.unwrap();
         assert!(sp.contains("DB needs migration"));
-        assert!(sp.contains("Culture repo"));
+        assert!(sp.contains("Write-back: share your learnings"));
     }
 
     #[tokio::test]

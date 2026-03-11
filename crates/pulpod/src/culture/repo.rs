@@ -45,6 +45,21 @@ impl CultureRepo {
             run_git(&root, &["config", "user.name", "pulpo"]).await?;
         }
 
+        // Bootstrap: write starter AGENTS.md if it doesn't exist
+        let global_dir = root.join("culture");
+        std::fs::create_dir_all(&global_dir)?;
+        let agents_md = global_dir.join(AGENTS_MD_FILENAME);
+        if !agents_md.exists() {
+            std::fs::write(&agents_md, BOOTSTRAP_TEMPLATE)?;
+            // Stage and commit the bootstrap template
+            run_git(&root, &["add", "culture/AGENTS.md"]).await?;
+            run_git(
+                &root,
+                &["commit", "-m", "culture: bootstrap AGENTS.md template"],
+            )
+            .await?;
+        }
+
         // Set up remote if configured and not already present
         if let Some(url) = &remote {
             let has_origin = run_git(&root, &["remote", "get-url", "origin"])
@@ -63,6 +78,7 @@ impl CultureRepo {
     }
 
     /// Persist a culture item as a Markdown file with YAML frontmatter.
+    /// After saving, recompiles the AGENTS.md for the affected scope.
     pub async fn save(&self, culture: &Culture) -> Result<()> {
         let dir = self.item_dir(culture);
         std::fs::create_dir_all(&dir)?;
@@ -73,14 +89,12 @@ impl CultureRepo {
         let content = serialize_to_markdown(culture)?;
         std::fs::write(&path, &content)?;
 
-        // Relative path for git add
-        let rel = path
-            .strip_prefix(&self.root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
+        // Recompile AGENTS.md for this scope
+        self.compile_scope_for(culture)?;
 
-        run_git(&self.root, &["add", &rel]).await?;
+        // Stage both the entry and the updated AGENTS.md
+        let scope_dir = scope_dir_name(culture);
+        run_git(&self.root, &["add", &scope_dir]).await?;
 
         let msg = format!("culture: {}", culture.title);
         run_git(&self.root, &["commit", "-m", &msg]).await?;
@@ -166,20 +180,33 @@ impl CultureRepo {
     }
 
     /// Delete a culture item by ID. Returns true if found and deleted.
+    /// After deletion, recompiles the AGENTS.md for the affected scope.
     pub async fn delete(&self, id: &str) -> Result<bool> {
         let path = self.find_by_id(id)?;
         let Some(path) = path else {
             return Ok(false);
         };
 
-        let rel = path
-            .strip_prefix(&self.root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
+        // Read the item before deleting so we know which scope to recompile
+        let content = std::fs::read_to_string(&path)?;
+        let item = parse_file(&path, &content);
 
         std::fs::remove_file(&path)?;
-        run_git(&self.root, &["add", &rel]).await?;
+
+        // Recompile AGENTS.md for the affected scope
+        if let Some(ref culture) = item {
+            self.compile_scope_for(culture)?;
+            let scope_dir = scope_dir_name(culture);
+            run_git(&self.root, &["add", &scope_dir]).await?;
+        } else {
+            let rel = path
+                .strip_prefix(&self.root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+            run_git(&self.root, &["add", &rel]).await?;
+        }
+
         run_git(
             &self.root,
             &["commit", "-m", &format!("culture: delete {id}")],
@@ -191,10 +218,11 @@ impl CultureRepo {
     }
 
     /// Delete all culture for a session. Returns count deleted.
+    /// After deletion, recompiles AGENTS.md for all affected scopes.
     pub async fn delete_by_session(&self, session_id: &str) -> Result<usize> {
         let items = self.read_all()?;
         let to_delete: Vec<_> = items
-            .iter()
+            .into_iter()
             .filter(|k| k.session_id.to_string() == session_id)
             .collect();
 
@@ -203,17 +231,25 @@ impl CultureRepo {
         }
 
         let count = to_delete.len();
+        let mut affected_scopes = std::collections::HashSet::new();
+
         for item in &to_delete {
             if let Some(path) = self.find_by_id(&item.id.to_string())? {
                 std::fs::remove_file(&path)?;
-                let rel = path
-                    .strip_prefix(&self.root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .to_string();
-                run_git(&self.root, &["add", &rel]).await?;
             }
+            affected_scopes.insert(scope_dir_name(item));
         }
+
+        // Recompile AGENTS.md for all affected scopes
+        for scope in &affected_scopes {
+            self.compile_agents_md(scope)?;
+        }
+
+        // Stage all affected scope directories
+        let mut git_args = vec!["add"];
+        let scope_refs: Vec<&str> = affected_scopes.iter().map(String::as_str).collect();
+        git_args.extend_from_slice(&scope_refs);
+        run_git(&self.root, &git_args).await?;
 
         run_git(
             &self.root,
@@ -240,6 +276,7 @@ impl CultureRepo {
     }
 
     /// Update a culture item. Only non-`None` fields are patched.
+    /// After updating, recompiles the AGENTS.md for the affected scope.
     pub async fn update(
         &self,
         id: &str,
@@ -273,12 +310,11 @@ impl CultureRepo {
         let md = serialize_to_markdown(&item)?;
         std::fs::write(&path, md)?;
 
-        let rel = path
-            .strip_prefix(&self.root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
-        run_git(&self.root, &["add", &rel]).await?;
+        // Recompile AGENTS.md for this scope
+        self.compile_scope_for(&item)?;
+
+        let scope_dir = scope_dir_name(&item);
+        run_git(&self.root, &["add", &scope_dir]).await?;
         run_git(
             &self.root,
             &["commit", "-m", &format!("culture: update {id}")],
@@ -302,6 +338,67 @@ impl CultureRepo {
     /// The root path of the culture repo.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Read the compiled AGENTS.md for a given scope directory.
+    /// Returns `None` if the file doesn't exist.
+    pub fn read_agents_md(&self, scope_dir: &str) -> Result<Option<String>> {
+        let path = self.root.join(scope_dir).join(AGENTS_MD_FILENAME);
+        if path.exists() {
+            Ok(Some(std::fs::read_to_string(&path)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Compile an AGENTS.md file for a scope directory by collecting all
+    /// culture entries in that directory and appending them under
+    /// "## Session Learnings".
+    ///
+    /// For the global scope (`culture/`), the bootstrap template is preserved
+    /// above the learnings section. For repo/ink scopes, a minimal header is
+    /// generated.
+    pub fn compile_agents_md(&self, scope_dir: &str) -> Result<()> {
+        let dir = self.root.join(scope_dir);
+        if !dir.exists() {
+            return Ok(());
+        }
+
+        // Collect entries from this specific directory (not recursive into sub-scopes)
+        let mut entries = Vec::new();
+        if dir.is_dir() {
+            for entry in std::fs::read_dir(&dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_file()
+                    && is_culture_file(&path)
+                    && let Ok(content) = std::fs::read_to_string(&path)
+                    && let Some(k) = parse_file(&path, &content)
+                {
+                    entries.push(k);
+                }
+            }
+        }
+
+        // Sort by relevance DESC, then created_at DESC
+        entries.sort_by(|a, b| {
+            b.relevance
+                .partial_cmp(&a.relevance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.created_at.cmp(&a.created_at))
+        });
+
+        let content = build_agents_md_content(scope_dir, &entries);
+        let agents_path = dir.join(AGENTS_MD_FILENAME);
+        std::fs::write(&agents_path, content)?;
+
+        Ok(())
+    }
+
+    /// Compile the AGENTS.md for the scope that a culture item belongs to.
+    fn compile_scope_for(&self, culture: &Culture) -> Result<()> {
+        let scope_dir = scope_dir_name(culture);
+        self.compile_agents_md(&scope_dir)
     }
 
     // ── Private helpers ─────────────────────────────────────────────────
@@ -497,6 +594,65 @@ async fn run_git(dir: &Path, args: &[&str]) -> Result<String> {
     }
 }
 
+/// Build the content for a compiled AGENTS.md file.
+///
+/// For the global scope (`culture/`), preserves the bootstrap template header.
+/// For repo/ink scopes, generates a minimal header. In both cases, entries are
+/// appended under a "## Session Learnings" section.
+fn build_agents_md_content(scope_dir: &str, entries: &[Culture]) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+
+    if scope_dir == "culture" {
+        // Global scope: use the bootstrap template (which already ends with
+        // "## Session Learnings")
+        out.push_str(BOOTSTRAP_TEMPLATE);
+    } else {
+        // Scoped: generate a minimal header
+        #[allow(clippy::option_if_let_else)]
+        let scope_label = if let Some(slug) = scope_dir.strip_prefix("repos/") {
+            format!("Repository: {slug}")
+        } else if let Some(ink) = scope_dir.strip_prefix("inks/") {
+            format!("Ink: {ink}")
+        } else {
+            "Culture".to_owned()
+        };
+        let _ = write!(out, "# {scope_label}\n\n## Session Learnings\n\n");
+    }
+
+    if entries.is_empty() {
+        out.push_str("<!-- No learnings yet -->\n");
+    } else {
+        for entry in entries {
+            let kind_tag = match entry.kind {
+                CultureKind::Summary => "summary",
+                CultureKind::Failure => "failure",
+            };
+            let _ = write!(out, "### [{kind_tag}] {}\n\n", entry.title);
+            if !entry.body.is_empty() {
+                out.push_str(&entry.body);
+                out.push('\n');
+            }
+            out.push('\n');
+        }
+    }
+
+    out
+}
+
+/// Get the scope directory name (relative to root) for a culture item.
+fn scope_dir_name(k: &Culture) -> String {
+    k.scope_repo.as_ref().map_or_else(
+        || {
+            k.scope_ink
+                .as_ref()
+                .map_or_else(|| "culture".to_owned(), |ink| format!("inks/{ink}"))
+        },
+        |repo| format!("repos/{}", repo_slug(repo)),
+    )
+}
+
 /// Derive a filesystem-safe slug from a repo path.
 fn repo_slug(path: &str) -> String {
     Path::new(path)
@@ -569,11 +725,56 @@ fn collect_culture_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Check if a path is a culture file (`.md` or legacy `.json`).
+/// The filename used for compiled AGENTS.md files in each scope directory.
+const AGENTS_MD_FILENAME: &str = "AGENTS.md";
+
+/// Check if a path is a culture entry file (`.md` or legacy `.json`),
+/// excluding compiled AGENTS.md files which are generated artifacts.
 fn is_culture_file(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|ext| ext == "md" || ext == "json")
+    let is_agents_md = path.file_name().is_some_and(|n| n == AGENTS_MD_FILENAME);
+    !is_agents_md
+        && path
+            .extension()
+            .is_some_and(|ext| ext == "md" || ext == "json")
 }
+
+/// Starter AGENTS.md template with community-validated sections.
+/// Written to `culture/AGENTS.md` (global scope) on first init.
+const BOOTSTRAP_TEMPLATE: &str = "\
+# Culture
+
+Shared learnings accumulated by Pulpo agent sessions. This file is automatically
+maintained — agents contribute learnings after each session, and Pulpo validates
+and merges them here.
+
+## Commands
+
+<!-- Build, test, lint, and dev commands discovered by agents -->
+
+## Testing
+
+<!-- Testing conventions, frameworks, and gotchas -->
+
+## Architecture
+
+<!-- Key modules, their relationships, and design decisions -->
+
+## Code Style
+
+<!-- Formatting, naming, and patterns to follow or avoid -->
+
+## Git Workflow
+
+<!-- Branching, commit conventions, and PR requirements -->
+
+## Boundaries
+
+<!-- Files/dirs not to modify, security considerations, constraints -->
+
+## Session Learnings
+
+<!-- Entries below are added automatically by Pulpo from agent sessions -->
+";
 
 #[cfg(test)]
 mod tests {
@@ -840,17 +1041,23 @@ mod tests {
         let k = make_culture("md-test", Some("/tmp/repo"), None);
         repo.save(&k).await.unwrap();
 
-        // Verify the file is a .md file with YAML frontmatter
+        // Verify the directory contains the entry file + compiled AGENTS.md
         let repo_dir = repo.root().join("repos").join("repo");
         let entries: Vec<_> = std::fs::read_dir(&repo_dir)
             .unwrap()
             .filter_map(Result::ok)
             .collect();
-        assert_eq!(entries.len(), 1);
-        let path = entries[0].path();
-        assert_eq!(path.extension().unwrap(), "md");
+        assert_eq!(entries.len(), 2); // entry .md + AGENTS.md
 
-        let content = std::fs::read_to_string(&path).unwrap();
+        // Find the entry file (not AGENTS.md)
+        let entry_path = entries
+            .iter()
+            .map(std::fs::DirEntry::path)
+            .find(|p| p.file_name().unwrap() != "AGENTS.md")
+            .unwrap();
+        assert_eq!(entry_path.extension().unwrap(), "md");
+
+        let content = std::fs::read_to_string(&entry_path).unwrap();
         assert!(content.starts_with("---\n"));
         assert!(content.contains("title: md-test"));
         assert!(content.contains("Test body"));
@@ -1420,6 +1627,301 @@ mod tests {
         .await
         .unwrap();
         assert!(repo.root().join(".git").exists());
+    }
+
+    // ── AGENTS.md bootstrap tests ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_init_creates_bootstrap_agents_md() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let agents_md = repo.root().join("culture").join("AGENTS.md");
+        assert!(agents_md.exists());
+
+        let content = std::fs::read_to_string(&agents_md).unwrap();
+        assert!(content.contains("# Culture"));
+        assert!(content.contains("## Commands"));
+        assert!(content.contains("## Testing"));
+        assert!(content.contains("## Architecture"));
+        assert!(content.contains("## Code Style"));
+        assert!(content.contains("## Git Workflow"));
+        assert!(content.contains("## Boundaries"));
+        assert!(content.contains("## Session Learnings"));
+    }
+
+    #[tokio::test]
+    async fn test_init_bootstrap_is_committed() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let log = run_git(repo.root(), &["log", "--oneline"]).await.unwrap();
+        assert!(log.contains("bootstrap AGENTS.md"));
+    }
+
+    #[tokio::test]
+    async fn test_init_does_not_overwrite_existing_agents_md() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let data_dir = tmpdir.path().to_str().unwrap();
+
+        // First init creates the bootstrap
+        let repo = CultureRepo::init(data_dir, None).await.unwrap();
+
+        // Manually modify the AGENTS.md
+        let agents_md = repo.root().join("culture").join("AGENTS.md");
+        std::fs::write(&agents_md, "# Custom culture content\n").unwrap();
+
+        // Second init should NOT overwrite
+        CultureRepo::init(data_dir, None).await.unwrap();
+
+        let content = std::fs::read_to_string(&agents_md).unwrap();
+        assert_eq!(content, "# Custom culture content\n");
+    }
+
+    #[tokio::test]
+    async fn test_agents_md_not_parsed_as_culture_entry() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        // AGENTS.md exists but should NOT appear in list
+        let items = repo.list(None, None, None, None, None).unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn test_is_culture_file_excludes_agents_md() {
+        assert!(!is_culture_file(Path::new("culture/AGENTS.md")));
+        assert!(!is_culture_file(Path::new(
+            "/data/culture/repos/pulpo/AGENTS.md"
+        )));
+        // Regular .md files still match
+        assert!(is_culture_file(Path::new("summary-2026-03-08-abcd1234.md")));
+    }
+
+    #[tokio::test]
+    async fn test_read_agents_md_global() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let content = repo.read_agents_md("culture").unwrap();
+        assert!(content.is_some());
+        assert!(content.unwrap().contains("# Culture"));
+    }
+
+    #[tokio::test]
+    async fn test_read_agents_md_nonexistent_scope() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let content = repo.read_agents_md("repos/nonexistent").unwrap();
+        assert!(content.is_none());
+    }
+
+    // ── AGENTS.md compilation tests ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_save_updates_agents_md() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_culture("useful finding", None, None);
+        repo.save(&k).await.unwrap();
+
+        let content = repo.read_agents_md("culture").unwrap().unwrap();
+        assert!(content.contains("# Culture"));
+        assert!(content.contains("## Session Learnings"));
+        assert!(content.contains("### [summary] useful finding"));
+        assert!(content.contains("Test body"));
+    }
+
+    #[tokio::test]
+    async fn test_save_updates_repo_scoped_agents_md() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_culture("repo finding", Some("/tmp/myrepo"), None);
+        repo.save(&k).await.unwrap();
+
+        let content = repo.read_agents_md("repos/myrepo").unwrap().unwrap();
+        assert!(content.contains("# Repository: myrepo"));
+        assert!(content.contains("### [summary] repo finding"));
+    }
+
+    #[tokio::test]
+    async fn test_save_updates_ink_scoped_agents_md() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_culture("ink finding", None, Some("reviewer"));
+        repo.save(&k).await.unwrap();
+
+        let content = repo.read_agents_md("inks/reviewer").unwrap().unwrap();
+        assert!(content.contains("# Ink: reviewer"));
+        assert!(content.contains("### [summary] ink finding"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_recompiles_agents_md() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_culture("will delete", None, None);
+        let id = k.id.to_string();
+        repo.save(&k).await.unwrap();
+
+        // Verify it's in the compiled AGENTS.md
+        let content = repo.read_agents_md("culture").unwrap().unwrap();
+        assert!(content.contains("will delete"));
+
+        repo.delete(&id).await.unwrap();
+
+        // After delete, AGENTS.md should no longer contain the entry
+        let content = repo.read_agents_md("culture").unwrap().unwrap();
+        assert!(!content.contains("will delete"));
+        assert!(content.contains("No learnings yet"));
+    }
+
+    #[tokio::test]
+    async fn test_update_recompiles_agents_md() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_culture("old title", None, None);
+        let id = k.id.to_string();
+        repo.save(&k).await.unwrap();
+
+        repo.update(&id, Some("new title"), None, None, None)
+            .await
+            .unwrap();
+
+        let content = repo.read_agents_md("culture").unwrap().unwrap();
+        assert!(content.contains("new title"));
+        assert!(!content.contains("old title"));
+    }
+
+    #[tokio::test]
+    async fn test_compile_agents_md_failure_kind() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_failure("crash bug", Some("/tmp/repo"));
+        repo.save(&k).await.unwrap();
+
+        let content = repo.read_agents_md("repos/repo").unwrap().unwrap();
+        assert!(content.contains("### [failure] crash bug"));
+    }
+
+    #[tokio::test]
+    async fn test_compile_agents_md_sorted_by_relevance() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let mut low = make_culture("low priority", None, None);
+        low.relevance = 0.2;
+        repo.save(&low).await.unwrap();
+
+        let mut high = make_culture("high priority", None, None);
+        high.relevance = 0.9;
+        repo.save(&high).await.unwrap();
+
+        let content = repo.read_agents_md("culture").unwrap().unwrap();
+        let high_pos = content.find("high priority").unwrap();
+        let low_pos = content.find("low priority").unwrap();
+        assert!(high_pos < low_pos, "high relevance should appear first");
+    }
+
+    #[test]
+    fn test_build_agents_md_content_global_empty() {
+        let content = build_agents_md_content("culture", &[]);
+        assert!(content.contains("# Culture"));
+        assert!(content.contains("## Session Learnings"));
+        assert!(content.contains("No learnings yet"));
+    }
+
+    #[test]
+    fn test_build_agents_md_content_repo_scope() {
+        let content = build_agents_md_content("repos/myrepo", &[]);
+        assert!(content.contains("# Repository: myrepo"));
+        assert!(content.contains("## Session Learnings"));
+    }
+
+    #[test]
+    fn test_build_agents_md_content_ink_scope() {
+        let content = build_agents_md_content("inks/coder", &[]);
+        assert!(content.contains("# Ink: coder"));
+    }
+
+    #[test]
+    fn test_build_agents_md_content_with_entries() {
+        let entries = vec![
+            make_culture("first", None, None),
+            make_failure("second", None),
+        ];
+        let content = build_agents_md_content("culture", &entries);
+        assert!(content.contains("### [summary] first"));
+        assert!(content.contains("### [failure] second"));
+        assert!(!content.contains("No learnings yet"));
+    }
+
+    #[test]
+    fn test_scope_dir_name_global() {
+        let k = make_culture("test", None, None);
+        assert_eq!(scope_dir_name(&k), "culture");
+    }
+
+    #[test]
+    fn test_scope_dir_name_repo() {
+        let k = make_culture("test", Some("/tmp/myrepo"), None);
+        assert_eq!(scope_dir_name(&k), "repos/myrepo");
+    }
+
+    #[test]
+    fn test_scope_dir_name_ink() {
+        let k = make_culture("test", None, Some("coder"));
+        assert_eq!(scope_dir_name(&k), "inks/coder");
+    }
+
+    #[test]
+    fn test_compile_agents_md_nonexistent_dir() {
+        let repo = CultureRepo {
+            root: PathBuf::from("/nonexistent/path"),
+            remote: None,
+        };
+        // Should return Ok, not error
+        let result = repo.compile_agents_md("repos/missing");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_bootstrap_template_content() {
+        assert!(BOOTSTRAP_TEMPLATE.starts_with("# Culture"));
+        assert!(BOOTSTRAP_TEMPLATE.contains("## Session Learnings"));
+        // Should not be empty
+        assert!(BOOTSTRAP_TEMPLATE.len() > 100);
     }
 
     #[tokio::test]
