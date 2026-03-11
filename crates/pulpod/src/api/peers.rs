@@ -167,7 +167,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                knowledge: crate::config::KnowledgeConfig::default(),
+                culture: crate::config::CultureConfig::default(),
             },
             manager,
             peer_registry,

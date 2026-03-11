@@ -2,30 +2,30 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Trash2 } from 'lucide-react';
-import type { Knowledge } from '@/api/types';
+import type { Culture } from '@/api/types';
 
-interface KnowledgeListProps {
-  items: Knowledge[];
+interface CultureListProps {
+  items: Culture[];
   onDelete: (id: string) => void;
   onRefresh: () => void;
 }
 
-export function KnowledgeList({ items, onDelete }: KnowledgeListProps) {
+export function CultureList({ items, onDelete }: CultureListProps) {
   return (
-    <div className="space-y-3" data-testid="knowledge-list">
+    <div className="space-y-3" data-testid="culture-list">
       <p className="text-xs text-muted-foreground">{items.length} items</p>
       {items.map((item) => (
-        <KnowledgeCard key={item.id} item={item} onDelete={onDelete} />
+        <CultureCard key={item.id} item={item} onDelete={onDelete} />
       ))}
     </div>
   );
 }
 
-function KnowledgeCard({ item, onDelete }: { item: Knowledge; onDelete: (id: string) => void }) {
+function CultureCard({ item, onDelete }: { item: Culture; onDelete: (id: string) => void }) {
   const date = new Date(item.created_at).toLocaleDateString();
 
   return (
-    <Card data-testid="knowledge-card">
+    <Card data-testid="culture-card">
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
         <div className="space-y-1">
           <CardTitle className="text-sm font-medium">{item.title}</CardTitle>
@@ -50,7 +50,7 @@ function KnowledgeCard({ item, onDelete }: { item: Knowledge; onDelete: (id: str
           size="icon"
           className="h-7 w-7 text-muted-foreground hover:text-destructive"
           onClick={() => onDelete(item.id)}
-          data-testid="delete-knowledge-btn"
+          data-testid="delete-culture-btn"
         >
           <Trash2 className="h-3.5 w-3.5" />
         </Button>

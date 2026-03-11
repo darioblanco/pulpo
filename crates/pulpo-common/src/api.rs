@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::BindMode;
-use crate::knowledge::{Knowledge, KnowledgeKind};
+use crate::culture::{Culture, CultureKind};
 use crate::node::NodeInfo;
 use crate::peer::{PeerEntry, PeerInfo};
 use crate::session::{Provider, Session, SessionMode};
@@ -304,31 +304,31 @@ pub struct ListSessionsQuery {
     pub order: Option<String>,
 }
 
-// -- Knowledge types --
+// -- Culture types --
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct KnowledgeResponse {
-    pub knowledge: Vec<Knowledge>,
+pub struct CultureResponse {
+    pub culture: Vec<Culture>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct ListKnowledgeQuery {
+pub struct ListCultureQuery {
     pub repo: Option<String>,
     pub ink: Option<String>,
-    pub kind: Option<KnowledgeKind>,
+    pub kind: Option<CultureKind>,
     pub session_id: Option<String>,
     pub limit: Option<usize>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct KnowledgeContextQuery {
+pub struct CultureContextQuery {
     pub workdir: Option<String>,
     pub ink: Option<String>,
     pub limit: Option<usize>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct UpdateKnowledgeRequest {
+pub struct UpdateCultureRequest {
     pub title: Option<String>,
     pub body: Option<String>,
     pub tags: Option<Vec<String>>,
@@ -336,17 +336,17 @@ pub struct UpdateKnowledgeRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct KnowledgeItemResponse {
-    pub knowledge: Knowledge,
+pub struct CultureItemResponse {
+    pub culture: Culture,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct KnowledgeDeleteResponse {
+pub struct CultureDeleteResponse {
     pub deleted: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct KnowledgePushResponse {
+pub struct CulturePushResponse {
     pub pushed: bool,
     pub message: String,
 }
@@ -1437,22 +1437,22 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_response_serialize() {
-        let resp = KnowledgeResponse { knowledge: vec![] };
+    fn test_culture_response_serialize() {
+        let resp = CultureResponse { culture: vec![] };
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"knowledge\":[]"));
+        assert!(json.contains("\"culture\":[]"));
     }
 
     #[test]
-    fn test_knowledge_response_debug() {
-        let resp = KnowledgeResponse { knowledge: vec![] };
+    fn test_culture_response_debug() {
+        let resp = CultureResponse { culture: vec![] };
         let debug = format!("{resp:?}");
-        assert!(debug.contains("KnowledgeResponse"));
+        assert!(debug.contains("CultureResponse"));
     }
 
     #[test]
-    fn test_list_knowledge_query_default() {
-        let q = ListKnowledgeQuery::default();
+    fn test_list_culture_query_default() {
+        let q = ListCultureQuery::default();
         assert!(q.repo.is_none());
         assert!(q.ink.is_none());
         assert!(q.kind.is_none());
@@ -1461,18 +1461,18 @@ mod tests {
     }
 
     #[test]
-    fn test_list_knowledge_query_deserialize() {
+    fn test_list_culture_query_deserialize() {
         let json = r#"{"repo":"/tmp/repo","ink":"coder","kind":"failure","limit":10}"#;
-        let q: ListKnowledgeQuery = serde_json::from_str(json).unwrap();
+        let q: ListCultureQuery = serde_json::from_str(json).unwrap();
         assert_eq!(q.repo, Some("/tmp/repo".into()));
         assert_eq!(q.ink, Some("coder".into()));
-        assert_eq!(q.kind, Some(KnowledgeKind::Failure));
+        assert_eq!(q.kind, Some(CultureKind::Failure));
         assert_eq!(q.limit, Some(10));
     }
 
     #[test]
-    fn test_list_knowledge_query_debug() {
-        let q = ListKnowledgeQuery {
+    fn test_list_culture_query_debug() {
+        let q = ListCultureQuery {
             repo: Some("/repo".into()),
             ..Default::default()
         };
@@ -1481,25 +1481,25 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_context_query_default() {
-        let q = KnowledgeContextQuery::default();
+    fn test_culture_context_query_default() {
+        let q = CultureContextQuery::default();
         assert!(q.workdir.is_none());
         assert!(q.ink.is_none());
         assert!(q.limit.is_none());
     }
 
     #[test]
-    fn test_knowledge_context_query_deserialize() {
+    fn test_culture_context_query_deserialize() {
         let json = r#"{"workdir":"/repo","ink":"reviewer","limit":5}"#;
-        let q: KnowledgeContextQuery = serde_json::from_str(json).unwrap();
+        let q: CultureContextQuery = serde_json::from_str(json).unwrap();
         assert_eq!(q.workdir, Some("/repo".into()));
         assert_eq!(q.ink, Some("reviewer".into()));
         assert_eq!(q.limit, Some(5));
     }
 
     #[test]
-    fn test_knowledge_context_query_debug() {
-        let q = KnowledgeContextQuery {
+    fn test_culture_context_query_debug() {
+        let q = CultureContextQuery {
             workdir: Some("/repo".into()),
             ..Default::default()
         };
@@ -1508,9 +1508,9 @@ mod tests {
     }
 
     #[test]
-    fn test_update_knowledge_request_deserialize() {
+    fn test_update_culture_request_deserialize() {
         let json = r#"{"title":"new","body":"updated","tags":["a","b"],"relevance":0.8}"#;
-        let req: UpdateKnowledgeRequest = serde_json::from_str(json).unwrap();
+        let req: UpdateCultureRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.title, Some("new".into()));
         assert_eq!(req.body, Some("updated".into()));
         assert_eq!(req.tags, Some(vec!["a".into(), "b".into()]));
@@ -1518,9 +1518,9 @@ mod tests {
     }
 
     #[test]
-    fn test_update_knowledge_request_partial() {
+    fn test_update_culture_request_partial() {
         let json = r#"{"title":"only-title"}"#;
-        let req: UpdateKnowledgeRequest = serde_json::from_str(json).unwrap();
+        let req: UpdateCultureRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.title, Some("only-title".into()));
         assert!(req.body.is_none());
         assert!(req.tags.is_none());
@@ -1528,8 +1528,8 @@ mod tests {
     }
 
     #[test]
-    fn test_update_knowledge_request_debug() {
-        let req = UpdateKnowledgeRequest {
+    fn test_update_culture_request_debug() {
+        let req = UpdateCultureRequest {
             title: Some("test".into()),
             body: None,
             tags: None,
@@ -1540,15 +1540,15 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_item_response_roundtrip() {
+    fn test_culture_item_response_roundtrip() {
         use chrono::Utc;
         use uuid::Uuid;
 
-        let resp = KnowledgeItemResponse {
-            knowledge: Knowledge {
+        let resp = CultureItemResponse {
+            culture: Culture {
                 id: Uuid::new_v4(),
                 session_id: Uuid::new_v4(),
-                kind: KnowledgeKind::Summary,
+                kind: CultureKind::Summary,
                 scope_repo: Some("/repo".into()),
                 scope_ink: Some("coder".into()),
                 title: "test".into(),
@@ -1559,26 +1559,26 @@ mod tests {
             },
         };
         let json = serde_json::to_string(&resp).unwrap();
-        let back: KnowledgeItemResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.knowledge.title, "test");
+        let back: CultureItemResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.culture.title, "test");
     }
 
     #[test]
-    fn test_knowledge_delete_response_roundtrip() {
-        let resp = KnowledgeDeleteResponse { deleted: true };
+    fn test_culture_delete_response_roundtrip() {
+        let resp = CultureDeleteResponse { deleted: true };
         let json = serde_json::to_string(&resp).unwrap();
-        let back: KnowledgeDeleteResponse = serde_json::from_str(&json).unwrap();
+        let back: CultureDeleteResponse = serde_json::from_str(&json).unwrap();
         assert!(back.deleted);
     }
 
     #[test]
-    fn test_knowledge_push_response_roundtrip() {
-        let resp = KnowledgePushResponse {
+    fn test_culture_push_response_roundtrip() {
+        let resp = CulturePushResponse {
             pushed: true,
             message: "pushed to remote".into(),
         };
         let json = serde_json::to_string(&resp).unwrap();
-        let back: KnowledgePushResponse = serde_json::from_str(&json).unwrap();
+        let back: CulturePushResponse = serde_json::from_str(&json).unwrap();
         assert!(back.pushed);
         assert_eq!(back.message, "pushed to remote");
     }

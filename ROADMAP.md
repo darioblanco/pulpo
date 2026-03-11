@@ -58,107 +58,64 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
 - audit-friendly event streams,
 - provider adapter portability.
 
-## Shipped (Current Baseline)
+## Shipped
 
 - `pulpod` daemon + REST API + embedded web UI
 - `pulpo` CLI
 - SQLite-backed session persistence
 - Session lifecycle: `creating`, `running`, `completed`, `dead`, `stale`
 - Resume flow after stale detection
-- Watchdog interventions (memory + idle)
+- Watchdog interventions (memory + idle) with live config reload via watch channel
+- Machine-readable intervention reason codes (`InterventionCode` enum)
 - Binary guard toggle (`unrestricted` on/off)
-- Claude Code + Codex + Gemini + OpenCode provider support
+- Claude Code + Codex + Gemini + OpenCode + Shell (bare tmux) provider support
+- Provider availability detection and compatibility matrix (`GET /api/v1/providers`)
+- Graceful 400 error when provider binary is missing at spawn
 - Multi-node support (manual peers + mDNS in `public` mode)
+- Full config surface via API/UI (watchdog, notifications, per-session overrides, bind mode)
 - SSE events (`/api/v1/events`)
 - MCP server mode (`pulpod mcp`)
 - Scheduling via crontab wrapper
 - Discord integration in `contrib/`
-- **Knowledge system**: git-backed knowledge repo with extraction, injection, and human CRUD
+- **Culture system**: git-backed culture repo with extraction, injection, and human CRUD
   - Extraction: rule-based summaries and failure learnings from completed sessions
-  - Storage: JSON files in a local git repo (`<data_dir>/knowledge/`), optional remote sync
+  - Storage: JSON files in a local git repo (`<data_dir>/culture/`), optional remote sync
   - Injection: context breadcrumbs + write-back instructions injected into new sessions at spawn
-  - CRUD API: `GET/PUT/DELETE /api/v1/knowledge/{id}`, `POST /knowledge/push`
-  - CLI: `pulpo knowledge` with `--get`, `--delete`, `--push`, `--context` flags
-  - Web: `/knowledge` page with filtering, deletion, and push-to-remote
+  - CRUD API: `GET/PUT/DELETE /api/v1/culture/{id}`, `POST /culture/push`
+  - CLI: `pulpo culture` with `--get`, `--delete`, `--push`, `--context` flags
+  - Web: `/culture` page with filtering, deletion, and push-to-remote
   - Inks: 6-field universal roles (description, provider, model, mode, unrestricted, instructions)
 
-## Refactored Roadmap
+## What's Next?
 
-## Phase A (Next 1-2 releases): Double down on control-plane fundamentals
+The control-plane fundamentals are solid. The question now is: what would make Pulpo meaningfully more useful day-to-day, rather than adding enterprise features nobody needs yet?
 
-### 1. Config surface parity (highest priority)
+Open questions to guide the next phase:
 
-- Expose watchdog settings via API/UI (`GET/PUT /api/v1/watchdog`)
-- Expose notifications settings via API/UI (`GET/PUT /api/v1/notifications`)
-- Expose per-session overrides in API (`max_turns`, `max_budget_usd`, `output_format`)
-- Expose bind mode controls in settings (with explicit restart_required semantics)
+- Is the culture system actually producing useful learnings, or is it noise?
+- Are there friction points in the spawn → monitor → kill/resume loop?
+- Is multi-node orchestration a real daily need, or a theoretical one?
+- Would better integration with existing tools (git workflows, CI, etc.) matter more than new Pulpo features?
 
-Why: reduce SSH/TOML edits and make operational policy manageable from one surface.
+The roadmap should be driven by real usage friction, not speculative feature lists.
 
-### 2. Reliability and auditability hardening
+## Parked (revisit when demanded by real usage)
 
-- Standardize intervention reason taxonomy (machine-readable codes + human text)
-- Add event replay/export endpoint for postmortems (bounded window)
-- Tighten stale/dead edge-case tests across daemon restart and failed kills
+- Node labels/tags and scheduling constraints — useful at fleet scale, premature now
+- Per-ink policy bundles — inks already cover the common case; per-ink budgets/limits add complexity without clear demand
+- SLO metrics endpoint — observability for its own sake; the dashboard already shows what matters
+- Team-friendly multi-user auth — only if real users demand it
+- Docker deployment profiles — only if self-hosted adoption grows
+- Restart-required UI for bind/port changes — narrow edge case, self-diagnosing
 
-Why: reliability semantics are Pulpo's core moat.
-
-### 3. Provider adapter stability layer
-
-- Add adapter contract tests to detect CLI flag/behavior drift
-- Publish provider compatibility matrix in docs (last verified versions)
-- Add safer degradation paths when provider binaries/auth are invalid
-
-Why: provider churn is guaranteed; Pulpo should absorb it.
-
-## Phase B (Following 2-4 releases): Fleet operations for serious usage
-
-### 4. Multi-node operations primitives
-
-- Node labels/tags (e.g., `high-mem`, `gpu`, `cheap`)
-- Scheduling constraints for spawn (`--node-label`, fallback behavior)
-- Node drain/cordon semantics (stop new sessions, preserve running)
-
-Why: this separates Pulpo from single-machine wrappers.
-
-### 5. Policy as configuration (without platform bloat)
-
-- Per-ink policy bundles (unrestricted toggle + budget + tool allowlists + runtime limits)
-- Global policy defaults with local override visibility
-- Policy dry-run endpoint to explain effective settings before spawn
-
-Why: predictable governance without becoming an enterprise platform.
-
-### 6. SLO-oriented observability
-
-- Runtime metrics endpoint (session starts, failure rate, intervention rate, resume success)
-- Basic dashboard trend views (24h/7d)
-- Health checks that include dependency readiness (tmux/provider availability)
-
-Why: proves operational value and prevents silent drift.
-
-## Phase C (Longer-term): Optional collaboration layer
-
-### 7. Team-friendly mode (re-evaluate based on demand)
-
-- Scoped multi-user auth and ownership only if demanded by real users
-- Keep single-user default unchanged
-
-Why: only pursue if it strengthens control-plane adoption, not as a default direction.
-
-### 8. Deployment ergonomics
-
-- One-command upgrade/migration path for self-hosted nodes
-- Official Docker deployment profiles for daemon-first production use
-
-Why: improve operational lifecycle without changing product identity.
-
-## De-prioritized / Removed From Active Roadmap
+## De-prioritized / Removed
 
 - Voice-command surfaces as a core product track
 - Broad chat-platform feature expansion beyond control-plane needs
 - Competing directly with IDE-native agent UX
 - Building a monolithic all-in-one agent framework
+- Event replay/export endpoint — speculative, no clear consumer
+- Adapter contract tests against real provider binaries — fragile, environment-dependent
 
 These may exist as contrib experiments, but they are not core sequencing drivers.
 

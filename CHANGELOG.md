@@ -96,14 +96,14 @@
 
 * **guards:** replace 3-level presets with binary unrestricted toggle ([bb46c8c](https://github.com/darioblanco/pulpo/commit/bb46c8c59665dd4d0c87becab3264ede032f2ca9))
 * **inks:** add model field to InkConfig for per-ink model selection ([3c4df80](https://github.com/darioblanco/pulpo/commit/3c4df80867e0a27af582eedd9cdef592aab4378b))
-* **knowledge:** extract and store learnings from completed sessions ([334850b](https://github.com/darioblanco/pulpo/commit/334850b88a9a6cd342f036557b157bdcc6ce9589))
-* **knowledge:** human CRUD API, CLI commands, and manual push ([428c5ae](https://github.com/darioblanco/pulpo/commit/428c5ae891947786d4d2d33384de517264b3d371))
-* **knowledge:** inject context + write-back instructions at session spawn ([d083258](https://github.com/darioblanco/pulpo/commit/d0832586c23c9d7019aeeea122a8179d30c367ea))
-* **knowledge:** replace SQLite storage with git-backed repository ([0ceaf18](https://github.com/darioblanco/pulpo/commit/0ceaf180d48e9318f93672e60a4e9f435b93c39e))
-* **web:** knowledge browser page with CRUD and push-to-remote ([e38cf91](https://github.com/darioblanco/pulpo/commit/e38cf916d262bc48dc500412d10245b7470607b9))
+* **culture:** extract and store learnings from completed sessions ([334850b](https://github.com/darioblanco/pulpo/commit/334850b88a9a6cd342f036557b157bdcc6ce9589))
+* **culture:** human CRUD API, CLI commands, and manual push ([428c5ae](https://github.com/darioblanco/pulpo/commit/428c5ae891947786d4d2d33384de517264b3d371))
+* **culture:** inject context + write-back instructions at session spawn ([d083258](https://github.com/darioblanco/pulpo/commit/d0832586c23c9d7019aeeea122a8179d30c367ea))
+* **culture:** replace SQLite storage with git-backed repository ([0ceaf18](https://github.com/darioblanco/pulpo/commit/0ceaf180d48e9318f93672e60a4e9f435b93c39e))
+* **web:** culture browser page with CRUD and push-to-remote ([e38cf91](https://github.com/darioblanco/pulpo/commit/e38cf916d262bc48dc500412d10245b7470607b9))
 * **web:** remove model dropdown from create session dialog ([36986a6](https://github.com/darioblanco/pulpo/commit/36986a6b7f9abf972a1b54f20310cfe8ec6e51e4))
 * **web:** remove model dropdown from create session dialog ([9c30110](https://github.com/darioblanco/pulpo/commit/9c3011093985ac0a5dd28c1151e9b6f964198811))
-* zero-arg spawn, knowledge markdown format, ocean visualization ([fd19ba9](https://github.com/darioblanco/pulpo/commit/fd19ba94410a93f539df151ee6f608b026238ab1))
+* zero-arg spawn, culture markdown format, ocean visualization ([fd19ba9](https://github.com/darioblanco/pulpo/commit/fd19ba94410a93f539df151ee6f608b026238ab1))
 
 ## [0.0.8](https://github.com/darioblanco/pulpo/compare/v0.0.7...v0.0.8) (2026-03-08)
 

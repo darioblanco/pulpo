@@ -112,7 +112,7 @@ pulpo input <NAME> [TEXT]
 pulpo kill <NAME>
 pulpo resume <NAME>
 pulpo interventions <NAME>
-pulpo knowledge [--context] [--get ID] [--delete ID] [--push]
+pulpo culture [--context] [--get ID] [--delete ID] [--push]
 pulpo nodes
 pulpo schedule <install|list|pause|resume|remove>
 pulpo ui

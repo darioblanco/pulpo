@@ -15,17 +15,17 @@ use tracing::{debug, warn};
 
 use crate::backend::Backend;
 use crate::config::{InkConfig, SessionDefaultsConfig};
+use crate::culture;
+use crate::culture::repo::CultureRepo;
 use crate::guard::check_capability_warnings;
-use crate::knowledge;
-use crate::knowledge::repo::KnowledgeRepo;
 use crate::store::Store;
 
 #[derive(Clone)]
 pub struct SessionManager {
     backend: Arc<dyn Backend>,
     store: Store,
-    knowledge_repo: Option<KnowledgeRepo>,
-    inject_knowledge: bool,
+    culture_repo: Option<CultureRepo>,
+    inject_culture: bool,
     default_guard: GuardConfig,
     default_provider: Option<String>,
     session_defaults: SessionDefaultsConfig,
@@ -44,8 +44,8 @@ impl SessionManager {
         Self {
             backend,
             store,
-            knowledge_repo: None,
-            inject_knowledge: true,
+            culture_repo: None,
+            inject_culture: true,
             default_guard,
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
@@ -68,14 +68,14 @@ impl SessionManager {
     }
 
     #[must_use]
-    pub fn with_knowledge_repo(mut self, repo: KnowledgeRepo, inject: bool) -> Self {
-        self.inject_knowledge = inject;
-        self.knowledge_repo = Some(repo);
+    pub fn with_culture_repo(mut self, repo: CultureRepo, inject: bool) -> Self {
+        self.inject_culture = inject;
+        self.culture_repo = Some(repo);
         self
     }
 
-    pub const fn knowledge_repo(&self) -> Option<&KnowledgeRepo> {
-        self.knowledge_repo.as_ref()
+    pub const fn culture_repo(&self) -> Option<&CultureRepo> {
+        self.culture_repo.as_ref()
     }
 
     #[must_use]
@@ -126,7 +126,7 @@ impl SessionManager {
     ) -> Result<(Session, Vec<String>)> {
         let mut req = self.apply_defaults(req);
         req = self.resolve_ink(req)?;
-        req = self.inject_knowledge_context(req);
+        req = self.inject_culture_context(req);
         let workdir = req.workdir.clone().unwrap_or_default();
         validate_workdir(&workdir)?;
         let prompt = req.prompt.clone().unwrap_or_default();
@@ -323,18 +323,18 @@ impl SessionManager {
         Ok(req)
     }
 
-    /// Inject knowledge context into the request `prompt`/`system_prompt`.
+    /// Inject culture context into the request `prompt`/`system_prompt`.
     /// Adds a compact summary of past findings plus the repo path for deeper
     /// exploration, and instructs the agent to write back discoveries.
-    fn inject_knowledge_context(&self, mut req: CreateSessionRequest) -> CreateSessionRequest {
-        if !self.inject_knowledge {
+    fn inject_culture_context(&self, mut req: CreateSessionRequest) -> CreateSessionRequest {
+        if !self.inject_culture {
             return req;
         }
-        // Shell sessions have no agent to read knowledge context
+        // Shell sessions have no agent to read culture context
         if req.provider == Some(Provider::Shell) {
             return req;
         }
-        let Some(repo) = &self.knowledge_repo else {
+        let Some(repo) = &self.culture_repo else {
             return req;
         };
 
@@ -344,7 +344,7 @@ impl SessionManager {
             .unwrap_or_default();
 
         let root = repo.root().display();
-        let context = build_knowledge_context(&items, &root.to_string(), workdir);
+        let context = build_culture_context(&items, &root.to_string(), workdir);
 
         let provider = req.provider.unwrap_or(Provider::Claude);
         if crate::guard::provider_capabilities(provider).system_prompt {
@@ -409,7 +409,7 @@ impl SessionManager {
             .update_session_status(&session.id.to_string(), SessionStatus::Stale)
             .await?;
         session.status = SessionStatus::Stale;
-        self.extract_and_store_knowledge(session).await;
+        self.extract_and_store_culture(session).await;
         Ok(true)
     }
 
@@ -432,7 +432,7 @@ impl SessionManager {
             .await?;
         let mut dead_session = session;
         dead_session.status = SessionStatus::Dead;
-        self.extract_and_store_knowledge(&dead_session).await;
+        self.extract_and_store_culture(&dead_session).await;
         self.emit_event(&dead_session, Some(previous));
         Ok(())
     }
@@ -537,19 +537,19 @@ impl SessionManager {
         &self.store
     }
 
-    /// Extract knowledge from a session and persist it to the git-backed knowledge repo.
+    /// Extract culture from a session and persist it to the git-backed culture repo.
     /// Best-effort: logs warnings on failure but does not propagate errors.
-    async fn extract_and_store_knowledge(&self, session: &Session) {
-        let Some(repo) = &self.knowledge_repo else {
+    async fn extract_and_store_culture(&self, session: &Session) {
+        let Some(repo) = &self.culture_repo else {
             return;
         };
-        let items = knowledge::extract(session);
+        let items = culture::extract(session);
         for item in &items {
             if let Err(e) = repo.save(item).await {
                 warn!(
                     session_id = %session.id,
                     kind = %item.kind,
-                    "Failed to store knowledge: {e}"
+                    "Failed to store culture: {e}"
                 );
             }
         }
@@ -557,7 +557,7 @@ impl SessionManager {
             debug!(
                 session_id = %session.id,
                 count = items.len(),
-                "Extracted knowledge from session"
+                "Extracted culture from session"
             );
         }
     }
@@ -694,27 +694,27 @@ pub(crate) fn build_command(
     format!("bash -c \"{escaped}; echo '[pulpo] Agent exited'; exec bash\"")
 }
 
-use pulpo_common::knowledge::Knowledge;
+use pulpo_common::culture::Culture;
 
-/// Build a knowledge context block for injection into agent prompts.
+/// Build a culture context block for injection into agent prompts.
 ///
 /// Contains three sections:
 /// 1. A compact summary of the most relevant past findings
-/// 2. The knowledge repo path for deeper exploration
+/// 2. The culture repo path for deeper exploration
 /// 3. Write-back instructions so the agent documents new discoveries
-fn build_knowledge_context(items: &[Knowledge], repo_root: &str, workdir: &str) -> String {
+fn build_culture_context(items: &[Culture], repo_root: &str, workdir: &str) -> String {
     use std::fmt::Write;
     let mut ctx = String::new();
 
-    ctx.push_str("## Knowledge from previous sessions\n\n");
+    ctx.push_str("## Culture from previous sessions\n\n");
 
     if items.is_empty() {
         ctx.push_str("No previous findings for this repo/ink.\n");
     } else {
         for item in items {
             let kind = match item.kind {
-                pulpo_common::knowledge::KnowledgeKind::Summary => "summary",
-                pulpo_common::knowledge::KnowledgeKind::Failure => "failure",
+                pulpo_common::culture::CultureKind::Summary => "summary",
+                pulpo_common::culture::CultureKind::Failure => "failure",
             };
             let _ = writeln!(ctx, "- [{kind}] {}", item.title);
             // Include body if short enough (max 200 chars)
@@ -735,7 +735,7 @@ fn build_knowledge_context(items: &[Knowledge], repo_root: &str, workdir: &str) 
          Structure:\n\
          - `repos/{slug}/` — findings specific to this codebase\n\
          - `inks/<ink>/` — findings specific to a role (reviewer, coder, etc.)\n\
-         - `culture/` — global team knowledge\n\n\
+         - `culture/` — global team culture\n\n\
          Files are Markdown with YAML frontmatter. When you discover important patterns, \
          gotchas, or environment requirements, save them as `.md` files:\n\n\
          ```markdown\n\
@@ -2027,11 +2027,11 @@ mod tests {
     }
 
     #[test]
-    fn test_inject_knowledge_shell_skipped() {
+    fn test_inject_culture_shell_skipped() {
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: None,
-            inject_knowledge: true,
+            culture_repo: None,
+            inject_culture: true,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             default_provider: None,
@@ -2040,10 +2040,10 @@ mod tests {
             event_tx: None,
             node_name: String::new(),
         };
-        let mut req = make_req("shell-knowledge-test");
+        let mut req = make_req("shell-culture-test");
         req.provider = Some(Provider::Shell);
-        let result = mgr.inject_knowledge_context(req);
-        // Shell sessions should skip knowledge injection
+        let result = mgr.inject_culture_context(req);
+        // Shell sessions should skip culture injection
         assert_eq!(result.system_prompt, None);
     }
 
@@ -2105,8 +2105,8 @@ mod tests {
         let inks = HashMap::new();
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: None,
-            inject_knowledge: false,
+            culture_repo: None,
+            inject_culture: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2126,8 +2126,8 @@ mod tests {
         let inks = HashMap::new();
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: None,
-            inject_knowledge: false,
+            culture_repo: None,
+            inject_culture: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2161,8 +2161,8 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: None,
-            inject_knowledge: false,
+            culture_repo: None,
+            inject_culture: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2199,8 +2199,8 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: None,
-            inject_knowledge: false,
+            culture_repo: None,
+            inject_culture: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2242,8 +2242,8 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: None,
-            inject_knowledge: false,
+            culture_repo: None,
+            inject_culture: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2282,8 +2282,8 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: None,
-            inject_knowledge: false,
+            culture_repo: None,
+            inject_culture: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2329,8 +2329,8 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: None,
-            inject_knowledge: false,
+            culture_repo: None,
+            inject_culture: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2365,8 +2365,8 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: None,
-            inject_knowledge: false,
+            culture_repo: None,
+            inject_culture: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2402,8 +2402,8 @@ mod tests {
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: None,
-            inject_knowledge: false,
+            culture_repo: None,
+            inject_culture: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2722,10 +2722,10 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // -- build_knowledge_context tests --
+    // -- build_culture_context tests --
 
-    fn make_knowledge_item(title: &str, kind: pulpo_common::knowledge::KnowledgeKind) -> Knowledge {
-        Knowledge {
+    fn make_culture_item(title: &str, kind: pulpo_common::culture::CultureKind) -> Culture {
+        Culture {
             id: Uuid::new_v4(),
             session_id: Uuid::new_v4(),
             kind,
@@ -2740,27 +2740,27 @@ mod tests {
     }
 
     #[test]
-    fn test_build_knowledge_context_empty() {
-        let ctx = build_knowledge_context(&[], "/data/knowledge", "/tmp/repo");
+    fn test_build_culture_context_empty() {
+        let ctx = build_culture_context(&[], "/data/culture", "/tmp/repo");
         assert!(ctx.contains("No previous findings"));
-        assert!(ctx.contains("Path: /data/knowledge"));
+        assert!(ctx.contains("Path: /data/culture"));
         assert!(ctx.contains("repos/repo/"));
         assert!(ctx.contains("culture/"));
     }
 
     #[test]
-    fn test_build_knowledge_context_with_items() {
+    fn test_build_culture_context_with_items() {
         let items = vec![
-            make_knowledge_item(
+            make_culture_item(
                 "Auth race condition",
-                pulpo_common::knowledge::KnowledgeKind::Failure,
+                pulpo_common::culture::CultureKind::Failure,
             ),
-            make_knowledge_item(
+            make_culture_item(
                 "Uses pnpm not npm",
-                pulpo_common::knowledge::KnowledgeKind::Summary,
+                pulpo_common::culture::CultureKind::Summary,
             ),
         ];
-        let ctx = build_knowledge_context(&items, "/data/knowledge", "/tmp/repo");
+        let ctx = build_culture_context(&items, "/data/culture", "/tmp/repo");
         assert!(ctx.contains("[failure] Auth race condition"));
         assert!(ctx.contains("[summary] Uses pnpm not npm"));
         assert!(ctx.contains("Details here."));
@@ -2768,24 +2768,23 @@ mod tests {
     }
 
     #[test]
-    fn test_build_knowledge_context_long_body_excluded() {
-        let mut item =
-            make_knowledge_item("Long body", pulpo_common::knowledge::KnowledgeKind::Summary);
+    fn test_build_culture_context_long_body_excluded() {
+        let mut item = make_culture_item("Long body", pulpo_common::culture::CultureKind::Summary);
         item.body = "x".repeat(201);
-        let ctx = build_knowledge_context(&[item], "/data/knowledge", "/tmp/repo");
+        let ctx = build_culture_context(&[item], "/data/culture", "/tmp/repo");
         assert!(ctx.contains("[summary] Long body"));
         assert!(!ctx.contains(&"x".repeat(201)));
     }
 
     #[test]
-    fn test_build_knowledge_context_repo_slug() {
-        let ctx = build_knowledge_context(&[], "/data/knowledge", "/home/user/my-project");
+    fn test_build_culture_context_repo_slug() {
+        let ctx = build_culture_context(&[], "/data/culture", "/home/user/my-project");
         assert!(ctx.contains("repos/my-project/"));
     }
 
     #[test]
-    fn test_build_knowledge_context_write_back_format() {
-        let ctx = build_knowledge_context(&[], "/data/knowledge", "/tmp/repo");
+    fn test_build_culture_context_write_back_format() {
+        let ctx = build_culture_context(&[], "/data/culture", "/tmp/repo");
         assert!(ctx.contains("kind: summary"));
         assert!(ctx.contains("scope_repo:"));
         assert!(ctx.contains("relevance: 0.5"));
@@ -2793,8 +2792,8 @@ mod tests {
     }
 
     #[test]
-    fn test_build_knowledge_context_culture_repo_structure() {
-        let ctx = build_knowledge_context(&[], "/data/knowledge", "/tmp/repo");
+    fn test_build_culture_context_culture_repo_structure() {
+        let ctx = build_culture_context(&[], "/data/culture", "/tmp/repo");
         assert!(ctx.contains("Culture repo"));
         assert!(ctx.contains("inks/<ink>/"));
         assert!(ctx.contains("culture/"));
@@ -2802,14 +2801,14 @@ mod tests {
         assert!(ctx.contains("living documentation"));
     }
 
-    // -- inject_knowledge_context tests --
+    // -- inject_culture_context tests --
 
     #[test]
-    fn test_inject_knowledge_disabled() {
+    fn test_inject_culture_disabled() {
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: None,
-            inject_knowledge: false,
+            culture_repo: None,
+            inject_culture: false,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
@@ -2819,18 +2818,18 @@ mod tests {
             node_name: String::new(),
         };
         let req = make_req("test");
-        let result = mgr.inject_knowledge_context(req);
+        let result = mgr.inject_culture_context(req);
         // No modification when disabled
         assert_eq!(result.prompt.as_deref(), Some("test"));
         assert_eq!(result.system_prompt, None);
     }
 
     #[test]
-    fn test_inject_knowledge_no_repo() {
+    fn test_inject_culture_no_repo() {
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: None,
-            inject_knowledge: true,
+            culture_repo: None,
+            inject_culture: true,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
@@ -2840,7 +2839,7 @@ mod tests {
             node_name: String::new(),
         };
         let req = make_req("test");
-        let result = mgr.inject_knowledge_context(req);
+        let result = mgr.inject_culture_context(req);
         assert_eq!(result.prompt.as_deref(), Some("test"));
         assert_eq!(result.system_prompt, None);
     }
@@ -2854,23 +2853,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_inject_knowledge_claude_appends_system_prompt() {
+    async fn test_inject_culture_claude_appends_system_prompt() {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
-        repo.save(&make_knowledge_item(
+        repo.save(&make_culture_item(
             "DB needs migration",
-            pulpo_common::knowledge::KnowledgeKind::Summary,
+            pulpo_common::culture::CultureKind::Summary,
         ))
         .await
         .unwrap();
 
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: Some(repo),
-            inject_knowledge: true,
+            culture_repo: Some(repo),
+            inject_culture: true,
             store: async_store().await,
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
@@ -2882,31 +2881,31 @@ mod tests {
         let mut req = make_req("test");
         req.provider = Some(Provider::Claude);
         req.workdir = Some("/tmp/repo".into());
-        let result = mgr.inject_knowledge_context(req);
-        // Claude: knowledge goes to system_prompt
+        let result = mgr.inject_culture_context(req);
+        // Claude: culture goes to system_prompt
         let sp = result.system_prompt.unwrap();
         assert!(sp.contains("DB needs migration"));
         assert!(sp.contains("Culture repo"));
     }
 
     #[tokio::test]
-    async fn test_inject_knowledge_codex_prepends_prompt() {
+    async fn test_inject_culture_codex_prepends_prompt() {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
-        repo.save(&make_knowledge_item(
+        repo.save(&make_culture_item(
             "Use pnpm",
-            pulpo_common::knowledge::KnowledgeKind::Summary,
+            pulpo_common::culture::CultureKind::Summary,
         ))
         .await
         .unwrap();
 
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: Some(repo),
-            inject_knowledge: true,
+            culture_repo: Some(repo),
+            inject_culture: true,
             store: async_store().await,
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
@@ -2918,27 +2917,27 @@ mod tests {
         let mut req = make_req("test");
         req.provider = Some(Provider::Codex);
         req.workdir = Some("/tmp/repo".into());
-        let result = mgr.inject_knowledge_context(req);
-        // Codex: knowledge prepended to prompt
+        let result = mgr.inject_culture_context(req);
+        // Codex: culture prepended to prompt
         let prompt = result.prompt.as_ref().unwrap();
-        assert!(prompt.starts_with("## Knowledge from previous sessions"));
+        assert!(prompt.starts_with("## Culture from previous sessions"));
         assert!(prompt.contains("Use pnpm"));
         assert!(prompt.ends_with("test"));
         assert!(result.system_prompt.is_none());
     }
 
     #[tokio::test]
-    async fn test_inject_knowledge_preserves_existing_system_prompt() {
+    async fn test_inject_culture_preserves_existing_system_prompt() {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            knowledge_repo: Some(repo),
-            inject_knowledge: true,
+            culture_repo: Some(repo),
+            inject_culture: true,
             store: async_store().await,
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
@@ -2951,11 +2950,11 @@ mod tests {
         req.provider = Some(Provider::Claude);
         req.workdir = Some("/tmp/repo".into());
         req.system_prompt = Some("Be careful with auth module.".into());
-        let result = mgr.inject_knowledge_context(req);
+        let result = mgr.inject_culture_context(req);
         let sp = result.system_prompt.unwrap();
-        // Existing system prompt preserved, knowledge appended
+        // Existing system prompt preserved, culture appended
         assert!(sp.starts_with("Be careful with auth module."));
-        assert!(sp.contains("Knowledge from previous sessions"));
+        assert!(sp.contains("Culture from previous sessions"));
     }
 
     // ───────────────────────────────────────────────────────────

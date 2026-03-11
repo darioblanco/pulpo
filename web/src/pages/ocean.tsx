@@ -158,10 +158,10 @@ export function OceanPage() {
             {pools.length > 1 && !focusedNode && (
               <div
                 className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground"
-                data-testid="knowledge-current"
+                data-testid="culture-current"
               >
                 <span className="h-px flex-1 bg-border" />
-                <span>Knowledge: shared ocean</span>
+                <span>Culture: shared ocean</span>
                 <span className="h-px flex-1 bg-border" />
               </div>
             )}

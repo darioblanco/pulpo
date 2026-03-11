@@ -1,13 +1,13 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use pulpo_common::api::{
-    AuthTokenResponse, CreateSessionResponse, InterventionEventResponse, KnowledgeDeleteResponse,
-    KnowledgeItemResponse, KnowledgePushResponse, KnowledgeResponse, PeersResponse,
+    AuthTokenResponse, CreateSessionResponse, CultureDeleteResponse, CultureItemResponse,
+    CulturePushResponse, CultureResponse, InterventionEventResponse, PeersResponse,
     ProvidersResponse,
 };
 #[cfg(test)]
 use pulpo_common::api::{ProviderCapabilitiesResponse, ProviderInfoResponse};
-use pulpo_common::knowledge::Knowledge;
+use pulpo_common::culture::Culture;
 use pulpo_common::session::Session;
 
 #[derive(Parser, Debug)]
@@ -169,9 +169,9 @@ pub enum Commands {
     /// Open the web dashboard in your browser
     Ui,
 
-    /// Query extracted knowledge from past sessions
+    /// Query extracted culture from past sessions
     #[command(visible_alias = "kn")]
-    Knowledge {
+    Culture {
         /// Filter by session ID
         #[arg(long)]
         session: Option<String>,
@@ -192,19 +192,19 @@ pub enum Commands {
         #[arg(long, default_value = "20")]
         limit: usize,
 
-        /// Context mode: find relevant knowledge for a workdir
+        /// Context mode: find relevant culture for a workdir
         #[arg(long)]
         context: bool,
 
-        /// Get a single knowledge item by ID
+        /// Get a single culture item by ID
         #[arg(long)]
         get: Option<String>,
 
-        /// Delete a knowledge item by ID
+        /// Delete a culture item by ID
         #[arg(long)]
         delete: Option<String>,
 
-        /// Push local knowledge to configured remote
+        /// Push local culture to configured remote
         #[arg(long)]
         push: bool,
     },
@@ -328,10 +328,10 @@ fn format_interventions(events: &[InterventionEventResponse]) -> String {
     lines.join("\n")
 }
 
-/// Format knowledge items as a table.
-fn format_knowledge(items: &[Knowledge]) -> String {
+/// Format culture items as a table.
+fn format_culture(items: &[Culture]) -> String {
     if items.is_empty() {
-        return "No knowledge found.".into();
+        return "No culture found.".into();
     }
     let mut lines = vec![format!(
         "{:<10} {:<40} {:<10} {:<6} {}",
@@ -1144,7 +1144,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let session: Session = serde_json::from_str(&text)?;
             Ok(format!("Resumed session \"{}\"", session.name))
         }
-        Commands::Knowledge {
+        Commands::Culture {
             session,
             kind,
             repo,
@@ -1157,41 +1157,41 @@ pub async fn execute(cli: &Cli) -> Result<String> {
         } => {
             // Single-item get
             if let Some(id) = get {
-                let endpoint = format!("{url}/api/v1/knowledge/{id}");
+                let endpoint = format!("{url}/api/v1/culture/{id}");
                 let resp = authed_get(&client, endpoint, token.as_deref())
                     .send()
                     .await
                     .map_err(|e| friendly_error(&e, node))?;
                 let text = ok_or_api_error(resp).await?;
-                let resp: KnowledgeItemResponse = serde_json::from_str(&text)?;
-                return Ok(format_knowledge(&[resp.knowledge]));
+                let resp: CultureItemResponse = serde_json::from_str(&text)?;
+                return Ok(format_culture(&[resp.culture]));
             }
 
             // Delete by ID
             if let Some(id) = delete {
-                let endpoint = format!("{url}/api/v1/knowledge/{id}");
+                let endpoint = format!("{url}/api/v1/culture/{id}");
                 let resp = authed_delete(&client, endpoint, token.as_deref())
                     .send()
                     .await
                     .map_err(|e| friendly_error(&e, node))?;
                 let text = ok_or_api_error(resp).await?;
-                let resp: KnowledgeDeleteResponse = serde_json::from_str(&text)?;
+                let resp: CultureDeleteResponse = serde_json::from_str(&text)?;
                 return Ok(if resp.deleted {
-                    format!("Deleted knowledge item {id}")
+                    format!("Deleted culture item {id}")
                 } else {
-                    format!("Knowledge item {id} not found")
+                    format!("Culture item {id} not found")
                 });
             }
 
             // Push to remote
             if *push {
-                let endpoint = format!("{url}/api/v1/knowledge/push");
+                let endpoint = format!("{url}/api/v1/culture/push");
                 let resp = authed_post(&client, endpoint, token.as_deref())
                     .send()
                     .await
                     .map_err(|e| friendly_error(&e, node))?;
                 let text = ok_or_api_error(resp).await?;
-                let resp: KnowledgePushResponse = serde_json::from_str(&text)?;
+                let resp: CulturePushResponse = serde_json::from_str(&text)?;
                 return Ok(resp.message);
             }
 
@@ -1204,7 +1204,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 if let Some(i) = ink {
                     params.push(format!("ink={i}"));
                 }
-                format!("{url}/api/v1/knowledge/context?{}", params.join("&"))
+                format!("{url}/api/v1/culture/context?{}", params.join("&"))
             } else {
                 if let Some(s) = session {
                     params.push(format!("session_id={s}"));
@@ -1218,15 +1218,15 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 if let Some(i) = ink {
                     params.push(format!("ink={i}"));
                 }
-                format!("{url}/api/v1/knowledge?{}", params.join("&"))
+                format!("{url}/api/v1/culture?{}", params.join("&"))
             };
             let resp = authed_get(&client, endpoint, token.as_deref())
                 .send()
                 .await
                 .map_err(|e| friendly_error(&e, node))?;
             let text = ok_or_api_error(resp).await?;
-            let resp: KnowledgeResponse = serde_json::from_str(&text)?;
-            Ok(format_knowledge(&resp.knowledge))
+            let resp: CultureResponse = serde_json::from_str(&text)?;
+            Ok(format_culture(&resp.culture))
         }
         Commands::Schedule { action } => execute_schedule(action, node),
     }
@@ -3623,25 +3623,25 @@ mod tests {
         assert_eq!(format!("{action:?}"), "List");
     }
 
-    // ── Knowledge CLI tests ─────────────────────────────────────────────
+    // ── Culture CLI tests ─────────────────────────────────────────────
 
     #[test]
-    fn test_cli_parse_knowledge() {
-        let cli = Cli::try_parse_from(["pulpo", "knowledge"]).unwrap();
-        assert!(matches!(cli.command, Commands::Knowledge { .. }));
+    fn test_cli_parse_culture() {
+        let cli = Cli::try_parse_from(["pulpo", "culture"]).unwrap();
+        assert!(matches!(cli.command, Commands::Culture { .. }));
     }
 
     #[test]
-    fn test_cli_parse_knowledge_alias() {
+    fn test_cli_parse_culture_alias() {
         let cli = Cli::try_parse_from(["pulpo", "kn"]).unwrap();
-        assert!(matches!(cli.command, Commands::Knowledge { .. }));
+        assert!(matches!(cli.command, Commands::Culture { .. }));
     }
 
     #[test]
-    fn test_cli_parse_knowledge_with_filters() {
+    fn test_cli_parse_culture_with_filters() {
         let cli = Cli::try_parse_from([
             "pulpo",
-            "knowledge",
+            "culture",
             "--kind",
             "failure",
             "--repo",
@@ -3653,7 +3653,7 @@ mod tests {
         ])
         .unwrap();
         match &cli.command {
-            Commands::Knowledge {
+            Commands::Culture {
                 kind,
                 repo,
                 ink,
@@ -3665,39 +3665,39 @@ mod tests {
                 assert_eq!(ink.as_deref(), Some("coder"));
                 assert_eq!(*limit, 5);
             }
-            _ => panic!("expected Knowledge command"),
+            _ => panic!("expected Culture command"),
         }
     }
 
     #[test]
-    fn test_cli_parse_knowledge_context() {
-        let cli = Cli::try_parse_from(["pulpo", "knowledge", "--context", "--repo", "/tmp/repo"])
-            .unwrap();
+    fn test_cli_parse_culture_context() {
+        let cli =
+            Cli::try_parse_from(["pulpo", "culture", "--context", "--repo", "/tmp/repo"]).unwrap();
         match &cli.command {
-            Commands::Knowledge { context, repo, .. } => {
+            Commands::Culture { context, repo, .. } => {
                 assert!(*context);
                 assert_eq!(repo.as_deref(), Some("/tmp/repo"));
             }
-            _ => panic!("expected Knowledge command"),
+            _ => panic!("expected Culture command"),
         }
     }
 
     #[test]
-    fn test_format_knowledge_empty() {
-        assert_eq!(format_knowledge(&[]), "No knowledge found.");
+    fn test_format_culture_empty() {
+        assert_eq!(format_culture(&[]), "No culture found.");
     }
 
     #[test]
-    fn test_format_knowledge_items() {
+    fn test_format_culture_items() {
         use chrono::Utc;
-        use pulpo_common::knowledge::{Knowledge, KnowledgeKind};
+        use pulpo_common::culture::{Culture, CultureKind};
         use uuid::Uuid;
 
         let items = vec![
-            Knowledge {
+            Culture {
                 id: Uuid::new_v4(),
                 session_id: Uuid::new_v4(),
-                kind: KnowledgeKind::Summary,
+                kind: CultureKind::Summary,
                 scope_repo: Some("/tmp/repo".into()),
                 scope_ink: Some("coder".into()),
                 title: "Fixed the auth bug".into(),
@@ -3706,10 +3706,10 @@ mod tests {
                 relevance: 0.7,
                 created_at: Utc::now(),
             },
-            Knowledge {
+            Culture {
                 id: Uuid::new_v4(),
                 session_id: Uuid::new_v4(),
-                kind: KnowledgeKind::Failure,
+                kind: CultureKind::Failure,
                 scope_repo: None,
                 scope_ink: None,
                 title: "OOM crash during build".into(),
@@ -3720,7 +3720,7 @@ mod tests {
             },
         ];
 
-        let output = format_knowledge(&items);
+        let output = format_culture(&items);
         assert!(output.contains("KIND"));
         assert!(output.contains("TITLE"));
         assert!(output.contains("summary"));
@@ -3731,71 +3731,71 @@ mod tests {
     }
 
     #[test]
-    fn test_format_knowledge_long_title_truncated() {
+    fn test_format_culture_long_title_truncated() {
         use chrono::Utc;
-        use pulpo_common::knowledge::{Knowledge, KnowledgeKind};
+        use pulpo_common::culture::{Culture, CultureKind};
         use uuid::Uuid;
 
-        let items = vec![Knowledge {
+        let items = vec![Culture {
             id: Uuid::new_v4(),
             session_id: Uuid::new_v4(),
-            kind: KnowledgeKind::Summary,
+            kind: CultureKind::Summary,
             scope_repo: Some("/repo".into()),
             scope_ink: None,
-            title: "A very long title that exceeds the maximum display width for knowledge items in the CLI".into(),
+            title: "A very long title that exceeds the maximum display width for culture items in the CLI".into(),
             body: "Body".into(),
             tags: vec![],
             relevance: 0.5,
             created_at: Utc::now(),
         }];
 
-        let output = format_knowledge(&items);
+        let output = format_culture(&items);
         assert!(output.contains('…'));
     }
 
     #[test]
-    fn test_cli_parse_knowledge_get() {
-        let cli = Cli::try_parse_from(["pulpo", "knowledge", "--get", "abc-123"]).unwrap();
+    fn test_cli_parse_culture_get() {
+        let cli = Cli::try_parse_from(["pulpo", "culture", "--get", "abc-123"]).unwrap();
         match &cli.command {
-            Commands::Knowledge { get, .. } => {
+            Commands::Culture { get, .. } => {
                 assert_eq!(get.as_deref(), Some("abc-123"));
             }
-            _ => panic!("expected Knowledge command"),
+            _ => panic!("expected Culture command"),
         }
     }
 
     #[test]
-    fn test_cli_parse_knowledge_delete() {
-        let cli = Cli::try_parse_from(["pulpo", "knowledge", "--delete", "abc-123"]).unwrap();
+    fn test_cli_parse_culture_delete() {
+        let cli = Cli::try_parse_from(["pulpo", "culture", "--delete", "abc-123"]).unwrap();
         match &cli.command {
-            Commands::Knowledge { delete, .. } => {
+            Commands::Culture { delete, .. } => {
                 assert_eq!(delete.as_deref(), Some("abc-123"));
             }
-            _ => panic!("expected Knowledge command"),
+            _ => panic!("expected Culture command"),
         }
     }
 
     #[test]
-    fn test_cli_parse_knowledge_push() {
-        let cli = Cli::try_parse_from(["pulpo", "knowledge", "--push"]).unwrap();
+    fn test_cli_parse_culture_push() {
+        let cli = Cli::try_parse_from(["pulpo", "culture", "--push"]).unwrap();
         match &cli.command {
-            Commands::Knowledge { push, .. } => {
+            Commands::Culture { push, .. } => {
                 assert!(*push);
             }
-            _ => panic!("expected Knowledge command"),
+            _ => panic!("expected Culture command"),
         }
     }
 
     #[test]
-    fn test_format_knowledge_no_repo() {
+    fn test_format_culture_no_repo() {
         use chrono::Utc;
-        use pulpo_common::knowledge::{Knowledge, KnowledgeKind};
+        use pulpo_common::culture::{Culture, CultureKind};
         use uuid::Uuid;
 
-        let items = vec![Knowledge {
+        let items = vec![Culture {
             id: Uuid::new_v4(),
             session_id: Uuid::new_v4(),
-            kind: KnowledgeKind::Summary,
+            kind: CultureKind::Summary,
             scope_repo: None,
             scope_ink: None,
             title: "Global finding".into(),
@@ -3805,7 +3805,7 @@ mod tests {
             created_at: Utc::now(),
         }];
 
-        let output = format_knowledge(&items);
+        let output = format_culture(&items);
         assert!(output.contains('-')); // "-" for no repo
     }
 }

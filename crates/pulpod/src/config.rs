@@ -26,7 +26,7 @@ pub struct Config {
     #[serde(default)]
     pub notifications: NotificationsConfig,
     #[serde(default)]
-    pub knowledge: KnowledgeConfig,
+    pub culture: CultureConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -47,14 +47,14 @@ pub struct InkConfig {
     pub instructions: Option<String>,
 }
 
-/// Knowledge repository configuration (git-backed storage for extracted knowledge).
+/// Culture repository configuration (git-backed storage for extracted culture).
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct KnowledgeConfig {
-    /// Optional git remote URL. When set, the knowledge repo will be pushed
-    /// to this remote after each commit, enabling multi-node knowledge sharing.
+pub struct CultureConfig {
+    /// Optional git remote URL. When set, the culture repo will be pushed
+    /// to this remote after each commit, enabling multi-node culture sharing.
     #[serde(default)]
     pub remote: Option<String>,
-    /// Inject relevant knowledge into agent prompts at session spawn time.
+    /// Inject relevant culture into agent prompts at session spawn time.
     /// Includes a compact summary of past findings plus the repo path for
     /// deeper exploration. Defaults to true when absent.
     #[serde(default = "default_inject")]
@@ -463,7 +463,7 @@ pub fn load(path: &str) -> Result<Config> {
             watchdog: WatchdogConfig::default(),
             inks: built_in_inks(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         })
     }
 }
@@ -551,7 +551,7 @@ data_dir = "/tmp/pulpo-test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         let expanded = config.data_dir();
         assert!(
@@ -577,7 +577,7 @@ data_dir = "/tmp/pulpo-test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         assert_eq!(config.data_dir(), "/absolute/path");
     }
@@ -711,7 +711,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         let debug = format!("{config:?}");
         assert!(debug.contains("node-a"));
@@ -798,7 +798,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -827,7 +827,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -858,7 +858,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -882,7 +882,7 @@ unrestricted = true
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                knowledge: KnowledgeConfig::default(),
+                culture: CultureConfig::default(),
             },
             Path::new("/dev/null/impossible/config.toml"),
         );
@@ -908,7 +908,7 @@ unrestricted = true
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                knowledge: KnowledgeConfig::default(),
+                culture: CultureConfig::default(),
             },
             Path::new(""),
         );
@@ -938,7 +938,7 @@ unrestricted = true
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                knowledge: KnowledgeConfig::default(),
+                culture: CultureConfig::default(),
             },
             &dir_target,
         );
@@ -963,7 +963,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         #[allow(clippy::redundant_clone)]
         let cloned = config.clone();
@@ -1007,7 +1007,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("ser"));
@@ -1079,7 +1079,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         assert!(config.auth.token.is_empty());
         let generated = ensure_auth_token(&mut config);
@@ -1106,7 +1106,7 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         let generated = ensure_auth_token(&mut config);
         assert!(!generated);
@@ -1175,7 +1175,7 @@ token = "my-secret-token"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1245,7 +1245,7 @@ token = "peer-secret"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1354,7 +1354,7 @@ breach_count = 5
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1564,7 +1564,7 @@ idle_action = "pause"
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1673,7 +1673,7 @@ provider = "codex"
             watchdog: WatchdogConfig::default(),
             inks,
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1793,7 +1793,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
                 }),
                 webhooks: vec![],
             },
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1900,7 +1900,7 @@ url = "https://example.com"
                     secret: Some("key".into()),
                 }],
             },
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2003,7 +2003,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2161,27 +2161,26 @@ provider = "codex"
     }
 
     #[test]
-    fn test_knowledge_config_default_inject_true() {
-        let config: KnowledgeConfig = toml::from_str("").unwrap();
+    fn test_culture_config_default_inject_true() {
+        let config: CultureConfig = toml::from_str("").unwrap();
         assert!(config.inject);
         assert!(config.remote.is_none());
     }
 
     #[test]
-    fn test_knowledge_config_inject_disabled() {
-        let config: KnowledgeConfig = toml::from_str("inject = false").unwrap();
+    fn test_culture_config_inject_disabled() {
+        let config: CultureConfig = toml::from_str("inject = false").unwrap();
         assert!(!config.inject);
     }
 
     #[test]
-    fn test_knowledge_config_with_remote_and_inject() {
-        let config: KnowledgeConfig =
-            toml::from_str("remote = \"git@github.com:user/knowledge.git\"\ninject = true")
-                .unwrap();
+    fn test_culture_config_with_remote_and_inject() {
+        let config: CultureConfig =
+            toml::from_str("remote = \"git@github.com:user/culture.git\"\ninject = true").unwrap();
         assert!(config.inject);
         assert_eq!(
             config.remote.as_deref(),
-            Some("git@github.com:user/knowledge.git")
+            Some("git@github.com:user/culture.git")
         );
     }
 
@@ -2216,7 +2215,7 @@ provider = "codex"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2247,7 +2246,7 @@ provider = "codex"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            knowledge: KnowledgeConfig::default(),
+            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();

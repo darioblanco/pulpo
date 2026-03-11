@@ -16,7 +16,7 @@ import { useSSE } from '@/hooks/use-sse';
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/history', icon: History, label: 'History' },
-  { to: '/knowledge', icon: BookOpen, label: 'Knowledge' },
+  { to: '/culture', icon: BookOpen, label: 'Culture' },
   { to: '/ocean', icon: Waves, label: 'Ocean' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];

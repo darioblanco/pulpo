@@ -8,12 +8,12 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum KnowledgeKind {
+pub enum CultureKind {
     Summary,
     Failure,
 }
 
-impl fmt::Display for KnowledgeKind {
+impl fmt::Display for CultureKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Summary => write!(f, "summary"),
@@ -22,23 +22,23 @@ impl fmt::Display for KnowledgeKind {
     }
 }
 
-impl FromStr for KnowledgeKind {
+impl FromStr for CultureKind {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "summary" => Ok(Self::Summary),
             "failure" => Ok(Self::Failure),
-            other => Err(format!("unknown knowledge kind: {other}")),
+            other => Err(format!("unknown culture kind: {other}")),
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct Knowledge {
+pub struct Culture {
     pub id: Uuid,
     pub session_id: Uuid,
-    pub kind: KnowledgeKind,
+    pub kind: CultureKind,
     /// Scoped to this working directory / repo path. `None` = global.
     pub scope_repo: Option<String>,
     /// Scoped to this ink name. `None` = any ink.
@@ -56,11 +56,11 @@ pub struct Knowledge {
 mod tests {
     use super::*;
 
-    fn make_knowledge() -> Knowledge {
-        Knowledge {
+    fn make_culture() -> Culture {
+        Culture {
             id: Uuid::new_v4(),
             session_id: Uuid::new_v4(),
-            kind: KnowledgeKind::Summary,
+            kind: CultureKind::Summary,
             scope_repo: Some("/tmp/repo".into()),
             scope_ink: Some("coder".into()),
             title: "Claude session completed successfully".into(),
@@ -72,61 +72,61 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_kind_serialize() {
+    fn test_culture_kind_serialize() {
         assert_eq!(
-            serde_json::to_string(&KnowledgeKind::Summary).unwrap(),
+            serde_json::to_string(&CultureKind::Summary).unwrap(),
             "\"summary\""
         );
         assert_eq!(
-            serde_json::to_string(&KnowledgeKind::Failure).unwrap(),
+            serde_json::to_string(&CultureKind::Failure).unwrap(),
             "\"failure\""
         );
     }
 
     #[test]
-    fn test_knowledge_kind_deserialize() {
+    fn test_culture_kind_deserialize() {
         assert_eq!(
-            serde_json::from_str::<KnowledgeKind>("\"summary\"").unwrap(),
-            KnowledgeKind::Summary
+            serde_json::from_str::<CultureKind>("\"summary\"").unwrap(),
+            CultureKind::Summary
         );
         assert_eq!(
-            serde_json::from_str::<KnowledgeKind>("\"failure\"").unwrap(),
-            KnowledgeKind::Failure
-        );
-    }
-
-    #[test]
-    fn test_knowledge_kind_invalid_deserialize() {
-        assert!(serde_json::from_str::<KnowledgeKind>("\"invalid\"").is_err());
-    }
-
-    #[test]
-    fn test_knowledge_kind_display() {
-        assert_eq!(KnowledgeKind::Summary.to_string(), "summary");
-        assert_eq!(KnowledgeKind::Failure.to_string(), "failure");
-    }
-
-    #[test]
-    fn test_knowledge_kind_from_str() {
-        assert_eq!(
-            "summary".parse::<KnowledgeKind>().unwrap(),
-            KnowledgeKind::Summary
-        );
-        assert_eq!(
-            "failure".parse::<KnowledgeKind>().unwrap(),
-            KnowledgeKind::Failure
+            serde_json::from_str::<CultureKind>("\"failure\"").unwrap(),
+            CultureKind::Failure
         );
     }
 
     #[test]
-    fn test_knowledge_kind_from_str_invalid() {
-        let err = "invalid".parse::<KnowledgeKind>().unwrap_err();
-        assert!(err.contains("unknown knowledge kind"));
+    fn test_culture_kind_invalid_deserialize() {
+        assert!(serde_json::from_str::<CultureKind>("\"invalid\"").is_err());
     }
 
     #[test]
-    fn test_knowledge_kind_clone_and_copy() {
-        let k = KnowledgeKind::Summary;
+    fn test_culture_kind_display() {
+        assert_eq!(CultureKind::Summary.to_string(), "summary");
+        assert_eq!(CultureKind::Failure.to_string(), "failure");
+    }
+
+    #[test]
+    fn test_culture_kind_from_str() {
+        assert_eq!(
+            "summary".parse::<CultureKind>().unwrap(),
+            CultureKind::Summary
+        );
+        assert_eq!(
+            "failure".parse::<CultureKind>().unwrap(),
+            CultureKind::Failure
+        );
+    }
+
+    #[test]
+    fn test_culture_kind_from_str_invalid() {
+        let err = "invalid".parse::<CultureKind>().unwrap_err();
+        assert!(err.contains("unknown culture kind"));
+    }
+
+    #[test]
+    fn test_culture_kind_clone_and_copy() {
+        let k = CultureKind::Summary;
         let k2 = k;
         #[allow(clippy::clone_on_copy)]
         let k3 = k.clone();
@@ -135,16 +135,16 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_kind_debug() {
-        assert_eq!(format!("{:?}", KnowledgeKind::Summary), "Summary");
-        assert_eq!(format!("{:?}", KnowledgeKind::Failure), "Failure");
+    fn test_culture_kind_debug() {
+        assert_eq!(format!("{:?}", CultureKind::Summary), "Summary");
+        assert_eq!(format!("{:?}", CultureKind::Failure), "Failure");
     }
 
     #[test]
-    fn test_knowledge_serialize_roundtrip() {
-        let k = make_knowledge();
+    fn test_culture_serialize_roundtrip() {
+        let k = make_culture();
         let json = serde_json::to_string(&k).unwrap();
-        let deserialized: Knowledge = serde_json::from_str(&json).unwrap();
+        let deserialized: Culture = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, k.id);
         assert_eq!(deserialized.session_id, k.session_id);
         assert_eq!(deserialized.kind, k.kind);
@@ -157,11 +157,11 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_with_global_scope() {
-        let k = Knowledge {
+    fn test_culture_with_global_scope() {
+        let k = Culture {
             scope_repo: None,
             scope_ink: None,
-            ..make_knowledge()
+            ..make_culture()
         };
         let json = serde_json::to_string(&k).unwrap();
         assert!(json.contains("\"scope_repo\":null"));
@@ -169,8 +169,8 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_clone() {
-        let k = make_knowledge();
+    fn test_culture_clone() {
+        let k = make_culture();
         #[allow(clippy::redundant_clone)]
         let cloned = k.clone();
         assert_eq!(cloned.id, k.id);
@@ -178,21 +178,21 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_debug() {
-        let k = make_knowledge();
+    fn test_culture_debug() {
+        let k = make_culture();
         let debug = format!("{k:?}");
-        assert!(debug.contains("Knowledge"));
+        assert!(debug.contains("Culture"));
         assert!(debug.contains("Summary"));
     }
 
     #[test]
-    fn test_knowledge_failure_kind() {
-        let k = Knowledge {
-            kind: KnowledgeKind::Failure,
+    fn test_culture_failure_kind() {
+        let k = Culture {
+            kind: CultureKind::Failure,
             relevance: 0.8,
-            ..make_knowledge()
+            ..make_culture()
         };
-        assert_eq!(k.kind, KnowledgeKind::Failure);
+        assert_eq!(k.kind, CultureKind::Failure);
         assert!((k.relevance - 0.8).abs() < f64::EPSILON);
     }
 }

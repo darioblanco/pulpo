@@ -195,7 +195,7 @@ describe('OceanPage', () => {
     });
   });
 
-  it('shows knowledge current when multiple nodes exist', async () => {
+  it('shows culture current when multiple nodes exist', async () => {
     mockGetPeers.mockResolvedValue({
       local: {
         name: 'mac-studio',
@@ -220,17 +220,17 @@ describe('OceanPage', () => {
 
     renderOcean();
     await waitFor(() => {
-      expect(screen.getByTestId('knowledge-current')).toBeInTheDocument();
-      expect(screen.getByText('Knowledge: shared ocean')).toBeInTheDocument();
+      expect(screen.getByTestId('culture-current')).toBeInTheDocument();
+      expect(screen.getByText('Culture: shared ocean')).toBeInTheDocument();
     });
   });
 
-  it('does not show knowledge current with single node', async () => {
+  it('does not show culture current with single node', async () => {
     renderOcean();
     await waitFor(() => {
       expect(screen.getByTestId('tide-pool-grid')).toBeInTheDocument();
     });
-    expect(screen.queryByTestId('knowledge-current')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('culture-current')).not.toBeInTheDocument();
   });
 
   it('shows node name in tide pool header', async () => {

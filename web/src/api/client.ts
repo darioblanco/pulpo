@@ -11,11 +11,11 @@ import type {
   InksResponse,
   CreateSessionRequest,
   CreateSessionResponse,
-  KnowledgeResponse,
-  KnowledgeItemResponse,
-  KnowledgeDeleteResponse,
-  KnowledgePushResponse,
-  UpdateKnowledgeRequest,
+  CultureResponse,
+  CultureItemResponse,
+  CultureDeleteResponse,
+  CulturePushResponse,
+  UpdateCultureRequest,
 } from './types';
 
 let getBaseUrl: () => string = () => '';
@@ -238,13 +238,13 @@ export async function updateRemoteConfig(
   return res.json();
 }
 
-export async function listKnowledge(params?: {
+export async function listCulture(params?: {
   session_id?: string;
   kind?: string;
   repo?: string;
   ink?: string;
   limit?: number;
-}): Promise<KnowledgeResponse> {
+}): Promise<CultureResponse> {
   const query = new URLSearchParams();
   if (params?.session_id) query.set('session_id', params.session_id);
   if (params?.kind) query.set('kind', params.kind);
@@ -252,53 +252,53 @@ export async function listKnowledge(params?: {
   if (params?.ink) query.set('ink', params.ink);
   if (params?.limit) query.set('limit', String(params.limit));
   const qs = query.toString();
-  const res = await authFetch(`${resolveBaseUrl()}/knowledge${qs ? `?${qs}` : ''}`);
-  if (!res.ok) throw new Error('Failed to fetch knowledge');
+  const res = await authFetch(`${resolveBaseUrl()}/culture${qs ? `?${qs}` : ''}`);
+  if (!res.ok) throw new Error('Failed to fetch culture');
   return res.json();
 }
 
-export async function getKnowledgeContext(params?: {
+export async function getCultureContext(params?: {
   workdir?: string;
   ink?: string;
   limit?: number;
-}): Promise<KnowledgeResponse> {
+}): Promise<CultureResponse> {
   const query = new URLSearchParams();
   if (params?.workdir) query.set('workdir', params.workdir);
   if (params?.ink) query.set('ink', params.ink);
   if (params?.limit) query.set('limit', String(params.limit));
   const qs = query.toString();
-  const res = await authFetch(`${resolveBaseUrl()}/knowledge/context${qs ? `?${qs}` : ''}`);
-  if (!res.ok) throw new Error('Failed to fetch knowledge context');
+  const res = await authFetch(`${resolveBaseUrl()}/culture/context${qs ? `?${qs}` : ''}`);
+  if (!res.ok) throw new Error('Failed to fetch culture context');
   return res.json();
 }
 
-export async function getKnowledgeItem(id: string): Promise<KnowledgeItemResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/knowledge/${id}`);
-  if (!res.ok) throw new Error('Failed to fetch knowledge item');
+export async function getCultureItem(id: string): Promise<CultureItemResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/culture/${id}`);
+  if (!res.ok) throw new Error('Failed to fetch culture item');
   return res.json();
 }
 
-export async function updateKnowledge(
+export async function updateCulture(
   id: string,
-  data: UpdateKnowledgeRequest,
-): Promise<KnowledgeItemResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/knowledge/${id}`, {
+  data: UpdateCultureRequest,
+): Promise<CultureItemResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/culture/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error('Failed to update knowledge item');
+  if (!res.ok) throw new Error('Failed to update culture item');
   return res.json();
 }
 
-export async function deleteKnowledge(id: string): Promise<KnowledgeDeleteResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/knowledge/${id}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error('Failed to delete knowledge item');
+export async function deleteCulture(id: string): Promise<CultureDeleteResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/culture/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete culture item');
   return res.json();
 }
 
-export async function pushKnowledge(): Promise<KnowledgePushResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/knowledge/push`, { method: 'POST' });
-  if (!res.ok) throw new Error('Failed to push knowledge');
+export async function pushCulture(): Promise<CulturePushResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/culture/push`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to push culture');
   return res.json();
 }

@@ -7,18 +7,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { KnowledgeFilterParams } from '@/pages/knowledge';
+import type { CultureFilterParams } from '@/pages/culture';
 
-interface KnowledgeFilterProps {
-  onFilter: (params: KnowledgeFilterParams) => void;
+interface CultureFilterProps {
+  onFilter: (params: CultureFilterParams) => void;
 }
 
-export function KnowledgeFilter({ onFilter }: KnowledgeFilterProps) {
+export function CultureFilter({ onFilter }: CultureFilterProps) {
   const [kind, setKind] = useState<string>('');
   const [repo, setRepo] = useState('');
   const [ink, setInk] = useState('');
 
-  function apply(updates: Partial<KnowledgeFilterParams>) {
+  function apply(updates: Partial<CultureFilterParams>) {
     const next = {
       kind: updates.kind ?? kind,
       repo: updates.repo ?? repo,
@@ -32,7 +32,7 @@ export function KnowledgeFilter({ onFilter }: KnowledgeFilterProps) {
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2" data-testid="knowledge-filter">
+    <div className="flex flex-wrap items-center gap-2" data-testid="culture-filter">
       <Select
         value={kind}
         onValueChange={(v) => {

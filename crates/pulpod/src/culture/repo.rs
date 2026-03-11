@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
-use pulpo_common::knowledge::{Knowledge, KnowledgeKind};
+use pulpo_common::culture::{Culture, CultureKind};
 use tokio::process::Command;
 use tracing::{debug, warn};
 
-/// Git-backed knowledge repository.
+/// Git-backed culture repository.
 ///
-/// Stores knowledge items as Markdown files with YAML frontmatter in a local
+/// Stores culture items as Markdown files with YAML frontmatter in a local
 /// git repo, optionally synced to a remote. Directory structure:
 ///
 /// ```text
@@ -23,19 +23,19 @@ use tracing::{debug, warn};
 ///
 /// - `repos/<slug>/` — scoped to a specific working directory / repository
 /// - `inks/<ink>/` — scoped to an ink (but not a specific repo)
-/// - `culture/` — global knowledge, not scoped to any repo or ink
+/// - `culture/` — global culture, not scoped to any repo or ink
 #[derive(Clone, Debug)]
-pub struct KnowledgeRepo {
+pub struct CultureRepo {
     root: PathBuf,
     remote: Option<String>,
 }
 
-impl KnowledgeRepo {
-    /// Initialise (or open) the knowledge git repo.
+impl CultureRepo {
+    /// Initialise (or open) the culture git repo.
     pub async fn init(data_dir: &str, remote: Option<String>) -> Result<Self> {
-        let root = PathBuf::from(data_dir).join("knowledge");
+        let root = PathBuf::from(data_dir).join("culture");
         std::fs::create_dir_all(&root)
-            .with_context(|| format!("create knowledge dir: {}", root.display()))?;
+            .with_context(|| format!("create culture dir: {}", root.display()))?;
 
         // git init (idempotent)
         if !root.join(".git").exists() {
@@ -55,22 +55,22 @@ impl KnowledgeRepo {
             }
             // Best-effort pull
             if let Err(e) = run_git(&root, &["pull", "--rebase", "origin", "main"]).await {
-                debug!("knowledge pull skipped (expected on first use): {e}");
+                debug!("culture pull skipped (expected on first use): {e}");
             }
         }
 
         Ok(Self { root, remote })
     }
 
-    /// Persist a knowledge item as a Markdown file with YAML frontmatter.
-    pub async fn save(&self, knowledge: &Knowledge) -> Result<()> {
-        let dir = self.item_dir(knowledge);
+    /// Persist a culture item as a Markdown file with YAML frontmatter.
+    pub async fn save(&self, culture: &Culture) -> Result<()> {
+        let dir = self.item_dir(culture);
         std::fs::create_dir_all(&dir)?;
 
-        let filename = item_filename(knowledge);
+        let filename = item_filename(culture);
         let path = dir.join(&filename);
 
-        let content = serialize_to_markdown(knowledge)?;
+        let content = serialize_to_markdown(culture)?;
         std::fs::write(&path, &content)?;
 
         // Relative path for git add
@@ -82,7 +82,7 @@ impl KnowledgeRepo {
 
         run_git(&self.root, &["add", &rel]).await?;
 
-        let msg = format!("knowledge: {}", knowledge.title);
+        let msg = format!("culture: {}", culture.title);
         run_git(&self.root, &["commit", "-m", &msg]).await?;
 
         // Fire-and-forget push
@@ -90,7 +90,7 @@ impl KnowledgeRepo {
             let root = self.root.clone();
             tokio::spawn(async move {
                 if let Err(e) = run_git(&root, &["push", "origin", "main"]).await {
-                    warn!("knowledge push failed (will retry next commit): {e}");
+                    warn!("culture push failed (will retry next commit): {e}");
                 }
             });
         }
@@ -98,7 +98,7 @@ impl KnowledgeRepo {
         Ok(())
     }
 
-    /// List knowledge items, optionally filtered.
+    /// List culture items, optionally filtered.
     pub fn list(
         &self,
         session_id: Option<&str>,
@@ -106,7 +106,7 @@ impl KnowledgeRepo {
         repo: Option<&str>,
         ink: Option<&str>,
         limit: Option<usize>,
-    ) -> Result<Vec<Knowledge>> {
+    ) -> Result<Vec<Culture>> {
         let mut items = self.read_all()?;
 
         // Apply filters
@@ -133,14 +133,14 @@ impl KnowledgeRepo {
         Ok(items)
     }
 
-    /// Query knowledge relevant to a workdir/ink combination for context injection.
+    /// Query culture relevant to a workdir/ink combination for context injection.
     /// Returns items scoped to the repo, the ink, or global, ordered by relevance.
     pub fn query_context(
         &self,
         workdir: Option<&str>,
         ink: Option<&str>,
         limit: usize,
-    ) -> Result<Vec<Knowledge>> {
+    ) -> Result<Vec<Culture>> {
         let mut items = self.read_all()?;
 
         // Match: scope_repo is None (global) OR matches workdir
@@ -165,7 +165,7 @@ impl KnowledgeRepo {
         Ok(items)
     }
 
-    /// Delete a knowledge item by ID. Returns true if found and deleted.
+    /// Delete a culture item by ID. Returns true if found and deleted.
     pub async fn delete(&self, id: &str) -> Result<bool> {
         let path = self.find_by_id(id)?;
         let Some(path) = path else {
@@ -182,7 +182,7 @@ impl KnowledgeRepo {
         run_git(&self.root, &["add", &rel]).await?;
         run_git(
             &self.root,
-            &["commit", "-m", &format!("knowledge: delete {id}")],
+            &["commit", "-m", &format!("culture: delete {id}")],
         )
         .await?;
 
@@ -190,7 +190,7 @@ impl KnowledgeRepo {
         Ok(true)
     }
 
-    /// Delete all knowledge for a session. Returns count deleted.
+    /// Delete all culture for a session. Returns count deleted.
     pub async fn delete_by_session(&self, session_id: &str) -> Result<usize> {
         let items = self.read_all()?;
         let to_delete: Vec<_> = items
@@ -220,7 +220,7 @@ impl KnowledgeRepo {
             &[
                 "commit",
                 "-m",
-                &format!("knowledge: delete session {session_id}"),
+                &format!("culture: delete session {session_id}"),
             ],
         )
         .await?;
@@ -229,8 +229,8 @@ impl KnowledgeRepo {
         Ok(count)
     }
 
-    /// Get a single knowledge item by ID.
-    pub fn get_by_id(&self, id: &str) -> Result<Option<Knowledge>> {
+    /// Get a single culture item by ID.
+    pub fn get_by_id(&self, id: &str) -> Result<Option<Culture>> {
         let path = self.find_by_id(id)?;
         let Some(path) = path else {
             return Ok(None);
@@ -239,7 +239,7 @@ impl KnowledgeRepo {
         Ok(parse_file(&path, &content))
     }
 
-    /// Update a knowledge item. Only non-`None` fields are patched.
+    /// Update a culture item. Only non-`None` fields are patched.
     pub async fn update(
         &self,
         id: &str,
@@ -281,7 +281,7 @@ impl KnowledgeRepo {
         run_git(&self.root, &["add", &rel]).await?;
         run_git(
             &self.root,
-            &["commit", "-m", &format!("knowledge: update {id}")],
+            &["commit", "-m", &format!("culture: update {id}")],
         )
         .await?;
 
@@ -293,25 +293,25 @@ impl KnowledgeRepo {
     /// Returns an error if no remote is configured or push fails.
     pub async fn push(&self) -> Result<()> {
         let Some(ref _url) = self.remote else {
-            bail!("no remote configured for knowledge repo");
+            bail!("no remote configured for culture repo");
         };
         run_git(&self.root, &["push", "origin", "main"]).await?;
         Ok(())
     }
 
-    /// The root path of the knowledge repo.
+    /// The root path of the culture repo.
     pub fn root(&self) -> &Path {
         &self.root
     }
 
     // ── Private helpers ─────────────────────────────────────────────────
 
-    /// Determine the directory for a knowledge item.
+    /// Determine the directory for a culture item.
     ///
     /// - `scope_repo` set → `repos/<slug>/`
     /// - `scope_ink` set (no repo) → `inks/<ink>/`
     /// - neither → `culture/`
-    fn item_dir(&self, k: &Knowledge) -> PathBuf {
+    fn item_dir(&self, k: &Culture) -> PathBuf {
         k.scope_repo.as_ref().map_or_else(
             || {
                 k.scope_ink.as_ref().map_or_else(
@@ -323,19 +323,19 @@ impl KnowledgeRepo {
         )
     }
 
-    /// Read all knowledge files from the repo (`.md` and legacy `.json`).
-    fn read_all(&self) -> Result<Vec<Knowledge>> {
+    /// Read all culture files from the repo (`.md` and legacy `.json`).
+    fn read_all(&self) -> Result<Vec<Culture>> {
         let mut items = Vec::new();
         for dir_name in &["repos", "inks", "culture"] {
             let base = self.root.join(dir_name);
             if base.exists() {
-                collect_knowledge_files(&base, &mut items)?;
+                collect_culture_files(&base, &mut items)?;
             }
         }
         Ok(items)
     }
 
-    /// Find a knowledge file by its UUID.
+    /// Find a culture file by its UUID.
     fn find_by_id(&self, id: &str) -> Result<Option<PathBuf>> {
         let all = self.read_all_paths()?;
         for path in all {
@@ -349,13 +349,13 @@ impl KnowledgeRepo {
         Ok(None)
     }
 
-    /// Collect all knowledge file paths (`.md` and legacy `.json`).
+    /// Collect all culture file paths (`.md` and legacy `.json`).
     fn read_all_paths(&self) -> Result<Vec<PathBuf>> {
         let mut paths = Vec::new();
         for dir_name in &["repos", "inks", "culture"] {
             let base = self.root.join(dir_name);
             if base.exists() {
-                collect_knowledge_paths(&base, &mut paths)?;
+                collect_culture_paths(&base, &mut paths)?;
             }
         }
         Ok(paths)
@@ -366,7 +366,7 @@ impl KnowledgeRepo {
             let root = self.root.clone();
             tokio::spawn(async move {
                 if let Err(e) = run_git(&root, &["push", "origin", "main"]).await {
-                    warn!("knowledge push failed: {e}");
+                    warn!("culture push failed: {e}");
                 }
             });
         }
@@ -375,12 +375,12 @@ impl KnowledgeRepo {
 
 // ── Markdown serialization ──────────────────────────────────────────────
 
-/// YAML frontmatter metadata for knowledge files.
+/// YAML frontmatter metadata for culture files.
 #[derive(serde::Serialize, serde::Deserialize)]
-struct KnowledgeFrontmatter {
+struct CultureFrontmatter {
     id: uuid::Uuid,
     session_id: uuid::Uuid,
-    kind: KnowledgeKind,
+    kind: CultureKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     scope_repo: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -391,7 +391,7 @@ struct KnowledgeFrontmatter {
     created_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Serialize a `Knowledge` item to Markdown with YAML frontmatter.
+/// Serialize a `Culture` item to Markdown with YAML frontmatter.
 ///
 /// Format:
 /// ```text
@@ -407,8 +407,8 @@ struct KnowledgeFrontmatter {
 ///
 /// Body content here...
 /// ```
-fn serialize_to_markdown(k: &Knowledge) -> Result<String> {
-    let frontmatter = KnowledgeFrontmatter {
+fn serialize_to_markdown(k: &Culture) -> Result<String> {
+    let frontmatter = CultureFrontmatter {
         id: k.id,
         session_id: k.session_id,
         kind: k.kind,
@@ -423,8 +423,8 @@ fn serialize_to_markdown(k: &Knowledge) -> Result<String> {
     Ok(format!("---\n{yaml}---\n\n{}\n", k.body))
 }
 
-/// Parse a Markdown file with YAML frontmatter into a `Knowledge` item.
-fn parse_from_markdown(content: &str) -> Result<Knowledge> {
+/// Parse a Markdown file with YAML frontmatter into a `Culture` item.
+fn parse_from_markdown(content: &str) -> Result<Culture> {
     let content = content.trim();
     if !content.starts_with("---") {
         bail!("missing YAML frontmatter delimiter");
@@ -438,9 +438,9 @@ fn parse_from_markdown(content: &str) -> Result<Knowledge> {
     let body_start = end + 4; // skip "\n---"
     let body = after_first[body_start..].trim().to_owned();
 
-    let fm: KnowledgeFrontmatter = serde_yaml::from_str(yaml_str)?;
+    let fm: CultureFrontmatter = serde_yaml::from_str(yaml_str)?;
 
-    Ok(Knowledge {
+    Ok(Culture {
         id: fm.id,
         session_id: fm.session_id,
         kind: fm.kind,
@@ -455,21 +455,21 @@ fn parse_from_markdown(content: &str) -> Result<Knowledge> {
 }
 
 /// Parse a file as either Markdown (`.md`) or legacy JSON (`.json`).
-fn parse_file(path: &Path, content: &str) -> Option<Knowledge> {
+fn parse_file(path: &Path, content: &str) -> Option<Culture> {
     if path.extension().is_some_and(|ext| ext == "md") {
         match parse_from_markdown(content) {
             Ok(k) => Some(k),
             Err(e) => {
-                warn!("skip invalid knowledge markdown {}: {e}", path.display());
+                warn!("skip invalid culture markdown {}: {e}", path.display());
                 None
             }
         }
     } else if path.extension().is_some_and(|ext| ext == "json") {
         // Legacy JSON backward compatibility
-        match serde_json::from_str::<Knowledge>(content) {
+        match serde_json::from_str::<Culture>(content) {
             Ok(k) => Some(k),
             Err(e) => {
-                warn!("skip invalid knowledge json {}: {e}", path.display());
+                warn!("skip invalid culture json {}: {e}", path.display());
                 None
             }
         }
@@ -517,19 +517,19 @@ fn sanitize_slug(s: &str) -> String {
         .collect()
 }
 
-/// Generate a filename for a knowledge item.
-fn item_filename(k: &Knowledge) -> String {
+/// Generate a filename for a culture item.
+fn item_filename(k: &Culture) -> String {
     let kind_str = match k.kind {
-        KnowledgeKind::Summary => "summary",
-        KnowledgeKind::Failure => "failure",
+        CultureKind::Summary => "summary",
+        CultureKind::Failure => "failure",
     };
     let date = k.created_at.format("%Y-%m-%d");
     let id_short = &k.id.to_string()[..8];
     format!("{kind_str}-{date}-{id_short}.md")
 }
 
-/// Recursively collect all knowledge files (`.md` and legacy `.json`) and parse them.
-fn collect_knowledge_files(dir: &Path, items: &mut Vec<Knowledge>) -> Result<()> {
+/// Recursively collect all culture files (`.md` and legacy `.json`) and parse them.
+fn collect_culture_files(dir: &Path, items: &mut Vec<Culture>) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -537,23 +537,23 @@ fn collect_knowledge_files(dir: &Path, items: &mut Vec<Knowledge>) -> Result<()>
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_knowledge_files(&path, items)?;
-        } else if is_knowledge_file(&path) {
+            collect_culture_files(&path, items)?;
+        } else if is_culture_file(&path) {
             match std::fs::read_to_string(&path) {
                 Ok(content) => {
                     if let Some(k) = parse_file(&path, &content) {
                         items.push(k);
                     }
                 }
-                Err(e) => warn!("skip unreadable knowledge file {}: {e}", path.display()),
+                Err(e) => warn!("skip unreadable culture file {}: {e}", path.display()),
             }
         }
     }
     Ok(())
 }
 
-/// Recursively collect all knowledge file paths (`.md` and legacy `.json`).
-fn collect_knowledge_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
+/// Recursively collect all culture file paths (`.md` and legacy `.json`).
+fn collect_culture_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
@@ -561,16 +561,16 @@ fn collect_knowledge_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            collect_knowledge_paths(&path, paths)?;
-        } else if is_knowledge_file(&path) {
+            collect_culture_paths(&path, paths)?;
+        } else if is_culture_file(&path) {
             paths.push(path);
         }
     }
     Ok(())
 }
 
-/// Check if a path is a knowledge file (`.md` or legacy `.json`).
-fn is_knowledge_file(path: &Path) -> bool {
+/// Check if a path is a culture file (`.md` or legacy `.json`).
+fn is_culture_file(path: &Path) -> bool {
     path.extension()
         .is_some_and(|ext| ext == "md" || ext == "json")
 }
@@ -581,11 +581,11 @@ mod tests {
     use chrono::Utc;
     use uuid::Uuid;
 
-    fn make_knowledge(title: &str, repo: Option<&str>, ink: Option<&str>) -> Knowledge {
-        Knowledge {
+    fn make_culture(title: &str, repo: Option<&str>, ink: Option<&str>) -> Culture {
+        Culture {
             id: Uuid::new_v4(),
             session_id: Uuid::new_v4(),
-            kind: KnowledgeKind::Summary,
+            kind: CultureKind::Summary,
             scope_repo: repo.map(Into::into),
             scope_ink: ink.map(Into::into),
             title: title.into(),
@@ -596,11 +596,11 @@ mod tests {
         }
     }
 
-    fn make_failure(title: &str, repo: Option<&str>) -> Knowledge {
-        Knowledge {
-            kind: KnowledgeKind::Failure,
+    fn make_failure(title: &str, repo: Option<&str>) -> Culture {
+        Culture {
+            kind: CultureKind::Failure,
             relevance: 0.8,
-            ..make_knowledge(title, repo, None)
+            ..make_culture(title, repo, None)
         }
     }
 
@@ -608,7 +608,7 @@ mod tests {
 
     #[test]
     fn test_serialize_to_markdown() {
-        let k = make_knowledge("test finding", Some("/tmp/repo"), Some("coder"));
+        let k = make_culture("test finding", Some("/tmp/repo"), Some("coder"));
         let md = serialize_to_markdown(&k).unwrap();
         assert!(md.starts_with("---\n"));
         assert!(md.contains("title: test finding"));
@@ -619,7 +619,7 @@ mod tests {
 
     #[test]
     fn test_parse_from_markdown() {
-        let k = make_knowledge("roundtrip", Some("/tmp/repo"), Some("coder"));
+        let k = make_culture("roundtrip", Some("/tmp/repo"), Some("coder"));
         let md = serialize_to_markdown(&k).unwrap();
         let parsed = parse_from_markdown(&md).unwrap();
         assert_eq!(parsed.id, k.id);
@@ -650,13 +650,13 @@ mod tests {
         let k = make_failure("fail roundtrip", Some("/tmp"));
         let md = serialize_to_markdown(&k).unwrap();
         let parsed = parse_from_markdown(&md).unwrap();
-        assert_eq!(parsed.kind, KnowledgeKind::Failure);
+        assert_eq!(parsed.kind, CultureKind::Failure);
         assert_eq!(parsed.title, "fail roundtrip");
     }
 
     #[test]
     fn test_serialize_omits_none_scopes() {
-        let k = make_knowledge("global", None, None);
+        let k = make_culture("global", None, None);
         let md = serialize_to_markdown(&k).unwrap();
         assert!(!md.contains("scope_repo"));
         assert!(!md.contains("scope_ink"));
@@ -664,7 +664,7 @@ mod tests {
 
     #[test]
     fn test_parse_file_md() {
-        let k = make_knowledge("md test", Some("/tmp"), None);
+        let k = make_culture("md test", Some("/tmp"), None);
         let md = serialize_to_markdown(&k).unwrap();
         let path = Path::new("test.md");
         let parsed = parse_file(path, &md);
@@ -674,7 +674,7 @@ mod tests {
 
     #[test]
     fn test_parse_file_json_legacy() {
-        let k = make_knowledge("json test", Some("/tmp"), None);
+        let k = make_culture("json test", Some("/tmp"), None);
         let json = serde_json::to_string(&k).unwrap();
         let path = Path::new("test.json");
         let parsed = parse_file(path, &json);
@@ -727,7 +727,7 @@ mod tests {
 
     #[test]
     fn test_item_filename() {
-        let k = make_knowledge("test", Some("/tmp/repo"), None);
+        let k = make_culture("test", Some("/tmp/repo"), None);
         let name = item_filename(&k);
         assert!(name.starts_with("summary-"));
         assert_eq!(std::path::Path::new(&name).extension().unwrap(), "md");
@@ -743,55 +743,55 @@ mod tests {
 
     #[test]
     fn test_item_dir_with_scope_repo() {
-        let repo = KnowledgeRepo {
-            root: PathBuf::from("/data/knowledge"),
+        let repo = CultureRepo {
+            root: PathBuf::from("/data/culture"),
             remote: None,
         };
-        let k = make_knowledge("test", Some("/tmp/myrepo"), None);
+        let k = make_culture("test", Some("/tmp/myrepo"), None);
         let dir = repo.item_dir(&k);
-        assert_eq!(dir, PathBuf::from("/data/knowledge/repos/myrepo"));
+        assert_eq!(dir, PathBuf::from("/data/culture/repos/myrepo"));
     }
 
     #[test]
     fn test_item_dir_with_scope_ink_only() {
-        let repo = KnowledgeRepo {
-            root: PathBuf::from("/data/knowledge"),
+        let repo = CultureRepo {
+            root: PathBuf::from("/data/culture"),
             remote: None,
         };
-        let k = make_knowledge("test", None, Some("reviewer"));
+        let k = make_culture("test", None, Some("reviewer"));
         let dir = repo.item_dir(&k);
-        assert_eq!(dir, PathBuf::from("/data/knowledge/inks/reviewer"));
+        assert_eq!(dir, PathBuf::from("/data/culture/inks/reviewer"));
     }
 
     #[test]
     fn test_item_dir_culture() {
-        let repo = KnowledgeRepo {
-            root: PathBuf::from("/data/knowledge"),
+        let repo = CultureRepo {
+            root: PathBuf::from("/data/culture"),
             remote: None,
         };
-        let k = make_knowledge("test", None, None);
+        let k = make_culture("test", None, None);
         let dir = repo.item_dir(&k);
-        assert_eq!(dir, PathBuf::from("/data/knowledge/culture"));
+        assert_eq!(dir, PathBuf::from("/data/culture/culture"));
     }
 
     #[test]
     fn test_item_dir_repo_takes_precedence_over_ink() {
-        let repo = KnowledgeRepo {
-            root: PathBuf::from("/data/knowledge"),
+        let repo = CultureRepo {
+            root: PathBuf::from("/data/culture"),
             remote: None,
         };
         // When both scope_repo and scope_ink are set, repo wins
-        let k = make_knowledge("test", Some("/tmp/myrepo"), Some("coder"));
+        let k = make_culture("test", Some("/tmp/myrepo"), Some("coder"));
         let dir = repo.item_dir(&k);
-        assert_eq!(dir, PathBuf::from("/data/knowledge/repos/myrepo"));
+        assert_eq!(dir, PathBuf::from("/data/culture/repos/myrepo"));
     }
 
     #[test]
-    fn test_is_knowledge_file() {
-        assert!(is_knowledge_file(Path::new("test.md")));
-        assert!(is_knowledge_file(Path::new("test.json")));
-        assert!(!is_knowledge_file(Path::new("test.txt")));
-        assert!(!is_knowledge_file(Path::new("test")));
+    fn test_is_culture_file() {
+        assert!(is_culture_file(Path::new("test.md")));
+        assert!(is_culture_file(Path::new("test.json")));
+        assert!(!is_culture_file(Path::new("test.txt")));
+        assert!(!is_culture_file(Path::new("test")));
     }
 
     // ── Integration tests (git-backed) ──────────────────────────────────
@@ -799,7 +799,7 @@ mod tests {
     #[tokio::test]
     async fn test_init_creates_git_repo() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
         assert!(repo.root().join(".git").exists());
@@ -809,19 +809,19 @@ mod tests {
     async fn test_init_idempotent() {
         let tmpdir = tempfile::tempdir().unwrap();
         let data_dir = tmpdir.path().to_str().unwrap();
-        KnowledgeRepo::init(data_dir, None).await.unwrap();
+        CultureRepo::init(data_dir, None).await.unwrap();
         // Second init should not error
-        KnowledgeRepo::init(data_dir, None).await.unwrap();
+        CultureRepo::init(data_dir, None).await.unwrap();
     }
 
     #[tokio::test]
     async fn test_save_and_list() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("finding-1", Some("/tmp/repo"), Some("coder"));
+        let k = make_culture("finding-1", Some("/tmp/repo"), Some("coder"));
         repo.save(&k).await.unwrap();
 
         let items = repo.list(None, None, None, None, None).unwrap();
@@ -833,11 +833,11 @@ mod tests {
     #[tokio::test]
     async fn test_save_creates_markdown_file() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("md-test", Some("/tmp/repo"), None);
+        let k = make_culture("md-test", Some("/tmp/repo"), None);
         repo.save(&k).await.unwrap();
 
         // Verify the file is a .md file with YAML frontmatter
@@ -859,26 +859,26 @@ mod tests {
     #[tokio::test]
     async fn test_save_creates_git_commit() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("committed", Some("/tmp/repo"), None);
+        let k = make_culture("committed", Some("/tmp/repo"), None);
         repo.save(&k).await.unwrap();
 
         // Verify git log has a commit
         let log = run_git(repo.root(), &["log", "--oneline"]).await.unwrap();
-        assert!(log.contains("knowledge:"));
+        assert!(log.contains("culture:"));
     }
 
     #[tokio::test]
     async fn test_list_filter_by_kind() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        repo.save(&make_knowledge("sum", Some("/tmp"), None))
+        repo.save(&make_culture("sum", Some("/tmp"), None))
             .await
             .unwrap();
         repo.save(&make_failure("fail", Some("/tmp")))
@@ -897,14 +897,14 @@ mod tests {
     #[tokio::test]
     async fn test_list_filter_by_repo() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        repo.save(&make_knowledge("a", Some("/repo/a"), None))
+        repo.save(&make_culture("a", Some("/repo/a"), None))
             .await
             .unwrap();
-        repo.save(&make_knowledge("b", Some("/repo/b"), None))
+        repo.save(&make_culture("b", Some("/repo/b"), None))
             .await
             .unwrap();
 
@@ -916,14 +916,14 @@ mod tests {
     #[tokio::test]
     async fn test_list_filter_by_ink() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        repo.save(&make_knowledge("c", Some("/tmp"), Some("coder")))
+        repo.save(&make_culture("c", Some("/tmp"), Some("coder")))
             .await
             .unwrap();
-        repo.save(&make_knowledge("r", Some("/tmp"), Some("reviewer")))
+        repo.save(&make_culture("r", Some("/tmp"), Some("reviewer")))
             .await
             .unwrap();
 
@@ -935,14 +935,14 @@ mod tests {
     #[tokio::test]
     async fn test_list_filter_by_session() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("target", Some("/tmp"), None);
+        let k = make_culture("target", Some("/tmp"), None);
         let session_id = k.session_id.to_string();
         repo.save(&k).await.unwrap();
-        repo.save(&make_knowledge("other", Some("/tmp"), None))
+        repo.save(&make_culture("other", Some("/tmp"), None))
             .await
             .unwrap();
 
@@ -956,12 +956,12 @@ mod tests {
     #[tokio::test]
     async fn test_list_with_limit() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
         for i in 0..5 {
-            repo.save(&make_knowledge(&format!("item-{i}"), Some("/tmp"), None))
+            repo.save(&make_culture(&format!("item-{i}"), Some("/tmp"), None))
                 .await
                 .unwrap();
         }
@@ -973,7 +973,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_empty() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
@@ -984,17 +984,17 @@ mod tests {
     #[tokio::test]
     async fn test_query_context_returns_relevant() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        repo.save(&make_knowledge("global", None, None))
+        repo.save(&make_culture("global", None, None))
             .await
             .unwrap();
-        repo.save(&make_knowledge("scoped", Some("/my/repo"), Some("coder")))
+        repo.save(&make_culture("scoped", Some("/my/repo"), Some("coder")))
             .await
             .unwrap();
-        repo.save(&make_knowledge("other", Some("/other/repo"), None))
+        repo.save(&make_culture("other", Some("/other/repo"), None))
             .await
             .unwrap();
 
@@ -1008,12 +1008,12 @@ mod tests {
     #[tokio::test]
     async fn test_query_context_with_limit() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
         for i in 0..10 {
-            repo.save(&make_knowledge(&format!("g-{i}"), None, None))
+            repo.save(&make_culture(&format!("g-{i}"), None, None))
                 .await
                 .unwrap();
         }
@@ -1025,14 +1025,14 @@ mod tests {
     #[tokio::test]
     async fn test_query_context_no_workdir() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        repo.save(&make_knowledge("global", None, None))
+        repo.save(&make_culture("global", None, None))
             .await
             .unwrap();
-        repo.save(&make_knowledge("scoped", Some("/my/repo"), None))
+        repo.save(&make_culture("scoped", Some("/my/repo"), None))
             .await
             .unwrap();
 
@@ -1045,15 +1045,15 @@ mod tests {
     #[tokio::test]
     async fn test_query_context_ordered_by_relevance() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let mut low = make_knowledge("low", None, None);
+        let mut low = make_culture("low", None, None);
         low.relevance = 0.2;
         repo.save(&low).await.unwrap();
 
-        let mut high = make_knowledge("high", None, None);
+        let mut high = make_culture("high", None, None);
         high.relevance = 0.9;
         repo.save(&high).await.unwrap();
 
@@ -1065,11 +1065,11 @@ mod tests {
     #[tokio::test]
     async fn test_delete() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("to-delete", Some("/tmp"), None);
+        let k = make_culture("to-delete", Some("/tmp"), None);
         let id = k.id.to_string();
         repo.save(&k).await.unwrap();
 
@@ -1083,7 +1083,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_not_found() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
@@ -1094,20 +1094,20 @@ mod tests {
     #[tokio::test]
     async fn test_delete_by_session() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
         let session_id = Uuid::new_v4();
-        let k1 = Knowledge {
+        let k1 = Culture {
             session_id,
-            ..make_knowledge("s1", Some("/tmp"), None)
+            ..make_culture("s1", Some("/tmp"), None)
         };
-        let k2 = Knowledge {
+        let k2 = Culture {
             session_id,
-            ..make_knowledge("s2", Some("/tmp"), None)
+            ..make_culture("s2", Some("/tmp"), None)
         };
-        let k3 = make_knowledge("other-session", Some("/tmp"), None);
+        let k3 = make_culture("other-session", Some("/tmp"), None);
 
         repo.save(&k1).await.unwrap();
         repo.save(&k2).await.unwrap();
@@ -1127,7 +1127,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_by_session_none_found() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
@@ -1136,13 +1136,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_culture_knowledge() {
+    async fn test_save_culture_culture() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("global", None, None);
+        let k = make_culture("global", None, None);
         repo.save(&k).await.unwrap();
 
         // Should be in culture/ directory
@@ -1154,13 +1154,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_ink_scoped_knowledge() {
+    async fn test_save_ink_scoped_culture() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("ink-only", None, Some("reviewer"));
+        let k = make_culture("ink-only", None, Some("reviewer"));
         repo.save(&k).await.unwrap();
 
         // Should be in inks/reviewer/ directory
@@ -1172,13 +1172,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_scoped_knowledge() {
+    async fn test_save_scoped_culture() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("scoped", Some("/home/user/myrepo"), Some("coder"));
+        let k = make_culture("scoped", Some("/home/user/myrepo"), Some("coder"));
         repo.save(&k).await.unwrap();
 
         // Should be in repos/myrepo/ directory (repo takes precedence)
@@ -1189,21 +1189,21 @@ mod tests {
     #[tokio::test]
     async fn test_root_accessor() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
         assert!(repo.root().exists());
-        assert!(repo.root().ends_with("knowledge"));
+        assert!(repo.root().ends_with("culture"));
     }
 
     #[tokio::test]
     async fn test_delete_creates_git_commit() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("del-commit", Some("/tmp"), None);
+        let k = make_culture("del-commit", Some("/tmp"), None);
         let id = k.id.to_string();
         repo.save(&k).await.unwrap();
         repo.delete(&id).await.unwrap();
@@ -1213,67 +1213,67 @@ mod tests {
     }
 
     #[test]
-    fn test_collect_knowledge_files_ignores_unknown_ext() {
+    fn test_collect_culture_files_ignores_unknown_ext() {
         let tmpdir = tempfile::tempdir().unwrap();
         let dir = tmpdir.path();
-        std::fs::write(dir.join("readme.txt"), "not knowledge").unwrap();
+        std::fs::write(dir.join("readme.txt"), "not culture").unwrap();
 
         let mut items = Vec::new();
-        collect_knowledge_files(dir, &mut items).unwrap();
+        collect_culture_files(dir, &mut items).unwrap();
         assert!(items.is_empty());
     }
 
     #[test]
-    fn test_collect_knowledge_files_skips_invalid_md() {
+    fn test_collect_culture_files_skips_invalid_md() {
         let tmpdir = tempfile::tempdir().unwrap();
         let dir = tmpdir.path();
         std::fs::write(dir.join("bad.md"), "not valid frontmatter").unwrap();
 
         let mut items = Vec::new();
-        collect_knowledge_files(dir, &mut items).unwrap();
+        collect_culture_files(dir, &mut items).unwrap();
         assert!(items.is_empty());
     }
 
     #[test]
-    fn test_collect_knowledge_files_skips_invalid_json() {
+    fn test_collect_culture_files_skips_invalid_json() {
         let tmpdir = tempfile::tempdir().unwrap();
         let dir = tmpdir.path();
         std::fs::write(dir.join("bad.json"), "not json at all").unwrap();
 
         let mut items = Vec::new();
-        collect_knowledge_files(dir, &mut items).unwrap();
+        collect_culture_files(dir, &mut items).unwrap();
         assert!(items.is_empty());
     }
 
     #[test]
-    fn test_collect_knowledge_files_nonexistent_dir() {
+    fn test_collect_culture_files_nonexistent_dir() {
         let mut items = Vec::new();
-        let result = collect_knowledge_files(Path::new("/nonexistent"), &mut items);
+        let result = collect_culture_files(Path::new("/nonexistent"), &mut items);
         assert!(result.is_ok());
         assert!(items.is_empty());
     }
 
     #[test]
-    fn test_collect_knowledge_paths_empty() {
+    fn test_collect_culture_paths_empty() {
         let tmpdir = tempfile::tempdir().unwrap();
         let mut paths = Vec::new();
-        collect_knowledge_paths(tmpdir.path(), &mut paths).unwrap();
+        collect_culture_paths(tmpdir.path(), &mut paths).unwrap();
         assert!(paths.is_empty());
     }
 
     #[test]
-    fn test_collect_knowledge_paths_nonexistent_dir() {
+    fn test_collect_culture_paths_nonexistent_dir() {
         let mut paths = Vec::new();
-        let result = collect_knowledge_paths(Path::new("/nonexistent"), &mut paths);
+        let result = collect_culture_paths(Path::new("/nonexistent"), &mut paths);
         assert!(result.is_ok());
         assert!(paths.is_empty());
     }
 
     #[test]
-    fn test_knowledge_repo_clone() {
-        let repo = KnowledgeRepo {
+    fn test_culture_repo_clone() {
+        let repo = CultureRepo {
             root: PathBuf::from("/tmp"),
-            remote: Some("git@github.com:user/knowledge.git".into()),
+            remote: Some("git@github.com:user/culture.git".into()),
         };
         #[allow(clippy::redundant_clone)]
         let cloned = repo.clone();
@@ -1282,23 +1282,23 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_repo_debug() {
-        let repo = KnowledgeRepo {
+    fn test_culture_repo_debug() {
+        let repo = CultureRepo {
             root: PathBuf::from("/tmp"),
             remote: None,
         };
         let debug = format!("{repo:?}");
-        assert!(debug.contains("KnowledgeRepo"));
+        assert!(debug.contains("CultureRepo"));
     }
 
     #[tokio::test]
     async fn test_get_by_id() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("findme", Some("/tmp/repo"), None);
+        let k = make_culture("findme", Some("/tmp/repo"), None);
         let id = k.id.to_string();
         repo.save(&k).await.unwrap();
 
@@ -1310,7 +1310,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_by_id_not_found() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
@@ -1321,11 +1321,11 @@ mod tests {
     #[tokio::test]
     async fn test_update() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("original", Some("/tmp/repo"), None);
+        let k = make_culture("original", Some("/tmp/repo"), None);
         let id = k.id.to_string();
         repo.save(&k).await.unwrap();
 
@@ -1344,11 +1344,11 @@ mod tests {
     #[tokio::test]
     async fn test_update_tags() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("tagged", Some("/tmp/repo"), None);
+        let k = make_culture("tagged", Some("/tmp/repo"), None);
         let id = k.id.to_string();
         repo.save(&k).await.unwrap();
 
@@ -1364,7 +1364,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_not_found() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
@@ -1378,11 +1378,11 @@ mod tests {
     #[tokio::test]
     async fn test_update_creates_git_commit() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
-        let k = make_knowledge("commit-test", Some("/tmp/repo"), None);
+        let k = make_culture("commit-test", Some("/tmp/repo"), None);
         let id = k.id.to_string();
         repo.save(&k).await.unwrap();
         repo.update(&id, Some("changed"), None, None, None)
@@ -1396,7 +1396,7 @@ mod tests {
     #[tokio::test]
     async fn test_push_no_remote() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
@@ -1413,7 +1413,7 @@ mod tests {
     async fn test_init_with_remote_no_existing_repo() {
         let tmpdir = tempfile::tempdir().unwrap();
         // Remote URL that doesn't exist — init should still succeed (pull fails gracefully)
-        let repo = KnowledgeRepo::init(
+        let repo = CultureRepo::init(
             tmpdir.path().to_str().unwrap(),
             Some("https://nonexistent.example.com/repo.git".into()),
         )
@@ -1425,7 +1425,7 @@ mod tests {
     #[tokio::test]
     async fn test_legacy_json_backward_compat() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let repo = KnowledgeRepo::init(tmpdir.path().to_str().unwrap(), None)
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
 
@@ -1433,7 +1433,7 @@ mod tests {
         let legacy_dir = repo.root().join("repos").join("legacy-project");
         std::fs::create_dir_all(&legacy_dir).unwrap();
 
-        let k = make_knowledge("legacy item", Some("/tmp/legacy-project"), None);
+        let k = make_culture("legacy item", Some("/tmp/legacy-project"), None);
         let json = serde_json::to_string_pretty(&k).unwrap();
         std::fs::write(legacy_dir.join("summary-2026-01-01-abcd1234.json"), &json).unwrap();
 

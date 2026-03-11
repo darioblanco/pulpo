@@ -402,12 +402,12 @@ DELETE /peers/:name           Remove a peer
 
 ```
 GET    /inks                  List configured inks
-GET    /knowledge             List extracted knowledge (filters: session_id, kind, repo, ink, limit)
-GET    /knowledge/context     Query relevant knowledge for a workdir/ink (for prompt injection)
-GET    /knowledge/:id         Get a single knowledge item
-PUT    /knowledge/:id         Update a knowledge item (title, body, tags, relevance)
-DELETE /knowledge/:id         Delete a knowledge item
-POST   /knowledge/push        Push local knowledge commits to configured remote
+GET    /culture             List extracted culture (filters: session_id, kind, repo, ink, limit)
+GET    /culture/context     Query relevant culture for a workdir/ink (for prompt injection)
+GET    /culture/:id         Get a single culture item
+PUT    /culture/:id         Update a culture item (title, body, tags, relevance)
+DELETE /culture/:id         Delete a culture item
+POST   /culture/push        Push local culture commits to configured remote
 GET    /events                SSE event stream (session lifecycle events)
 ```
 
@@ -439,12 +439,12 @@ GET    /events                SSE event stream (session lifecycle events)
 | `GET`    | `/auth/token`                   | Get auth token (local only)    |
 | `GET`    | `/auth/pairing-url`             | Get QR pairing URL (local)     |
 | `GET`    | `/inks`                         | List configured inks           |
-| `GET`    | `/knowledge`                    | List extracted knowledge       |
-| `GET`    | `/knowledge/context`            | Query context-relevant knowledge |
-| `GET`    | `/knowledge/:id`                | Get single knowledge item      |
-| `PUT`    | `/knowledge/:id`                | Update knowledge item          |
-| `DELETE` | `/knowledge/:id`                | Delete knowledge item          |
-| `POST`   | `/knowledge/push`               | Push knowledge to remote       |
+| `GET`    | `/culture`                    | List extracted culture       |
+| `GET`    | `/culture/context`            | Query context-relevant culture |
+| `GET`    | `/culture/:id`                | Get single culture item      |
+| `PUT`    | `/culture/:id`                | Update culture item          |
+| `DELETE` | `/culture/:id`                | Delete culture item          |
+| `POST`   | `/culture/push`               | Push culture to remote       |
 | `GET`    | `/events`                       | SSE event stream               |
 
 ---
@@ -619,7 +619,7 @@ Ship the smallest useful thing first.
 ### Phase 5: Web UI ✅
 
 - ✅ React 19 + Vite + Tailwind CSS v4 + shadcn/ui
-- ✅ Responsive dashboard, history, settings, knowledge pages
+- ✅ Responsive dashboard, history, settings, culture pages
 - ✅ Static SPA embedded in `pulpod` binary via `rust-embed`
 
 ### Phase 5b: Desktop App UX Features ✅

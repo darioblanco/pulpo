@@ -12,7 +12,7 @@ pulpo kill <NAME>
 pulpo delete <NAME>
 pulpo resume <NAME>
 pulpo interventions <NAME>
-pulpo knowledge [--session] [--kind] [--repo] [--context] [--get] [--delete] [--push]
+pulpo culture [--session] [--kind] [--repo] [--context] [--get] [--delete] [--push]
 pulpo nodes
 pulpo schedule <install|list|pause|resume|remove>
 pulpo ui

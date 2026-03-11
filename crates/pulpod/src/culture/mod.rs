@@ -1,11 +1,11 @@
 pub mod repo;
 
 use chrono::Utc;
-use pulpo_common::knowledge::{Knowledge, KnowledgeKind};
+use pulpo_common::culture::{Culture, CultureKind};
 use pulpo_common::session::Session;
 use uuid::Uuid;
 
-/// Maximum body length for extracted knowledge (characters).
+/// Maximum body length for extracted culture (characters).
 const MAX_BODY_LEN: usize = 4000;
 
 /// Error signal patterns in session output that indicate failure.
@@ -29,9 +29,9 @@ const ERROR_PATTERNS: &[&str] = &[
     "timeout",
 ];
 
-/// Extract knowledge from a completed/dead session.
-/// Returns zero or more `Knowledge` items (always a summary, plus a failure if errors detected).
-pub fn extract(session: &Session) -> Vec<Knowledge> {
+/// Extract culture from a completed/dead session.
+/// Returns zero or more `Culture` items (always a summary, plus a failure if errors detected).
+pub fn extract(session: &Session) -> Vec<Culture> {
     let output = session.output_snapshot.as_deref().unwrap_or("");
     let mut results = Vec::new();
 
@@ -46,7 +46,7 @@ pub fn extract(session: &Session) -> Vec<Knowledge> {
     results
 }
 
-fn build_summary(session: &Session, output: &str) -> Knowledge {
+fn build_summary(session: &Session, output: &str) -> Culture {
     let title = format!(
         "{} session \"{}\" on {}",
         status_label(session),
@@ -64,10 +64,10 @@ fn build_summary(session: &Session, output: &str) -> Knowledge {
         tags.push(format!("model:{model}"));
     }
 
-    Knowledge {
+    Culture {
         id: Uuid::new_v4(),
         session_id: session.id,
-        kind: KnowledgeKind::Summary,
+        kind: CultureKind::Summary,
         scope_repo: Some(session.workdir.clone()),
         scope_ink: session.ink.clone(),
         title,
@@ -103,7 +103,7 @@ fn build_summary_body(session: &Session, output: &str) -> String {
     truncate_to(&body, MAX_BODY_LEN)
 }
 
-fn detect_failure(session: &Session, output: &str) -> Option<Knowledge> {
+fn detect_failure(session: &Session, output: &str) -> Option<Culture> {
     // Check intervention reason
     if let Some(reason) = &session.intervention_reason {
         return Some(build_failure(
@@ -140,7 +140,7 @@ fn detect_failure(session: &Session, output: &str) -> Option<Knowledge> {
     None
 }
 
-fn build_failure(session: &Session, reason: &str, output: &str, relevance: f64) -> Knowledge {
+fn build_failure(session: &Session, reason: &str, output: &str, relevance: f64) -> Culture {
     let title = format!(
         "Failure in \"{}\" on {}: {}",
         session.name, session.provider, reason,
@@ -167,10 +167,10 @@ fn build_failure(session: &Session, reason: &str, output: &str, relevance: f64) 
         tags.push(format!("ink:{ink}"));
     }
 
-    Knowledge {
+    Culture {
         id: Uuid::new_v4(),
         session_id: session.id,
-        kind: KnowledgeKind::Failure,
+        kind: CultureKind::Failure,
         scope_repo: Some(session.workdir.clone()),
         scope_ink: session.ink.clone(),
         title,
@@ -279,7 +279,7 @@ mod tests {
         let session = make_session("my-task");
         let results = extract(&session);
         assert!(!results.is_empty());
-        assert_eq!(results[0].kind, KnowledgeKind::Summary);
+        assert_eq!(results[0].kind, CultureKind::Summary);
         assert!(results[0].title.contains("my-task"));
         assert!(results[0].title.contains("claude"));
     }
@@ -300,7 +300,7 @@ mod tests {
         };
         let results = extract(&session);
         assert_eq!(results.len(), 2);
-        assert_eq!(results[1].kind, KnowledgeKind::Failure);
+        assert_eq!(results[1].kind, CultureKind::Failure);
         assert!(results[1].title.contains("Intervention"));
         assert!((results[1].relevance - 0.9).abs() < f64::EPSILON);
     }
@@ -313,7 +313,7 @@ mod tests {
         };
         let results = extract(&session);
         assert_eq!(results.len(), 2);
-        assert_eq!(results[1].kind, KnowledgeKind::Failure);
+        assert_eq!(results[1].kind, CultureKind::Failure);
         assert!(results[1].title.contains("Non-zero exit code"));
         assert!((results[1].relevance - 0.7).abs() < f64::EPSILON);
     }
@@ -326,7 +326,7 @@ mod tests {
         };
         let results = extract(&session);
         assert_eq!(results.len(), 2);
-        assert_eq!(results[1].kind, KnowledgeKind::Failure);
+        assert_eq!(results[1].kind, CultureKind::Failure);
         assert!(results[1].title.contains("Error pattern detected"));
     }
 
@@ -608,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_ids_are_unique() {
+    fn test_culture_ids_are_unique() {
         let session = Session {
             intervention_code: None,
             intervention_reason: Some("fail".into()),
@@ -619,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn test_knowledge_session_id_matches() {
+    fn test_culture_session_id_matches() {
         let session = make_session("id-match");
         let results = extract(&session);
         assert_eq!(results[0].session_id, session.id);

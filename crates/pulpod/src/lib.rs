@@ -1,9 +1,9 @@
 pub mod api;
 pub mod backend;
 pub mod config;
+pub mod culture;
 pub mod discovery;
 pub mod guard;
-pub mod knowledge;
 pub mod mcp;
 pub mod notifications;
 pub mod peers;
@@ -169,13 +169,12 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let default_guard = config.guards.to_guard_config();
     let node_name = config.node.name.clone();
     let (event_tx, _) = broadcast::channel::<PulpoEvent>(256);
-    let knowledge_repo =
-        knowledge::repo::KnowledgeRepo::init(&config.data_dir(), config.knowledge.remote.clone())
-            .await?;
+    let culture_repo =
+        culture::repo::CultureRepo::init(&config.data_dir(), config.culture.remote.clone()).await?;
     let manager = SessionManager::new(backend, store, default_guard, config.inks.clone())
         .with_default_provider(config.node.default_provider.clone())
         .with_session_defaults(config.session_defaults.clone())
-        .with_knowledge_repo(knowledge_repo, config.knowledge.inject)
+        .with_culture_repo(culture_repo, config.culture.inject)
         .with_event_tx(event_tx.clone(), node_name);
 
     let peer_registry = peers::PeerRegistry::new(&config.peers);
@@ -485,14 +484,13 @@ pub async fn build_mcp_server(cli: &Cli) -> Result<mcp::PulpoMcp> {
     let backend: Arc<dyn backend::Backend> = Arc::new(CoverageBackend);
 
     let default_guard = config.guards.to_guard_config();
-    let knowledge_repo =
-        knowledge::repo::KnowledgeRepo::init(&config.data_dir(), config.knowledge.remote.clone())
-            .await?;
+    let culture_repo =
+        culture::repo::CultureRepo::init(&config.data_dir(), config.culture.remote.clone()).await?;
     let manager =
         session::manager::SessionManager::new(backend, store, default_guard, config.inks.clone())
             .with_default_provider(config.node.default_provider.clone())
             .with_session_defaults(config.session_defaults.clone())
-            .with_knowledge_repo(knowledge_repo, config.knowledge.inject);
+            .with_culture_repo(culture_repo, config.culture.inject);
     let peer_registry = peers::PeerRegistry::new(&config.peers);
 
     Ok(mcp::PulpoMcp::new(manager, peer_registry, config))

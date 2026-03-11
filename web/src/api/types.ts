@@ -57,7 +57,7 @@ export interface InterventionEvent {
   created_at: string;
 }
 
-export interface Knowledge {
+export interface Culture {
   id: string;
   session_id: string;
   kind: 'summary' | 'failure';
@@ -70,24 +70,24 @@ export interface Knowledge {
   created_at: string;
 }
 
-export interface KnowledgeResponse {
-  knowledge: Knowledge[];
+export interface CultureResponse {
+  culture: Culture[];
 }
 
-export interface KnowledgeItemResponse {
-  knowledge: Knowledge;
+export interface CultureItemResponse {
+  culture: Culture;
 }
 
-export interface KnowledgeDeleteResponse {
+export interface CultureDeleteResponse {
   deleted: boolean;
 }
 
-export interface KnowledgePushResponse {
+export interface CulturePushResponse {
   pushed: boolean;
   message: string;
 }
 
-export interface UpdateKnowledgeRequest {
+export interface UpdateCultureRequest {
   title?: string;
   body?: string;
   tags?: string[];

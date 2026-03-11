@@ -1,10 +1,10 @@
 pub mod auth;
 pub mod config;
+pub mod culture;
 mod embed;
 pub mod events;
 pub mod health;
 pub mod inks;
-pub mod knowledge;
 pub mod node;
 pub mod notifications;
 pub mod peers;
@@ -168,7 +168,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            knowledge: crate::config::KnowledgeConfig::default(),
+            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -202,7 +202,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            knowledge: crate::config::KnowledgeConfig::default(),
+            culture: crate::config::CultureConfig::default(),
         };
         let config_path = tmpdir.path().join("config.toml");
         let backend = Arc::new(StubBackend);
@@ -256,7 +256,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            knowledge: crate::config::KnowledgeConfig::default(),
+            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -304,7 +304,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            knowledge: crate::config::KnowledgeConfig::default(),
+            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -345,7 +345,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            knowledge: crate::config::KnowledgeConfig::default(),
+            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
