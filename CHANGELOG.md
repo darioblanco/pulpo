@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.16](https://github.com/darioblanco/pulpo/compare/v0.0.15...v0.0.16) (2026-03-10)
+
+
+### Features
+
+* **ocean:** add kill and delete session actions to profile card ([ca887e3](https://github.com/darioblanco/pulpo/commit/ca887e3985acfc235a8f1356d1cfe48ec324ed98))
+* **ocean:** ambient effects, hue variations, expand/collapse pools ([0d53d89](https://github.com/darioblanco/pulpo/commit/0d53d89aa7d9f6656779fef582b7dc883b079e44))
+* **ocean:** new sprites, sea background, sunken ship landmark, badge positioning ([797111a](https://github.com/darioblanco/pulpo/commit/797111a174845e7381b2902846acbcc6d302c4fd))
+
 ## [0.0.15](https://github.com/darioblanco/pulpo/compare/v0.0.14...v0.0.15) (2026-03-10)
 
 
