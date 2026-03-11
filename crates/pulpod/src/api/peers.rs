@@ -163,6 +163,7 @@ mod tests {
                 auth: crate::config::AuthConfig::default(),
                 peers: peers_config,
                 guards: crate::config::GuardDefaultConfig::default(),
+                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),

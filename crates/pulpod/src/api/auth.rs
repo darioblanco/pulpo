@@ -283,6 +283,7 @@ mod tests {
             },
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),

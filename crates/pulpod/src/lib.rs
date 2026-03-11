@@ -174,6 +174,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
             .await?;
     let manager = SessionManager::new(backend, store, default_guard, config.inks.clone())
         .with_default_provider(config.node.default_provider.clone())
+        .with_session_defaults(config.session_defaults.clone())
         .with_knowledge_repo(knowledge_repo, config.knowledge.inject)
         .with_event_tx(event_tx.clone(), node_name);
 
@@ -474,6 +475,7 @@ pub async fn build_mcp_server(cli: &Cli) -> Result<mcp::PulpoMcp> {
     let manager =
         session::manager::SessionManager::new(backend, store, default_guard, config.inks.clone())
             .with_default_provider(config.node.default_provider.clone())
+            .with_session_defaults(config.session_defaults.clone())
             .with_knowledge_repo(knowledge_repo, config.knowledge.inject);
     let peer_registry = peers::PeerRegistry::new(&config.peers);
 

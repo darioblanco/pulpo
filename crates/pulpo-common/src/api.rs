@@ -77,9 +77,28 @@ pub struct ConfigResponse {
     pub auth: AuthConfigResponse,
     pub peers: HashMap<String, PeerEntry>,
     pub guards: GuardDefaultConfigResponse,
+    #[serde(default)]
+    pub session_defaults: SessionDefaultsConfigResponse,
     pub watchdog: WatchdogConfigResponse,
     pub notifications: NotificationsConfigResponse,
     pub inks: HashMap<String, InkConfigResponse>,
+}
+
+/// Session default values applied when the spawn request omits them.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct SessionDefaultsConfigResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_budget_usd: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_format: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -174,6 +193,8 @@ pub struct UpdateConfigRequest {
     pub discovery_interval_secs: Option<u64>,
     // Guard defaults
     pub unrestricted: Option<bool>,
+    // Session defaults
+    pub session_defaults: Option<SessionDefaultsConfigResponse>,
     // Watchdog
     pub watchdog_enabled: Option<bool>,
     pub watchdog_memory_threshold: Option<u8>,
@@ -289,6 +310,7 @@ mod tests {
             guards: GuardDefaultConfigResponse {
                 unrestricted: false,
             },
+            session_defaults: SessionDefaultsConfigResponse::default(),
             watchdog: WatchdogConfigResponse {
                 enabled: true,
                 memory_threshold: 90,
@@ -323,6 +345,7 @@ mod tests {
             guards: GuardDefaultConfigResponse {
                 unrestricted: false,
             },
+            session_defaults: SessionDefaultsConfigResponse::default(),
             watchdog: WatchdogConfigResponse {
                 enabled: true,
                 memory_threshold: 90,
@@ -373,6 +396,7 @@ mod tests {
             guards: GuardDefaultConfigResponse {
                 unrestricted: false,
             },
+            session_defaults: SessionDefaultsConfigResponse::default(),
             watchdog: WatchdogConfigResponse {
                 enabled: true,
                 memory_threshold: 90,
@@ -484,6 +508,7 @@ mod tests {
             guards: GuardDefaultConfigResponse {
                 unrestricted: false,
             },
+            session_defaults: SessionDefaultsConfigResponse::default(),
             watchdog: WatchdogConfigResponse {
                 enabled: true,
                 memory_threshold: 90,
@@ -1460,5 +1485,119 @@ mod tests {
         let back: KnowledgePushResponse = serde_json::from_str(&json).unwrap();
         assert!(back.pushed);
         assert_eq!(back.message, "pushed to remote");
+    }
+
+    #[test]
+    fn test_session_defaults_config_response_default() {
+        let sd = SessionDefaultsConfigResponse::default();
+        assert!(sd.provider.is_none());
+        assert!(sd.model.is_none());
+        assert!(sd.mode.is_none());
+        assert!(sd.max_turns.is_none());
+        assert!(sd.max_budget_usd.is_none());
+        assert!(sd.output_format.is_none());
+    }
+
+    #[test]
+    fn test_session_defaults_config_response_roundtrip() {
+        let sd = SessionDefaultsConfigResponse {
+            provider: Some("codex".into()),
+            model: Some("o3".into()),
+            mode: Some("autonomous".into()),
+            max_turns: Some(100),
+            max_budget_usd: Some(25.0),
+            output_format: Some("json".into()),
+        };
+        let json = serde_json::to_string(&sd).unwrap();
+        let back: SessionDefaultsConfigResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.provider.as_deref(), Some("codex"));
+        assert_eq!(back.model.as_deref(), Some("o3"));
+        assert_eq!(back.mode.as_deref(), Some("autonomous"));
+        assert_eq!(back.max_turns, Some(100));
+        assert!((back.max_budget_usd.unwrap() - 25.0).abs() < f64::EPSILON);
+        assert_eq!(back.output_format.as_deref(), Some("json"));
+    }
+
+    #[test]
+    fn test_session_defaults_config_response_debug_clone() {
+        let sd = SessionDefaultsConfigResponse {
+            provider: Some("claude".into()),
+            ..Default::default()
+        };
+        #[allow(clippy::redundant_clone)]
+        let cloned = sd.clone();
+        let debug = format!("{cloned:?}");
+        assert!(debug.contains("claude"));
+    }
+
+    #[test]
+    fn test_session_defaults_config_response_skip_serializing_none() {
+        let sd = SessionDefaultsConfigResponse::default();
+        let json = serde_json::to_string(&sd).unwrap();
+        // All fields are None, so nothing should be serialized
+        assert_eq!(json, "{}");
+    }
+
+    #[test]
+    fn test_config_response_with_session_defaults() {
+        let resp = ConfigResponse {
+            node: NodeConfigResponse {
+                name: "test".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                bind: BindMode::Local,
+                tag: None,
+                seed: None,
+                discovery_interval_secs: 30,
+                default_provider: None,
+            },
+            auth: AuthConfigResponse {},
+            peers: HashMap::new(),
+            guards: GuardDefaultConfigResponse {
+                unrestricted: false,
+            },
+            session_defaults: SessionDefaultsConfigResponse {
+                provider: Some("codex".into()),
+                model: Some("o3".into()),
+                ..Default::default()
+            },
+            watchdog: WatchdogConfigResponse {
+                enabled: true,
+                memory_threshold: 90,
+                check_interval_secs: 10,
+                breach_count: 3,
+                idle_timeout_secs: 600,
+                idle_action: "alert".into(),
+            },
+            notifications: NotificationsConfigResponse {
+                discord: None,
+                webhooks: vec![],
+            },
+            inks: HashMap::new(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"session_defaults\""));
+        assert!(json.contains("\"codex\""));
+        assert!(json.contains("\"o3\""));
+    }
+
+    #[test]
+    fn test_update_config_request_with_session_defaults() {
+        let json = r#"{"session_defaults":{"provider":"claude","model":"opus","max_turns":50}}"#;
+        let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
+        let sd = req.session_defaults.unwrap();
+        assert_eq!(sd.provider.as_deref(), Some("claude"));
+        assert_eq!(sd.model.as_deref(), Some("opus"));
+        assert_eq!(sd.max_turns, Some(50));
+        assert!(sd.mode.is_none());
+    }
+
+    #[test]
+    fn test_config_response_deserialize_missing_session_defaults() {
+        // Backward compat: old JSON without session_defaults should still deserialize
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"guards":{"unrestricted":false},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert"},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#;
+        let resp: ConfigResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.session_defaults.provider.is_none());
+        assert!(resp.session_defaults.model.is_none());
     }
 }

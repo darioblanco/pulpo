@@ -22,6 +22,8 @@ pub struct Config {
     #[serde(default)]
     pub inks: HashMap<String, InkConfig>,
     #[serde(default)]
+    pub session_defaults: SessionDefaultsConfig,
+    #[serde(default)]
     pub notifications: NotificationsConfig,
     #[serde(default)]
     pub knowledge: KnowledgeConfig,
@@ -131,6 +133,30 @@ pub fn ensure_auth_token(config: &mut Config) -> bool {
 pub struct GuardDefaultConfig {
     #[serde(default)]
     pub unrestricted: bool,
+}
+
+/// Default values applied to every new session when the request omits them.
+/// Ink overrides and explicit request fields always take precedence.
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+pub struct SessionDefaultsConfig {
+    /// Default provider (e.g. "claude", "codex"). Overrides `node.default_provider`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Default model (e.g. "opus", "o3").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Default session mode ("autonomous" or "interactive").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// Default max turns per session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<u32>,
+    /// Default max budget in USD per session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_budget_usd: Option<f64>,
+    /// Default output format (e.g. "json", "stream-json").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_format: Option<String>,
 }
 
 impl GuardDefaultConfig {
@@ -433,6 +459,7 @@ pub fn load(path: &str) -> Result<Config> {
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: built_in_inks(),
             notifications: NotificationsConfig::default(),
@@ -520,6 +547,7 @@ data_dir = "/tmp/pulpo-test"
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -545,6 +573,7 @@ data_dir = "/tmp/pulpo-test"
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -678,6 +707,7 @@ name = "test"
             auth: AuthConfig::default(),
             peers,
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -764,6 +794,7 @@ unrestricted = true
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -792,6 +823,7 @@ unrestricted = true
             auth: AuthConfig::default(),
             peers,
             guards: GuardDefaultConfig { unrestricted: true },
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -822,6 +854,7 @@ unrestricted = true
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -845,6 +878,7 @@ unrestricted = true
                 auth: AuthConfig::default(),
                 peers: HashMap::new(),
                 guards: GuardDefaultConfig::default(),
+                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
@@ -870,6 +904,7 @@ unrestricted = true
                 auth: AuthConfig::default(),
                 peers: HashMap::new(),
                 guards: GuardDefaultConfig::default(),
+                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
@@ -899,6 +934,7 @@ unrestricted = true
                 auth: AuthConfig::default(),
                 peers: HashMap::new(),
                 guards: GuardDefaultConfig::default(),
+                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
@@ -923,6 +959,7 @@ unrestricted = true
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -966,6 +1003,7 @@ unrestricted = true
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1037,6 +1075,7 @@ unrestricted = true
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1063,6 +1102,7 @@ unrestricted = true
             },
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1131,6 +1171,7 @@ token = "my-secret-token"
             },
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1200,6 +1241,7 @@ token = "peer-secret"
             auth: AuthConfig::default(),
             peers,
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1301,6 +1343,7 @@ breach_count = 5
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig {
                 enabled: false,
                 memory_threshold: 75,
@@ -1513,6 +1556,7 @@ idle_action = "pause"
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig {
                 idle_timeout_secs: 120,
                 idle_action: "kill".into(),
@@ -1625,6 +1669,7 @@ provider = "codex"
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks,
             notifications: NotificationsConfig::default(),
@@ -1738,6 +1783,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig {
@@ -1842,6 +1888,7 @@ url = "https://example.com"
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig {
@@ -1952,6 +1999,7 @@ name = "test"
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             guards: GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -2135,5 +2183,107 @@ provider = "codex"
             config.remote.as_deref(),
             Some("git@github.com:user/knowledge.git")
         );
+    }
+
+    #[test]
+    fn test_session_defaults_default() {
+        let sd = SessionDefaultsConfig::default();
+        assert!(sd.provider.is_none());
+        assert!(sd.model.is_none());
+        assert!(sd.mode.is_none());
+        assert!(sd.max_turns.is_none());
+        assert!(sd.max_budget_usd.is_none());
+        assert!(sd.output_format.is_none());
+    }
+
+    #[test]
+    fn test_session_defaults_toml_roundtrip() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        let config = Config {
+            node: NodeConfig::default(),
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: GuardDefaultConfig::default(),
+            session_defaults: SessionDefaultsConfig {
+                provider: Some("codex".into()),
+                model: Some("o3".into()),
+                mode: Some("autonomous".into()),
+                max_turns: Some(100),
+                max_budget_usd: Some(25.5),
+                output_format: Some("json".into()),
+            },
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
+        };
+        save(&config, &path).unwrap();
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.session_defaults.provider.as_deref(), Some("codex"));
+        assert_eq!(loaded.session_defaults.model.as_deref(), Some("o3"));
+        assert_eq!(loaded.session_defaults.mode.as_deref(), Some("autonomous"));
+        assert_eq!(loaded.session_defaults.max_turns, Some(100));
+        assert!((loaded.session_defaults.max_budget_usd.unwrap() - 25.5).abs() < f64::EPSILON);
+        assert_eq!(
+            loaded.session_defaults.output_format.as_deref(),
+            Some("json")
+        );
+    }
+
+    #[test]
+    fn test_session_defaults_toml_partial() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        let config = Config {
+            node: NodeConfig::default(),
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: GuardDefaultConfig::default(),
+            session_defaults: SessionDefaultsConfig {
+                model: Some("opus".into()),
+                ..SessionDefaultsConfig::default()
+            },
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig::default(),
+            knowledge: KnowledgeConfig::default(),
+        };
+        save(&config, &path).unwrap();
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert!(loaded.session_defaults.provider.is_none());
+        assert_eq!(loaded.session_defaults.model.as_deref(), Some("opus"));
+        assert!(loaded.session_defaults.mode.is_none());
+    }
+
+    #[test]
+    fn test_session_defaults_absent_in_toml_gives_empty() {
+        let toml_str = r#"
+[node]
+name = "test"
+port = 7433
+data_dir = "/tmp"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.session_defaults.provider.is_none());
+        assert!(config.session_defaults.model.is_none());
+        assert!(config.session_defaults.mode.is_none());
+        assert!(config.session_defaults.max_turns.is_none());
+        assert!(config.session_defaults.max_budget_usd.is_none());
+        assert!(config.session_defaults.output_format.is_none());
+    }
+
+    #[test]
+    fn test_session_defaults_debug_clone() {
+        let sd = SessionDefaultsConfig {
+            provider: Some("claude".into()),
+            model: Some("opus".into()),
+            ..SessionDefaultsConfig::default()
+        };
+        #[allow(clippy::redundant_clone)]
+        let cloned = sd.clone();
+        let debug = format!("{cloned:?}");
+        assert!(debug.contains("claude"));
+        assert!(debug.contains("opus"));
     }
 }

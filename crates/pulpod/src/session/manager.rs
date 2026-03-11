@@ -14,7 +14,7 @@ use pulpo_common::guard::GuardConfig;
 use tracing::{debug, warn};
 
 use crate::backend::Backend;
-use crate::config::InkConfig;
+use crate::config::{InkConfig, SessionDefaultsConfig};
 use crate::guard::check_capability_warnings;
 use crate::knowledge;
 use crate::knowledge::repo::KnowledgeRepo;
@@ -28,6 +28,7 @@ pub struct SessionManager {
     inject_knowledge: bool,
     default_guard: GuardConfig,
     default_provider: Option<String>,
+    session_defaults: SessionDefaultsConfig,
     inks: HashMap<String, InkConfig>,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
     node_name: String,
@@ -47,6 +48,7 @@ impl SessionManager {
             inject_knowledge: true,
             default_guard,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             inks,
             event_tx: None,
             node_name: String::new(),
@@ -56,6 +58,12 @@ impl SessionManager {
     #[must_use]
     pub fn with_default_provider(mut self, provider: Option<String>) -> Self {
         self.default_provider = provider;
+        self
+    }
+
+    #[must_use]
+    pub fn with_session_defaults(mut self, defaults: SessionDefaultsConfig) -> Self {
+        self.session_defaults = defaults;
         self
     }
 
@@ -229,13 +237,37 @@ impl SessionManager {
         if req.prompt.is_none() {
             req.prompt = Some(String::new());
         }
+        // Provider: session_defaults.provider > node.default_provider > Claude
         if req.provider.is_none() {
             let default = self
-                .default_provider
+                .session_defaults
+                .provider
                 .as_ref()
+                .or(self.default_provider.as_ref())
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(Provider::Claude);
             req.provider = Some(default);
+        }
+        // Session defaults for remaining fields
+        if req.model.is_none() {
+            req.model.clone_from(&self.session_defaults.model);
+        }
+        if req.mode.is_none() {
+            req.mode = self
+                .session_defaults
+                .mode
+                .as_ref()
+                .and_then(|m| m.parse().ok());
+        }
+        if req.max_turns.is_none() {
+            req.max_turns = self.session_defaults.max_turns;
+        }
+        if req.max_budget_usd.is_none() {
+            req.max_budget_usd = self.session_defaults.max_budget_usd;
+        }
+        if req.output_format.is_none() {
+            req.output_format
+                .clone_from(&self.session_defaults.output_format);
         }
         req
     }
@@ -949,6 +981,115 @@ mod tests {
         };
         let result = mgr.apply_defaults(req);
         assert_eq!(result.provider, Some(Provider::Codex));
+    }
+
+    #[tokio::test]
+    async fn test_apply_defaults_session_defaults_all_fields() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let mgr = mgr.with_session_defaults(SessionDefaultsConfig {
+            provider: Some("gemini".into()),
+            model: Some("gemini-2.5-pro".into()),
+            mode: Some("autonomous".into()),
+            max_turns: Some(50),
+            max_budget_usd: Some(10.0),
+            output_format: Some("json".into()),
+        });
+        let req = make_req("");
+        let result = mgr.apply_defaults(req);
+        assert_eq!(result.provider, Some(Provider::Gemini));
+        assert_eq!(result.model.as_deref(), Some("gemini-2.5-pro"));
+        assert_eq!(result.mode, Some(SessionMode::Autonomous));
+        assert_eq!(result.max_turns, Some(50));
+        assert!((result.max_budget_usd.unwrap() - 10.0).abs() < f64::EPSILON);
+        assert_eq!(result.output_format.as_deref(), Some("json"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_defaults_explicit_overrides_session_defaults() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let mgr = mgr.with_session_defaults(SessionDefaultsConfig {
+            provider: Some("gemini".into()),
+            model: Some("default-model".into()),
+            mode: Some("autonomous".into()),
+            max_turns: Some(50),
+            max_budget_usd: Some(10.0),
+            output_format: Some("json".into()),
+        });
+        let req = CreateSessionRequest {
+            name: None,
+            workdir: Some("/tmp".into()),
+            provider: Some(Provider::Claude),
+            prompt: Some("test".into()),
+            mode: Some(SessionMode::Interactive),
+            unrestricted: None,
+            model: Some("opus".into()),
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: Some(5),
+            max_budget_usd: Some(1.0),
+            output_format: Some("stream-json".into()),
+            worktree: None,
+            conversation_id: None,
+        };
+        let result = mgr.apply_defaults(req);
+        // Explicit values win over session defaults
+        assert_eq!(result.provider, Some(Provider::Claude));
+        assert_eq!(result.model.as_deref(), Some("opus"));
+        assert_eq!(result.mode, Some(SessionMode::Interactive));
+        assert_eq!(result.max_turns, Some(5));
+        assert!((result.max_budget_usd.unwrap() - 1.0).abs() < f64::EPSILON);
+        assert_eq!(result.output_format.as_deref(), Some("stream-json"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_defaults_session_defaults_provider_overrides_node_default() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let mgr = mgr
+            .with_default_provider(Some("codex".into()))
+            .with_session_defaults(SessionDefaultsConfig {
+                provider: Some("gemini".into()),
+                ..SessionDefaultsConfig::default()
+            });
+        let req = make_req("test");
+        let result = mgr.apply_defaults(req);
+        // session_defaults.provider takes precedence over node.default_provider
+        assert_eq!(result.provider, Some(Provider::Gemini));
+    }
+
+    #[tokio::test]
+    async fn test_apply_defaults_empty_session_defaults_falls_through() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let mgr = mgr.with_session_defaults(SessionDefaultsConfig::default());
+        let req = make_req("test");
+        let result = mgr.apply_defaults(req);
+        // Empty session defaults: falls through to Claude, no model/mode/etc
+        assert_eq!(result.provider, Some(Provider::Claude));
+        assert!(result.model.is_none());
+        assert!(result.mode.is_none());
+        assert!(result.max_turns.is_none());
+        assert!(result.max_budget_usd.is_none());
+        assert!(result.output_format.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_apply_defaults_partial_session_defaults() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let mgr = mgr.with_session_defaults(SessionDefaultsConfig {
+            model: Some("opus".into()),
+            max_turns: Some(25),
+            ..SessionDefaultsConfig::default()
+        });
+        let req = make_req("test");
+        let result = mgr.apply_defaults(req);
+        // Partial: only model and max_turns are set
+        assert_eq!(result.provider, Some(Provider::Claude));
+        assert_eq!(result.model.as_deref(), Some("opus"));
+        assert!(result.mode.is_none());
+        assert_eq!(result.max_turns, Some(25));
+        assert!(result.max_budget_usd.is_none());
+        assert!(result.output_format.is_none());
     }
 
     #[tokio::test]
@@ -1861,6 +2002,7 @@ mod tests {
             inks,
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let req = make_req("test");
@@ -1881,6 +2023,7 @@ mod tests {
             inks,
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -1915,6 +2058,7 @@ mod tests {
             inks,
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -1952,6 +2096,7 @@ mod tests {
             inks,
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -1994,6 +2139,7 @@ mod tests {
             inks,
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -2033,6 +2179,7 @@ mod tests {
             inks,
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -2079,6 +2226,7 @@ mod tests {
             inks,
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -2114,6 +2262,7 @@ mod tests {
             inks,
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -2150,6 +2299,7 @@ mod tests {
             inks,
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let req = CreateSessionRequest {
@@ -2553,6 +2703,7 @@ mod tests {
             inks: HashMap::new(),
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let req = make_req("test");
@@ -2573,6 +2724,7 @@ mod tests {
             inks: HashMap::new(),
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let req = make_req("test");
@@ -2612,6 +2764,7 @@ mod tests {
             inks: HashMap::new(),
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let mut req = make_req("test");
@@ -2647,6 +2800,7 @@ mod tests {
             inks: HashMap::new(),
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let mut req = make_req("test");
@@ -2678,6 +2832,7 @@ mod tests {
             inks: HashMap::new(),
             event_tx: None,
             default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
         };
         let mut req = make_req("test");
