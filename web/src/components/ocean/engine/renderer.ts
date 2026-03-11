@@ -135,7 +135,7 @@ function drawPixelBubble(
   ctx.globalAlpha = 1;
 }
 
-/** Draw seabed decorations (seaweed, shells, starfish). */
+/** Draw seabed decorations (seaweed, shells, starfish) anchored to the canvas bottom. */
 function drawDecorations(ctx: CanvasRenderingContext2D, world: WorldState, sprites: Sprites): void {
   const { camera } = world;
 
@@ -143,16 +143,20 @@ function drawDecorations(ctx: CanvasRenderingContext2D, world: WorldState, sprit
     const sprite = sprites.decor[d.type];
     if (!sprite) continue;
 
-    const [sx, sy] = worldToScreen(camera, d.x, d.y);
+    // Use world X for horizontal position, but anchor to canvas bottom (sand line)
+    const [sx] = worldToScreen(camera, d.x, d.y);
     if (sx < -50 || sx > camera.width + 50) continue;
 
-    const scale = camera.zoom;
+    const scale = camera.zoom * 1.2;
     const drawW = sprite.width * scale;
     const drawH = sprite.height * scale;
 
+    // Place with bottom edge at canvas bottom, slightly buried in sand
+    const bottomY = camera.height + drawH * 0.15;
+
     ctx.save();
     ctx.globalAlpha = 0.7;
-    ctx.drawImage(sprite, sx - drawW / 2, sy - drawH, drawW, drawH);
+    ctx.drawImage(sprite, sx - drawW / 2, bottomY - drawH, drawW, drawH);
     ctx.restore();
   }
 }

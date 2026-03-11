@@ -242,16 +242,18 @@ export function createWorld(width: number, height: number): WorldState {
 function generateDecorations(nodes: NodeLandmark[]): Decoration[] {
   if (nodes.length === 0) return [];
 
-  const minX = Math.min(...nodes.map((n) => n.x)) - 120;
-  const maxX = Math.max(...nodes.map((n) => n.x)) + 120;
+  const minX = Math.min(...nodes.map((n) => n.x)) - 300;
+  const maxX = Math.max(...nodes.map((n) => n.x)) + 300;
   const types = ['seaweed-1', 'seaweed-2', 'shell-1', 'shell-2', 'starfish'];
-  const count = Math.max(8, nodes.length * 5);
+  const count = Math.max(15, nodes.length * 8);
   const decorations: Decoration[] = [];
 
+  // Spread evenly across the range with jitter to avoid clumping
+  const spacing = (maxX - minX) / count;
   for (let i = 0; i < count; i++) {
     decorations.push({
       type: types[Math.floor(Math.random() * types.length)],
-      x: randomBetween(minX, maxX),
+      x: minX + i * spacing + randomBetween(-spacing * 0.4, spacing * 0.4),
       y: SEABED_Y + randomBetween(-5, 5),
     });
   }
