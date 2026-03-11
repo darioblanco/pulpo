@@ -6,10 +6,12 @@ pub mod health;
 pub mod inks;
 pub mod knowledge;
 pub mod node;
+pub mod notifications;
 pub mod peers;
 pub mod routes;
 pub mod sessions;
 pub mod static_files;
+pub mod watchdog;
 pub mod ws;
 
 use std::path::PathBuf;

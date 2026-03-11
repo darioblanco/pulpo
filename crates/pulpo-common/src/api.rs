@@ -219,6 +219,32 @@ pub struct UpdateConfigResponse {
     pub restart_required: bool,
 }
 
+/// Update request for watchdog settings. All fields optional — only provided fields change.
+#[derive(Debug, Default, Deserialize)]
+pub struct UpdateWatchdogRequest {
+    pub enabled: Option<bool>,
+    pub memory_threshold: Option<u8>,
+    pub check_interval_secs: Option<u64>,
+    pub breach_count: Option<u32>,
+    pub idle_timeout_secs: Option<u64>,
+    pub idle_action: Option<String>,
+}
+
+/// Update request for notification settings.
+#[derive(Debug, Default, Deserialize)]
+pub struct UpdateNotificationsRequest {
+    pub discord: Option<DiscordWebhookUpdateRequest>,
+    pub webhooks: Option<Vec<WebhookEndpointUpdateRequest>>,
+}
+
+/// Discord webhook update — set url to empty string to remove.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DiscordWebhookUpdateRequest {
+    pub webhook_url: String,
+    #[serde(default)]
+    pub events: Vec<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AddPeerRequest {
     pub name: String,
@@ -1599,5 +1625,85 @@ mod tests {
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert!(resp.session_defaults.provider.is_none());
         assert!(resp.session_defaults.model.is_none());
+    }
+
+    #[test]
+    fn test_update_watchdog_request_deserialize() {
+        let json = r#"{"enabled":false,"memory_threshold":80,"idle_action":"kill"}"#;
+        let req: UpdateWatchdogRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.enabled, Some(false));
+        assert_eq!(req.memory_threshold, Some(80));
+        assert_eq!(req.idle_action.as_deref(), Some("kill"));
+        assert!(req.check_interval_secs.is_none());
+    }
+
+    #[test]
+    fn test_update_watchdog_request_empty() {
+        let json = "{}";
+        let req: UpdateWatchdogRequest = serde_json::from_str(json).unwrap();
+        assert!(req.enabled.is_none());
+        assert!(req.memory_threshold.is_none());
+    }
+
+    #[test]
+    fn test_update_watchdog_request_debug() {
+        let req = UpdateWatchdogRequest {
+            enabled: Some(true),
+            ..Default::default()
+        };
+        let debug = format!("{req:?}");
+        assert!(debug.contains("true"));
+    }
+
+    #[test]
+    fn test_update_notifications_request_deserialize() {
+        let json = r#"{"discord":{"webhook_url":"https://test.com","events":["dead"]}}"#;
+        let req: UpdateNotificationsRequest = serde_json::from_str(json).unwrap();
+        let discord = req.discord.unwrap();
+        assert_eq!(discord.webhook_url, "https://test.com");
+        assert_eq!(discord.events, vec!["dead"]);
+        assert!(req.webhooks.is_none());
+    }
+
+    #[test]
+    fn test_update_notifications_request_empty() {
+        let json = "{}";
+        let req: UpdateNotificationsRequest = serde_json::from_str(json).unwrap();
+        assert!(req.discord.is_none());
+        assert!(req.webhooks.is_none());
+    }
+
+    #[test]
+    fn test_update_notifications_request_debug() {
+        let req = UpdateNotificationsRequest::default();
+        let debug = format!("{req:?}");
+        assert!(debug.contains("UpdateNotificationsRequest"));
+    }
+
+    #[test]
+    fn test_discord_webhook_update_request_deserialize() {
+        let json = r#"{"webhook_url":"https://test.com","events":["running","dead"]}"#;
+        let req: DiscordWebhookUpdateRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.webhook_url, "https://test.com");
+        assert_eq!(req.events, vec!["running", "dead"]);
+    }
+
+    #[test]
+    fn test_discord_webhook_update_request_empty_events() {
+        let json = r#"{"webhook_url":"https://test.com"}"#;
+        let req: DiscordWebhookUpdateRequest = serde_json::from_str(json).unwrap();
+        assert!(req.events.is_empty());
+    }
+
+    #[test]
+    fn test_discord_webhook_update_request_debug_clone() {
+        let req = DiscordWebhookUpdateRequest {
+            webhook_url: "https://test.com".into(),
+            events: vec![],
+        };
+        #[allow(clippy::redundant_clone)]
+        let cloned = req.clone();
+        let debug = format!("{cloned:?}");
+        assert!(debug.contains("test.com"));
     }
 }

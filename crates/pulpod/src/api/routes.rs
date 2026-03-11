@@ -14,9 +14,11 @@ use super::health;
 use super::inks;
 use super::knowledge;
 use super::node;
+use super::notifications;
 use super::peers;
 use super::sessions;
 use super::static_files;
+use super::watchdog;
 use super::ws;
 
 pub fn build(state: Arc<AppState>) -> Router {
@@ -33,6 +35,14 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route(
             "/api/v1/config",
             get(config::get_config).put(config::update_config),
+        )
+        .route(
+            "/api/v1/watchdog",
+            get(watchdog::get_watchdog).put(watchdog::update_watchdog),
+        )
+        .route(
+            "/api/v1/notifications",
+            get(notifications::get_notifications).put(notifications::update_notifications),
         )
         .route(
             "/api/v1/peers",
@@ -1472,5 +1482,77 @@ mod tests {
         assert!(text.contains("event: session"));
         assert!(text.contains("sse-test-id"));
         assert!(text.contains("sse-session"));
+    }
+
+    #[tokio::test]
+    async fn test_get_watchdog() {
+        let server = test_server().await;
+        let resp = server.get("/api/v1/watchdog").await;
+        resp.assert_status_ok();
+        let body: serde_json::Value = resp.json();
+        assert_eq!(body["enabled"], true);
+        assert_eq!(body["memory_threshold"], 90);
+        assert_eq!(body["idle_action"], "alert");
+    }
+
+    #[tokio::test]
+    async fn test_put_watchdog() {
+        let server = test_server().await;
+        let resp = server
+            .put("/api/v1/watchdog")
+            .json(&serde_json::json!({
+                "enabled": false,
+                "memory_threshold": 75,
+                "idle_action": "kill"
+            }))
+            .await;
+        resp.assert_status_ok();
+        let body: serde_json::Value = resp.json();
+        assert_eq!(body["enabled"], false);
+        assert_eq!(body["memory_threshold"], 75);
+        assert_eq!(body["idle_action"], "kill");
+    }
+
+    #[tokio::test]
+    async fn test_put_watchdog_validation_error() {
+        let server = test_server().await;
+        let resp = server
+            .put("/api/v1/watchdog")
+            .json(&serde_json::json!({
+                "memory_threshold": 0
+            }))
+            .await;
+        resp.assert_status(StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_get_notifications() {
+        let server = test_server().await;
+        let resp = server.get("/api/v1/notifications").await;
+        resp.assert_status_ok();
+        let body: serde_json::Value = resp.json();
+        assert!(body["discord"].is_null());
+        assert_eq!(body["webhooks"], serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn test_put_notifications() {
+        let server = test_server().await;
+        let resp = server
+            .put("/api/v1/notifications")
+            .json(&serde_json::json!({
+                "discord": {
+                    "webhook_url": "https://discord.com/api/webhooks/test",
+                    "events": ["running"]
+                }
+            }))
+            .await;
+        resp.assert_status_ok();
+        let body: serde_json::Value = resp.json();
+        assert_eq!(
+            body["discord"]["webhook_url"],
+            "https://discord.com/api/webhooks/test"
+        );
+        assert_eq!(body["discord"]["events"], serde_json::json!(["running"]));
     }
 }
