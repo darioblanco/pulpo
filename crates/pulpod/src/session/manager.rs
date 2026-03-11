@@ -2690,4 +2690,236 @@ mod tests {
         assert!(sp.starts_with("Be careful with auth module."));
         assert!(sp.contains("Knowledge from previous sessions"));
     }
+
+    // ───────────────────────────────────────────────────────────
+    // Stale / dead edge-case tests
+    // ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_kill_backend_error_leaves_session_running() {
+        // When backend.kill_session fails, the session must NOT be marked Dead.
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_kill_error()).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+
+        let result = mgr.kill_session(&id).await;
+        assert!(result.is_err());
+
+        // Session should still be Running (not Dead)
+        let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn test_kill_already_dead_session() {
+        // Killing a session that is already Dead should still succeed
+        // (backend kill is called, DB update is idempotent).
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+
+        // First kill — succeeds
+        mgr.kill_session(&id).await.unwrap();
+        let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Dead);
+
+        // Second kill — backend kill called again, DB stays Dead
+        backend.calls.lock().unwrap().clear();
+        mgr.kill_session(&id).await.unwrap();
+        let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Dead);
+
+        let has_kill = backend
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.starts_with("kill:"));
+        assert!(has_kill);
+    }
+
+    #[tokio::test]
+    async fn test_kill_stale_session() {
+        // Killing a stale session should succeed even if backend session is already gone.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+
+        // Mark stale via get_session
+        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Stale);
+
+        // Kill the stale session — backend kill is still called (best-effort cleanup)
+        backend.calls.lock().unwrap().clear();
+        mgr.kill_session(&id).await.unwrap();
+        let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Dead);
+    }
+
+    #[tokio::test]
+    async fn test_kill_stale_session_backend_error_propagates() {
+        // When killing a stale session and backend.kill fails, error propagates
+        // and session status should NOT change.
+        let backend = MockBackend::new().with_alive(false);
+        let (mgr, backend_ref, _pool) = test_manager(backend).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+
+        // Mark stale
+        let _ = mgr.get_session(&id).await.unwrap().unwrap();
+
+        // Now make kill fail
+        *backend_ref.kill_result.lock().unwrap() = Err(anyhow!("kill failed"));
+        let result = mgr.kill_session(&id).await;
+        assert!(result.is_err());
+
+        // Session remains Stale (not Dead, not Running)
+        let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Stale);
+    }
+
+    #[tokio::test]
+    async fn test_resume_backend_failure_leaves_session_stale() {
+        // When resume's backend.create_session fails, the session must stay Stale
+        // (not be marked Running).
+        let backend = MockBackend::new().with_alive(false);
+        let (mgr, backend_ref, _pool) = test_manager(backend).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+
+        // Mark stale
+        let _ = mgr.get_session(&id).await.unwrap();
+
+        // Make create fail for resume
+        *backend_ref.create_result.lock().unwrap() = Err(anyhow!("backend not found"));
+        let result = mgr.resume_session(&id).await;
+        assert!(result.is_err());
+
+        // Session must still be Stale
+        let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Stale);
+    }
+
+    #[tokio::test]
+    async fn test_get_session_reconciles_running_to_stale() {
+        // Simulates daemon restart: session is Running in DB but the backend
+        // process (tmux) is gone. get_session should detect this and mark Stale.
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+
+        // Session was just created as Running. Backend says it's dead.
+        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(
+            fetched.status,
+            SessionStatus::Stale,
+            "Running session with dead backend should be reconciled to Stale"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_reconciles_running_to_stale() {
+        // Same as above but via list_sessions — all Running sessions with dead
+        // backend should be reconciled to Stale.
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let (s1, _) = mgr.create_session(make_req("test1")).await.unwrap();
+        let (s2, _) = mgr.create_session(make_req("test2")).await.unwrap();
+
+        let sessions = mgr.list_sessions().await.unwrap();
+        for s in &sessions {
+            assert_eq!(
+                s.status,
+                SessionStatus::Stale,
+                "Session {} should be Stale after reconciliation",
+                s.name
+            );
+        }
+
+        // Verify DB is also updated (not just in-memory)
+        let db_s1 = mgr
+            .store
+            .get_session(&s1.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let db_s2 = mgr
+            .store
+            .get_session(&s2.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(db_s1.status, SessionStatus::Stale);
+        assert_eq!(db_s2.status, SessionStatus::Stale);
+    }
+
+    #[tokio::test]
+    async fn test_delete_session_tolerates_backend_kill_failure() {
+        // delete_session does best-effort backend cleanup. Even if kill fails,
+        // the session should still be deleted from the DB.
+        let backend = MockBackend::new().with_alive(false);
+        let (mgr, backend_ref, _pool) = test_manager(backend).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+
+        // Mark stale first (delete requires non-running status)
+        let _ = mgr.get_session(&id).await.unwrap();
+
+        // Make kill fail
+        *backend_ref.kill_result.lock().unwrap() = Err(anyhow!("kill failed"));
+
+        // Delete should still succeed (kill failure is best-effort)
+        mgr.delete_session(&id).await.unwrap();
+        let fetched = mgr.store.get_session(&id).await.unwrap();
+        assert!(fetched.is_none(), "Session should be deleted from DB");
+    }
+
+    #[tokio::test]
+    async fn test_resume_completed_session_fails() {
+        // A completed session (not stale) should not be resumable.
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+
+        // Mark completed
+        mgr.store
+            .update_session_status(&id, SessionStatus::Completed)
+            .await
+            .unwrap();
+
+        let result = mgr.resume_session(&id).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not stale"));
+    }
+
+    #[tokio::test]
+    async fn test_resume_dead_session_fails() {
+        // A dead session should not be resumable.
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+
+        mgr.kill_session(&id).await.unwrap();
+
+        let result = mgr.resume_session(&id).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not stale"));
+    }
+
+    #[tokio::test]
+    async fn test_stale_detection_skips_non_running_statuses() {
+        // check_and_mark_stale should only affect Running sessions.
+        // Dead, Completed, Stale, Creating sessions should not be touched.
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+
+        // Kill the session
+        // (need alive=true for kill to proceed since we call backend.kill)
+        // Actually the mock kill doesn't check is_alive, so this works.
+        mgr.kill_session(&id).await.unwrap();
+
+        // get_session on a Dead session should not transition it further
+        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Dead);
+    }
 }

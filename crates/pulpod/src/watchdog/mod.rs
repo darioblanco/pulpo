@@ -2283,4 +2283,183 @@ mod tests {
         let dyn_backend: Arc<dyn Backend> = Arc::new(backend);
         check_session_idle(&dyn_backend, &store, &idle_config, &session, now, timeout).await;
     }
+
+    // ───────────────────────────────────────────────────────────
+    // Stale / dead edge-case tests
+    // ───────────────────────────────────────────────────────────
+
+    /// Backend that fails kill only for specific session names.
+    struct SelectiveKillBackend {
+        fail_names: Vec<String>,
+        kill_calls: Mutex<Vec<String>>,
+    }
+
+    impl SelectiveKillBackend {
+        fn new(fail_names: Vec<&str>) -> Self {
+            Self {
+                fail_names: fail_names.into_iter().map(Into::into).collect(),
+                kill_calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl Backend for SelectiveKillBackend {
+        fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn kill_session(&self, name: &str) -> Result<()> {
+            self.kill_calls.lock().unwrap().push(name.into());
+            if self.fail_names.iter().any(|n| n == name) {
+                anyhow::bail!("selective kill failed for {name}");
+            }
+            Ok(())
+        }
+        fn is_alive(&self, _: &str) -> Result<bool> {
+            Ok(true)
+        }
+        fn capture_output(&self, _: &str, _: usize) -> Result<String> {
+            Ok("output".into())
+        }
+        fn send_input(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_intervene_partial_kill_failure() {
+        // When multiple sessions are running and one kill fails, the other
+        // should still be killed and recorded as an intervention.
+        let backend = Arc::new(SelectiveKillBackend::new(vec!["fail-session"]));
+        let store = test_store().await;
+
+        create_running_session(&store, "success-session").await;
+        create_running_session(&store, "fail-session").await;
+
+        let snapshot = MemorySnapshot {
+            available_mb: 100,
+            total_mb: 8192,
+        };
+
+        intervene(&(backend.clone() as Arc<dyn Backend>), &store, &snapshot).await;
+
+        // Both sessions should have been attempted
+        let call_count = backend.kill_calls.lock().unwrap().len();
+        assert_eq!(call_count, 2);
+
+        // success-session should be Dead with intervention reason
+        let success = store.get_session("success-session").await.unwrap().unwrap();
+        assert_eq!(success.status, SessionStatus::Dead);
+        assert!(success.intervention_reason.is_some());
+
+        // fail-session should remain Running (kill failed)
+        let fail = store.get_session("fail-session").await.unwrap().unwrap();
+        assert_eq!(fail.status, SessionStatus::Running);
+        assert!(fail.intervention_reason.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_intervene_skips_non_running_sessions() {
+        // intervene() should only kill Running sessions, ignoring Dead/Stale/Completed.
+        let backend = Arc::new(MockBackend::new());
+        let store = test_store().await;
+
+        let running = create_running_session(&store, "running-one").await;
+        let stale = create_running_session(&store, "stale-one").await;
+        store
+            .update_session_status(&stale.id.to_string(), SessionStatus::Stale)
+            .await
+            .unwrap();
+
+        let snapshot = MemorySnapshot {
+            available_mb: 100,
+            total_mb: 8192,
+        };
+
+        intervene(&(backend.clone() as Arc<dyn Backend>), &store, &snapshot).await;
+
+        // Only running-one should be killed
+        let kills: Vec<String> = backend.kill_calls.lock().unwrap().clone();
+        assert_eq!(kills.len(), 1);
+        assert_eq!(kills[0], "running-one");
+
+        // Verify statuses
+        let r = store
+            .get_session(&running.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(r.status, SessionStatus::Dead);
+
+        let s = store
+            .get_session(&stale.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(s.status, SessionStatus::Stale);
+    }
+
+    #[tokio::test]
+    async fn test_idle_kill_succeeds_but_session_disappears() {
+        // Edge case: backend kill succeeds, but the session was deleted from
+        // the DB between the list and the intervention. The store update should
+        // fail gracefully (warn, not panic).
+        let backend = Arc::new(MockBackend::new());
+        let store = test_store().await;
+
+        let session = Session {
+            id: uuid::Uuid::new_v4(),
+            name: "vanishing".into(),
+            workdir: "/tmp/repo".into(),
+            provider: Provider::Claude,
+            prompt: "test".into(),
+            status: SessionStatus::Running,
+            mode: SessionMode::Interactive,
+            conversation_id: None,
+            exit_code: None,
+            backend_session_id: Some("vanishing".into()),
+            output_snapshot: Some("test output".into()),
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+            idle_since: None,
+            waiting_for_input: false,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        // Don't insert — simulate the session vanishing between list and kill.
+        // handle_idle_session gets a session struct but the DB no longer has it.
+        let idle_config = IdleConfig {
+            enabled: true,
+            timeout_secs: 600,
+            action: IdleAction::Kill,
+        };
+        let now = chrono::Utc::now();
+        let timeout = chrono::Duration::seconds(600);
+        let dyn_backend: Arc<dyn Backend> = backend;
+
+        // Should not panic — kill succeeds, store update warns
+        handle_idle_session(
+            &dyn_backend,
+            &store,
+            &idle_config,
+            &session,
+            "vanishing",
+            now,
+            timeout,
+        )
+        .await;
+    }
 }
