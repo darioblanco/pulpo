@@ -251,10 +251,14 @@ pub struct AddPeerRequest {
     pub address: String,
 }
 
+use crate::session::InterventionCode;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct InterventionEventResponse {
     pub id: i64,
     pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<InterventionCode>,
     pub reason: String,
     pub created_at: String,
 }
@@ -945,6 +949,7 @@ mod tests {
         let event = InterventionEventResponse {
             id: 1,
             session_id: "abc-123".into(),
+            code: None,
             reason: "Memory usage 95%".into(),
             created_at: "2026-01-01T00:00:00Z".into(),
         };
@@ -963,6 +968,7 @@ mod tests {
         let event = InterventionEventResponse {
             id: 42,
             session_id: "test".into(),
+            code: None,
             reason: "reason".into(),
             created_at: "now".into(),
         };
@@ -975,6 +981,7 @@ mod tests {
         let event = InterventionEventResponse {
             id: 1,
             session_id: "s".into(),
+            code: None,
             reason: "r".into(),
             created_at: "c".into(),
         };
@@ -982,6 +989,34 @@ mod tests {
         let cloned = event.clone();
         assert_eq!(cloned.id, 1);
         assert_eq!(cloned.session_id, "s");
+    }
+
+    #[test]
+    fn test_intervention_event_response_with_code() {
+        let event = InterventionEventResponse {
+            id: 1,
+            session_id: "abc".into(),
+            code: Some(InterventionCode::MemoryPressure),
+            reason: "Memory 95%".into(),
+            created_at: "2026-01-01T00:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("memory_pressure"));
+        let deserialized: InterventionEventResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.code, Some(InterventionCode::MemoryPressure));
+    }
+
+    #[test]
+    fn test_intervention_event_response_code_none_skipped() {
+        let event = InterventionEventResponse {
+            id: 1,
+            session_id: "abc".into(),
+            code: None,
+            reason: "reason".into(),
+            created_at: "now".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(!json.contains("code"));
     }
 
     #[test]
@@ -1248,6 +1283,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -1291,6 +1327,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -1334,6 +1371,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,

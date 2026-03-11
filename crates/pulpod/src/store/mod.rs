@@ -8,11 +8,14 @@ use pulpo_common::session::{Provider, Session, SessionMode, SessionStatus};
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 use uuid::Uuid;
 
+use pulpo_common::session::InterventionCode;
+
 /// A single intervention event for audit trail purposes.
 #[derive(Debug, Clone)]
 pub struct InterventionEvent {
     pub id: i64,
     pub session_id: String,
+    pub code: Option<InterventionCode>,
     pub reason: String,
     pub created_at: DateTime<Utc>,
 }
@@ -188,6 +191,30 @@ impl Store {
                 .await?;
         }
 
+        // Idempotent migration: add intervention_code column to sessions
+        let has_intervention_code: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'intervention_code'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_intervention_code == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN intervention_code TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+
+        // Idempotent migration: add code column to intervention_events
+        let has_event_code: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('intervention_events') WHERE name = 'code'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_event_code == 0 {
+            sqlx::query("ALTER TABLE intervention_events ADD COLUMN code TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+
         // Idempotent migration: rename persona → ink
         let has_persona: i32 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'persona'",
@@ -231,6 +258,7 @@ impl Store {
             .as_ref()
             .map(serde_json::to_string)
             .transpose()?;
+        let intervention_code_str = session.intervention_code.map(|c| c.to_string());
         let intervention_at_str = session.intervention_at.map(|dt| dt.to_rfc3339());
         let last_output_at_str = session.last_output_at.map(|dt| dt.to_rfc3339());
         let idle_since_str = session.idle_since.map(|dt| dt.to_rfc3339());
@@ -242,9 +270,9 @@ impl Store {
                 output_snapshot, guard_config,
                 model, allowed_tools, system_prompt, metadata, ink,
                 max_turns, max_budget_usd, output_format,
-                intervention_reason, intervention_at,
+                intervention_code, intervention_reason, intervention_at,
                 last_output_at, idle_since, waiting_for_input, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
         .bind(&session.name)
@@ -266,6 +294,7 @@ impl Store {
         .bind(max_turns_i32)
         .bind(session.max_budget_usd)
         .bind(&session.output_format)
+        .bind(&intervention_code_str)
         .bind(&session.intervention_reason)
         .bind(&intervention_at_str)
         .bind(&last_output_at_str)
@@ -380,11 +409,18 @@ impl Store {
         &self.data_dir
     }
 
-    pub async fn update_session_intervention(&self, id: &str, reason: &str) -> Result<()> {
+    pub async fn update_session_intervention(
+        &self,
+        id: &str,
+        code: InterventionCode,
+        reason: &str,
+    ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
+        let code_str = code.to_string();
         sqlx::query(
-            "UPDATE sessions SET intervention_reason = ?, intervention_at = ?, status = 'dead', updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET intervention_code = ?, intervention_reason = ?, intervention_at = ?, status = 'dead', updated_at = ? WHERE id = ?",
         )
+        .bind(&code_str)
         .bind(reason)
         .bind(&now)
         .bind(&now)
@@ -393,9 +429,10 @@ impl Store {
         .await?;
         // Append to audit log
         sqlx::query(
-            "INSERT INTO intervention_events (session_id, reason, created_at) VALUES (?, ?, ?)",
+            "INSERT INTO intervention_events (session_id, code, reason, created_at) VALUES (?, ?, ?, ?)",
         )
         .bind(id)
+        .bind(&code_str)
         .bind(reason)
         .bind(&now)
         .execute(&self.pool)
@@ -408,7 +445,7 @@ impl Store {
         session_id: &str,
     ) -> Result<Vec<InterventionEvent>> {
         let rows = sqlx::query(
-            "SELECT id, session_id, reason, created_at FROM intervention_events WHERE session_id = ? ORDER BY id ASC",
+            "SELECT id, session_id, code, reason, created_at FROM intervention_events WHERE session_id = ? ORDER BY id ASC",
         )
         .bind(session_id)
         .fetch_all(&self.pool)
@@ -418,7 +455,7 @@ impl Store {
 
     pub async fn clear_session_intervention(&self, id: &str) -> Result<()> {
         sqlx::query(
-            "UPDATE sessions SET intervention_reason = NULL, intervention_at = NULL, updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET intervention_code = NULL, intervention_reason = NULL, intervention_at = NULL, updated_at = ? WHERE id = ?",
         )
         .bind(Utc::now().to_rfc3339())
         .bind(id)
@@ -502,6 +539,14 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
         .map(|s| serde_json::from_str::<std::collections::HashMap<String, String>>(&s))
         .transpose()?;
 
+    let intervention_code_str: Option<String> = row.get("intervention_code");
+    let intervention_code = intervention_code_str
+        .map(|s| {
+            s.parse::<InterventionCode>()
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .transpose()?;
+
     let intervention_at_str: Option<String> = row.get("intervention_at");
     let intervention_at = intervention_at_str
         .map(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)))
@@ -537,6 +582,7 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
         },
         max_budget_usd: row.get("max_budget_usd"),
         output_format: row.get("output_format"),
+        intervention_code,
         intervention_reason: row.get("intervention_reason"),
         intervention_at,
         last_output_at: {
@@ -560,9 +606,17 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
 
 fn row_to_intervention_event(row: &SqliteRow) -> Result<InterventionEvent> {
     let created_str: String = row.get("created_at");
+    let code_str: Option<String> = row.get("code");
+    let code = code_str
+        .map(|s| {
+            s.parse::<InterventionCode>()
+                .map_err(|e| anyhow::anyhow!(e))
+        })
+        .transpose()?;
     Ok(InterventionEvent {
         id: row.get("id"),
         session_id: row.get("session_id"),
+        code,
         reason: row.get("reason"),
         created_at: DateTime::parse_from_rfc3339(&created_str)?.with_timezone(&Utc),
     })
@@ -595,6 +649,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -817,6 +872,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -1303,7 +1359,11 @@ mod tests {
         store.insert_session(&session).await.unwrap();
 
         store
-            .update_session_intervention(&session.id.to_string(), "Memory usage 95% (512MB/8192MB)")
+            .update_session_intervention(
+                &session.id.to_string(),
+                InterventionCode::MemoryPressure,
+                "Memory usage 95% (512MB/8192MB)",
+            )
             .await
             .unwrap();
 
@@ -1313,6 +1373,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(fetched.status, SessionStatus::Dead);
+        assert_eq!(
+            fetched.intervention_code,
+            Some(InterventionCode::MemoryPressure)
+        );
         assert_eq!(
             fetched.intervention_reason.as_deref(),
             Some("Memory usage 95% (512MB/8192MB)")
@@ -1327,7 +1391,9 @@ mod tests {
             .execute(store.pool())
             .await
             .unwrap();
-        let result = store.update_session_intervention("test-id", "reason").await;
+        let result = store
+            .update_session_intervention("test-id", InterventionCode::UserKill, "reason")
+            .await;
         assert!(result.is_err());
     }
 
@@ -1339,7 +1405,11 @@ mod tests {
 
         // Set intervention first
         store
-            .update_session_intervention(&session.id.to_string(), "test reason")
+            .update_session_intervention(
+                &session.id.to_string(),
+                InterventionCode::UserKill,
+                "test reason",
+            )
             .await
             .unwrap();
 
@@ -1354,6 +1424,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+        assert!(fetched.intervention_code.is_none());
         assert!(fetched.intervention_reason.is_none());
         assert!(fetched.intervention_at.is_none());
     }
@@ -1466,7 +1537,7 @@ mod tests {
 
         // First intervention
         store
-            .update_session_intervention(&sid, "Memory 95%")
+            .update_session_intervention(&sid, InterventionCode::MemoryPressure, "Memory 95%")
             .await
             .unwrap();
 
@@ -1478,13 +1549,15 @@ mod tests {
             .await
             .unwrap();
         store
-            .update_session_intervention(&sid, "Memory 98%")
+            .update_session_intervention(&sid, InterventionCode::MemoryPressure, "Memory 98%")
             .await
             .unwrap();
 
         let events = store.list_intervention_events(&sid).await.unwrap();
         assert_eq!(events.len(), 2);
+        assert_eq!(events[0].code, Some(InterventionCode::MemoryPressure));
         assert_eq!(events[0].reason, "Memory 95%");
+        assert_eq!(events[1].code, Some(InterventionCode::MemoryPressure));
         assert_eq!(events[1].reason, "Memory 98%");
         assert_eq!(events[0].session_id, sid);
         assert_eq!(events[1].session_id, sid);
@@ -1517,6 +1590,7 @@ mod tests {
         let event = InterventionEvent {
             id: 1,
             session_id: "test-id".into(),
+            code: Some(InterventionCode::MemoryPressure),
             reason: "Memory 95%".into(),
             created_at: Utc::now(),
         };
@@ -1935,5 +2009,97 @@ mod tests {
             .unwrap();
         let s = store.get_session("waiting-test").await.unwrap().unwrap();
         assert!(!s.waiting_for_input);
+    }
+
+    #[tokio::test]
+    async fn test_intervention_code_roundtrip() {
+        let store = test_store().await;
+        let mut session = make_session("code-roundtrip");
+        session.intervention_code = Some(InterventionCode::IdleTimeout);
+        session.intervention_reason = Some("Idle for 10 minutes".into());
+        session.intervention_at = Some(Utc::now());
+        store.insert_session(&session).await.unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fetched.intervention_code,
+            Some(InterventionCode::IdleTimeout)
+        );
+        assert_eq!(
+            fetched.intervention_reason.as_deref(),
+            Some("Idle for 10 minutes")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_intervention_code_none_roundtrip() {
+        let store = test_store().await;
+        let session = make_session("code-none");
+        store.insert_session(&session).await.unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fetched.intervention_code.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_row_to_session_invalid_intervention_code() {
+        let store = test_store().await;
+        sqlx::query(
+            "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
+                intervention_code, created_at, updated_at)
+             VALUES (?, 'test', '/tmp', 'claude', 'test', 'running', 'interactive',
+                'invalid_code', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
+        )
+        .bind(TEST_UUID)
+        .execute(store.pool())
+        .await
+        .unwrap();
+        let result = store.get_session(TEST_UUID).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_intervention_event_code_roundtrip() {
+        let store = test_store().await;
+        let session = make_session("event-code");
+        store.insert_session(&session).await.unwrap();
+        let sid = session.id.to_string();
+
+        store
+            .update_session_intervention(&sid, InterventionCode::IdleTimeout, "Idle 15 min")
+            .await
+            .unwrap();
+
+        let events = store.list_intervention_events(&sid).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].code, Some(InterventionCode::IdleTimeout));
+        assert_eq!(events[0].reason, "Idle 15 min");
+    }
+
+    #[tokio::test]
+    async fn test_intervention_event_user_kill_code() {
+        let store = test_store().await;
+        let session = make_session("user-kill");
+        store.insert_session(&session).await.unwrap();
+        let sid = session.id.to_string();
+
+        store
+            .update_session_intervention(&sid, InterventionCode::UserKill, "Manual kill")
+            .await
+            .unwrap();
+
+        let fetched = store.get_session(&sid).await.unwrap().unwrap();
+        assert_eq!(fetched.intervention_code, Some(InterventionCode::UserKill));
+
+        let events = store.list_intervention_events(&sid).await.unwrap();
+        assert_eq!(events[0].code, Some(InterventionCode::UserKill));
     }
 }

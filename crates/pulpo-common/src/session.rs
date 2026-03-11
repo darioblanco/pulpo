@@ -10,6 +10,41 @@ use std::collections::HashMap;
 
 use crate::guard::GuardConfig;
 
+/// Machine-readable intervention reason codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InterventionCode {
+    /// Killed due to system memory pressure exceeding threshold.
+    MemoryPressure,
+    /// Killed due to session idle timeout.
+    IdleTimeout,
+    /// Manually killed by user via API/CLI.
+    UserKill,
+}
+
+impl fmt::Display for InterventionCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MemoryPressure => write!(f, "memory_pressure"),
+            Self::IdleTimeout => write!(f, "idle_timeout"),
+            Self::UserKill => write!(f, "user_kill"),
+        }
+    }
+}
+
+impl FromStr for InterventionCode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "memory_pressure" => Ok(Self::MemoryPressure),
+            "idle_timeout" => Ok(Self::IdleTimeout),
+            "user_kill" => Ok(Self::UserKill),
+            other => Err(format!("unknown intervention code: {other}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Provider {
@@ -132,6 +167,7 @@ pub struct Session {
     pub max_turns: Option<u32>,
     pub max_budget_usd: Option<f64>,
     pub output_format: Option<String>,
+    pub intervention_code: Option<InterventionCode>,
     pub intervention_reason: Option<String>,
     pub intervention_at: Option<DateTime<Utc>>,
     pub last_output_at: Option<DateTime<Utc>>,
@@ -169,6 +205,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -450,6 +487,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -518,6 +556,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -554,6 +593,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -593,6 +633,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -618,5 +659,111 @@ mod tests {
             Some(&"123".into())
         );
         assert_eq!(deserialized.ink, Some("coder".into()));
+    }
+
+    #[test]
+    fn test_intervention_code_serialize() {
+        assert_eq!(
+            serde_json::to_string(&InterventionCode::MemoryPressure).unwrap(),
+            "\"memory_pressure\""
+        );
+        assert_eq!(
+            serde_json::to_string(&InterventionCode::IdleTimeout).unwrap(),
+            "\"idle_timeout\""
+        );
+        assert_eq!(
+            serde_json::to_string(&InterventionCode::UserKill).unwrap(),
+            "\"user_kill\""
+        );
+    }
+
+    #[test]
+    fn test_intervention_code_deserialize() {
+        assert_eq!(
+            serde_json::from_str::<InterventionCode>("\"memory_pressure\"").unwrap(),
+            InterventionCode::MemoryPressure
+        );
+        assert_eq!(
+            serde_json::from_str::<InterventionCode>("\"idle_timeout\"").unwrap(),
+            InterventionCode::IdleTimeout
+        );
+        assert_eq!(
+            serde_json::from_str::<InterventionCode>("\"user_kill\"").unwrap(),
+            InterventionCode::UserKill
+        );
+    }
+
+    #[test]
+    fn test_intervention_code_invalid_deserialize() {
+        assert!(serde_json::from_str::<InterventionCode>("\"invalid\"").is_err());
+    }
+
+    #[test]
+    fn test_intervention_code_display() {
+        assert_eq!(
+            InterventionCode::MemoryPressure.to_string(),
+            "memory_pressure"
+        );
+        assert_eq!(InterventionCode::IdleTimeout.to_string(), "idle_timeout");
+        assert_eq!(InterventionCode::UserKill.to_string(), "user_kill");
+    }
+
+    #[test]
+    fn test_intervention_code_from_str() {
+        assert_eq!(
+            "memory_pressure".parse::<InterventionCode>().unwrap(),
+            InterventionCode::MemoryPressure
+        );
+        assert_eq!(
+            "idle_timeout".parse::<InterventionCode>().unwrap(),
+            InterventionCode::IdleTimeout
+        );
+        assert_eq!(
+            "user_kill".parse::<InterventionCode>().unwrap(),
+            InterventionCode::UserKill
+        );
+    }
+
+    #[test]
+    fn test_intervention_code_from_str_invalid() {
+        let err = "invalid".parse::<InterventionCode>().unwrap_err();
+        assert!(err.contains("unknown intervention code"));
+    }
+
+    #[test]
+    fn test_intervention_code_clone_and_copy() {
+        let c = InterventionCode::MemoryPressure;
+        let c2 = c;
+        #[allow(clippy::clone_on_copy)]
+        let c3 = c.clone();
+        assert_eq!(c, c2);
+        assert_eq!(c, c3);
+    }
+
+    #[test]
+    fn test_intervention_code_debug() {
+        assert_eq!(
+            format!("{:?}", InterventionCode::MemoryPressure),
+            "MemoryPressure"
+        );
+        assert_eq!(
+            format!("{:?}", InterventionCode::IdleTimeout),
+            "IdleTimeout"
+        );
+        assert_eq!(format!("{:?}", InterventionCode::UserKill), "UserKill");
+    }
+
+    #[test]
+    fn test_session_with_intervention_code() {
+        let mut session = make_session();
+        session.intervention_code = Some(InterventionCode::MemoryPressure);
+        session.intervention_reason = Some("Memory 95%".into());
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(json.contains("\"memory_pressure\""));
+        let deserialized: Session = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized.intervention_code,
+            Some(InterventionCode::MemoryPressure)
+        );
     }
 }

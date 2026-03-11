@@ -7,7 +7,7 @@ use memory::{MemoryReader, MemorySnapshot};
 use pulpo_common::session::SessionStatus;
 use tracing::{debug, info, warn};
 
-use pulpo_common::session::Session;
+use pulpo_common::session::{InterventionCode, Session};
 
 use crate::backend::Backend;
 use crate::store::Store;
@@ -180,7 +180,11 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
             snapshot.total_mb
         );
         if let Err(e) = store
-            .update_session_intervention(&session.id.to_string(), &reason)
+            .update_session_intervention(
+                &session.id.to_string(),
+                InterventionCode::MemoryPressure,
+                &reason,
+            )
             .await
         {
             warn!(
@@ -382,7 +386,11 @@ async fn handle_idle_session(
             }
 
             if let Err(e) = store
-                .update_session_intervention(&session.id.to_string(), &reason)
+                .update_session_intervention(
+                    &session.id.to_string(),
+                    InterventionCode::IdleTimeout,
+                    &reason,
+                )
                 .await
             {
                 warn!(
@@ -560,6 +568,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -592,6 +601,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -1001,6 +1011,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -1320,6 +1331,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -1378,6 +1390,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -1444,6 +1457,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -1500,6 +1514,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -1575,6 +1590,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now()), // very recent
@@ -1631,6 +1647,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -1686,6 +1703,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -1763,6 +1781,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -1842,6 +1861,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -1916,6 +1936,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now()),
@@ -1960,6 +1981,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now()),
@@ -1999,6 +2021,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -2062,6 +2085,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -2126,6 +2150,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
@@ -2430,6 +2455,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),

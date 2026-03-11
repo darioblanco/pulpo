@@ -263,6 +263,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -293,6 +294,7 @@ mod tests {
     #[test]
     fn test_extract_failure_on_intervention() {
         let session = Session {
+            intervention_code: None,
             intervention_reason: Some("Memory exceeded".into()),
             ..make_session("intervened")
         };
@@ -393,6 +395,7 @@ mod tests {
     #[test]
     fn test_failure_tags() {
         let session = Session {
+            intervention_code: None,
             intervention_reason: Some("OOM".into()),
             ..make_session("fail-tags")
         };
@@ -505,6 +508,7 @@ mod tests {
     #[test]
     fn test_intervention_takes_priority_over_exit_code() {
         let session = Session {
+            intervention_code: None,
             intervention_reason: Some("Memory exceeded".into()),
             exit_code: Some(1),
             output_snapshot: Some("Error: something bad".into()),
@@ -606,6 +610,7 @@ mod tests {
     #[test]
     fn test_knowledge_ids_are_unique() {
         let session = Session {
+            intervention_code: None,
             intervention_reason: Some("fail".into()),
             ..make_session("unique-ids")
         };

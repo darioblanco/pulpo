@@ -231,6 +231,7 @@ pub async fn list_interventions(
         .map(|e| pulpo_common::api::InterventionEventResponse {
             id: e.id,
             session_id: e.session_id,
+            code: e.code,
             reason: e.reason,
             created_at: e.created_at.to_rfc3339(),
         })
@@ -1068,6 +1069,7 @@ mod tests {
             max_turns: None,
             max_budget_usd: None,
             output_format: None,
+            intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
@@ -1220,7 +1222,11 @@ mod tests {
         state
             .session_manager
             .store()
-            .update_session_intervention(&session.id.to_string(), "Memory 95%")
+            .update_session_intervention(
+                &session.id.to_string(),
+                pulpo_common::session::InterventionCode::MemoryPressure,
+                "Memory 95%",
+            )
             .await
             .unwrap();
 
