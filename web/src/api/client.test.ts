@@ -22,6 +22,8 @@ import {
   removePeer,
   getPairingUrl,
   getInks,
+  listCultureFiles,
+  readCultureFile,
   resolveWsUrl,
   resolveBaseUrl,
   authHeaders,
@@ -673,5 +675,43 @@ describe('resolveWsUrl', () => {
     testToken = 'remote-token';
     const url = resolveWsUrl('/api/v1/sessions/s1/stream');
     expect(url).toBe('ws://mac-mini:7433/api/v1/sessions/s1/stream?token=remote-token');
+  });
+});
+
+describe('listCultureFiles', () => {
+  it('fetches culture file tree', async () => {
+    const data = {
+      files: [
+        { path: 'culture', is_dir: true },
+        { path: 'culture/AGENTS.md', is_dir: false },
+      ],
+    };
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(data) });
+    const result = await listCultureFiles();
+    expect(result.files).toHaveLength(2);
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/culture/files', expect.anything());
+  });
+
+  it('throws on error', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false });
+    await expect(listCultureFiles()).rejects.toThrow('Failed to list culture files');
+  });
+});
+
+describe('readCultureFile', () => {
+  it('fetches file content', async () => {
+    const data = { path: 'culture/AGENTS.md', content: '# Culture' };
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve(data) });
+    const result = await readCultureFile('culture/AGENTS.md');
+    expect(result.content).toBe('# Culture');
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/api/v1/culture/files/culture/AGENTS.md',
+      expect.anything(),
+    );
+  });
+
+  it('throws on error', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false });
+    await expect(readCultureFile('nonexistent.md')).rejects.toThrow('Failed to read culture file');
   });
 });

@@ -4,8 +4,9 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use pulpo_common::api::{
-    CultureContextQuery, CultureDeleteResponse, CultureItemResponse, CulturePushResponse,
-    CultureResponse, ErrorResponse, ListCultureQuery, UpdateCultureRequest,
+    CultureContextQuery, CultureDeleteResponse, CultureFileContentResponse, CultureFileEntry,
+    CultureFilesResponse, CultureItemResponse, CulturePushResponse, CultureResponse, ErrorResponse,
+    ListCultureQuery, UpdateCultureRequest,
 };
 
 use super::AppState;
@@ -197,6 +198,62 @@ pub async fn push(
     }
 }
 
+pub async fn list_files(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<CultureFilesResponse>, ApiError> {
+    let Some(repo) = state.session_manager.culture_repo() else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "culture repo not configured".into(),
+            }),
+        ));
+    };
+    let entries = repo.list_files().map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    let files = entries
+        .into_iter()
+        .map(|(path, is_dir)| CultureFileEntry { path, is_dir })
+        .collect();
+    Ok(Json(CultureFilesResponse { files }))
+}
+
+pub async fn read_file(
+    State(state): State<Arc<AppState>>,
+    Path(path): Path<String>,
+) -> Result<Json<CultureFileContentResponse>, ApiError> {
+    let Some(repo) = state.session_manager.culture_repo() else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "culture repo not configured".into(),
+            }),
+        ));
+    };
+    let content = repo.read_file(&path).map_err(|e| {
+        let status = if e.to_string().contains("not found") {
+            StatusCode::NOT_FOUND
+        } else if e.to_string().contains("traversal") {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        (
+            status,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    Ok(Json(CultureFileContentResponse { path, content }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,6 +336,8 @@ mod tests {
             .route("/api/v1/culture", routing::get(list))
             .route("/api/v1/culture/context", routing::get(context))
             .route("/api/v1/culture/push", post(push))
+            .route("/api/v1/culture/files", routing::get(list_files))
+            .route("/api/v1/culture/files/{*path}", routing::get(read_file))
             .route(
                 "/api/v1/culture/{id}",
                 routing::get(get).put(update).delete(delete),
@@ -801,5 +860,116 @@ mod tests {
         resp.assert_status_ok();
         let body: CultureResponse = resp.json();
         assert!(body.culture.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_files_returns_tree() {
+        let (state, _repo) = test_state().await;
+        let server = test_router(state);
+        let resp = server.get("/api/v1/culture/files").await;
+        resp.assert_status_ok();
+        let body: CultureFilesResponse = resp.json();
+        // Should have at least culture/ dir and culture/AGENTS.md
+        let paths: Vec<&str> = body.files.iter().map(|f| f.path.as_str()).collect();
+        assert!(paths.contains(&"culture"), "should list culture dir");
+        assert!(
+            paths.contains(&"culture/AGENTS.md"),
+            "should list culture/AGENTS.md"
+        );
+        // .git should be excluded
+        assert!(!paths.iter().any(|p| p.contains(".git")));
+    }
+
+    #[tokio::test]
+    async fn test_list_files_no_culture_repo() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: crate::config::GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            culture: crate::config::CultureConfig::default(),
+        };
+        let backend = Arc::new(StubBackend);
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        );
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let state = AppState::new(config, manager, peer_registry);
+
+        let server = test_router(state);
+        let resp = server.get("/api/v1/culture/files").await;
+        assert_ne!(resp.status_code(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_read_file_content() {
+        let (state, _repo) = test_state().await;
+        let server = test_router(state);
+        let resp = server.get("/api/v1/culture/files/culture/AGENTS.md").await;
+        resp.assert_status_ok();
+        let body: CultureFileContentResponse = resp.json();
+        assert_eq!(body.path, "culture/AGENTS.md");
+        assert!(body.content.contains("# Culture"));
+    }
+
+    #[tokio::test]
+    async fn test_read_file_not_found() {
+        let (state, _repo) = test_state().await;
+        let server = test_router(state);
+        let resp = server.get("/api/v1/culture/files/nonexistent.md").await;
+        assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_read_file_no_culture_repo() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: crate::config::GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            culture: crate::config::CultureConfig::default(),
+        };
+        let backend = Arc::new(StubBackend);
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        );
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let state = AppState::new(config, manager, peer_registry);
+
+        let server = test_router(state);
+        let resp = server.get("/api/v1/culture/files/culture/AGENTS.md").await;
+        assert_ne!(resp.status_code(), 200);
     }
 }

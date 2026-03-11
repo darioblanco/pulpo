@@ -76,6 +76,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/culture", get(culture::list))
         .route("/api/v1/culture/context", get(culture::context))
         .route("/api/v1/culture/push", post(culture::push))
+        .route("/api/v1/culture/files", get(culture::list_files))
+        .route("/api/v1/culture/files/{*path}", get(culture::read_file))
         .route(
             "/api/v1/culture/{id}",
             get(culture::get)

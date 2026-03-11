@@ -94,6 +94,20 @@ export interface UpdateCultureRequest {
   relevance?: number;
 }
 
+export interface CultureFileEntry {
+  path: string;
+  is_dir: boolean;
+}
+
+export interface CultureFilesResponse {
+  files: CultureFileEntry[];
+}
+
+export interface CultureFileContentResponse {
+  path: string;
+  content: string;
+}
+
 export interface InkConfig {
   description: string | null;
   provider: string | null;

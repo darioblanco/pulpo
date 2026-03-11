@@ -395,6 +395,45 @@ impl CultureRepo {
         Ok(())
     }
 
+    /// List all files and directories in the culture repo (excluding `.git`).
+    ///
+    /// Returns a flat list of `(relative_path, is_dir)` tuples, sorted
+    /// alphabetically with directories before files at each level.
+    pub fn list_files(&self) -> Result<Vec<(String, bool)>> {
+        let mut entries = Vec::new();
+        walk_dir(&self.root, &self.root, &mut entries)?;
+        // Sort: directories first, then alphabetically
+        entries.sort_by(|a, b| match (a.1, b.1) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.0.cmp(&b.0),
+        });
+        Ok(entries)
+    }
+
+    /// Read a file from the culture repo by relative path.
+    ///
+    /// Returns the file content, or an error if the path is outside the repo
+    /// root, is a directory, or doesn't exist.
+    pub fn read_file(&self, relative_path: &str) -> Result<String> {
+        let requested = self.root.join(relative_path);
+        let canonical = requested
+            .canonicalize()
+            .with_context(|| format!("file not found: {relative_path}"))?;
+        let root_canonical = self
+            .root
+            .canonicalize()
+            .with_context(|| "culture repo root not found")?;
+        if !canonical.starts_with(&root_canonical) {
+            bail!("path traversal not allowed: {relative_path}");
+        }
+        if canonical.is_dir() {
+            bail!("path is a directory: {relative_path}");
+        }
+        std::fs::read_to_string(&canonical)
+            .with_context(|| format!("failed to read: {relative_path}"))
+    }
+
     /// Compile the AGENTS.md for the scope that a culture item belongs to.
     fn compile_scope_for(&self, culture: &Culture) -> Result<()> {
         let scope_dir = scope_dir_name(culture);
@@ -549,6 +588,34 @@ fn parse_from_markdown(content: &str) -> Result<Culture> {
         relevance: fm.relevance,
         created_at: fm.created_at,
     })
+}
+
+/// Recursively walk a directory, collecting `(relative_path, is_dir)`.
+/// Skips `.git` directories.
+fn walk_dir(dir: &Path, root: &Path, out: &mut Vec<(String, bool)>) -> Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let mut dir_entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(Result::ok).collect();
+    dir_entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in dir_entries {
+        let path = entry.path();
+        let name = entry.file_name();
+        if name == ".git" {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        let is_dir = path.is_dir();
+        out.push((rel, is_dir));
+        if is_dir {
+            walk_dir(&path, root, out)?;
+        }
+    }
+    Ok(())
 }
 
 /// Parse a file as either Markdown (`.md`) or legacy JSON (`.json`).
@@ -1947,5 +2014,103 @@ mod tests {
         // get_by_id should also work
         let found = repo.get_by_id(&k.id.to_string()).unwrap();
         assert!(found.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_list_files_initial() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let files = repo.list_files().unwrap();
+        // Should contain at least the culture/ dir and culture/AGENTS.md
+        let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(paths.contains(&"culture"), "should list culture dir");
+        assert!(
+            paths.contains(&"culture/AGENTS.md"),
+            "should list culture/AGENTS.md"
+        );
+        // .git should be excluded
+        assert!(!paths.iter().any(|p| p.contains(".git")));
+    }
+
+    #[tokio::test]
+    async fn test_list_files_with_entries() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        repo.save(&make_culture("entry-1", Some("/my/repo"), None))
+            .await
+            .unwrap();
+        let files = repo.list_files().unwrap();
+        let paths: Vec<&str> = files.iter().map(|(p, _)| p.as_str()).collect();
+        assert!(paths.contains(&"repos"), "should list repos dir");
+        // Should have a repos/<slug>/ dir and files in it
+        assert!(
+            paths
+                .iter()
+                .any(|p| p.starts_with("repos/") && p.ends_with("AGENTS.md")),
+            "should have compiled AGENTS.md in repos scope"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_files_dirs_before_files() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let files = repo.list_files().unwrap();
+        // All directories should come before all files
+        let first_file_idx = files.iter().position(|(_, is_dir)| !is_dir);
+        let last_dir_idx = files.iter().rposition(|(_, is_dir)| *is_dir);
+        if let (Some(first_file), Some(last_dir)) = (first_file_idx, last_dir_idx) {
+            assert!(
+                last_dir < first_file,
+                "dirs should come before files in sorted order"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_read_file_existing() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let content = repo.read_file("culture/AGENTS.md").unwrap();
+        assert!(content.contains("# Culture"));
+    }
+
+    #[tokio::test]
+    async fn test_read_file_not_found() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let result = repo.read_file("nonexistent.md");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_read_file_path_traversal() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let result = repo.read_file("../../etc/passwd");
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_read_file_directory() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let result = repo.read_file("culture");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("directory"));
     }
 }

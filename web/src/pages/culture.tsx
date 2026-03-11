@@ -2,8 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { AppHeader } from '@/components/layout/app-header';
 import { CultureList } from '@/components/culture/culture-list';
 import { CultureFilter } from '@/components/culture/culture-filter';
+import { CultureFileBrowser } from '@/components/culture/culture-file-browser';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { listCulture, deleteCulture, pushCulture } from '@/api/client';
 import type { Culture } from '@/api/types';
 import { toast } from 'sonner';
@@ -76,27 +78,42 @@ export function CulturePage() {
         </Button>
       </AppHeader>
       <div className="space-y-4 p-4 sm:p-6">
-        <CultureFilter onFilter={setFilter} />
+        <Tabs defaultValue="files" data-testid="culture-tabs">
+          <TabsList>
+            <TabsTrigger value="files" data-testid="files-tab">
+              Files
+            </TabsTrigger>
+            <TabsTrigger value="entries" data-testid="entries-tab">
+              Entries
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="files">
+            <CultureFileBrowser />
+          </TabsContent>
+          <TabsContent value="entries">
+            <CultureFilter onFilter={setFilter} />
 
-        {loading ? (
-          <div data-testid="loading-skeleton" className="space-y-2">
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-            <Skeleton className="h-16 w-full" />
-          </div>
-        ) : error ? (
-          <p className="py-8 text-center text-destructive">{error}</p>
-        ) : items.length === 0 ? (
-          <p className="py-8 text-center text-muted-foreground">
-            No culture items yet. Culture is extracted from completed sessions.
-          </p>
-        ) : (
-          <CultureList
-            items={items}
-            onDelete={handleDelete}
-            onRefresh={() => fetchCulture(filter)}
-          />
-        )}
+            {loading ? (
+              <div data-testid="loading-skeleton" className="mt-4 space-y-2">
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-16 w-full" />
+              </div>
+            ) : error ? (
+              <p className="py-8 text-center text-destructive">{error}</p>
+            ) : items.length === 0 ? (
+              <p className="py-8 text-center text-muted-foreground">
+                No culture items yet. Culture is extracted from completed sessions.
+              </p>
+            ) : (
+              <CultureList
+                items={items}
+                onDelete={handleDelete}
+                onRefresh={() => fetchCulture(filter)}
+              />
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

@@ -15,6 +15,8 @@ import type {
   CultureItemResponse,
   CultureDeleteResponse,
   CulturePushResponse,
+  CultureFilesResponse,
+  CultureFileContentResponse,
   UpdateCultureRequest,
 } from './types';
 
@@ -300,5 +302,17 @@ export async function deleteCulture(id: string): Promise<CultureDeleteResponse> 
 export async function pushCulture(): Promise<CulturePushResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/culture/push`, { method: 'POST' });
   if (!res.ok) throw new Error('Failed to push culture');
+  return res.json();
+}
+
+export async function listCultureFiles(): Promise<CultureFilesResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/culture/files`);
+  if (!res.ok) throw new Error('Failed to list culture files');
+  return res.json();
+}
+
+export async function readCultureFile(path: string): Promise<CultureFileContentResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/culture/files/${path}`);
+  if (!res.ok) throw new Error('Failed to read culture file');
   return res.json();
 }

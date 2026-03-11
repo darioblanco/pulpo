@@ -351,6 +351,28 @@ pub struct CulturePushResponse {
     pub message: String,
 }
 
+/// A file or directory entry in the culture repo tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CultureFileEntry {
+    /// Relative path from culture repo root (e.g. "culture/AGENTS.md").
+    pub path: String,
+    /// Whether this entry is a directory.
+    pub is_dir: bool,
+}
+
+/// Response for listing the culture repo file tree.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CultureFilesResponse {
+    pub files: Vec<CultureFileEntry>,
+}
+
+/// Response for reading a single file from the culture repo.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CultureFileContentResponse {
+    pub path: String,
+    pub content: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1902,5 +1924,64 @@ mod tests {
         let parsed: ProvidersResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.providers.len(), 1);
         assert_eq!(parsed.providers[0].provider, Provider::Shell);
+    }
+
+    #[test]
+    fn test_culture_file_entry_serialize() {
+        let entry = CultureFileEntry {
+            path: "culture/AGENTS.md".into(),
+            is_dir: false,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("culture/AGENTS.md"));
+        assert!(json.contains("false"));
+        let parsed: CultureFileEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.path, "culture/AGENTS.md");
+        assert!(!parsed.is_dir);
+    }
+
+    #[test]
+    fn test_culture_file_entry_clone_debug() {
+        let entry = CultureFileEntry {
+            path: "repos/foo/AGENTS.md".into(),
+            is_dir: false,
+        };
+        #[allow(clippy::redundant_clone)]
+        let cloned = entry.clone();
+        let debug = format!("{cloned:?}");
+        assert!(debug.contains("repos/foo/AGENTS.md"));
+    }
+
+    #[test]
+    fn test_culture_files_response_serialize() {
+        let resp = CultureFilesResponse {
+            files: vec![
+                CultureFileEntry {
+                    path: "culture".into(),
+                    is_dir: true,
+                },
+                CultureFileEntry {
+                    path: "culture/AGENTS.md".into(),
+                    is_dir: false,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let parsed: CultureFilesResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.files.len(), 2);
+        assert!(parsed.files[0].is_dir);
+        assert!(!parsed.files[1].is_dir);
+    }
+
+    #[test]
+    fn test_culture_file_content_response_serialize() {
+        let resp = CultureFileContentResponse {
+            path: "culture/AGENTS.md".into(),
+            content: "# Culture\n\nSome content".into(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let parsed: CultureFileContentResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.path, "culture/AGENTS.md");
+        assert!(parsed.content.contains("# Culture"));
     }
 }
