@@ -43,16 +43,11 @@ const MANIFEST: Record<string, string[]> = {
     'tang',
     'jellyfish',
     'turtle',
-    'bubbles',
-    'shark-1',
     'shark-2',
     'shark-3',
-    'shark-4',
     'shark-5',
     'shark-6',
-    'shark-7',
-    'shark-8',
-    'shark-9',
+    'bubbles',
   ],
 };
 

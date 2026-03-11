@@ -135,6 +135,28 @@ function drawPixelBubble(
   ctx.globalAlpha = 1;
 }
 
+/** Draw seabed decorations (seaweed, shells, starfish). */
+function drawDecorations(ctx: CanvasRenderingContext2D, world: WorldState, sprites: Sprites): void {
+  const { camera } = world;
+
+  for (const d of world.decorations) {
+    const sprite = sprites.decor[d.type];
+    if (!sprite) continue;
+
+    const [sx, sy] = worldToScreen(camera, d.x, d.y);
+    if (sx < -50 || sx > camera.width + 50) continue;
+
+    const scale = camera.zoom;
+    const drawW = sprite.width * scale;
+    const drawH = sprite.height * scale;
+
+    ctx.save();
+    ctx.globalAlpha = 0.7;
+    ctx.drawImage(sprite, sx - drawW / 2, sy - drawH, drawW, drawH);
+    ctx.restore();
+  }
+}
+
 /** Draw fauna creatures behind octopuses. */
 function drawFauna(
   ctx: CanvasRenderingContext2D,
@@ -145,8 +167,8 @@ function drawFauna(
   const { camera } = world;
 
   for (const f of world.fauna) {
-    const sprite = sprites.fauna[f.type];
-    if (!sprite) continue;
+    const sheet = sprites.fauna[f.type];
+    if (!sheet) continue;
 
     const [sx, sy] = worldToScreen(camera, f.x, f.y);
     if (sx < -200 || sx > camera.width + 200) continue;
@@ -154,17 +176,21 @@ function drawFauna(
     const size = f.size * camera.zoom;
     const bob = Math.sin(time * 0.001 + f.x * 0.2) * 3 * camera.zoom;
 
-    // Draw full sprite as a single frame (no sprite sheet splitting)
-    const aspect = sprite.height / sprite.width;
-    const drawW = size;
-    const drawH = size * aspect;
+    // Square frames from sprite sheet
+    const FRAME_H = sheet.height;
+    const FRAME_W = FRAME_H;
+    const frameCount = Math.max(1, Math.floor(sheet.width / FRAME_W));
+    const frame = f.animFrame % frameCount;
 
     ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.globalAlpha = f.alpha;
     ctx.translate(sx, sy + bob);
     if (f.vx < 0) ctx.scale(-1, 1);
 
-    ctx.drawImage(sprite, -drawW / 2, -drawH / 2, drawW, drawH);
+    ctx.drawImage(sheet, frame * FRAME_W, 0, FRAME_W, FRAME_H, -size / 2, -size / 2, size, size);
+    ctx.imageSmoothingEnabled = false;
     ctx.restore();
   }
 }
@@ -303,6 +329,9 @@ export function render(
   drawLightRays(ctx, width, height, time, ambientSeed);
   drawPlankton(ctx, width, height, time, ambientSeed);
 
+  // --- Seabed decorations ---
+  drawDecorations(ctx, world, sprites);
+
   // --- Fauna ---
   drawFauna(ctx, world, sprites, time);
 
@@ -399,7 +428,7 @@ function drawOctopus(
 
   // Name + provider badges
   const nodeColor = nodeByName.get(oct.nodeName)?.color ?? '#d4e4ef';
-  const fontSize = Math.max(8, 9 * (camera.zoom / 2));
+  const fontSize = Math.max(10, 14 * (camera.zoom / 2));
   const padX = 4;
   const padY = 2;
   const gap = 2;

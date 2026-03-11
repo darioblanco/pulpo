@@ -86,6 +86,9 @@ export interface FaunaEntity {
   vx: number;
   size: number;
   alpha: number;
+  animFrame: number;
+  animTimer: number;
+  animSpeed: number;
 }
 
 export interface WorldState {
@@ -120,34 +123,106 @@ function randomBetween(min: number, max: number): number {
 
 // --- Create world ---
 
-// Fauna types: small fish swim fast in the mid-water, larger creatures are slower/deeper
-const FAUNA_TYPES = [
-  'angelfish',
-  'clownfish',
-  'fish-gold',
-  'silverfish',
-  'tang',
-  'jellyfish',
-  'turtle',
-];
+// Fish types swim in schools; larger creatures are rarer and slower
+const FISH_TYPES = ['angelfish', 'clownfish', 'fish-gold', 'silverfish', 'tang'];
+const SHARK_TYPES = ['shark-2', 'shark-3', 'shark-5', 'shark-6'];
+const LARGE_TYPES = ['jellyfish', 'turtle'];
 
 function generateFauna(width: number): FaunaEntity[] {
-  const count = 6 + Math.floor(Math.random() * 5); // 6-10 creatures
   const fauna: FaunaEntity[] = [];
   const worldW = Math.max(width, 600);
 
-  for (let i = 0; i < count; i++) {
-    const type = FAUNA_TYPES[Math.floor(Math.random() * FAUNA_TYPES.length)];
-    const isLarge = type === 'turtle' || type === 'jellyfish';
+  // 2-3 schools of fish, each school is 3-5 fish of the same type clustered together
+  const schoolCount = 2 + Math.floor(Math.random() * 2);
+  for (let s = 0; s < schoolCount; s++) {
+    const type = FISH_TYPES[Math.floor(Math.random() * FISH_TYPES.length)];
+    const schoolSize = 3 + Math.floor(Math.random() * 3);
+    const centerX = randomBetween(-worldW * 0.3, worldW * 1.3);
+    const centerY = randomBetween(SWIM_ZONE_TOP + 30, SWIM_ZONE_BOTTOM - 30);
+    const dir = Math.random() > 0.5 ? 1 : -1;
+    const baseSpeed = randomBetween(12, 22);
+
+    for (let i = 0; i < schoolSize; i++) {
+      fauna.push({
+        type,
+        x: centerX + randomBetween(-40, 40),
+        y: centerY + randomBetween(-25, 25),
+        vx: (baseSpeed + randomBetween(-3, 3)) * dir,
+        size: randomBetween(28, 42),
+        alpha: 1,
+        animFrame: Math.floor(Math.random() * 4),
+        animTimer: 0,
+        animSpeed: randomBetween(0.15, 0.3),
+      });
+    }
+  }
+
+  // 2-4 solo fish scattered around
+  const soloCount = 2 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < soloCount; i++) {
+    const type = FISH_TYPES[Math.floor(Math.random() * FISH_TYPES.length)];
     fauna.push({
       type,
       x: randomBetween(-worldW * 0.5, worldW * 1.5),
       y: randomBetween(SWIM_ZONE_TOP + 20, SWIM_ZONE_BOTTOM - 10),
-      vx: randomBetween(5, 15) * (Math.random() > 0.5 ? 1 : -1) * (isLarge ? 0.5 : 1),
-      size: isLarge ? randomBetween(24, 36) : randomBetween(16, 24),
-      alpha: randomBetween(0.6, 0.85),
+      vx: randomBetween(10, 25) * (Math.random() > 0.5 ? 1 : -1),
+      size: randomBetween(30, 45),
+      alpha: 1,
+      animFrame: Math.floor(Math.random() * 4),
+      animTimer: 0,
+      animSpeed: randomBetween(0.15, 0.3),
     });
   }
+
+  // 1-2 large creatures (jellyfish, turtle)
+  const largeCount = 1 + Math.floor(Math.random() * 2);
+  for (let i = 0; i < largeCount; i++) {
+    const type = LARGE_TYPES[Math.floor(Math.random() * LARGE_TYPES.length)];
+    fauna.push({
+      type,
+      x: randomBetween(-worldW * 0.3, worldW * 1.3),
+      y: randomBetween(SWIM_ZONE_TOP + 40, SWIM_ZONE_BOTTOM - 20),
+      vx: randomBetween(3, 8) * (Math.random() > 0.5 ? 1 : -1),
+      size: randomBetween(50, 70),
+      alpha: 1,
+      animFrame: Math.floor(Math.random() * 4),
+      animTimer: 0,
+      animSpeed: randomBetween(0.1, 0.2),
+    });
+  }
+
+  // 1-3 bubble columns drifting up
+  const bubbleCount = 1 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < bubbleCount; i++) {
+    fauna.push({
+      type: 'bubbles',
+      x: randomBetween(-worldW * 0.3, worldW * 1.3),
+      y: randomBetween(SWIM_ZONE_TOP, SWIM_ZONE_BOTTOM),
+      vx: randomBetween(-1, 1),
+      size: randomBetween(20, 35),
+      alpha: 0.5,
+      animFrame: Math.floor(Math.random() * 4),
+      animTimer: 0,
+      animSpeed: randomBetween(0.3, 0.5),
+    });
+  }
+
+  // 0-1 shark (rare, large, slow)
+  if (Math.random() < 0.5) {
+    const type = SHARK_TYPES[Math.floor(Math.random() * SHARK_TYPES.length)];
+    fauna.push({
+      type,
+      x: randomBetween(-worldW * 0.5, worldW * 1.5),
+      y: randomBetween(SWIM_ZONE_TOP + 10, SWIM_ZONE_TOP + 60),
+      vx: randomBetween(6, 12) * (Math.random() > 0.5 ? 1 : -1),
+      size: randomBetween(60, 90),
+      alpha: 1,
+      animFrame: 0,
+      animTimer: 0,
+      animSpeed: 1, // no animation for sharks (single frame repeated)
+    });
+  }
+
   return fauna;
 }
 
@@ -485,14 +560,25 @@ export function update(world: WorldState, dt: number): void {
     });
   }
 
-  // Update fauna — simple horizontal drift, wrap around
+  // Update fauna — horizontal drift + animation
   const camLeft = world.camera.x - 400;
   const camRight = world.camera.x + world.camera.width / world.camera.zoom + 400;
   for (const f of world.fauna) {
     f.x += f.vx * cappedDt;
+    // Bubbles drift upward and wrap to bottom
+    if (f.type === 'bubbles') {
+      f.y -= 8 * cappedDt;
+      if (f.y < SWIM_ZONE_TOP - 30) f.y = SWIM_ZONE_BOTTOM + 10;
+    }
     // Wrap around when offscreen
     if (f.vx > 0 && f.x > camRight) f.x = camLeft - 50;
     if (f.vx < 0 && f.x < camLeft) f.x = camRight + 50;
+    // Advance animation
+    f.animTimer += cappedDt;
+    if (f.animTimer >= f.animSpeed) {
+      f.animTimer -= f.animSpeed;
+      f.animFrame = (f.animFrame + 1) % 4;
+    }
   }
 }
 
