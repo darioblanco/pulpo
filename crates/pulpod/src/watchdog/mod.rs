@@ -45,43 +45,67 @@ impl Default for IdleConfig {
     }
 }
 
+/// Runtime configuration for the watchdog loop, updated via watch channel.
+#[derive(Debug, Clone)]
+pub struct WatchdogRuntimeConfig {
+    pub threshold: u8,
+    pub interval: Duration,
+    pub breach_count: u32,
+    pub idle: IdleConfig,
+}
+
 /// Runs the watchdog loop that monitors system memory and intervenes when sustained pressure
 /// is detected. Kills running sessions after `breach_count` consecutive checks above `threshold`.
+///
+/// The loop dynamically picks up config changes sent via the `config_rx` watch channel.
 pub async fn run_watchdog_loop(
     backend: Arc<dyn Backend>,
     store: Store,
     reader: Box<dyn MemoryReader>,
-    threshold: u8,
-    interval: Duration,
-    breach_count: u32,
-    idle: IdleConfig,
+    config_rx: tokio::sync::watch::Receiver<WatchdogRuntimeConfig>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
-    let mut tick = tokio::time::interval(interval);
+    let initial = config_rx.borrow().clone();
+    let mut current_interval = initial.interval;
+    let mut tick = tokio::time::interval(current_interval);
     tick.tick().await; // first tick completes immediately
     let mut consecutive_breaches: u32 = 0;
 
     loop {
         tokio::select! {
             _ = tick.tick() => {
+                let cfg = config_rx.borrow().clone();
+
+                // If interval changed, recreate the ticker
+                if cfg.interval != current_interval {
+                    info!(
+                        old_interval_secs = current_interval.as_secs(),
+                        new_interval_secs = cfg.interval.as_secs(),
+                        "Watchdog interval changed, resetting ticker"
+                    );
+                    current_interval = cfg.interval;
+                    tick = tokio::time::interval(current_interval);
+                    tick.tick().await; // consume immediate first tick
+                }
+
                 match reader.read_memory() {
                     Ok(snapshot) => {
                         let usage = snapshot.usage_percent();
-                        debug!(usage, threshold, consecutive_breaches, "Memory check");
+                        debug!(usage, threshold = cfg.threshold, consecutive_breaches, "Memory check");
 
-                        if usage >= threshold {
+                        if usage >= cfg.threshold {
                             consecutive_breaches += 1;
                             warn!(
                                 usage,
-                                threshold,
+                                threshold = cfg.threshold,
                                 consecutive_breaches,
-                                breach_count,
+                                breach_count = cfg.breach_count,
                                 available_mb = snapshot.available_mb,
                                 total_mb = snapshot.total_mb,
                                 "Memory pressure detected"
                             );
 
-                            if consecutive_breaches >= breach_count {
+                            if consecutive_breaches >= cfg.breach_count {
                                 intervene(&backend, &store, &snapshot).await;
                                 consecutive_breaches = 0;
                             }
@@ -89,7 +113,7 @@ pub async fn run_watchdog_loop(
                             if consecutive_breaches > 0 {
                                 info!(
                                     usage,
-                                    threshold,
+                                    threshold = cfg.threshold,
                                     "Memory pressure subsided, resetting breach counter"
                                 );
                             }
@@ -102,8 +126,8 @@ pub async fn run_watchdog_loop(
                 }
 
                 // Idle detection runs on every tick, independent of memory checks
-                if idle.enabled {
-                    check_idle_sessions(&backend, &store, &idle).await;
+                if cfg.idle.enabled {
+                    check_idle_sessions(&backend, &store, &cfg.idle).await;
                 }
             }
             _ = shutdown_rx.changed() => {
@@ -614,6 +638,40 @@ mod tests {
         session
     }
 
+    fn make_config(
+        threshold: u8,
+        interval: Duration,
+        breach_count: u32,
+        idle: IdleConfig,
+    ) -> tokio::sync::watch::Receiver<WatchdogRuntimeConfig> {
+        let cfg = WatchdogRuntimeConfig {
+            threshold,
+            interval,
+            breach_count,
+            idle,
+        };
+        let (_, rx) = tokio::sync::watch::channel(cfg);
+        rx
+    }
+
+    fn make_config_with_tx(
+        threshold: u8,
+        interval: Duration,
+        breach_count: u32,
+        idle: IdleConfig,
+    ) -> (
+        tokio::sync::watch::Sender<WatchdogRuntimeConfig>,
+        tokio::sync::watch::Receiver<WatchdogRuntimeConfig>,
+    ) {
+        let cfg = WatchdogRuntimeConfig {
+            threshold,
+            interval,
+            breach_count,
+            idle,
+        };
+        tokio::sync::watch::channel(cfg)
+    }
+
     #[tokio::test]
     async fn test_watchdog_shutdown() {
         let backend = Arc::new(MockBackend::new());
@@ -625,13 +683,15 @@ mod tests {
             backend,
             store,
             Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
+            make_config(
+                90,
+                Duration::from_millis(10),
+                3,
+                IdleConfig {
+                    enabled: false,
+                    ..IdleConfig::default()
+                },
+            ),
             shutdown_rx,
         ));
 
@@ -666,13 +726,15 @@ mod tests {
             backend_clone,
             store,
             Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
+            make_config(
+                90,
+                Duration::from_millis(10),
+                3,
+                IdleConfig {
+                    enabled: false,
+                    ..IdleConfig::default()
+                },
+            ),
             shutdown_rx,
         ));
 
@@ -713,13 +775,15 @@ mod tests {
             backend_clone,
             store,
             Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
+            make_config(
+                90,
+                Duration::from_millis(10),
+                3,
+                IdleConfig {
+                    enabled: false,
+                    ..IdleConfig::default()
+                },
+            ),
             shutdown_rx,
         ));
 
@@ -760,13 +824,15 @@ mod tests {
             backend_clone,
             store_clone,
             Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
+            make_config(
+                90,
+                Duration::from_millis(10),
+                3,
+                IdleConfig {
+                    enabled: false,
+                    ..IdleConfig::default()
+                },
+            ),
             shutdown_rx,
         ));
 
@@ -823,13 +889,15 @@ mod tests {
             backend_clone,
             store,
             Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
+            make_config(
+                90,
+                Duration::from_millis(10),
+                3,
+                IdleConfig {
+                    enabled: false,
+                    ..IdleConfig::default()
+                },
+            ),
             shutdown_rx,
         ));
 
@@ -852,13 +920,15 @@ mod tests {
             backend,
             store,
             Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
+            make_config(
+                90,
+                Duration::from_millis(10),
+                3,
+                IdleConfig {
+                    enabled: false,
+                    ..IdleConfig::default()
+                },
+            ),
             shutdown_rx,
         ));
 
@@ -897,13 +967,15 @@ mod tests {
             backend_clone,
             store_clone,
             Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
+            make_config(
+                90,
+                Duration::from_millis(10),
+                3,
+                IdleConfig {
+                    enabled: false,
+                    ..IdleConfig::default()
+                },
+            ),
             shutdown_rx,
         ));
 
@@ -960,13 +1032,15 @@ mod tests {
             backend_clone,
             store_clone,
             Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
+            make_config(
+                90,
+                Duration::from_millis(10),
+                3,
+                IdleConfig {
+                    enabled: false,
+                    ..IdleConfig::default()
+                },
+            ),
             shutdown_rx,
         ));
 
@@ -1044,13 +1118,15 @@ mod tests {
             backend_clone,
             store,
             Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
+            make_config(
+                90,
+                Duration::from_millis(10),
+                3,
+                IdleConfig {
+                    enabled: false,
+                    ..IdleConfig::default()
+                },
+            ),
             shutdown_rx,
         ));
 
@@ -1105,13 +1181,15 @@ mod tests {
             backend_clone,
             store,
             Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
+            make_config(
+                90,
+                Duration::from_millis(10),
+                3,
+                IdleConfig {
+                    enabled: false,
+                    ..IdleConfig::default()
+                },
+            ),
             shutdown_rx,
         ));
 
@@ -1154,13 +1232,15 @@ mod tests {
             backend,
             store,
             Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
+            make_config(
+                90,
+                Duration::from_millis(10),
+                3,
+                IdleConfig {
+                    enabled: false,
+                    ..IdleConfig::default()
+                },
+            ),
             shutdown_rx,
         ));
 
@@ -1891,10 +1971,7 @@ mod tests {
             backend_clone,
             store_clone,
             Box::new(reader),
-            90,
-            Duration::from_millis(10),
-            3,
-            idle_config,
+            make_config(90, Duration::from_millis(10), 3, idle_config),
             shutdown_rx,
         ));
 
@@ -2487,5 +2564,119 @@ mod tests {
             timeout,
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn test_watchdog_live_config_reload_threshold() {
+        // Start with high threshold (95) — no intervention should happen
+        let backend = Arc::new(MockBackend::new());
+        let store = test_store().await;
+        let session = create_running_session(&store, "reload-test").await;
+        // 90% usage — below 95 threshold initially
+        let reader = MockMemoryReader::new(vec![
+            MemorySnapshot {
+                available_mb: 820,
+                total_mb: 8192,
+            },
+            MemorySnapshot {
+                available_mb: 820,
+                total_mb: 8192,
+            },
+            MemorySnapshot {
+                available_mb: 820,
+                total_mb: 8192,
+            },
+            MemorySnapshot {
+                available_mb: 820,
+                total_mb: 8192,
+            },
+        ]);
+
+        let (config_tx, config_rx) = make_config_with_tx(
+            95,
+            Duration::from_millis(10),
+            1,
+            IdleConfig {
+                enabled: false,
+                ..IdleConfig::default()
+            },
+        );
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+        let handle = tokio::spawn(run_watchdog_loop(
+            backend.clone(),
+            store.clone(),
+            Box::new(reader),
+            config_rx,
+            shutdown_rx,
+        ));
+
+        // Let it run a tick with high threshold — no intervention
+        time::sleep(Duration::from_millis(30)).await;
+        assert!(backend.kill_calls.lock().unwrap().is_empty());
+
+        // Lower threshold to 80 — now 90% usage should trigger intervention
+        config_tx
+            .send(WatchdogRuntimeConfig {
+                threshold: 80,
+                interval: Duration::from_millis(10),
+                breach_count: 1,
+                idle: IdleConfig {
+                    enabled: false,
+                    ..IdleConfig::default()
+                },
+            })
+            .unwrap();
+
+        time::sleep(Duration::from_millis(30)).await;
+        shutdown_tx.send(true).unwrap();
+        handle.await.unwrap();
+
+        // Now a kill should have happened because threshold was lowered
+        assert!(
+            !backend.kill_calls.lock().unwrap().is_empty(),
+            "Expected kill after threshold lowered"
+        );
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Dead);
+    }
+
+    #[tokio::test]
+    async fn test_watchdog_runtime_config_debug() {
+        let cfg = WatchdogRuntimeConfig {
+            threshold: 90,
+            interval: Duration::from_secs(10),
+            breach_count: 3,
+            idle: IdleConfig::default(),
+        };
+        let debug = format!("{cfg:?}");
+        assert!(debug.contains("90"));
+        assert!(debug.contains("breach_count"));
+    }
+
+    #[tokio::test]
+    async fn test_watchdog_runtime_config_clone() {
+        let cfg = WatchdogRuntimeConfig {
+            threshold: 80,
+            interval: Duration::from_secs(5),
+            breach_count: 2,
+            idle: IdleConfig {
+                enabled: true,
+                timeout_secs: 300,
+                action: IdleAction::Kill,
+            },
+        };
+        #[allow(clippy::redundant_clone)]
+        let cloned = cfg.clone();
+        assert_eq!(cloned.threshold, 80);
+        assert_eq!(cloned.interval, Duration::from_secs(5));
+        assert_eq!(cloned.breach_count, 2);
+        assert!(cloned.idle.enabled);
+        assert_eq!(cloned.idle.timeout_secs, 300);
+        assert_eq!(cloned.idle.action, IdleAction::Kill);
     }
 }

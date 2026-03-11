@@ -76,6 +76,26 @@ pub async fn update_watchdog(
             .map_err(|e| internal_error(&e.to_string()))?;
     }
 
+    // Push updated config to the running watchdog loop
+    if let Some(tx) = &state.watchdog_config_tx {
+        let runtime_cfg = crate::watchdog::WatchdogRuntimeConfig {
+            threshold: config.watchdog.memory_threshold,
+            interval: std::time::Duration::from_secs(config.watchdog.check_interval_secs),
+            breach_count: config.watchdog.breach_count,
+            idle: crate::watchdog::IdleConfig {
+                enabled: config.watchdog.idle_timeout_secs > 0,
+                timeout_secs: config.watchdog.idle_timeout_secs,
+                action: if config.watchdog.idle_action == "kill" {
+                    crate::watchdog::IdleAction::Kill
+                } else {
+                    crate::watchdog::IdleAction::Alert
+                },
+            },
+        };
+        // Ignore send error — watchdog may have shut down
+        let _ = tx.send(runtime_cfg);
+    }
+
     let resp = WatchdogConfigResponse {
         enabled: config.watchdog.enabled,
         memory_threshold: config.watchdog.memory_threshold,
@@ -353,5 +373,81 @@ mod tests {
         let (status, Json(err)) = bad_request("nope");
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(err.error, "nope");
+    }
+
+    #[tokio::test]
+    async fn test_update_watchdog_pushes_config_to_channel() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let backend = Arc::new(StubBackend);
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        );
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let initial = crate::watchdog::WatchdogRuntimeConfig {
+            threshold: 90,
+            interval: std::time::Duration::from_secs(10),
+            breach_count: 3,
+            idle: crate::watchdog::IdleConfig::default(),
+        };
+        let (config_tx, config_rx) = tokio::sync::watch::channel(initial);
+        let (event_tx, _) = tokio::sync::broadcast::channel(16);
+        let state = AppState::with_watchdog_tx(
+            Config {
+                node: NodeConfig {
+                    name: "test-node".into(),
+                    port: 7433,
+                    data_dir: tmpdir.path().to_str().unwrap().into(),
+                    ..NodeConfig::default()
+                },
+                auth: crate::config::AuthConfig::default(),
+                peers: HashMap::new(),
+                guards: GuardDefaultConfig::default(),
+                session_defaults: crate::config::SessionDefaultsConfig::default(),
+                watchdog: crate::config::WatchdogConfig::default(),
+                inks: HashMap::new(),
+                notifications: crate::config::NotificationsConfig::default(),
+                knowledge: crate::config::KnowledgeConfig::default(),
+            },
+            std::path::PathBuf::new(),
+            manager,
+            peer_registry,
+            event_tx,
+            Some(config_tx),
+        );
+
+        // Update threshold via API
+        let req = UpdateWatchdogRequest {
+            memory_threshold: Some(75),
+            check_interval_secs: Some(30),
+            idle_action: Some("kill".into()),
+            ..Default::default()
+        };
+        let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.memory_threshold, 75);
+
+        // Verify the watch channel received the update
+        let received = config_rx.borrow().clone();
+        assert_eq!(received.threshold, 75);
+        assert_eq!(received.interval, std::time::Duration::from_secs(30));
+        assert_eq!(received.idle.action, crate::watchdog::IdleAction::Kill);
+    }
+
+    #[tokio::test]
+    async fn test_update_watchdog_no_channel_still_works() {
+        // When watchdog_config_tx is None, update should still succeed
+        let state = test_state().await;
+        assert!(state.watchdog_config_tx.is_none());
+        let req = UpdateWatchdogRequest {
+            memory_threshold: Some(80),
+            ..Default::default()
+        };
+        let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
+        assert_eq!(resp.memory_threshold, 80);
     }
 }

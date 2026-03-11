@@ -24,6 +24,7 @@ use tokio::sync::{RwLock, broadcast};
 use crate::config::Config;
 use crate::peers::PeerRegistry;
 use crate::session::manager::SessionManager;
+use crate::watchdog::WatchdogRuntimeConfig;
 
 const EVENT_CHANNEL_CAPACITY: usize = 256;
 
@@ -40,6 +41,8 @@ pub struct AppState {
     pub cached_prober:
         Option<crate::peers::health::CachedProber<crate::peers::health::HttpPeerProber>>,
     pub event_tx: broadcast::Sender<PulpoEvent>,
+    /// Watch channel sender for pushing watchdog config changes to the running loop.
+    pub watchdog_config_tx: Option<tokio::sync::watch::Sender<WatchdogRuntimeConfig>>,
 }
 
 impl AppState {
@@ -57,6 +60,7 @@ impl AppState {
             #[cfg(not(coverage))]
             cached_prober: None,
             event_tx,
+            watchdog_config_tx: None,
         })
     }
 
@@ -78,6 +82,30 @@ impl AppState {
                 std::time::Duration::from_secs(60),
             )),
             event_tx,
+            watchdog_config_tx: None,
+        })
+    }
+
+    pub fn with_watchdog_tx(
+        config: Config,
+        config_path: PathBuf,
+        session_manager: SessionManager,
+        peer_registry: PeerRegistry,
+        event_tx: broadcast::Sender<PulpoEvent>,
+        watchdog_config_tx: Option<tokio::sync::watch::Sender<WatchdogRuntimeConfig>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            config: Arc::new(RwLock::new(config)),
+            config_path,
+            session_manager,
+            peer_registry,
+            #[cfg(not(coverage))]
+            cached_prober: Some(crate::peers::health::CachedProber::new(
+                crate::peers::health::HttpPeerProber::new(),
+                std::time::Duration::from_secs(60),
+            )),
+            event_tx,
+            watchdog_config_tx,
         })
     }
 }
@@ -206,6 +234,95 @@ mod tests {
         assert!(b.capture_output("n", 10).unwrap().is_empty());
         assert!(b.send_input("n", "t").is_ok());
         assert!(b.setup_logging("n", "p").is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_app_state_with_watchdog_tx() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: crate::config::GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            knowledge: crate::config::KnowledgeConfig::default(),
+        };
+        let backend = Arc::new(StubBackend);
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        );
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (event_tx, _) = tokio::sync::broadcast::channel(16);
+        let initial = crate::watchdog::WatchdogRuntimeConfig {
+            threshold: 90,
+            interval: std::time::Duration::from_secs(10),
+            breach_count: 3,
+            idle: crate::watchdog::IdleConfig::default(),
+        };
+        let (config_tx, _config_rx) = tokio::sync::watch::channel(initial);
+        let state = AppState::with_watchdog_tx(
+            config,
+            tmpdir.path().join("config.toml"),
+            manager,
+            peer_registry,
+            event_tx,
+            Some(config_tx),
+        );
+        assert!(state.watchdog_config_tx.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_app_state_with_watchdog_tx_none() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: crate::config::GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            knowledge: crate::config::KnowledgeConfig::default(),
+        };
+        let backend = Arc::new(StubBackend);
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        );
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (event_tx, _) = tokio::sync::broadcast::channel(16);
+        let state = AppState::with_watchdog_tx(
+            config,
+            tmpdir.path().join("config.toml"),
+            manager,
+            peer_registry,
+            event_tx,
+            None,
+        );
+        assert!(state.watchdog_config_tx.is_none());
     }
 
     #[tokio::test]

@@ -183,41 +183,44 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let mut shutdown_handle = ShutdownHandle::new();
 
     #[cfg(not(coverage))]
-    {
+    let watchdog_config_tx = {
         if config.watchdog.enabled {
             let reader = watchdog::memory::SystemMemoryReader;
-            let wd_threshold = config.watchdog.memory_threshold;
-            let wd_interval = std::time::Duration::from_secs(config.watchdog.check_interval_secs);
-            let wd_breach_count = config.watchdog.breach_count;
-            let (wd_shutdown_tx, wd_shutdown_rx) = watch::channel(false);
-            info!(
-                threshold = wd_threshold,
-                interval_secs = wd_interval.as_secs(),
-                breach_count = wd_breach_count,
-                "Starting memory watchdog"
-            );
-            let wd_idle = watchdog::IdleConfig {
-                enabled: config.watchdog.idle_timeout_secs > 0,
-                timeout_secs: config.watchdog.idle_timeout_secs,
-                action: if config.watchdog.idle_action == "kill" {
-                    watchdog::IdleAction::Kill
-                } else {
-                    watchdog::IdleAction::Alert
+            let wd_runtime = watchdog::WatchdogRuntimeConfig {
+                threshold: config.watchdog.memory_threshold,
+                interval: std::time::Duration::from_secs(config.watchdog.check_interval_secs),
+                breach_count: config.watchdog.breach_count,
+                idle: watchdog::IdleConfig {
+                    enabled: config.watchdog.idle_timeout_secs > 0,
+                    timeout_secs: config.watchdog.idle_timeout_secs,
+                    action: if config.watchdog.idle_action == "kill" {
+                        watchdog::IdleAction::Kill
+                    } else {
+                        watchdog::IdleAction::Alert
+                    },
                 },
             };
+            let (wd_config_tx, wd_config_rx) = watch::channel(wd_runtime.clone());
+            let (wd_shutdown_tx, wd_shutdown_rx) = watch::channel(false);
+            info!(
+                threshold = wd_runtime.threshold,
+                interval_secs = wd_runtime.interval.as_secs(),
+                breach_count = wd_runtime.breach_count,
+                "Starting memory watchdog"
+            );
             tokio::spawn(watchdog::run_watchdog_loop(
                 watchdog_backend,
                 watchdog_store,
                 Box::new(reader),
-                wd_threshold,
-                wd_interval,
-                wd_breach_count,
-                wd_idle,
+                wd_config_rx,
                 wd_shutdown_rx,
             ));
             shutdown_handle.add_sender(wd_shutdown_tx);
+            Some(wd_config_tx)
+        } else {
+            None
         }
-    }
+    };
 
     let bind_mode = config.node.bind;
 
@@ -317,7 +320,20 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         info!(webhook = %name, "Webhook notifications enabled");
     }
 
-    let state = api::AppState::with_event_tx(config, config_path, manager, peer_registry, event_tx);
+    #[cfg(not(coverage))]
+    let wd_tx = watchdog_config_tx;
+    #[cfg(coverage)]
+    let wd_tx: Option<tokio::sync::watch::Sender<watchdog::WatchdogRuntimeConfig>> = None;
+
+    let state = api::AppState::with_watchdog_tx(
+        config,
+        config_path,
+        manager,
+        peer_registry,
+        event_tx,
+        wd_tx,
+    );
+
     let app = api::router(state);
 
     let bind_ip: String = match bind_mode {
