@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.17](https://github.com/darioblanco/pulpo/compare/v0.0.16...v0.0.17) (2026-03-11)
+
+
+### Features
+
+* **ocean:** animated fish schools, seabed decor, bigger labels, sharks ([f50af9f](https://github.com/darioblanco/pulpo/commit/f50af9f7065b01fb1f97103184107acf3808e8fb))
+
 ## [0.0.16](https://github.com/darioblanco/pulpo/compare/v0.0.15...v0.0.16) (2026-03-10)
 
 
