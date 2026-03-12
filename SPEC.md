@@ -2,10 +2,12 @@
 
 > _Eight arms, one brain — orchestrating agents across your network._
 >
-> Last verified against code: 2026-03-08
+> Last verified against code: 2026-03-12
 
 Pulpo is a lightweight daemon that manages coding agent sessions (Claude Code,
-Codex) across multiple machines on a trusted network (LAN, VPN, or Tailscale).
+Codex, Gemini, OpenCode, Shell) across multiple machines on a trusted network
+(LAN, VPN, or Tailscale), with a git-backed culture system where agents learn
+from each other's sessions.
 It abstracts tmux management behind a clean API, and provides a mobile-friendly
 web UI for orchestrating agents from your phone or laptop.
 
@@ -111,6 +113,8 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 - **Dashboard**: all nodes, all sessions, at a glance
 - **Session detail**: live terminal output (xterm.js), input field, metadata
 - **History**: session history with search/filter
+- **Culture**: file browser + entries list with filter, approve, delete, push-to-remote, sync status
+- **Ocean**: gamified canvas view with animated session octopuses and node landmarks
 - **Settings**: node config, guard configuration, peer management
 
 ---
@@ -402,17 +406,27 @@ DELETE /peers/:name           Remove a peer
 
 ```
 GET    /inks                  List configured inks
-GET    /culture             List extracted culture (filters: session_id, kind, repo, ink, limit)
-GET    /culture/context     Query relevant culture for a workdir/ink (for prompt injection)
-GET    /culture/:id         Get a single culture item
-PUT    /culture/:id         Update a culture item (title, body, tags, relevance)
-DELETE /culture/:id         Delete a culture item
-POST   /culture/push        Push local culture commits to configured remote
-GET    /events                SSE event stream (session lifecycle events)
+GET    /events                SSE event stream
 ```
 
-`/events` emits tagged events:
-- `kind: "session"` for session lifecycle updates (`creating`, `running`, `completed`, `dead`, `stale`)
+### Culture
+
+```
+GET    /culture               List culture entries (filters: session_id, kind, repo, ink, limit)
+GET    /culture/context       Query relevant culture for a workdir/ink (for prompt injection)
+GET    /culture/files         List files in the culture git repo
+GET    /culture/files/:path   Read a file from the culture git repo
+GET    /culture/sync          Get sync status (enabled, last_sync, errors, pending_commits)
+GET    /culture/:id           Get a single culture item
+PUT    /culture/:id           Update a culture item (title, body, tags, relevance)
+DELETE /culture/:id           Delete a culture item
+POST   /culture/:id/approve   Approve a stale culture item (removes stale tag, refreshes TTL)
+POST   /culture/push          Push local culture commits to configured remote
+```
+
+`/events` emits tagged SSE events:
+- `event: session` — session lifecycle updates (`creating`, `running`, `completed`, `dead`, `stale`)
+- `event: culture` — culture changes (`synced`, `saved`, `harvested`) with action, count, node_name, timestamp
 
 ### Quick Reference
 
@@ -439,12 +453,16 @@ GET    /events                SSE event stream (session lifecycle events)
 | `GET`    | `/auth/token`                   | Get auth token (local only)    |
 | `GET`    | `/auth/pairing-url`             | Get QR pairing URL (local)     |
 | `GET`    | `/inks`                         | List configured inks           |
-| `GET`    | `/culture`                    | List extracted culture       |
-| `GET`    | `/culture/context`            | Query context-relevant culture |
-| `GET`    | `/culture/:id`                | Get single culture item      |
-| `PUT`    | `/culture/:id`                | Update culture item          |
-| `DELETE` | `/culture/:id`                | Delete culture item          |
-| `POST`   | `/culture/push`               | Push culture to remote       |
+| `GET`    | `/culture`                      | List culture entries           |
+| `GET`    | `/culture/context`              | Query context-relevant culture |
+| `GET`    | `/culture/files`                | List culture repo files        |
+| `GET`    | `/culture/files/:path`          | Read culture repo file         |
+| `GET`    | `/culture/sync`                 | Get sync status                |
+| `GET`    | `/culture/:id`                  | Get single culture item        |
+| `PUT`    | `/culture/:id`                  | Update culture item            |
+| `DELETE` | `/culture/:id`                  | Delete culture item            |
+| `POST`   | `/culture/:id/approve`          | Approve stale culture item     |
+| `POST`   | `/culture/push`                 | Push culture to remote         |
 | `GET`    | `/events`                       | SSE event stream               |
 
 ---
@@ -529,6 +547,7 @@ pulpo/
 │   ├── pulpod/src/             # Daemon: Axum API, tmux backend, SQLite, watchdog,
 │   │   ├── api/                #   MCP server, mDNS, guard enforcement, SSE, inks
 │   │   ├── backend/            #   tmux.rs — terminal backend
+│   │   ├── culture/            #   Git-backed culture repo, sync loop, AGENTS.md compilation
 │   │   ├── session/            #   manager, state machine, output capture, PTY bridge
 │   │   ├── store/              #   SQLite persistence + migrations
 │   │   ├── notifications/      #   Discord webhook notifier
@@ -709,6 +728,14 @@ mode = "autonomous"
 unrestricted = false
 instructions = "Implement the task with tests and clear commit messages."
 
+[culture]
+remote = "git@github.com:you/culture.git"  # optional git remote for sync
+inject = true               # inject culture context into new sessions (default: true)
+ttl_days = 30               # flag entries as stale after N days without reference (0 = disabled)
+curator = false             # spawn curator sessions for past sessions without write-backs
+sync_interval_secs = 300    # background pull interval (default: 5 min, requires remote)
+sync_scopes = ["culture", "repos/my-repo"]  # optional scope filter for sync
+
 [notifications.discord]
 webhook_url = "https://discord.com/api/webhooks/..."
 events = ["running", "completed", "dead"]   # optional filter; omit for all events
@@ -775,6 +802,68 @@ to discover anyone.
 
 See `docker/README.md` for full setup instructions, architecture diagram, and
 troubleshooting guide.
+
+---
+
+## Culture System
+
+The culture system is Pulpo's differentiating feature: agents learn from each other's sessions across machines via a git-backed knowledge repository.
+
+### Design Principles
+
+- **AGENTS.md as the format** — the open standard that Claude Code, Codex, Gemini CLI, Copilot, and others read natively
+- **Agents curate their own culture** — working agents write learnings via structured write-back instructions; no separate curator sessions needed
+- **Only non-inferable details** — culture entries capture things a future agent couldn't figure out from the code itself
+- **Scoped layers** — global culture applies everywhere, repo-scoped and ink-scoped culture apply to specific contexts; layers merge at spawn
+
+### Storage
+
+Culture lives in a local git repo at `<data_dir>/culture/` with this structure:
+
+```
+culture/
+├── AGENTS.md              # Global AGENTS.md (auto-compiled from entries)
+├── pending/               # Agent write-back files (harvested on session completion)
+├── culture/               # Global culture entries (markdown with YAML frontmatter)
+│   ├── <uuid>-summary.md
+│   └── <uuid>-failure.md
+├── repos/
+│   └── <slug>/
+│       ├── AGENTS.md      # Repo-scoped AGENTS.md
+│       └── <uuid>.md
+└── inks/
+    └── <ink>/
+        ├── AGENTS.md      # Ink-scoped AGENTS.md
+        └── <uuid>.md
+```
+
+### Write-back and Harvest
+
+At spawn, agents receive a concrete write-back instruction with a file path:
+
+```
+When you finish your task, write your non-obvious learnings to:
+  <culture_repo>/pending/<session-name>.md
+```
+
+On session completion, Pulpo harvests pending files, validates them, and commits entries to the appropriate scoped directory. AGENTS.md files are recompiled after each commit.
+
+### Lifecycle
+
+- **Relevance tracking**: `last_referenced_at` updates each time an entry is injected into a session
+- **TTL decay**: entries unreferenced for `ttl_days` are tagged `stale` for review
+- **Supersede**: new entries can replace old ones (tagged `superseded`, relevance zeroed)
+- **Approve**: stale entries can be approved (removes tag, refreshes TTL)
+
+### Cross-Node Sync
+
+When a git remote is configured, culture syncs across nodes:
+
+- **Background pull loop**: `run_culture_sync_loop` runs every `sync_interval_secs`
+- **Conflict resolution**: rebase-first, with merge fallback using `--ours` strategy
+- **Scope filtering**: optional `sync_scopes` config limits which directories are accepted from remote
+- **Concurrency**: `tokio::sync::Mutex` guards all git-mutating operations (save, harvest, pull)
+- **Events**: culture changes emit SSE events (`synced`, `saved`, `harvested`)
 
 ---
 
