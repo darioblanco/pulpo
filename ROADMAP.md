@@ -46,7 +46,7 @@ Pulpo is lower-value if you:
 Pulpo's defensible wedge is: **agent runtime control plane with collective culture for trusted self-hosted environments**.
 
 Not unique: prompting UX, code-gen quality, chat interfaces.
-Unique: cross-node session lifecycle, watchdog interventions, stale/resume semantics, provider-agnostic operational API, **agent-driven culture accumulation** — agents learn from each other's sessions and improve over time via AGENTS.md-formatted shared learnings.
+Unique: cross-node session lifecycle, watchdog interventions, idle/finished/lost detection and resume semantics, provider-agnostic operational API, **agent-driven culture accumulation** — agents learn from each other's sessions and improve over time via AGENTS.md-formatted shared learnings.
 
 ## Product Thesis
 
@@ -63,8 +63,8 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
 - `pulpod` daemon + REST API + embedded web UI
 - `pulpo` CLI
 - SQLite-backed session persistence
-- Session lifecycle: `creating`, `running`, `completed`, `dead`, `stale`
-- Resume flow after stale detection
+- Session lifecycle: `creating`, `active`, `idle`, `finished`, `killed`, `lost`
+- Resume flow from `lost` and `finished` states
 - Watchdog interventions (memory + idle) with live config reload via watch channel
 - Machine-readable intervention reason codes (`InterventionCode` enum)
 - Binary guard toggle (`unrestricted` on/off)
@@ -88,76 +88,22 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
   - P2 — Discord culture notifications: culture event listener + embed formatting
   - P3 — Node info completeness: real memory + GPU detection in peers endpoint
   - P4 — SPEC.md refresh: culture system, sync, SSE event types documented
+- **Session lifecycle hardening** (S1–S5 complete): user-centric state machine with full detection
+  - S1 — State rename: Running/Completed/Dead/Stale → Active/Idle/Finished/Killed/Lost (`d71ab54`)
+  - S2 — Idle detection: Active ⇄ Idle transitions based on output snapshots and waiting patterns (`68bf3d7`)
+  - S3 — Finished detection: `[pulpo] Agent exited` marker detection, culture harvest on finish, resume from Finished (`5d4c1d2`)
+  - S4 — Lost refinement: finished TTL cleanup, resume semantics (Lost + Finished allowed, Killed blocked) (`36ad150`)
+  - S5 — Session lifecycle documentation: full state machine reference at `docs/operations/session-lifecycle.md`, SPEC.md updated
 
-## What's Next: Session Lifecycle Hardening
+## What's Next: Culture Quality
 
-The session state machine has a critical gap: **sessions never automatically reach a terminal state**. When an agent finishes its work, the session stays `Running` forever because `exec bash` keeps the tmux session alive. The `[pulpo] Agent exited` marker is already emitted but never detected. Meanwhile, `Completed` and `Stale` are effectively dead code.
+With session lifecycle hardened, the next focus is improving what agents learn and share.
 
-This undermines the entire lifecycle model. The fix is a full state rename (Option C) that makes states user-centric, plus new detection logic.
+### Culture quality improvements
 
-### State rename: Running/Completed/Dead/Stale → Active/Idle/Finished/Killed/Lost
-
-| Old | New | Meaning |
-|-----|-----|---------|
-| Creating | Creating | Setting up (keep) |
-| Running | **Active** | Agent is working — output is changing |
-| _(new)_ | **Idle** | Agent needs user attention — waiting for input or at its prompt |
-| Completed | **Finished** | Agent process exited — task is done |
-| Dead | **Killed** | Session was terminated (user, watchdog memory, watchdog idle timeout) |
-| Stale | **Lost** | tmux process disappeared unexpectedly (crash, reboot) |
-
-**Key semantics:**
-- `unrestricted` is a **guard toggle** (pass-through to agent CLI flags like `--dangerously-skip-permissions`), NOT a mode. It's orthogonal to Interactive/Autonomous. Pulpo doesn't enforce permissions — the agent binary does. Pulpo only observes terminal output.
-- **Interactive sessions** cycle `Active ⇄ Idle` until the user kills the session or exits the agent. `Idle` fires on permission prompts (if restricted) AND "what's next?" prompts.
-- **Autonomous sessions** go `Active → Finished` (if unrestricted) or `Active → Idle → Active → ... → Finished` (if restricted, due to permission prompts).
-- **Shell sessions** cycle `Active ⇄ Idle` based on whether a command is running in the bash prompt.
-- `Finished` is terminal — no automatic transition back. Resume from `Finished` restarts the agent.
-- `Killed` is terminal — no resume. Create a new session.
-- `Lost` allows resume (recreate tmux session).
-
-### S1 — State rename (mechanical refactor)
-
-Rename enum variants, serde strings, Display/FromStr, pattern matches across ~25 files. No new logic — pure rename.
-
-- `SessionStatus::Running → Active`, `Completed → Finished`, `Dead → Killed`, `Stale → Lost`
-- Add `SessionStatus::Idle` variant
-- Update all Rust crates, web components, CSS vars, ocean sprites, Discord bot, tests
-- Ocean visual mapping: Active = lavender (was running), Idle = amber (was stale), Finished = emerald (was completed), Killed = red (was dead), Lost = red recolor (same sprite as Killed)
-- Ocean behavior: Idle gets minimal movement / small radius (was stale behavior)
-- Update `waiting_for_input` flag → remove it, replaced by `Idle` state
-- DB migration: update `status` column default from `'creating'` to `'creating'`, rename existing status values in-place
-- Config: `notification_events` default changes from `["completed", "dead"]` to `["finished", "killed"]`
-
-### S2 — Idle detection (Active ⇄ Idle transitions)
-
-Promote the existing `waiting_for_input` detection into real state transitions.
-
-- **Active → Idle**: watchdog detects output unchanged for 1 tick AND (waiting patterns matched OR agent at its prompt). Piggybacks on existing output snapshot comparison — no performance cost.
-- **Idle → Active**: watchdog detects output changed since last tick. Transition back to Active.
-- **Shell idle**: detect bash prompt idle (no running command) → Idle. Command running → Active.
-- Remove `waiting_for_input` DB column and session field (replaced by `Idle` status)
-- SSE events emitted on all transitions (web UI needs them). Discord bot filters to only notify on Finished/Killed/Lost.
-
-### S3 — Finished detection (agent exit)
-
-Detect the `[pulpo] Agent exited` marker and transition to `Finished`.
-
-- **Detection**: watchdog checks for `[pulpo] Agent exited` in captured output → `Active/Idle → Finished`
-- **Culture extraction**: trigger on `Finished` (same as current kill/stale paths)
-- **Keep `exec bash`**: tmux shell stays alive for inspection, but session state reflects agent is done
-- **Resume from Finished**: allowed — restarts agent command in new tmux session
-
-### S4 — Lost refinement and cleanup
-
-- **Finished + TTL → cleanup**: configurable auto-kill of tmux shell after grace period once Finished. Keeps the process around briefly for inspection, then cleans up.
-- **Resume semantics**: Lost → recreate tmux + restart agent. Finished → restart agent. Killed → blocked.
-- **Dashboard**: filters for terminal states (Finished/Killed/Lost) are now accurate
-
-### S5 — Session lifecycle documentation
-
-- `docs/session-lifecycle.md`: full state machine diagram, transition rules, detection mechanisms, mode × guard matrix, corner cases, visual mapping
-- Update SPEC.md session lifecycle section
-- Update CLAUDE.md if conventions change
+- Improve what agents write back (better prompts, validation, deduplication)
+- Culture effectiveness metrics: do agents with culture produce better results?
+- Automated culture pruning based on staleness and contradiction detection
 
 ## Future Directions
 

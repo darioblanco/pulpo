@@ -122,42 +122,51 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 ## Session Lifecycle
 
 ```
-  spawn          running           done/interrupted
-    │               │                    │
-    ▼               ▼                    ▼
-┌────────┐    ┌──────────┐    ┌───────────────────┐
-│CREATING│───▶│ RUNNING  │───▶│ COMPLETED / DEAD  │
-└────────┘    └──────────┘    └───────────────────┘
-                   │                    │
-                   │    reboot/crash    │
-                   ▼                    │
-              ┌──────────┐             │
-              │  STALE   │─── resume ──┘
-              └──────────┘
+  spawn           agent working        agent exits
+    │                   │                   │
+    ▼                   ▼                   ▼
+┌────────┐       ┌──────────┐        ┌──────────┐
+│CREATING│──────▶│  ACTIVE  │───────▶│ FINISHED │
+└────────┘       └──────────┘        └──────────┘
+                   ▲      │                │
+            output │      │ waiting        │ TTL / user
+           changed │      │ for input      ▼
+                   │      ▼          ┌──────────┐
+                   │ ┌──────────┐    │  KILLED  │
+                   └─│   IDLE   │    └──────────┘
+                     └──────────┘          ▲
+                                           │ watchdog / user
+                     ┌──────────┐
+                     │   LOST   │◀── tmux disappeared
+                     └──────────┘
 ```
+
+> Full lifecycle reference: [`docs/operations/session-lifecycle.md`](docs/operations/session-lifecycle.md)
 
 ### States
 
 - **CREATING**: tmux session is being set up
-- **RUNNING**: agent is active, terminal output is streaming
-- **COMPLETED**: agent exited cleanly (exit code 0)
-- **DEAD**: agent exited with error or was killed
-- **STALE**: the daemon restarted and found a session record in SQLite but no
-  matching tmux session — the machine rebooted or tmux crashed. The user can
-  "resume" which creates a new tmux session and runs the agent with
-  `--resume <conversation-id>` (Claude Code)
+- **ACTIVE**: agent is working — terminal output is changing
+- **IDLE**: agent needs attention — waiting for user input or at its prompt
+- **FINISHED**: agent process exited — task is done. Detected by `[pulpo] Agent exited` marker
+- **KILLED**: session was terminated by user, watchdog (memory/idle), or finished TTL cleanup
+- **LOST**: tmux process disappeared unexpectedly (crash, reboot)
 
 ### State Quick Reference
 
-| Status      | Meaning                       | How it happens               | What to do next               |
-| ----------- | ----------------------------- | ---------------------------- | ----------------------------- |
-| `creating`  | tmux session being set up     | `pulpo spawn` just ran       | Wait                          |
-| `running`   | Agent is active               | Session started successfully | `logs`, `attach`, `kill`      |
-| `completed` | Agent exited cleanly (exit 0) | Task finished                | `delete` or keep for history  |
-| `dead`      | Agent crashed or was killed   | Error, `kill`, or watchdog   | `spawn` new or `delete`       |
-| `stale`     | DB record but no tmux session | Daemon restart / reboot      | `resume`                      |
+| Status     | Meaning                         | How it happens                    | What to do next                 |
+| ---------- | ------------------------------- | --------------------------------- | ------------------------------- |
+| `creating` | tmux session being set up       | `pulpo spawn` just ran            | Wait                            |
+| `active`   | Agent is working                | Session started / output changed  | `logs`, `attach`, `kill`        |
+| `idle`     | Agent waiting for input         | Watchdog detected waiting pattern | `attach` to interact, or `kill` |
+| `finished` | Agent exited                    | `[pulpo] Agent exited` detected   | `resume` or `delete`            |
+| `killed`   | Session terminated              | User, watchdog, or TTL cleanup    | `spawn` new or `delete`         |
+| `lost`     | tmux process disappeared        | Daemon restart / reboot / crash   | `resume`                        |
 
-Key distinction: **stale** means the session record exists but the tmux process is gone (recoverable via `resume`). **Dead** means the process exited with an error or was killed (requires a fresh `spawn`).
+Key distinctions:
+- **Idle** is a live state — the agent process is running but waiting. **Finished** means the agent exited.
+- **Finished** is resumable (restarts the agent). **Killed** is not resumable (requires fresh `spawn`).
+- **Lost** means the tmux process is gone but may be recoverable via `resume`.
 
 ### Persistence (what survives a reboot)
 
