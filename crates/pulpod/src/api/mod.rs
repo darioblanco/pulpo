@@ -279,6 +279,7 @@ mod tests {
             interval: std::time::Duration::from_secs(10),
             breach_count: 3,
             idle: crate::watchdog::IdleConfig::default(),
+            finished_ttl_secs: 0,
         };
         let (config_tx, _config_rx) = tokio::sync::watch::channel(initial);
         let sync_status = Arc::new(RwLock::new(SyncStatus::new(false)));

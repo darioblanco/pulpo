@@ -222,6 +222,9 @@ pub struct WatchdogConfig {
     pub idle_timeout_secs: u64,
     #[serde(default = "default_idle_action")]
     pub idle_action: String,
+    /// Seconds after Finished before tmux shell is killed (0 = disabled).
+    #[serde(default)]
+    pub finished_ttl_secs: u64,
 }
 
 impl WatchdogConfig {
@@ -257,6 +260,7 @@ impl Default for WatchdogConfig {
             breach_count: default_breach_count(),
             idle_timeout_secs: default_idle_timeout_secs(),
             idle_action: default_idle_action(),
+            finished_ttl_secs: 0,
         }
     }
 }
@@ -1392,6 +1396,7 @@ breach_count = 5
                 breach_count: 5,
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
+                finished_ttl_secs: 0,
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),

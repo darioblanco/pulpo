@@ -51,6 +51,7 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
             breach_count: config.watchdog.breach_count,
             idle_timeout_secs: config.watchdog.idle_timeout_secs,
             idle_action: config.watchdog.idle_action.clone(),
+            finished_ttl_secs: config.watchdog.finished_ttl_secs,
         },
         notifications: NotificationsConfigResponse {
             discord: config
@@ -845,6 +846,7 @@ mod tests {
                 breach_count: 3,
                 idle_timeout_secs: 300,
                 idle_action: "pause".into(),
+                finished_ttl_secs: 0,
             },
             inks: {
                 let mut m = HashMap::new();

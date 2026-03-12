@@ -34,6 +34,7 @@ pub async fn get_watchdog(
         breach_count: config.watchdog.breach_count,
         idle_timeout_secs: config.watchdog.idle_timeout_secs,
         idle_action: config.watchdog.idle_action.clone(),
+        finished_ttl_secs: config.watchdog.finished_ttl_secs,
     };
     drop(config);
     Ok(Json(resp))
@@ -63,6 +64,9 @@ pub async fn update_watchdog(
     if let Some(action) = req.idle_action {
         config.watchdog.idle_action = action;
     }
+    if let Some(ttl) = req.finished_ttl_secs {
+        config.watchdog.finished_ttl_secs = ttl;
+    }
 
     // Validate the updated config
     config
@@ -91,6 +95,7 @@ pub async fn update_watchdog(
                     crate::watchdog::IdleAction::Alert
                 },
             },
+            finished_ttl_secs: config.watchdog.finished_ttl_secs,
         };
         // Ignore send error — watchdog may have shut down
         let _ = tx.send(runtime_cfg);
@@ -103,6 +108,7 @@ pub async fn update_watchdog(
         breach_count: config.watchdog.breach_count,
         idle_timeout_secs: config.watchdog.idle_timeout_secs,
         idle_action: config.watchdog.idle_action.clone(),
+        finished_ttl_secs: config.watchdog.finished_ttl_secs,
     };
     drop(config);
     Ok(Json(resp))
@@ -251,6 +257,7 @@ mod tests {
             breach_count: Some(5),
             idle_timeout_secs: Some(300),
             idle_action: Some("kill".into()),
+            finished_ttl_secs: None,
         };
         let Json(resp) = update_watchdog(State(state.clone()), Json(req))
             .await
@@ -394,6 +401,7 @@ mod tests {
             interval: std::time::Duration::from_secs(10),
             breach_count: 3,
             idle: crate::watchdog::IdleConfig::default(),
+            finished_ttl_secs: 0,
         };
         let (config_tx, config_rx) = tokio::sync::watch::channel(initial);
         let (event_tx, _) = tokio::sync::broadcast::channel(16);

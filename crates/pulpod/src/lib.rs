@@ -221,6 +221,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                         watchdog::IdleAction::Alert
                     },
                 },
+                finished_ttl_secs: config.watchdog.finished_ttl_secs,
             };
             let (wd_config_tx, wd_config_rx) = watch::channel(wd_runtime.clone());
             let (wd_shutdown_tx, wd_shutdown_rx) = watch::channel(false);

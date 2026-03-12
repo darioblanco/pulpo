@@ -50,6 +50,7 @@ const testConfig: ConfigResponse = {
     breach_count: 3,
     idle_timeout_secs: 300,
     idle_action: 'pause',
+    finished_ttl_secs: 0,
   },
   notifications: {
     discord: null,

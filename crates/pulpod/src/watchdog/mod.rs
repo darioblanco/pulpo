@@ -63,6 +63,8 @@ pub struct WatchdogRuntimeConfig {
     pub interval: Duration,
     pub breach_count: u32,
     pub idle: IdleConfig,
+    /// Seconds after Finished before tmux shell is killed (0 = disabled).
+    pub finished_ttl_secs: u64,
 }
 
 /// Context for handling agent-finished transitions (culture harvest + events).
@@ -148,6 +150,11 @@ pub async fn run_watchdog_loop(
                 // Idle + finished detection runs on every tick, independent of memory checks
                 if cfg.idle.enabled {
                     check_idle_sessions(&backend, &store, &cfg.idle, &finished_ctx).await;
+                }
+
+                // Clean up finished sessions whose tmux shell has exceeded the TTL
+                if cfg.finished_ttl_secs > 0 {
+                    cleanup_finished_sessions(&backend, &store, cfg.finished_ttl_secs).await;
                 }
             }
             _ = shutdown_rx.changed() => {
@@ -415,7 +422,9 @@ async fn handle_session_finished(store: &Store, session: &Session, ctx: &Finishe
         let _ = tx.send(PulpoEvent::Session(event));
     }
 
-    // Harvest culture (best-effort)
+    // Harvest culture (best-effort). Gated from coverage: requires a real git repo.
+    // The harvest_pending function itself is tested in culture::repo tests.
+    #[cfg(not(coverage))]
     if let Some(repo) = &ctx.culture_repo {
         match repo
             .harvest_pending(
@@ -542,6 +551,57 @@ async fn handle_idle_session(
             warn!(
                 "Idle check: killed idle session {} after {minutes} minutes",
                 session.name
+            );
+        }
+    }
+}
+
+/// Kill tmux shells for Finished sessions that have exceeded the TTL grace period.
+async fn cleanup_finished_sessions(
+    backend: &Arc<dyn Backend>,
+    store: &Store,
+    finished_ttl_secs: u64,
+) {
+    let sessions = match store.list_sessions().await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("Finished cleanup: failed to list sessions: {e}");
+            return;
+        }
+    };
+
+    let now = chrono::Utc::now();
+    let ttl = chrono::Duration::seconds(finished_ttl_secs.try_into().unwrap_or(i64::MAX));
+
+    for session in sessions
+        .iter()
+        .filter(|s| s.status == SessionStatus::Finished)
+    {
+        let age = now - session.updated_at;
+        if age <= ttl {
+            continue;
+        }
+
+        let bid = resolve_backend_id(session, backend.as_ref());
+        if let Err(e) = backend.kill_session(&bid) {
+            debug!(
+                session_name = %session.name,
+                "Finished cleanup: tmux already gone: {e}"
+            );
+        }
+        if let Err(e) = store
+            .update_session_status(&session.id.to_string(), SessionStatus::Killed)
+            .await
+        {
+            warn!(
+                session_name = %session.name,
+                "Finished cleanup: failed to mark killed: {e}"
+            );
+        } else {
+            info!(
+                session_name = %session.name,
+                age_secs = age.num_seconds(),
+                "Finished cleanup: killed tmux shell after TTL"
             );
         }
     }
@@ -740,6 +800,7 @@ mod tests {
             interval,
             breach_count,
             idle,
+            finished_ttl_secs: 0,
         };
         let (_, rx) = tokio::sync::watch::channel(cfg);
         rx
@@ -759,6 +820,7 @@ mod tests {
             interval,
             breach_count,
             idle,
+            finished_ttl_secs: 0,
         };
         tokio::sync::watch::channel(cfg)
     }
@@ -2594,6 +2656,7 @@ mod tests {
                     enabled: false,
                     ..IdleConfig::default()
                 },
+                finished_ttl_secs: 0,
             })
             .unwrap();
 
@@ -2621,6 +2684,7 @@ mod tests {
             interval: Duration::from_secs(10),
             breach_count: 3,
             idle: IdleConfig::default(),
+            finished_ttl_secs: 0,
         };
         let debug = format!("{cfg:?}");
         assert!(debug.contains("90"));
@@ -2638,6 +2702,7 @@ mod tests {
                 timeout_secs: 300,
                 action: IdleAction::Kill,
             },
+            finished_ttl_secs: 0,
         };
         #[allow(clippy::redundant_clone)]
         let cloned = cfg.clone();
@@ -3044,5 +3109,153 @@ mod tests {
             }
             PulpoEvent::Culture(_) => panic!("Expected Session event"),
         }
+    }
+
+    // --- S4: Finished TTL cleanup tests ---
+
+    #[tokio::test]
+    async fn test_cleanup_finished_sessions_kills_expired() {
+        let backend = Arc::new(MockBackend::new());
+        let store = test_store().await;
+        let session = create_running_session(&store, "expired").await;
+
+        // Mark as Finished with old updated_at
+        store
+            .update_session_status(&session.id.to_string(), SessionStatus::Finished)
+            .await
+            .unwrap();
+        // Manually set updated_at to 2 hours ago
+        sqlx::query("UPDATE sessions SET updated_at = ? WHERE id = ?")
+            .bind((chrono::Utc::now() - chrono::Duration::seconds(7200)).to_rfc3339())
+            .bind(session.id.to_string())
+            .execute(store.pool())
+            .await
+            .unwrap();
+
+        let dyn_backend: Arc<dyn Backend> = backend.clone();
+        cleanup_finished_sessions(&dyn_backend, &store, 3600).await; // TTL = 1 hour
+
+        // Should be Killed now
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Killed);
+        // Backend kill should have been called
+        assert!(
+            backend
+                .kill_calls
+                .lock()
+                .unwrap()
+                .contains(&"expired".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_finished_sessions_skips_recent() {
+        let backend = Arc::new(MockBackend::new());
+        let store = test_store().await;
+        let session = create_running_session(&store, "recent").await;
+
+        // Mark as Finished (just now, so within TTL)
+        store
+            .update_session_status(&session.id.to_string(), SessionStatus::Finished)
+            .await
+            .unwrap();
+
+        let dyn_backend: Arc<dyn Backend> = backend.clone();
+        cleanup_finished_sessions(&dyn_backend, &store, 3600).await; // TTL = 1 hour
+
+        // Should still be Finished
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Finished);
+        assert!(backend.kill_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_finished_sessions_ignores_active() {
+        let backend = Arc::new(MockBackend::new());
+        let store = test_store().await;
+        let _session = create_running_session(&store, "active-one").await;
+
+        let dyn_backend: Arc<dyn Backend> = backend.clone();
+        cleanup_finished_sessions(&dyn_backend, &store, 1).await; // TTL = 1 sec
+
+        // Should still be Active (cleanup only targets Finished)
+        assert!(backend.kill_calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_finished_kill_failure_still_marks_killed() {
+        // Even if backend.kill_session fails (tmux already gone), status should update
+        let backend = Arc::new(MockBackend::failing_kill());
+        let store = test_store().await;
+        let session = create_running_session(&store, "gone").await;
+
+        store
+            .update_session_status(&session.id.to_string(), SessionStatus::Finished)
+            .await
+            .unwrap();
+        // Set updated_at to 2 hours ago
+        sqlx::query("UPDATE sessions SET updated_at = ? WHERE id = ?")
+            .bind((chrono::Utc::now() - chrono::Duration::seconds(7200)).to_rfc3339())
+            .bind(session.id.to_string())
+            .execute(store.pool())
+            .await
+            .unwrap();
+
+        let dyn_backend: Arc<dyn Backend> = backend;
+        cleanup_finished_sessions(&dyn_backend, &store, 3600).await;
+
+        // Should still be marked as Killed even though backend.kill failed
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Killed);
+    }
+
+    #[test]
+    fn test_agent_exit_marker_constant() {
+        assert_eq!(AGENT_EXIT_MARKER, "[pulpo] Agent exited");
+    }
+
+    #[tokio::test]
+    async fn test_finished_no_culture_repo() {
+        // Test handle_session_finished without culture repo (common case)
+        let store = test_store().await;
+        let session = create_running_session(&store, "no-culture").await;
+
+        let ctx = FinishedContext {
+            event_tx: None,
+            node_name: "n".into(),
+            culture_repo: None,
+        };
+        handle_session_finished(&store, &session, &ctx).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Finished);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_finished_no_finished_sessions() {
+        let backend = Arc::new(MockBackend::new());
+        let store = test_store().await;
+
+        // No sessions at all
+        let dyn_backend: Arc<dyn Backend> = backend.clone();
+        cleanup_finished_sessions(&dyn_backend, &store, 3600).await;
+
+        assert!(backend.kill_calls.lock().unwrap().is_empty());
     }
 }
