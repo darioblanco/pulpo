@@ -63,7 +63,6 @@ export function SSEProvider({ children }: { children: ReactNode }) {
       session_name: string;
       status: string;
       output_snippet: string | null;
-      waiting_for_input: boolean | null;
     }): boolean => {
       const current = sessionsRef.current;
       const idx = current.findIndex((s) => s.id === event.session_id);
@@ -75,7 +74,6 @@ export function SSEProvider({ children }: { children: ReactNode }) {
           return {
             ...s,
             status: event.status,
-            waiting_for_input: event.waiting_for_input ?? s.waiting_for_input,
           };
         }),
       );

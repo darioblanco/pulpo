@@ -118,7 +118,6 @@ mod tests {
             previous_status: Some("creating".into()),
             node_name: "test".into(),
             output_snippet: None,
-            waiting_for_input: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
         });
         state.event_tx.send(event.clone()).unwrap();
@@ -137,7 +136,6 @@ mod tests {
             previous_status: None,
             node_name: "test".into(),
             output_snippet: None,
-            waiting_for_input: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
         });
 
@@ -172,7 +170,6 @@ mod tests {
                 previous_status: None,
                 node_name: "n".into(),
                 output_snippet: None,
-                waiting_for_input: None,
                 timestamp: "t".into(),
             }));
         }

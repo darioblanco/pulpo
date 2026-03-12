@@ -229,29 +229,6 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
     }
 }
 
-async fn check_idle_sessions(backend: &Arc<dyn Backend>, store: &Store, idle_config: &IdleConfig) {
-    let sessions = match store.list_sessions().await {
-        Ok(s) => s,
-        Err(e) => {
-            warn!("Idle check: failed to list sessions: {e}");
-            return;
-        }
-    };
-
-    let running: Vec<_> = sessions
-        .into_iter()
-        .filter(|s| s.status == SessionStatus::Active)
-        .collect();
-
-    let now = chrono::Utc::now();
-    let timeout =
-        chrono::Duration::seconds(idle_config.timeout_secs.try_into().unwrap_or(i64::MAX));
-
-    for session in &running {
-        check_session_idle(backend, store, idle_config, session, now, timeout).await;
-    }
-}
-
 /// Patterns that indicate the agent is waiting for user input.
 const WAITING_PATTERNS: &[&str] = &[
     "Do you trust",
@@ -279,6 +256,30 @@ pub fn detect_waiting_for_input(output: &str) -> bool {
         }
     }
     false
+}
+
+async fn check_idle_sessions(backend: &Arc<dyn Backend>, store: &Store, idle_config: &IdleConfig) {
+    let sessions = match store.list_sessions().await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("Idle check: failed to list sessions: {e}");
+            return;
+        }
+    };
+
+    // Process both Active and Idle sessions — Active may become Idle, Idle may become Active
+    let live: Vec<_> = sessions
+        .into_iter()
+        .filter(|s| s.status == SessionStatus::Active || s.status == SessionStatus::Idle)
+        .collect();
+
+    let now = chrono::Utc::now();
+    let timeout =
+        chrono::Duration::seconds(idle_config.timeout_secs.try_into().unwrap_or(i64::MAX));
+
+    for session in &live {
+        check_session_idle(backend, store, idle_config, session, now, timeout).await;
+    }
 }
 
 async fn check_session_idle(
@@ -314,36 +315,50 @@ async fn check_session_idle(
         return;
     }
 
-    // Check if agent is waiting for user input
-    let waiting = detect_waiting_for_input(&current_output);
-    if waiting != session.waiting_for_input {
-        if let Err(e) = store
-            .update_session_waiting_for_input(&session.id.to_string(), waiting)
-            .await
-        {
-            warn!(
-                "Idle check: failed to update waiting_for_input for {}: {e}",
-                session.name
-            );
-        } else if waiting {
-            info!(
-                "Session {} appears to be waiting for user input",
-                session.name
-            );
-        }
-    }
-
     // Determine if output changed since last check
     let output_changed = session.output_snapshot.as_deref() != Some(current_output.as_str());
 
     if output_changed {
         handle_active_session(store, session).await;
     } else {
+        // Check for waiting-for-input patterns → transition Active to Idle
+        if session.status == SessionStatus::Active && detect_waiting_for_input(&current_output) {
+            info!(
+                "Session {} is waiting for input, transitioning to idle",
+                session.name
+            );
+            if let Err(e) = store
+                .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+                .await
+            {
+                warn!(
+                    "Idle check: failed to transition {} to idle: {e}",
+                    session.name
+                );
+            }
+            return;
+        }
         handle_idle_session(backend, store, idle_config, session, &bid, now, timeout).await;
     }
 }
 
 async fn handle_active_session(store: &Store, session: &pulpo_common::session::Session) {
+    // If session was Idle and output changed, transition back to Active
+    if session.status == SessionStatus::Idle {
+        info!(
+            "Session {} has new output, transitioning back to active",
+            session.name
+        );
+        if let Err(e) = store
+            .update_session_status(&session.id.to_string(), SessionStatus::Active)
+            .await
+        {
+            warn!(
+                "Idle check: failed to transition {} back to active: {e}",
+                session.name
+            );
+        }
+    }
     if session.idle_since.is_none() {
         return;
     }
@@ -570,39 +585,6 @@ mod tests {
         store
     }
 
-    fn make_running_session(name: &str) -> Session {
-        Session {
-            id: uuid::Uuid::new_v4(),
-            name: name.into(),
-            workdir: "/tmp/repo".into(),
-            provider: Provider::Claude,
-            prompt: "test".into(),
-            status: SessionStatus::Active,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
-            exit_code: None,
-            backend_session_id: Some(name.to_owned()),
-            output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            waiting_for_input: false,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        }
-    }
-
     async fn create_running_session(store: &Store, name: &str) -> Session {
         let session = Session {
             id: uuid::Uuid::new_v4(),
@@ -630,7 +612,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1090,7 +1071,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1416,7 +1396,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1475,7 +1454,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1542,7 +1520,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(100)),
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1599,7 +1576,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1675,7 +1651,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now()), // very recent
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1732,7 +1707,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(idle_time),
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1788,7 +1762,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1866,7 +1839,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now() - chrono::Duration::seconds(700),
             updated_at: chrono::Utc::now(),
         };
@@ -1946,7 +1918,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2018,7 +1989,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now()),
             idle_since: Some(chrono::Utc::now()),
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2063,7 +2033,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now()),
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2103,7 +2072,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2167,7 +2135,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2232,7 +2199,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2256,134 +2222,6 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(fetched.idle_since.is_some());
-    }
-
-    #[test]
-    fn test_detect_waiting_for_input_trust_prompt() {
-        let output = "Welcome to Claude Code!\n\nDo you trust the files in this folder?\nYes / No";
-        assert!(detect_waiting_for_input(output));
-    }
-
-    #[test]
-    fn test_detect_waiting_for_input_yn_prompt() {
-        let output = "Some output\nInstall dependencies? (y/n)";
-        assert!(detect_waiting_for_input(output));
-    }
-
-    #[test]
-    fn test_detect_waiting_for_input_bracket_yn() {
-        let output = "Continue? [Y/n]";
-        assert!(detect_waiting_for_input(output));
-    }
-
-    #[test]
-    fn test_detect_waiting_for_input_press_enter() {
-        let output = "Setup complete.\nPress Enter to continue...";
-        assert!(detect_waiting_for_input(output));
-    }
-
-    #[test]
-    fn test_detect_waiting_for_input_no_match() {
-        let output = "Building project...\nCompiling src/main.rs\nFinished in 2.3s";
-        assert!(!detect_waiting_for_input(output));
-    }
-
-    #[test]
-    fn test_detect_waiting_for_input_empty() {
-        assert!(!detect_waiting_for_input(""));
-    }
-
-    #[test]
-    fn test_detect_waiting_for_input_only_checks_last_5_lines() {
-        // The pattern is on line 1 (6+ lines ago), outside the last 5
-        let output = "Do you trust this?\nline2\nline3\nline4\nline5\nline6\nline7";
-        assert!(!detect_waiting_for_input(output));
-    }
-
-    #[test]
-    fn test_detect_waiting_for_input_case_insensitive() {
-        let output = "DO YOU TRUST this folder?";
-        assert!(detect_waiting_for_input(output));
-    }
-
-    #[test]
-    fn test_detect_waiting_for_input_yes_no_brackets() {
-        let output = "Are you sure? [yes/no]";
-        assert!(detect_waiting_for_input(output));
-    }
-
-    #[test]
-    fn test_detect_waiting_for_input_approve() {
-        let output = "Please approve this action";
-        assert!(detect_waiting_for_input(output));
-    }
-
-    #[tokio::test]
-    async fn test_idle_check_sets_waiting_for_input() {
-        let backend = MockBackend::new().with_output("Do you trust this folder?\nYes / No");
-        let store = test_store().await;
-        let session = make_running_session("waiting-detect");
-        store.insert_session(&session).await.unwrap();
-
-        let now = chrono::Utc::now();
-        let timeout = chrono::Duration::seconds(600);
-        let idle_config = IdleConfig::default();
-
-        let dyn_backend: Arc<dyn Backend> = Arc::new(backend);
-        check_session_idle(&dyn_backend, &store, &idle_config, &session, now, timeout).await;
-
-        let updated = store.get_session("waiting-detect").await.unwrap().unwrap();
-        assert!(updated.waiting_for_input);
-    }
-
-    #[tokio::test]
-    async fn test_idle_check_clears_waiting_for_input() {
-        let backend = MockBackend::new().with_output("Building project...\nDone.");
-        let store = test_store().await;
-        let mut session = make_running_session("waiting-clear");
-        session.waiting_for_input = true;
-        store.insert_session(&session).await.unwrap();
-        // Also set it in the DB explicitly
-        store
-            .update_session_waiting_for_input(&session.id.to_string(), true)
-            .await
-            .unwrap();
-
-        let now = chrono::Utc::now();
-        let timeout = chrono::Duration::seconds(600);
-        let idle_config = IdleConfig::default();
-
-        // Re-read to get the DB state
-        let session = store.get_session("waiting-clear").await.unwrap().unwrap();
-
-        let dyn_backend: Arc<dyn Backend> = Arc::new(backend);
-        check_session_idle(&dyn_backend, &store, &idle_config, &session, now, timeout).await;
-
-        let updated = store.get_session("waiting-clear").await.unwrap().unwrap();
-        assert!(!updated.waiting_for_input);
-    }
-
-    #[tokio::test]
-    async fn test_idle_check_waiting_update_error() {
-        let backend = MockBackend::new().with_output("Do you trust this folder?\nYes / No");
-        let store = test_store().await;
-        let session = make_running_session("waiting-err");
-        store.insert_session(&session).await.unwrap();
-
-        // Drop the waiting_for_input column to make the update query fail
-        // while output snapshot update still succeeds
-        sqlx::query("ALTER TABLE sessions DROP COLUMN waiting_for_input")
-            .execute(store.pool())
-            .await
-            .unwrap();
-
-        let now = chrono::Utc::now();
-        let timeout = chrono::Duration::seconds(600);
-        let idle_config = IdleConfig::default();
-
-        // Should log a warning but not panic
-        let dyn_backend: Arc<dyn Backend> = Arc::new(backend);
-        check_session_idle(&dyn_backend, &store, &idle_config, &session, now, timeout).await;
     }
 
     // ───────────────────────────────────────────────────────────
@@ -2537,7 +2375,6 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
-            waiting_for_input: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2678,5 +2515,238 @@ mod tests {
         assert!(cloned.idle.enabled);
         assert_eq!(cloned.idle.timeout_secs, 300);
         assert_eq!(cloned.idle.action, IdleAction::Kill);
+    }
+
+    #[test]
+    fn test_detect_waiting_for_input_basic() {
+        // Returns true for "Do you trust this file?"
+        assert!(detect_waiting_for_input(
+            "Some output\nDo you trust this file?"
+        ));
+
+        // Returns true for "[Y/n]"
+        assert!(detect_waiting_for_input("Continue? [Y/n]"));
+
+        // Returns false for regular output
+        assert!(!detect_waiting_for_input(
+            "Building project...\nCompilation succeeded."
+        ));
+
+        // Only checks last 5 lines — pattern on line 1 of 7 is out of range
+        let output = "Do you trust this file?\nline2\nline3\nline4\nline5\nline6\nline7";
+        assert!(!detect_waiting_for_input(output));
+
+        // Pattern within last 5 lines should still match
+        let output = "line1\nline2\nline3\nDo you trust this file?\nline5";
+        assert!(detect_waiting_for_input(output));
+    }
+
+    #[test]
+    fn test_detect_waiting_for_input_case_insensitive() {
+        assert!(detect_waiting_for_input("DO YOU TRUST THIS FILE?"));
+        assert!(detect_waiting_for_input("do you trust this file?"));
+        assert!(detect_waiting_for_input("press enter to continue"));
+        assert!(detect_waiting_for_input("PRESS ENTER"));
+        assert!(detect_waiting_for_input("Approve This action"));
+    }
+
+    #[tokio::test]
+    async fn test_idle_transition_active_to_idle() {
+        // Mock backend returns output containing a waiting pattern
+        let backend =
+            Arc::new(MockBackend::new().with_output("Building...\nDo you trust this file?"));
+        let store = test_store().await;
+
+        // Create an Active session whose output_snapshot matches mock output
+        // (so output_changed == false, triggering the waiting-for-input check)
+        let session = Session {
+            id: uuid::Uuid::new_v4(),
+            name: "active-to-idle".into(),
+            workdir: "/tmp/repo".into(),
+            provider: Provider::Claude,
+            prompt: "test".into(),
+            status: SessionStatus::Active,
+            mode: SessionMode::Interactive,
+            conversation_id: None,
+            exit_code: None,
+            backend_session_id: Some("active-to-idle".into()),
+            output_snapshot: Some("Building...\nDo you trust this file?".into()),
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: Some(chrono::Utc::now()),
+            idle_since: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        store.insert_session(&session).await.unwrap();
+
+        let idle_config = IdleConfig {
+            enabled: true,
+            timeout_secs: 600,
+            action: IdleAction::Alert,
+        };
+
+        let dyn_backend: Arc<dyn Backend> = backend;
+        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Idle);
+    }
+
+    #[tokio::test]
+    async fn test_idle_transition_idle_to_active() {
+        // Mock backend returns "new output" — different from the stored snapshot
+        let backend = Arc::new(MockBackend::new().with_output("new output from agent"));
+        let store = test_store().await;
+
+        // Create an Idle session with a different output_snapshot
+        let session = Session {
+            id: uuid::Uuid::new_v4(),
+            name: "idle-to-active".into(),
+            workdir: "/tmp/repo".into(),
+            provider: Provider::Claude,
+            prompt: "test".into(),
+            status: SessionStatus::Idle,
+            mode: SessionMode::Interactive,
+            conversation_id: None,
+            exit_code: None,
+            backend_session_id: Some("idle-to-active".into()),
+            output_snapshot: Some("old stale output".into()),
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: Some(chrono::Utc::now()),
+            idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(60)),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        store.insert_session(&session).await.unwrap();
+
+        let idle_config = IdleConfig {
+            enabled: true,
+            timeout_secs: 600,
+            action: IdleAction::Alert,
+        };
+
+        let dyn_backend: Arc<dyn Backend> = backend;
+        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Active);
+        assert!(fetched.idle_since.is_none());
+    }
+
+    fn make_idle_test_session(
+        name: &str,
+        status: SessionStatus,
+        idle_since: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Session {
+        Session {
+            id: uuid::Uuid::new_v4(),
+            name: name.into(),
+            workdir: "/tmp/repo".into(),
+            provider: Provider::Claude,
+            prompt: "test".into(),
+            status,
+            mode: SessionMode::Interactive,
+            conversation_id: None,
+            exit_code: None,
+            backend_session_id: Some(name.into()),
+            output_snapshot: Some("unchanged output".into()),
+            guard_config: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+            idle_since,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_idle_check_includes_idle_sessions() {
+        let backend = Arc::new(MockBackend::new().with_output("unchanged output"));
+        let store = test_store().await;
+
+        let active_session = make_idle_test_session("active-one", SessionStatus::Active, None);
+        let idle_since = Some(chrono::Utc::now() - chrono::Duration::seconds(100));
+        let idle_session = make_idle_test_session("idle-one", SessionStatus::Idle, idle_since);
+        let dead_session = make_idle_test_session("dead-one", SessionStatus::Killed, None);
+
+        store.insert_session(&active_session).await.unwrap();
+        store.insert_session(&idle_session).await.unwrap();
+        store.insert_session(&dead_session).await.unwrap();
+
+        let idle_config = IdleConfig {
+            enabled: true,
+            timeout_secs: 600,
+            action: IdleAction::Alert,
+        };
+
+        let dyn_backend: Arc<dyn Backend> = backend.clone();
+        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+
+        // Both Active and Idle sessions should have been processed
+        let capture_count = backend.capture_calls.lock().unwrap().len();
+        assert_eq!(capture_count, 2);
+
+        let fetched_active = store
+            .get_session(&active_session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fetched_active.idle_since.is_some());
+
+        let fetched_idle = store
+            .get_session(&idle_session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched_idle.status, SessionStatus::Idle);
+
+        // Dead session should NOT have been processed
+        assert!(
+            !backend
+                .capture_calls
+                .lock()
+                .unwrap()
+                .contains(&"dead-one".to_string())
+        );
     }
 }

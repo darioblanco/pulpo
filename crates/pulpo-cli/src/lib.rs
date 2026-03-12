@@ -281,11 +281,7 @@ fn format_sessions(sessions: &[Session]) -> String {
         } else {
             s.prompt.clone()
         };
-        let status_display = if s.waiting_for_input {
-            "waiting".to_owned()
-        } else {
-            s.status.to_string()
-        };
+        let status_display = s.status.to_string();
         lines.push(format!(
             "{:<20} {:<12} {:<10} {:<14} {}",
             s.name, status_display, s.provider, s.mode, prompt_display
@@ -1625,7 +1621,7 @@ mod tests {
     }
 
     /// A valid Session JSON for test responses.
-    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","provider":"claude","prompt":"Fix bug","status":"active","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","provider":"claude","prompt":"Fix bug","status":"active","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
 
     /// A valid `CreateSessionResponse` JSON wrapping the session.
     fn test_create_response_json() -> String {
@@ -2238,7 +2234,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
@@ -2282,54 +2277,11 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("..."));
-    }
-
-    #[test]
-    fn test_format_sessions_waiting_for_input() {
-        use chrono::Utc;
-        use pulpo_common::session::{Provider, SessionMode, SessionStatus};
-        use uuid::Uuid;
-
-        let sessions = vec![Session {
-            id: Uuid::nil(),
-            name: "blocked".into(),
-            workdir: "/tmp".into(),
-            provider: Provider::Claude,
-            prompt: "Fix bug".into(),
-            status: SessionStatus::Active,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            waiting_for_input: true,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        }];
-        let output = format_sessions(&sessions);
-        assert!(output.contains("waiting"));
-        // "interactive" contains "active", so check the status column specifically
-        assert!(!output.contains(" active "));
     }
 
     #[test]
@@ -2849,7 +2801,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_with_backend_session_id() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"my-session","workdir":"/tmp","provider":"claude","prompt":"test","status":"active","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"my-session","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"my-session","workdir":"/tmp","provider":"claude","prompt":"test","status":"active","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"my-session","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -2914,7 +2866,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_stale_session() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"stale-sess","workdir":"/tmp","provider":"claude","prompt":"test","status":"lost","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"stale-sess","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"stale-sess","workdir":"/tmp","provider":"claude","prompt":"test","status":"lost","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"stale-sess","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -2939,7 +2891,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_dead_session() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","provider":"claude","prompt":"test","status":"killed","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","provider":"claude","prompt":"test","status":"killed","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -3128,7 +3080,7 @@ mod tests {
                         let n = count.fetch_add(1, Ordering::SeqCst);
                         let status = if n < 2 { "active" } else { "finished" };
                         format!(
-                            r#"{{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"{status}","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#
+                            r#"{{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"{status}","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#
                         )
                     }
                 }),
@@ -3214,7 +3166,7 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"killed","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"killed","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 
@@ -3250,7 +3202,7 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"lost","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"lost","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 

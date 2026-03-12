@@ -49,7 +49,6 @@ async fn read_cluster_status(mcp: &PulpoMcp, uri: &str) -> Result<ReadResourceRe
     let total = sessions.len();
     let mut by_status = std::collections::HashMap::new();
     let mut idle = Vec::new();
-    let mut waiting_for_input = Vec::new();
 
     for s in &sessions {
         *by_status.entry(s.status.to_string()).or_insert(0usize) += 1;
@@ -61,13 +60,6 @@ async fn read_cluster_status(mcp: &PulpoMcp, uri: &str) -> Result<ReadResourceRe
                 "id": s.id.to_string(),
                 "name": s.name,
                 "idle_minutes": idle_minutes,
-            }));
-        }
-
-        if s.waiting_for_input {
-            waiting_for_input.push(serde_json::json!({
-                "id": s.id.to_string(),
-                "name": s.name,
             }));
         }
     }
@@ -102,7 +94,6 @@ async fn read_cluster_status(mcp: &PulpoMcp, uri: &str) -> Result<ReadResourceRe
             "total": total,
             "by_status": by_status,
             "idle": idle,
-            "waiting_for_input": waiting_for_input,
         },
         "nodes": {
             "local": {
@@ -443,39 +434,6 @@ mod tests {
         let json = serde_json::to_string(&result.contents[0]).unwrap();
         assert!(json.contains("1 sessions"));
         assert!(json.contains("active"));
-    }
-
-    #[tokio::test]
-    async fn test_read_resource_cluster_status_with_waiting_session() {
-        let (mcp, pool) = test_mcp_with_pool().await;
-        // Create a session
-        let params = SpawnSessionParams {
-            workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
-            name: None,
-            ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
-            node: None,
-        };
-        let spawn_result = mcp.spawn_session(Parameters(params)).await;
-        let session: pulpo_common::session::Session = serde_json::from_str(&spawn_result).unwrap();
-
-        // Mark waiting_for_input
-        sqlx::query("UPDATE sessions SET waiting_for_input = 1 WHERE id = ?")
-            .bind(session.id.to_string())
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        let result = read_resource(&mcp, "pulpo://cluster/status").await.unwrap();
-        let json = serde_json::to_string(&result.contents[0]).unwrap();
-        assert!(json.contains("waiting_for_input"));
-        assert!(json.contains(&session.id.to_string()));
     }
 
     #[tokio::test]

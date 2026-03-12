@@ -46,7 +46,6 @@ export interface Session {
   intervention_reason: string | null;
   intervention_at: string | null;
   last_output_at: string | null;
-  waiting_for_input: boolean;
   created_at: string;
 }
 

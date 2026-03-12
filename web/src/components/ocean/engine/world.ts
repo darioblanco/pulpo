@@ -39,7 +39,6 @@ export interface OctopusEntity {
   lastOutputAt: string | null;
   interventionReason: string | null;
   prompt: string;
-  waitingForInput: boolean;
   nodeName: string;
   x: number;
   y: number;
@@ -314,7 +313,6 @@ export function syncSingleNode(
 
     if (existing) {
       existing.status = session.status;
-      existing.waitingForInput = session.waiting_for_input;
       existing.ink = session.ink;
       existing.model = session.model;
       existing.mode = session.mode;
@@ -342,7 +340,6 @@ export function syncSingleNode(
         lastOutputAt: session.last_output_at,
         interventionReason: session.intervention_reason,
         prompt: session.prompt,
-        waitingForInput: session.waiting_for_input,
         nodeName: nodeName,
         x: hx + randomBetween(-10, 10),
         y: hy + randomBetween(-10, 10),
@@ -430,7 +427,7 @@ export function syncData(
       if (existing) {
         // Update data fields, keep position and animation state
         existing.status = session.status;
-        existing.waitingForInput = session.waiting_for_input;
+
         existing.ink = session.ink;
         existing.model = session.model;
         existing.mode = session.mode;
@@ -459,7 +456,6 @@ export function syncData(
           lastOutputAt: session.last_output_at,
           interventionReason: session.intervention_reason,
           prompt: session.prompt,
-          waitingForInput: session.waiting_for_input,
           nodeName: node.name,
           x: hx + randomBetween(-10, 10),
           y: hy + randomBetween(-10, 10),

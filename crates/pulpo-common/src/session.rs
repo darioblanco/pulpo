@@ -179,7 +179,6 @@ pub struct Session {
     pub intervention_at: Option<DateTime<Utc>>,
     pub last_output_at: Option<DateTime<Utc>>,
     pub idle_since: Option<DateTime<Utc>>,
-    pub waiting_for_input: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -217,7 +216,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -523,7 +521,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -592,7 +589,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -629,7 +625,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -669,7 +664,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

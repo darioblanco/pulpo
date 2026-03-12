@@ -19,7 +19,7 @@ function makeOctopus(overrides: Partial<OctopusEntity> = {}): OctopusEntity {
     lastOutputAt: null,
     interventionReason: null,
     prompt: 'Fix the auth bug',
-    waitingForInput: false,
+
     nodeName: 'mac-studio',
     x: 100,
     y: 100,
@@ -105,20 +105,6 @@ describe('ProfileCard', () => {
       </MemoryRouter>,
     );
     expect(screen.queryByText('Ink:')).not.toBeInTheDocument();
-  });
-
-  it('shows waiting indicator when waiting for input', () => {
-    render(
-      <MemoryRouter>
-        <ProfileCard
-          octopus={makeOctopus({ waitingForInput: true })}
-          screenX={400}
-          screenY={300}
-          onClose={vi.fn()}
-        />
-      </MemoryRouter>,
-    );
-    expect(screen.getByText('awaiting input')).toBeInTheDocument();
   });
 
   it('renders node name', () => {

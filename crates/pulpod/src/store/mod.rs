@@ -153,20 +153,6 @@ impl Store {
                 .await?;
         }
 
-        // Idempotent migration: waiting_for_input column
-        let has_waiting_for_input: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'waiting_for_input'",
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        if has_waiting_for_input == 0 {
-            sqlx::query(
-                "ALTER TABLE sessions ADD COLUMN waiting_for_input INTEGER NOT NULL DEFAULT 0",
-            )
-            .execute(&self.pool)
-            .await?;
-        }
-
         // Idempotent migration: append-only intervention events table
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS intervention_events (
@@ -293,8 +279,8 @@ impl Store {
                 model, allowed_tools, system_prompt, metadata, ink,
                 max_turns, max_budget_usd, output_format,
                 intervention_code, intervention_reason, intervention_at,
-                last_output_at, idle_since, waiting_for_input, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                last_output_at, idle_since, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
         .bind(&session.name)
@@ -321,7 +307,6 @@ impl Store {
         .bind(&intervention_at_str)
         .bind(&last_output_at_str)
         .bind(&idle_since_str)
-        .bind(session.waiting_for_input)
         .bind(session.created_at.to_rfc3339())
         .bind(session.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -525,17 +510,6 @@ impl Store {
             .await?;
         Ok(())
     }
-
-    pub async fn update_session_waiting_for_input(&self, id: &str, waiting: bool) -> Result<()> {
-        let now = Utc::now().to_rfc3339();
-        sqlx::query("UPDATE sessions SET waiting_for_input = ?, updated_at = ? WHERE id = ?")
-            .bind(waiting)
-            .bind(&now)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
 }
 
 fn row_to_session(row: &SqliteRow) -> Result<Session> {
@@ -617,10 +591,6 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
             s.map(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)))
                 .transpose()?
         },
-        waiting_for_input: {
-            let v: Option<i32> = row.try_get("waiting_for_input").unwrap_or(None);
-            v.is_some_and(|n| n != 0)
-        },
         created_at: DateTime::parse_from_rfc3339(&created_str)?.with_timezone(&Utc),
         updated_at: DateTime::parse_from_rfc3339(&updated_str)?.with_timezone(&Utc),
     })
@@ -676,7 +646,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
+
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -899,7 +869,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
+
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -2004,33 +1974,6 @@ mod tests {
         store.pool().close().await;
         let result = store.migrate().await;
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_update_session_waiting_for_input() {
-        let store = test_store().await;
-        let session = make_session("waiting-test");
-        store.insert_session(&session).await.unwrap();
-
-        // Initially false
-        let s = store.get_session("waiting-test").await.unwrap().unwrap();
-        assert!(!s.waiting_for_input);
-
-        // Set to true
-        store
-            .update_session_waiting_for_input(&session.id.to_string(), true)
-            .await
-            .unwrap();
-        let s = store.get_session("waiting-test").await.unwrap().unwrap();
-        assert!(s.waiting_for_input);
-
-        // Set back to false
-        store
-            .update_session_waiting_for_input(&session.id.to_string(), false)
-            .await
-            .unwrap();
-        let s = store.get_session("waiting-test").await.unwrap().unwrap();
-        assert!(!s.waiting_for_input);
     }
 
     #[tokio::test]

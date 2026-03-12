@@ -1074,7 +1074,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: now,
             updated_at: now,
         };

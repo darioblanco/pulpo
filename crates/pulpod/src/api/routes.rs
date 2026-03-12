@@ -1482,7 +1482,6 @@ mod tests {
                 previous_status: Some("creating".into()),
                 node_name: "test-node".into(),
                 output_snippet: None,
-                waiting_for_input: None,
                 timestamp: "2026-01-01T00:00:00Z".into(),
             }))
             .unwrap();

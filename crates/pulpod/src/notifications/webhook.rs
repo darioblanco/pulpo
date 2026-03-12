@@ -127,7 +127,6 @@ mod tests {
             previous_status: None,
             node_name: "node-1".into(),
             output_snippet: None,
-            waiting_for_input: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
         }
     }
@@ -159,13 +158,11 @@ mod tests {
         let event = SessionEvent {
             previous_status: Some("lost".into()),
             output_snippet: Some("hello".into()),
-            waiting_for_input: Some(true),
             ..test_event("active")
         };
         let payload = build_webhook_payload(&event);
         assert_eq!(payload["previous_status"], "lost");
         assert_eq!(payload["output_snippet"], "hello");
-        assert_eq!(payload["waiting_for_input"], true);
     }
 
     // --- compute_signature tests ---
@@ -433,7 +430,6 @@ mod tests {
                 previous_status: None,
                 node_name: "n".into(),
                 output_snippet: None,
-                waiting_for_input: None,
                 timestamp: "t".into(),
             }));
         }

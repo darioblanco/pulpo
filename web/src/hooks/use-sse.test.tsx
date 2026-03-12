@@ -134,7 +134,7 @@ describe('useSSE', () => {
         intervention_reason: null,
         intervention_at: null,
         last_output_at: null,
-        waiting_for_input: false,
+
         created_at: '2025-01-01T00:00:00Z',
       },
     ];
@@ -171,7 +171,7 @@ describe('useSSE', () => {
         intervention_reason: null,
         intervention_at: null,
         last_output_at: null,
-        waiting_for_input: false,
+
         created_at: '2025-01-01T00:00:00Z',
       },
     ];
@@ -193,7 +193,6 @@ describe('useSSE', () => {
           session_name: 'my-api',
           status: 'finished',
           output_snippet: null,
-          waiting_for_input: null,
         }),
       );
     });
@@ -227,7 +226,7 @@ describe('useSSE', () => {
           intervention_reason: null,
           intervention_at: null,
           last_output_at: null,
-          waiting_for_input: false,
+
           created_at: '2025-01-01T00:00:00Z',
         },
       ]);
@@ -258,7 +257,7 @@ describe('useSSE', () => {
         intervention_reason: null,
         intervention_at: null,
         last_output_at: null,
-        waiting_for_input: false,
+
         created_at: '2025-01-01T00:00:00Z',
       },
     ];
@@ -328,7 +327,7 @@ describe('useSSE', () => {
         intervention_reason: null,
         intervention_at: null,
         last_output_at: null,
-        waiting_for_input: false,
+
         created_at: '2025-01-01T00:00:00Z',
       },
     ];
@@ -364,7 +363,7 @@ describe('useSSE', () => {
         intervention_reason: null,
         intervention_at: null,
         last_output_at: null,
-        waiting_for_input: false,
+
         created_at: '2025-01-01T00:00:00Z',
       },
     ];
@@ -378,7 +377,6 @@ describe('useSSE', () => {
           session_name: 'unknown',
           status: 'active',
           output_snippet: null,
-          waiting_for_input: null,
         }),
       );
     });
@@ -386,57 +384,6 @@ describe('useSSE', () => {
     await waitFor(() => {
       expect(mockFetch).toHaveBeenCalled();
     });
-  });
-
-  it('updates waiting_for_input from event', async () => {
-    const sessions = [
-      {
-        id: 'sess-1',
-        name: 'my-api',
-        provider: 'claude',
-        status: 'active',
-        prompt: 'Fix',
-        mode: 'interactive',
-        workdir: '/repo',
-        guard_config: null,
-        model: null,
-        allowed_tools: null,
-        system_prompt: null,
-        metadata: null,
-        ink: null,
-        max_turns: null,
-        max_budget_usd: null,
-        output_format: null,
-        intervention_reason: null,
-        intervention_at: null,
-        last_output_at: null,
-        waiting_for_input: false,
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ];
-    mockFetch.mockResolvedValue({ json: () => Promise.resolve(sessions) });
-    const { result } = renderHook(() => useSSE(), { wrapper });
-
-    act(() => lastES().onopen?.());
-
-    await waitFor(() => {
-      expect(result.current.sessions).toHaveLength(1);
-    });
-
-    act(() => {
-      lastES()._fireEvent(
-        'session',
-        JSON.stringify({
-          session_id: 'sess-1',
-          session_name: 'my-api',
-          status: 'active',
-          output_snippet: null,
-          waiting_for_input: true,
-        }),
-      );
-    });
-
-    expect(result.current.sessions[0].waiting_for_input).toBe(true);
   });
 
   it('hydrates sessions eagerly before SSE opens', async () => {
@@ -461,7 +408,7 @@ describe('useSSE', () => {
         intervention_reason: null,
         intervention_at: null,
         last_output_at: null,
-        waiting_for_input: false,
+
         created_at: '2025-01-01T00:00:00Z',
       },
     ];

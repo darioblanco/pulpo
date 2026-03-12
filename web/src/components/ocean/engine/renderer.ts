@@ -463,13 +463,4 @@ function drawOctopus(
     ctx.fillStyle = '#94b8d0';
     ctx.fillText(oct.provider, provX + padX, provY + padY + fontSize - 2);
   }
-
-  if (oct.waitingForInput) {
-    const bubble = sprites.ui['speech-bubble'];
-    if (bubble) {
-      const bSize = 16 * camera.zoom;
-      const bounce = Math.sin(time * 0.004) * 3;
-      ctx.drawImage(bubble, sx + size / 4, drawY - size / 2 - bSize + bounce, bSize, bSize);
-    }
-  }
 }

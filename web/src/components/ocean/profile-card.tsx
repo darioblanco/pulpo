@@ -123,9 +123,6 @@ export function ProfileCard({
               style={{ imageRendering: 'pixelated' }}
             />
             <span style={{ color }}>{octopus.status}</span>
-            {octopus.waitingForInput && (
-              <span className="text-xs text-amber-400">awaiting input</span>
-            )}
           </div>
 
           {/* Details */}

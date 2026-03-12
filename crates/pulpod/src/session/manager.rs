@@ -114,7 +114,6 @@ impl SessionManager {
                 previous_status: previous_status.map(|s| s.to_string()),
                 node_name: self.node_name.clone(),
                 output_snippet: session.output_snapshot.clone(),
-                waiting_for_input: Some(session.waiting_for_input),
                 timestamp: Utc::now().to_rfc3339(),
             };
             // Ignore send errors — no subscribers is OK
@@ -209,7 +208,6 @@ impl SessionManager {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: now,
             updated_at: now,
         };
@@ -1809,7 +1807,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: now,
             updated_at: now,
         };
@@ -2670,7 +2667,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -2714,7 +2710,6 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-            waiting_for_input: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

@@ -8,7 +8,6 @@ pub struct SessionEvent {
     pub previous_status: Option<String>,
     pub node_name: String,
     pub output_snippet: Option<String>,
-    pub waiting_for_input: Option<bool>,
     pub timestamp: String,
 }
 
@@ -40,7 +39,6 @@ mod tests {
             previous_status: Some("creating".into()),
             node_name: "node-1".into(),
             output_snippet: Some("Hello world".into()),
-            waiting_for_input: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
         };
         let json = serde_json::to_string(&event).unwrap();
@@ -62,7 +60,6 @@ mod tests {
             previous_status: None,
             node_name: "n".into(),
             output_snippet: None,
-            waiting_for_input: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
         };
         let json = serde_json::to_string(&event).unwrap();
@@ -79,7 +76,6 @@ mod tests {
             previous_status: None,
             node_name: "n".into(),
             output_snippet: None,
-            waiting_for_input: None,
             timestamp: "t".into(),
         };
         let cloned = event.clone();
@@ -160,7 +156,6 @@ mod tests {
             previous_status: None,
             node_name: "n".into(),
             output_snippet: None,
-            waiting_for_input: None,
             timestamp: "t".into(),
         });
         let json = serde_json::to_string(&event).unwrap();
@@ -170,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_pulpo_event_deserialize_session() {
-        let json = r#"{"kind":"session","session_id":"s1","session_name":"test","status":"active","previous_status":null,"node_name":"n","output_snippet":null,"waiting_for_input":null,"timestamp":"t"}"#;
+        let json = r#"{"kind":"session","session_id":"s1","session_name":"test","status":"active","previous_status":null,"node_name":"n","output_snippet":null,"timestamp":"t"}"#;
         let event: PulpoEvent = serde_json::from_str(json).unwrap();
         assert!(matches!(&event, PulpoEvent::Session(se) if se.session_id == "s1"));
     }
@@ -191,7 +186,6 @@ mod tests {
             previous_status: None,
             node_name: "n".into(),
             output_snippet: None,
-            waiting_for_input: None,
             timestamp: "t".into(),
         });
         let cloned = event.clone();
@@ -207,7 +201,6 @@ mod tests {
             previous_status: Some("active".into()),
             node_name: "n".into(),
             output_snippet: Some("done".into()),
-            waiting_for_input: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
         });
         let json = serde_json::to_string(&original).unwrap();
