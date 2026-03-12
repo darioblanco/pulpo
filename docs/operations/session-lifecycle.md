@@ -42,8 +42,10 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 - **Trigger**: Backend reports tmux session is alive after spawn.
 
 ### Active → Idle
-- **Trigger**: Watchdog detects output unchanged for 1 tick AND waiting patterns matched.
-- **Detection**: The watchdog compares `output_snapshot` on each tick. If output hasn't changed and the last lines match known waiting patterns (permission prompts, "what's next?" prompts), the session transitions to Idle.
+- **Trigger**: Watchdog detects output unchanged — either via known waiting patterns (immediate) or sustained unchanged output (20+ seconds).
+- **Detection**: The watchdog compares `output_snapshot` on each tick. Two paths to Idle:
+  1. **Pattern match (immediate)**: If output is unchanged and the last 5 lines match known waiting patterns (permission prompts, "what's next?" prompts), transition happens on the first unchanged tick.
+  2. **Sustained silence (universal)**: If `last_output_at` is more than 20 seconds ago, transition happens regardless of terminal content. This catches all providers without needing provider-specific patterns.
 
 ### Idle → Active
 - **Trigger**: Watchdog detects output changed since last tick.

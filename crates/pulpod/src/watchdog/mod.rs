@@ -369,22 +369,39 @@ async fn check_session_idle(
     if output_changed {
         handle_active_session(store, session).await;
     } else {
-        // Check for waiting-for-input patterns → transition Active to Idle
-        if session.status == SessionStatus::Active && detect_waiting_for_input(&current_output) {
-            info!(
-                "Session {} is waiting for input, transitioning to idle",
-                session.name
-            );
-            if let Err(e) = store
-                .update_session_status(&session.id.to_string(), SessionStatus::Idle)
-                .await
-            {
-                warn!(
-                    "Idle check: failed to transition {} to idle: {e}",
-                    session.name
+        // Output unchanged since last tick — transition Active → Idle.
+        // Known waiting-for-input patterns trigger immediate transition on the
+        // first unchanged tick. Without a pattern match, we require 2 consecutive
+        // unchanged ticks (last_output_at older than check interval) to avoid
+        // false positives during brief pauses in output.
+        if session.status == SessionStatus::Active {
+            let immediate = detect_waiting_for_input(&current_output);
+            let sustained = session.last_output_at.is_some_and(|t| {
+                let elapsed = now - t;
+                // At least 2 ticks of unchanged output (check_interval default 10s)
+                elapsed.num_seconds() >= 20
+            });
+            if immediate || sustained {
+                info!(
+                    "Session {} idle ({}), transitioning to idle",
+                    session.name,
+                    if immediate {
+                        "waiting pattern"
+                    } else {
+                        "output unchanged"
+                    }
                 );
+                if let Err(e) = store
+                    .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+                    .await
+                {
+                    warn!(
+                        "Idle check: failed to transition {} to idle: {e}",
+                        session.name
+                    );
+                }
+                return;
             }
-            return;
         }
         handle_idle_session(backend, store, idle_config, session, &bid, now, timeout).await;
     }
@@ -1595,15 +1612,13 @@ mod tests {
         let dyn_backend: Arc<dyn Backend> = backend;
         check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
-        // Session should now have idle_since set
+        // Session should have transitioned from Active to Idle (output unchanged > 20s)
         let fetched = store
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert!(fetched.idle_since.is_some());
-        // Session should still be running (alert mode doesn't kill)
-        assert_eq!(fetched.status, SessionStatus::Active);
+        assert_eq!(fetched.status, SessionStatus::Idle);
     }
 
     #[tokio::test]
@@ -1611,13 +1626,15 @@ mod tests {
         let backend = Arc::new(MockBackend::new());
         let store = test_store().await;
 
+        // Session is already Idle with idle_since set — tests the kill path in
+        // handle_idle_session (Active sessions now transition to Idle first).
         let session = Session {
             id: uuid::Uuid::new_v4(),
             name: "kill-idle".into(),
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Idle,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1636,7 +1653,7 @@ mod tests {
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-            idle_since: None,
+            idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1870,7 +1887,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Idle,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1904,14 +1921,14 @@ mod tests {
         let dyn_backend: Arc<dyn Backend> = backend;
         check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
-        // idle_since should still be set (already marked, not re-marked)
+        // idle_since should still be set and status stays Idle
         let fetched = store
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
         assert!(fetched.idle_since.is_some());
-        assert_eq!(fetched.status, SessionStatus::Active);
+        assert_eq!(fetched.status, SessionStatus::Idle);
     }
 
     #[tokio::test]
@@ -1919,13 +1936,15 @@ mod tests {
         let backend = Arc::new(MockBackend::failing_kill());
         let store = test_store().await;
 
+        // Session is already Idle with idle_since set — tests kill failure path
+        // in handle_idle_session (Active sessions now transition to Idle first).
         let session = Session {
             id: uuid::Uuid::new_v4(),
             name: "kill-fail-idle".into(),
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Active,
+            status: SessionStatus::Idle,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1944,7 +1963,7 @@ mod tests {
             intervention_reason: None,
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-            idle_since: None,
+            idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1959,13 +1978,13 @@ mod tests {
         let dyn_backend: Arc<dyn Backend> = backend;
         check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
-        // Session should remain running since kill failed
+        // Session should remain Idle since kill failed
         let fetched = store
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Active);
+        assert_eq!(fetched.status, SessionStatus::Idle);
     }
 
     #[tokio::test]
@@ -2414,7 +2433,8 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(fetched.idle_since.is_some());
+        // Active session with unchanged output > 20s transitions to Idle
+        assert_eq!(fetched.status, SessionStatus::Idle);
     }
 
     // ───────────────────────────────────────────────────────────
@@ -2928,7 +2948,8 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(fetched_active.idle_since.is_some());
+        // Active session with unchanged output > 20s transitions to Idle
+        assert_eq!(fetched_active.status, SessionStatus::Idle);
 
         let fetched_idle = store
             .get_session(&idle_session.id.to_string())
