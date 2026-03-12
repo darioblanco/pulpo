@@ -925,7 +925,18 @@ fn build_culture_context(
          - Skip this if you didn't discover anything non-obvious\n\
          - If your learning corrects or replaces an existing one shown above, \
          add a `supersedes: <id>` line with the old entry's ID\n\
-         - Pulpo validates entries automatically and rejects low-quality ones"
+         - Pulpo validates entries automatically and rejects low-quality ones\n\n\
+         Advanced: you can add optional YAML frontmatter for richer metadata:\n\n\
+         ```markdown\n\
+         ---\n\
+         kind: failure\n\
+         supersedes: <uuid>\n\
+         tags: [env, auth]\n\
+         ---\n\n\
+         # Title\n\n\
+         Body...\n\
+         ```\n\n\
+         Supported fields: `kind` (summary or failure), `supersedes`, `tags`."
     );
 
     ctx

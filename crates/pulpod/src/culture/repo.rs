@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use pulpo_common::culture::{Culture, CultureKind};
+use serde::Deserialize;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -753,7 +754,7 @@ impl CultureRepo {
         let culture = Culture {
             id: uuid::Uuid::new_v4(),
             session_id,
-            kind: CultureKind::Summary,
+            kind: entry.kind.unwrap_or(CultureKind::Summary),
             scope_repo: if workdir.is_empty() {
                 None
             } else {
@@ -762,7 +763,11 @@ impl CultureRepo {
             scope_ink: ink.map(ToOwned::to_owned),
             title: entry.title,
             body: entry.body,
-            tags: vec!["agent-written".into()],
+            tags: {
+                let mut tags = vec!["agent-written".into()];
+                tags.extend(entry.extra_tags);
+                tags
+            },
             relevance: compute_relevance(chrono::Utc::now(), 0),
             created_at: chrono::Utc::now(),
             last_referenced_at: None,
@@ -1243,6 +1248,21 @@ struct PendingEntry {
     body: String,
     /// Optional ID of an existing culture entry this new one supersedes.
     supersedes: Option<String>,
+    /// Optional kind override (default: Summary).
+    kind: Option<CultureKind>,
+    /// Optional additional tags beyond "agent-written".
+    extra_tags: Vec<String>,
+}
+
+/// Optional YAML frontmatter in a pending write-back file.
+#[derive(Deserialize)]
+struct PendingFrontmatter {
+    #[serde(default)]
+    kind: Option<CultureKind>,
+    #[serde(default)]
+    supersedes: Option<String>,
+    #[serde(default)]
+    tags: Vec<String>,
 }
 
 /// Validate a parsed pending entry for quality.
@@ -1298,7 +1318,9 @@ fn strip_fenced_code_blocks(text: &str) -> String {
 
 /// Parse a pending write-back file into a `PendingEntry`.
 ///
-/// Expected format:
+/// Supports two formats:
+///
+/// **Simple format** (always supported):
 /// ```text
 /// # Short title describing the learning
 ///
@@ -1307,7 +1329,19 @@ fn strip_fenced_code_blocks(text: &str) -> String {
 /// supersedes: <uuid>
 /// ```
 ///
-/// The `supersedes:` line is optional and can appear anywhere in the body.
+/// **Frontmatter format** (optional):
+/// ```text
+/// ---
+/// kind: failure
+/// supersedes: <uuid>
+/// tags: [env, auth]
+/// ---
+///
+/// # Short title
+///
+/// Detailed explanation...
+/// ```
+///
 /// Returns `None` if the file doesn't have a valid `# title` line or has empty body.
 fn parse_pending_file(content: &str) -> Option<PendingEntry> {
     let content = content.trim();
@@ -1315,27 +1349,31 @@ fn parse_pending_file(content: &str) -> Option<PendingEntry> {
         return None;
     }
 
+    // Try to parse optional YAML frontmatter
+    let (frontmatter, remaining) = extract_pending_frontmatter(content);
+
     // Find the first `# ` line (title)
-    let title_line = content.lines().find(|l| l.starts_with("# "))?;
+    let title_line = remaining.lines().find(|l| l.starts_with("# "))?;
     let title = title_line.strip_prefix("# ")?.trim().to_owned();
     if title.is_empty() {
         return None;
     }
 
     // Body is everything after the title line
-    let after_title = content.split_once(title_line)?.1.trim().to_owned();
+    let after_title = remaining.split_once(title_line)?.1.trim().to_owned();
     if after_title.is_empty() {
         return None;
     }
 
-    // Extract optional `supersedes: <id>` line from body
-    let mut supersedes = None;
+    // Extract optional `supersedes: <id>` line from body (only if not in frontmatter)
+    let mut supersedes = frontmatter.as_ref().and_then(|fm| fm.supersedes.clone());
     let mut body_lines = Vec::new();
     for line in after_title.lines() {
-        if let Some(id) = line.strip_prefix("supersedes:").map(str::trim) {
-            if !id.is_empty() {
-                supersedes = Some(id.to_owned());
-            }
+        if supersedes.is_none()
+            && let Some(id) = line.strip_prefix("supersedes:").map(str::trim)
+            && !id.is_empty()
+        {
+            supersedes = Some(id.to_owned());
         } else {
             body_lines.push(line);
         }
@@ -1349,7 +1387,29 @@ fn parse_pending_file(content: &str) -> Option<PendingEntry> {
         title,
         body,
         supersedes,
+        kind: frontmatter.as_ref().and_then(|fm| fm.kind),
+        extra_tags: frontmatter.map_or_else(Vec::new, |fm| fm.tags),
     })
+}
+
+/// Extract optional YAML frontmatter from a pending file.
+/// Returns `(Some(frontmatter), remaining_content)` if frontmatter is found,
+/// or `(None, original_content)` if not.
+fn extract_pending_frontmatter(content: &str) -> (Option<PendingFrontmatter>, &str) {
+    if !content.starts_with("---") {
+        return (None, content);
+    }
+
+    let after_first = &content[3..];
+    let Some(end) = after_first.find("\n---") else {
+        return (None, content);
+    };
+
+    let yaml_str = &after_first[..end];
+    let remaining = &after_first[end + 4..]; // skip "\n---"
+
+    serde_yaml::from_str::<PendingFrontmatter>(yaml_str)
+        .map_or((None, content), |fm| (Some(fm), remaining))
 }
 
 /// The filename used for compiled AGENTS.md files in each scope directory.
@@ -2807,6 +2867,78 @@ mod tests {
         assert!(entry.supersedes.is_none());
     }
 
+    // ── parse_pending_file frontmatter tests ───────────────────────────
+
+    #[test]
+    fn test_parse_pending_file_with_frontmatter_kind() {
+        let content = "---\nkind: failure\n---\n\n# Database migration failed\n\nThe migration crashes when the table already exists.";
+        let entry = parse_pending_file(content).unwrap();
+        assert_eq!(entry.title, "Database migration failed");
+        assert_eq!(entry.kind, Some(CultureKind::Failure));
+        assert!(entry.body.contains("migration crashes"));
+    }
+
+    #[test]
+    fn test_parse_pending_file_with_frontmatter_supersedes() {
+        let content = "---\nsupersedes: abc-123\n---\n\n# Updated auth flow\n\nNew approach uses PKCE for all OAuth flows going forward.";
+        let entry = parse_pending_file(content).unwrap();
+        assert_eq!(entry.supersedes, Some("abc-123".into()));
+        assert!(!entry.body.contains("supersedes"));
+    }
+
+    #[test]
+    fn test_parse_pending_file_with_frontmatter_tags() {
+        let content = "---\ntags:\n  - env\n  - auth\n---\n\n# Token rotation needed\n\nTokens expire after 30 days and must be rotated via cron.";
+        let entry = parse_pending_file(content).unwrap();
+        assert_eq!(entry.extra_tags, vec!["env", "auth"]);
+    }
+
+    #[test]
+    fn test_parse_pending_file_malformed_frontmatter_fallback() {
+        // Invalid YAML frontmatter — should fall back to simple parsing
+        let content = "---\n{invalid yaml[[\n---\n\n# Fallback title\n\nBody content that is long enough to pass validation checks.";
+        let entry = parse_pending_file(content).unwrap();
+        assert_eq!(entry.title, "Fallback title");
+        assert!(entry.kind.is_none());
+        assert!(entry.extra_tags.is_empty());
+    }
+
+    #[test]
+    fn test_parse_pending_file_no_frontmatter_still_works() {
+        // Simple format — backward compatible
+        let content = "# Simple title here\n\nSimple body content that is long enough.";
+        let entry = parse_pending_file(content).unwrap();
+        assert_eq!(entry.title, "Simple title here");
+        assert!(entry.kind.is_none());
+        assert!(entry.extra_tags.is_empty());
+        assert!(entry.supersedes.is_none());
+    }
+
+    #[test]
+    fn test_extract_pending_frontmatter_none() {
+        let (fm, remaining) = extract_pending_frontmatter("# no frontmatter\n\nBody");
+        assert!(fm.is_none());
+        assert_eq!(remaining, "# no frontmatter\n\nBody");
+    }
+
+    #[test]
+    fn test_extract_pending_frontmatter_valid() {
+        let content = "---\nkind: failure\ntags:\n  - env\n---\n\n# Title\n\nBody";
+        let (fm, remaining) = extract_pending_frontmatter(content);
+        let fm = fm.unwrap();
+        assert_eq!(fm.kind, Some(CultureKind::Failure));
+        assert_eq!(fm.tags, vec!["env"]);
+        assert!(remaining.contains("# Title"));
+    }
+
+    #[test]
+    fn test_extract_pending_frontmatter_no_closing() {
+        let content = "---\nkind: failure\n# No closing delimiter";
+        let (fm, remaining) = extract_pending_frontmatter(content);
+        assert!(fm.is_none());
+        assert_eq!(remaining, content);
+    }
+
     // ── validate_pending_entry tests ────────────────────────────────────
 
     fn make_valid_entry() -> PendingEntry {
@@ -2816,6 +2948,8 @@ mod tests {
                    Set PRAGMA journal_mode=WAL at connection init."
                 .into(),
             supersedes: None,
+            kind: None,
+            extra_tags: vec![],
         }
     }
 
@@ -2880,6 +3014,7 @@ mod tests {
                 "{title}\nSome additional detail that makes the body long enough to pass."
             ),
             supersedes: None,
+            ..make_valid_entry()
         };
         let err = validate_pending_entry(&entry).unwrap_err();
         assert!(err.contains("title duplicates first line"), "{err}");
@@ -2892,6 +3027,7 @@ mod tests {
             body: "auth tokens expire silently\nExtra detail to be long enough for validation."
                 .into(),
             supersedes: None,
+            ..make_valid_entry()
         };
         let err = validate_pending_entry(&entry).unwrap_err();
         assert!(err.contains("title duplicates first line"), "{err}");
@@ -3096,6 +3232,33 @@ mod tests {
         // No culture entries should be created
         let items = repo.list(None, None, None, None, None).unwrap();
         assert!(items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_harvest_pending_with_frontmatter() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let pending_path = repo.root().join("pending").join("fm-session.md");
+        std::fs::write(
+            &pending_path,
+            "---\nkind: failure\ntags:\n  - env\n---\n\n# Database migration crashes on existing table\n\nThe migration script does not check if the table already exists before CREATE TABLE.",
+        )
+        .unwrap();
+
+        let count = repo
+            .harvest_pending("fm-session", Uuid::new_v4(), "/tmp/repo", None)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let items = repo.list(None, None, None, None, None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].kind, CultureKind::Failure);
+        assert!(items[0].tags.contains(&"agent-written".into()));
+        assert!(items[0].tags.contains(&"env".into()));
     }
 
     #[tokio::test]
