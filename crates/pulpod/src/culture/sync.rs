@@ -199,7 +199,7 @@ mod tests {
         let remote_path = remote_dir.path().to_str().unwrap();
 
         tokio::process::Command::new("git")
-            .args(["init", "--bare"])
+            .args(["init", "--bare", "-b", "main"])
             .current_dir(remote_path)
             .output()
             .await
@@ -296,7 +296,7 @@ mod tests {
         let remote_path = remote_dir.path().to_str().unwrap();
 
         tokio::process::Command::new("git")
-            .args(["init", "--bare"])
+            .args(["init", "--bare", "-b", "main"])
             .current_dir(remote_path)
             .output()
             .await
@@ -366,7 +366,7 @@ mod tests {
         let remote_path = remote_dir.path().to_str().unwrap();
 
         tokio::process::Command::new("git")
-            .args(["init", "--bare"])
+            .args(["init", "--bare", "-b", "main"])
             .current_dir(remote_path)
             .output()
             .await
@@ -400,7 +400,7 @@ mod tests {
         let remote_path = remote_dir.path().to_str().unwrap();
 
         tokio::process::Command::new("git")
-            .args(["init", "--bare"])
+            .args(["init", "--bare", "-b", "main"])
             .current_dir(remote_path)
             .output()
             .await

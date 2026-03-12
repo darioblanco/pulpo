@@ -53,7 +53,7 @@ impl CultureRepo {
 
         // git init (idempotent)
         if !root.join(".git").exists() {
-            run_git(&root, &["init"]).await?;
+            run_git(&root, &["init", "-b", "main"]).await?;
             // Configure for automation
             run_git(&root, &["config", "user.email", "pulpo@localhost"]).await?;
             run_git(&root, &["config", "user.name", "pulpo"]).await?;
@@ -3927,7 +3927,7 @@ mod tests {
         let remote_dir = tempfile::tempdir().unwrap();
         let remote_path = remote_dir.path().to_str().unwrap();
         tokio::process::Command::new("git")
-            .args(["init", "--bare"])
+            .args(["init", "--bare", "-b", "main"])
             .current_dir(remote_path)
             .output()
             .await
@@ -3984,7 +3984,7 @@ mod tests {
         let remote_dir = tempfile::tempdir().unwrap();
         let remote_path = remote_dir.path().to_str().unwrap();
         tokio::process::Command::new("git")
-            .args(["init", "--bare"])
+            .args(["init", "--bare", "-b", "main"])
             .current_dir(remote_path)
             .output()
             .await
@@ -4016,7 +4016,7 @@ mod tests {
         let remote_dir = tempfile::tempdir().unwrap();
         let remote_path = remote_dir.path().to_str().unwrap();
         tokio::process::Command::new("git")
-            .args(["init", "--bare"])
+            .args(["init", "--bare", "-b", "main"])
             .current_dir(remote_path)
             .output()
             .await
