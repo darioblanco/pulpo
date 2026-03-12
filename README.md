@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/logo.svg" alt="Pulpo" width="128" height="128" />
+  <img src="web/public/logo.png" alt="Pulpo" width="128" height="128" />
 </p>
 
 <h1 align="center">Pulpo</h1>

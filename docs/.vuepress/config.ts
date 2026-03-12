@@ -8,7 +8,7 @@ export default defineUserConfig({
   description: 'Self-hosted control plane docs for coding agents',
   base: '/pulpo/',
   theme: defaultTheme({
-    logo: 'https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.svg',
+    logo: 'https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.png',
     repo: 'darioblanco/pulpo',
     docsDir: 'docs',
     navbar: [

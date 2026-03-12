@@ -2,7 +2,7 @@
 home: true
 title: Pulpo Documentation
 heroText: Pulpo
-heroImage: https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.svg
+heroImage: https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.png
 tagline: Self-hosted control plane for coding agents. Durable sessions, collective culture, multi-node operations.
 actions:
   - text: Install
