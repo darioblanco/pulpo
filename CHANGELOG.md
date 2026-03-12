@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.0.19](https://github.com/darioblanco/pulpo/compare/v0.0.18...v0.0.19) (2026-03-12)
+
+
+### Features
+
+* add dedicated watchdog and notifications API endpoints ([0020179](https://github.com/darioblanco/pulpo/commit/0020179006469a3cdbe4878615b754063497c744))
+* add machine-readable intervention reason codes ([7c87477](https://github.com/darioblanco/pulpo/commit/7c87477f602efe8bc4be043ca25820811241010e))
+* add session_defaults config section ([d778c69](https://github.com/darioblanco/pulpo/commit/d778c69278fd7980d1b2c8dbbbc17aeb3e5ed167))
+* **api:** populate memory_mb and gpu in peers endpoint ([5a8e18c](https://github.com/darioblanco/pulpo/commit/5a8e18ccbc9b1e41a1acfd016a29379663d3fe8c))
+* **culture:** AGENTS.md compilation, scoped injection, and structured write-back ([d7672a9](https://github.com/darioblanco/pulpo/commit/d7672a9077cbf0e71210e46a97f2938e53b2ff56))
+* **culture:** content validation and quality guidance for write-backs ([3835740](https://github.com/darioblanco/pulpo/commit/383574057abf10c39a784ed573e390d013414b0e))
+* **culture:** cross-node sync with background pull loop and conflict resolution ([caba6f7](https://github.com/darioblanco/pulpo/commit/caba6f73fc05807269f483c694f81db0bab1f19c))
+* **culture:** deduplication at harvest time ([5e2b66b](https://github.com/darioblanco/pulpo/commit/5e2b66baf009a9a943ebe55f109d0d98ccc333e0))
+* **culture:** dynamic relevance decay with reference tracking ([abfc4b7](https://github.com/darioblanco/pulpo/commit/abfc4b7b76fbd6b530a5d72d4a8e39119243e07b))
+* **culture:** exclude stale and superseded entries from AGENTS.md ([cd307bd](https://github.com/darioblanco/pulpo/commit/cd307bd3acd95fe8b482b58f69c40d7a01a0b2a7))
+* **culture:** file browser API and UI for culture repo ([b5b5b59](https://github.com/darioblanco/pulpo/commit/b5b5b59f30c1172a37fd7fb4fa173202431fef70))
+* **culture:** harvest agent write-backs, replace rule-based extraction ([e895aa8](https://github.com/darioblanco/pulpo/commit/e895aa85ca3e38255ab5310965ec3ceca15889c9))
+* **culture:** lifecycle management with reference tracking and TTL decay ([250d7cf](https://github.com/darioblanco/pulpo/commit/250d7cff9da617fe5a979cab0473df634f424fd0))
+* **culture:** optional YAML frontmatter in pending write-back files ([95b55fa](https://github.com/darioblanco/pulpo/commit/95b55fa35701809392bd2ceb3e202e33e3173b11))
+* **discord:** forward culture SSE events to notification channel ([868a562](https://github.com/darioblanco/pulpo/commit/868a56227eeccad603ed41e90dd9f40ed5fcc0c5))
+* **docker:** add Tailscale sidecar compose profile ([a5da0a8](https://github.com/darioblanco/pulpo/commit/a5da0a88124ea8e05a1a46528dcb05e32bacfdda))
+* live watchdog config reload via watch channel ([3c397bc](https://github.com/darioblanco/pulpo/commit/3c397bc93574469d8287cbaf2d7829f21f7f2139))
+* provider availability detection, compatibility matrix, and bare shell sessions ([33ef3c1](https://github.com/darioblanco/pulpo/commit/33ef3c1891db44b69e5c43c1c9748bc7a932206b))
+* **session:** finished detection on agent exit marker ([5d4c1d2](https://github.com/darioblanco/pulpo/commit/5d4c1d2de95d6a82f3dea6af30bf9dc5b05149c3))
+* **session:** finished TTL cleanup and resume semantics ([36ad150](https://github.com/darioblanco/pulpo/commit/36ad15037374f57b68bda928b5aec5de9fd27fdb))
+* **session:** idle detection with Active ⇄ Idle state transitions ([68bf3d7](https://github.com/darioblanco/pulpo/commit/68bf3d7e5a237728db7b17e885a2d34e7ee8a285))
+* **web:** real-time culture updates via SSE events ([a093e9d](https://github.com/darioblanco/pulpo/commit/a093e9df382a9c7cf70ad0f66aac64927ce0089c))
+
+
+### Bug Fixes
+
+* skip provider binary check in test builds ([503a9a4](https://github.com/darioblanco/pulpo/commit/503a9a4f3a789c30faa8a19959889678ef28c5bf))
+* use explicit -b main for git init in tests and production ([e21b1a5](https://github.com/darioblanco/pulpo/commit/e21b1a5c91641863cccd13b02a95b8e08936e33e))
+
 ## [0.0.18](https://github.com/darioblanco/pulpo/compare/v0.0.17...v0.0.18) (2026-03-11)
 
 
