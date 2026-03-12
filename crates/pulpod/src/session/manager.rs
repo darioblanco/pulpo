@@ -754,6 +754,11 @@ fn which_binary(name: &str) -> Option<String> {
 /// Check if a provider's binary is available on this system.
 /// Shell is always available. For agent providers, checks PATH and common locations.
 pub fn is_provider_available(provider: Provider) -> bool {
+    // In test builds, skip real binary detection so unit tests don't depend on
+    // external provider binaries being installed on the machine.
+    if cfg!(test) {
+        return true;
+    }
     if provider == Provider::Shell {
         return true;
     }
