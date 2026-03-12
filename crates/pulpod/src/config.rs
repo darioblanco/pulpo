@@ -59,10 +59,18 @@ pub struct CultureConfig {
     /// deeper exploration. Defaults to true when absent.
     #[serde(default = "default_inject")]
     pub inject: bool,
+    /// Days after last reference before an entry is considered stale.
+    /// `0` disables TTL-based decay. Defaults to 30 days.
+    #[serde(default = "default_ttl_days")]
+    pub ttl_days: u32,
 }
 
 const fn default_inject() -> bool {
     true
+}
+
+const fn default_ttl_days() -> u32 {
+    30
 }
 
 /// Notification configuration (webhooks for status updates).
@@ -2182,6 +2190,24 @@ provider = "codex"
             config.remote.as_deref(),
             Some("git@github.com:user/culture.git")
         );
+    }
+
+    #[test]
+    fn test_culture_config_default_ttl_days() {
+        let config: CultureConfig = toml::from_str("").unwrap();
+        assert_eq!(config.ttl_days, 30);
+    }
+
+    #[test]
+    fn test_culture_config_custom_ttl_days() {
+        let config: CultureConfig = toml::from_str("ttl_days = 90").unwrap();
+        assert_eq!(config.ttl_days, 90);
+    }
+
+    #[test]
+    fn test_culture_config_ttl_disabled() {
+        let config: CultureConfig = toml::from_str("ttl_days = 0").unwrap();
+        assert_eq!(config.ttl_days, 0);
     }
 
     #[test]

@@ -3705,6 +3705,7 @@ mod tests {
                 tags: vec!["claude".into(), "completed".into()],
                 relevance: 0.7,
                 created_at: Utc::now(),
+                last_referenced_at: None,
             },
             Culture {
                 id: Uuid::new_v4(),
@@ -3717,6 +3718,7 @@ mod tests {
                 tags: vec!["failure".into()],
                 relevance: 0.9,
                 created_at: Utc::now(),
+                last_referenced_at: None,
             },
         ];
 
@@ -3747,6 +3749,7 @@ mod tests {
             tags: vec![],
             relevance: 0.5,
             created_at: Utc::now(),
+            last_referenced_at: None,
         }];
 
         let output = format_culture(&items);
@@ -3803,6 +3806,7 @@ mod tests {
             tags: vec![],
             relevance: 0.5,
             created_at: Utc::now(),
+            last_referenced_at: None,
         }];
 
         let output = format_culture(&items);

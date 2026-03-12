@@ -1578,6 +1578,7 @@ mod tests {
                 tags: vec!["tag".into()],
                 relevance: 0.5,
                 created_at: Utc::now(),
+                last_referenced_at: None,
             },
         };
         let json = serde_json::to_string(&resp).unwrap();

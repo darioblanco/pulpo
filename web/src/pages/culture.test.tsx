@@ -58,6 +58,7 @@ function makeCulture(overrides: Partial<Culture> = {}): Culture {
     tags: ['claude', 'completed'],
     relevance: 0.7,
     created_at: '2025-01-01T00:00:00Z',
+    last_referenced_at: null,
     ...overrides,
   };
 }
@@ -192,6 +193,18 @@ describe('CulturePage', () => {
     await switchToEntriesTab();
     await waitFor(() => {
       expect(screen.getByText('2 items')).toBeInTheDocument();
+    });
+  });
+
+  it('shows stale items with reduced opacity', async () => {
+    mockListCulture.mockResolvedValue({
+      culture: [makeCulture({ tags: ['stale', 'claude'], title: 'Old finding' })],
+    });
+    renderCulture();
+    await switchToEntriesTab();
+    await waitFor(() => {
+      const card = screen.getByTestId('culture-card');
+      expect(card).toHaveClass('opacity-60');
     });
   });
 });

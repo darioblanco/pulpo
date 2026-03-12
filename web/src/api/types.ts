@@ -68,6 +68,7 @@ export interface Culture {
   tags: string[];
   relevance: number;
   created_at: string;
+  last_referenced_at: string | null;
 }
 
 export interface CultureResponse {

@@ -358,6 +358,7 @@ mod tests {
             tags: vec!["claude".into()],
             relevance: 0.5,
             created_at: chrono::Utc::now(),
+            last_referenced_at: None,
         }
     }
 

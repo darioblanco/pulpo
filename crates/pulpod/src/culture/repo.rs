@@ -157,6 +157,7 @@ impl CultureRepo {
 
     /// Query culture relevant to a workdir/ink combination for context injection.
     /// Returns items scoped to the repo, the ink, or global, ordered by relevance.
+    /// Also updates `last_referenced_at` on returned entries (best-effort).
     pub fn query_context(
         &self,
         workdir: Option<&str>,
@@ -184,7 +185,70 @@ impl CultureRepo {
         });
 
         items.truncate(limit);
+
+        // Best-effort: mark returned entries as referenced
+        if !items.is_empty() {
+            let ids: Vec<uuid::Uuid> = items.iter().map(|k| k.id).collect();
+            self.touch_referenced(&ids);
+        }
+
         Ok(items)
+    }
+
+    /// Mark entries as referenced (updates `last_referenced_at` on disk).
+    /// Best-effort: skips entries that can't be found or updated.
+    pub fn touch_referenced(&self, ids: &[uuid::Uuid]) {
+        let now = chrono::Utc::now();
+        for id in ids {
+            let id_str = id.to_string();
+            if let Ok(Some(path)) = self.find_by_id(&id_str)
+                && let Ok(content) = std::fs::read_to_string(&path)
+                && let Some(mut item) = parse_file(&path, &content)
+            {
+                item.last_referenced_at = Some(now);
+                if let Ok(md) = serialize_to_markdown(&item) {
+                    let _ = std::fs::write(&path, md);
+                }
+            }
+        }
+    }
+
+    /// Find entries that haven't been referenced within `ttl_days` and tag them as `stale`.
+    /// Uses `last_referenced_at` if set, otherwise falls back to `created_at`.
+    /// Returns the number of entries flagged.
+    pub fn flag_stale(&self, ttl_days: u32) -> Result<usize> {
+        if ttl_days == 0 {
+            return Ok(0);
+        }
+
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(i64::from(ttl_days));
+        let items = self.read_all()?;
+        let mut count = 0;
+
+        for item in &items {
+            // Already flagged
+            if item.tags.iter().any(|t| t == "stale") {
+                continue;
+            }
+
+            let last_active = item.last_referenced_at.unwrap_or(item.created_at);
+            if last_active < cutoff {
+                let id_str = item.id.to_string();
+                if let Ok(Some(path)) = self.find_by_id(&id_str)
+                    && let Ok(content) = std::fs::read_to_string(&path)
+                    && let Some(mut stale_item) = parse_file(&path, &content)
+                    && let Ok(md) = serialize_to_markdown(&{
+                        stale_item.tags.push("stale".into());
+                        stale_item
+                    })
+                {
+                    let _ = std::fs::write(&path, md);
+                    count += 1;
+                }
+            }
+        }
+
+        Ok(count)
     }
 
     /// Delete a culture item by ID. Returns true if found and deleted.
@@ -551,6 +615,7 @@ impl CultureRepo {
             tags: vec!["agent-written".into()],
             relevance: 0.8,
             created_at: chrono::Utc::now(),
+            last_referenced_at: None,
         };
 
         self.save(&culture).await?;
@@ -596,6 +661,8 @@ struct CultureFrontmatter {
     tags: Vec<String>,
     relevance: f64,
     created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_referenced_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Serialize a `Culture` item to Markdown with YAML frontmatter.
@@ -625,6 +692,7 @@ fn serialize_to_markdown(k: &Culture) -> Result<String> {
         tags: k.tags.clone(),
         relevance: k.relevance,
         created_at: k.created_at,
+        last_referenced_at: k.last_referenced_at,
     };
     let yaml = serde_yaml::to_string(&frontmatter)?;
     Ok(format!("---\n{yaml}---\n\n{}\n", k.body))
@@ -658,6 +726,7 @@ fn parse_from_markdown(content: &str) -> Result<Culture> {
         tags: fm.tags,
         relevance: fm.relevance,
         created_at: fm.created_at,
+        last_referenced_at: fm.last_referenced_at,
     })
 }
 
@@ -964,6 +1033,7 @@ mod tests {
             tags: vec!["claude".into()],
             relevance: 0.5,
             created_at: Utc::now(),
+            last_referenced_at: None,
         }
     }
 
@@ -2420,5 +2490,176 @@ mod tests {
 
         let agents_content = repo.read_agents_md("repos/myrepo").unwrap().unwrap();
         assert!(agents_content.contains("AGENTS.md compilation"));
+    }
+
+    // ── last_referenced_at tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_serialize_last_referenced_at_none() {
+        let k = make_culture("no-ref", None, None);
+        let md = serialize_to_markdown(&k).unwrap();
+        assert!(!md.contains("last_referenced_at"));
+    }
+
+    #[test]
+    fn test_serialize_last_referenced_at_some() {
+        let mut k = make_culture("ref", None, None);
+        k.last_referenced_at = Some(Utc::now());
+        let md = serialize_to_markdown(&k).unwrap();
+        assert!(md.contains("last_referenced_at"));
+    }
+
+    #[test]
+    fn test_roundtrip_last_referenced_at() {
+        let mut k = make_culture("roundtrip-ref", None, None);
+        k.last_referenced_at = Some(Utc::now());
+        let md = serialize_to_markdown(&k).unwrap();
+        let parsed = parse_from_markdown(&md).unwrap();
+        assert!(parsed.last_referenced_at.is_some());
+    }
+
+    #[test]
+    fn test_parse_legacy_without_last_referenced_at() {
+        // Simulate a file written before the field existed
+        let k = make_culture("legacy", None, None);
+        let md = serialize_to_markdown(&k).unwrap();
+        // The field is omitted when None, so parsing should succeed with None
+        let parsed = parse_from_markdown(&md).unwrap();
+        assert!(parsed.last_referenced_at.is_none());
+    }
+
+    // ── touch_referenced tests ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_touch_referenced_updates_timestamp() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_culture("touchable", Some("/tmp"), None);
+        let id = k.id;
+        repo.save(&k).await.unwrap();
+
+        // Initially, last_referenced_at should be None
+        let item = repo.get_by_id(&id.to_string()).unwrap().unwrap();
+        assert!(item.last_referenced_at.is_none());
+
+        // Touch it
+        repo.touch_referenced(&[id]);
+
+        // Now it should have a timestamp
+        let item = repo.get_by_id(&id.to_string()).unwrap().unwrap();
+        assert!(item.last_referenced_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_touch_referenced_nonexistent_id() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        // Should not error
+        repo.touch_referenced(&[Uuid::new_v4()]);
+    }
+
+    #[tokio::test]
+    async fn test_query_context_touches_entries() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_culture("context-touch", None, None);
+        let id = k.id;
+        repo.save(&k).await.unwrap();
+
+        // Query context — should touch the entry
+        let items = repo.query_context(None, None, 10).unwrap();
+        assert_eq!(items.len(), 1);
+
+        // Entry should now have last_referenced_at set
+        let item = repo.get_by_id(&id.to_string()).unwrap().unwrap();
+        assert!(item.last_referenced_at.is_some());
+    }
+
+    // ── flag_stale tests ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_flag_stale_zero_ttl_noop() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        repo.save(&make_culture("item", None, None)).await.unwrap();
+        let count = repo.flag_stale(0).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_flag_stale_recent_entry_not_flagged() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        repo.save(&make_culture("fresh", None, None)).await.unwrap();
+        let count = repo.flag_stale(30).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_flag_stale_old_entry_flagged() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let mut old = make_culture("old", None, None);
+        old.created_at = Utc::now() - chrono::Duration::days(60);
+        repo.save(&old).await.unwrap();
+
+        let count = repo.flag_stale(30).unwrap();
+        assert_eq!(count, 1);
+
+        let item = repo.get_by_id(&old.id.to_string()).unwrap().unwrap();
+        assert!(item.tags.contains(&"stale".into()));
+    }
+
+    #[tokio::test]
+    async fn test_flag_stale_referenced_entry_not_flagged() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let mut old = make_culture("old-but-active", None, None);
+        old.created_at = Utc::now() - chrono::Duration::days(60);
+        old.last_referenced_at = Some(Utc::now());
+        repo.save(&old).await.unwrap();
+
+        let count = repo.flag_stale(30).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_flag_stale_already_stale_not_double_tagged() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let mut old = make_culture("already-stale", None, None);
+        old.created_at = Utc::now() - chrono::Duration::days(60);
+        old.tags.push("stale".into());
+        repo.save(&old).await.unwrap();
+
+        let count = repo.flag_stale(30).unwrap();
+        assert_eq!(count, 0);
+
+        let item = repo.get_by_id(&old.id.to_string()).unwrap().unwrap();
+        assert_eq!(item.tags.iter().filter(|t| *t == "stale").count(), 1);
     }
 }

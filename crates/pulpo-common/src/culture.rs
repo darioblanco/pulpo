@@ -50,6 +50,9 @@ pub struct Culture {
     /// Relevance score 0.0–1.0 for ranking.
     pub relevance: f64,
     pub created_at: DateTime<Utc>,
+    /// When this entry was last used in context injection. `None` if never referenced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_referenced_at: Option<DateTime<Utc>>,
 }
 
 #[cfg(test)]
@@ -68,6 +71,7 @@ mod tests {
             tags: vec!["claude".into(), "completed".into()],
             relevance: 0.5,
             created_at: Utc::now(),
+            last_referenced_at: None,
         }
     }
 

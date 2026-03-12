@@ -171,6 +171,20 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let (event_tx, _) = broadcast::channel::<PulpoEvent>(256);
     let culture_repo =
         culture::repo::CultureRepo::init(&config.data_dir(), config.culture.remote.clone()).await?;
+
+    // Run stale sweep on startup
+    if config.culture.ttl_days > 0 {
+        match culture_repo.flag_stale(config.culture.ttl_days) {
+            Ok(count) if count > 0 => {
+                tracing::info!(count, "Flagged stale culture entries");
+            }
+            Err(e) => {
+                tracing::warn!("Culture stale sweep failed: {e}");
+            }
+            _ => {}
+        }
+    }
+
     let manager = SessionManager::new(backend, store, default_guard, config.inks.clone())
         .with_default_provider(config.node.default_provider.clone())
         .with_session_defaults(config.session_defaults.clone())

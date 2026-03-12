@@ -23,9 +23,10 @@ export function CultureList({ items, onDelete }: CultureListProps) {
 
 function CultureCard({ item, onDelete }: { item: Culture; onDelete: (id: string) => void }) {
   const date = new Date(item.created_at).toLocaleDateString();
+  const isStale = item.tags.includes('stale');
 
   return (
-    <Card data-testid="culture-card">
+    <Card data-testid="culture-card" className={isStale ? 'opacity-60' : ''}>
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
         <div className="space-y-1">
           <CardTitle className="text-sm font-medium">{item.title}</CardTitle>

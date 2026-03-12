@@ -2776,6 +2776,7 @@ mod tests {
             tags: vec![],
             relevance: 0.5,
             created_at: Utc::now(),
+            last_referenced_at: None,
         }
     }
 
