@@ -671,6 +671,13 @@ impl CultureRepo {
             return Ok(0);
         };
 
+        // Validate content quality
+        if let Err(reason) = validate_pending_entry(&entry) {
+            warn!("rejected pending file for session {session_name}: {reason}");
+            std::fs::remove_file(&pending_path)?;
+            return Ok(0);
+        }
+
         // If this entry explicitly supersedes an older one, tag the old entry
         if let Some(ref old_id) = entry.supersedes {
             self.supersede(old_id)?;
@@ -1126,6 +1133,57 @@ struct PendingEntry {
     body: String,
     /// Optional ID of an existing culture entry this new one supersedes.
     supersedes: Option<String>,
+}
+
+/// Validate a parsed pending entry for quality.
+///
+/// Returns `Ok(())` if the entry meets quality thresholds, or `Err(reason)` if it should
+/// be rejected. Rejected entries are logged and skipped during harvest.
+fn validate_pending_entry(entry: &PendingEntry) -> Result<(), String> {
+    // Title length: 10–120 chars
+    let title_len = entry.title.len();
+    if title_len < 10 {
+        return Err(format!("title too short ({title_len} chars, minimum 10)"));
+    }
+    if title_len > 120 {
+        return Err(format!("title too long ({title_len} chars, maximum 120)"));
+    }
+
+    // Body length: minimum 30 chars
+    let body_len = entry.body.len();
+    if body_len < 30 {
+        return Err(format!("body too short ({body_len} chars, minimum 30)"));
+    }
+
+    // Title must not be a substring of body's first line (lazy restating)
+    let normalized_title = entry.title.to_lowercase();
+    let normalized_body = entry.body.to_lowercase();
+    if normalized_title == normalized_body.lines().next().unwrap_or_default().trim() {
+        return Err("title duplicates first line of body".into());
+    }
+
+    // Body must not be only fenced code blocks (no explanation)
+    let non_code_content = strip_fenced_code_blocks(&entry.body);
+    if non_code_content.trim().is_empty() {
+        return Err("body contains only code blocks with no explanation".into());
+    }
+
+    Ok(())
+}
+
+/// Strip fenced code blocks from text, returning the remaining content.
+fn strip_fenced_code_blocks(text: &str) -> String {
+    let mut result = String::new();
+    let mut in_code_block = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            in_code_block = !in_code_block;
+        } else if !in_code_block {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result
 }
 
 /// Parse a pending write-back file into a `PendingEntry`.
@@ -2596,6 +2654,142 @@ mod tests {
         assert!(entry.supersedes.is_none());
     }
 
+    // ── validate_pending_entry tests ────────────────────────────────────
+
+    fn make_valid_entry() -> PendingEntry {
+        PendingEntry {
+            title: "SQLite WAL mode required for concurrent readers".into(),
+            body: "The default journal mode blocks concurrent reads during writes. \
+                   Set PRAGMA journal_mode=WAL at connection init."
+                .into(),
+            supersedes: None,
+        }
+    }
+
+    #[test]
+    fn test_validate_valid_entry() {
+        assert!(validate_pending_entry(&make_valid_entry()).is_ok());
+    }
+
+    #[test]
+    fn test_validate_title_too_short() {
+        let entry = PendingEntry {
+            title: "fix".into(),
+            ..make_valid_entry()
+        };
+        let err = validate_pending_entry(&entry).unwrap_err();
+        assert!(err.contains("title too short"), "{err}");
+    }
+
+    #[test]
+    fn test_validate_title_too_long() {
+        let entry = PendingEntry {
+            title: "a".repeat(121),
+            ..make_valid_entry()
+        };
+        let err = validate_pending_entry(&entry).unwrap_err();
+        assert!(err.contains("title too long"), "{err}");
+    }
+
+    #[test]
+    fn test_validate_title_at_boundaries() {
+        // Exactly 10 chars — should pass
+        let entry = PendingEntry {
+            title: "a".repeat(10),
+            ..make_valid_entry()
+        };
+        assert!(validate_pending_entry(&entry).is_ok());
+
+        // Exactly 120 chars — should pass
+        let entry = PendingEntry {
+            title: "a".repeat(120),
+            ..make_valid_entry()
+        };
+        assert!(validate_pending_entry(&entry).is_ok());
+    }
+
+    #[test]
+    fn test_validate_body_too_short() {
+        let entry = PendingEntry {
+            body: "Fixed the bug.".into(),
+            ..make_valid_entry()
+        };
+        let err = validate_pending_entry(&entry).unwrap_err();
+        assert!(err.contains("body too short"), "{err}");
+    }
+
+    #[test]
+    fn test_validate_title_duplicates_body_first_line() {
+        let title = "Auth tokens expire silently";
+        let entry = PendingEntry {
+            title: title.into(),
+            body: format!(
+                "{title}\nSome additional detail that makes the body long enough to pass."
+            ),
+            supersedes: None,
+        };
+        let err = validate_pending_entry(&entry).unwrap_err();
+        assert!(err.contains("title duplicates first line"), "{err}");
+    }
+
+    #[test]
+    fn test_validate_title_duplicates_body_case_insensitive() {
+        let entry = PendingEntry {
+            title: "Auth Tokens Expire Silently".into(),
+            body: "auth tokens expire silently\nExtra detail to be long enough for validation."
+                .into(),
+            supersedes: None,
+        };
+        let err = validate_pending_entry(&entry).unwrap_err();
+        assert!(err.contains("title duplicates first line"), "{err}");
+    }
+
+    #[test]
+    fn test_validate_body_only_code_blocks() {
+        let entry = PendingEntry {
+            body: "```rust\nfn main() {\n    println!(\"hello\");\n}\n```".into(),
+            ..make_valid_entry()
+        };
+        let err = validate_pending_entry(&entry).unwrap_err();
+        assert!(err.contains("only code blocks"), "{err}");
+    }
+
+    #[test]
+    fn test_validate_body_code_blocks_with_explanation() {
+        let entry = PendingEntry {
+            body: "The WAL mode is required for concurrent access.\n\n\
+                   ```sql\nPRAGMA journal_mode=WAL;\n```"
+                .into(),
+            ..make_valid_entry()
+        };
+        assert!(validate_pending_entry(&entry).is_ok());
+    }
+
+    // ── strip_fenced_code_blocks tests ──────────────────────────────────
+
+    #[test]
+    fn test_strip_fenced_code_blocks_none() {
+        assert_eq!(
+            strip_fenced_code_blocks("plain text\n").trim(),
+            "plain text"
+        );
+    }
+
+    #[test]
+    fn test_strip_fenced_code_blocks_only_code() {
+        let text = "```\ncode here\n```";
+        assert!(strip_fenced_code_blocks(text).trim().is_empty());
+    }
+
+    #[test]
+    fn test_strip_fenced_code_blocks_mixed() {
+        let text = "before\n```\ncode\n```\nafter";
+        let result = strip_fenced_code_blocks(text);
+        assert!(result.contains("before"));
+        assert!(result.contains("after"));
+        assert!(!result.contains("code"));
+    }
+
     // ── harvest_pending tests ────────────────────────────────────────────
 
     #[tokio::test]
@@ -2674,6 +2868,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_harvest_pending_rejects_low_quality() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let pending_path = repo.root().join("pending").join("low-quality.md");
+        // Valid parse but fails validation: title too short, body too short
+        std::fs::write(&pending_path, "# fix\n\nFixed the bug.").unwrap();
+
+        let count = repo
+            .harvest_pending("low-quality", Uuid::new_v4(), "/tmp/repo", None)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+
+        // File should be cleaned up
+        assert!(!pending_path.exists());
+
+        // No culture entries should be created
+        let items = repo.list(None, None, None, None, None).unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[tokio::test]
     async fn test_harvest_pending_creates_git_commit() {
         let tmpdir = tempfile::tempdir().unwrap();
         let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
@@ -2683,7 +2902,7 @@ mod tests {
         let pending_path = repo.root().join("pending").join("test-session.md");
         std::fs::write(
             &pending_path,
-            "# Git commit test\n\nVerify commits are made.",
+            "# Git commit test learning entry\n\nVerify that culture harvest creates proper git commits with the right metadata.",
         )
         .unwrap();
 
@@ -2703,7 +2922,7 @@ mod tests {
             .unwrap();
 
         let pending_path = repo.root().join("pending").join("no-workdir.md");
-        std::fs::write(&pending_path, "# Global learning\n\nApplies everywhere.").unwrap();
+        std::fs::write(&pending_path, "# Global learning across all scopes\n\nApplies everywhere across all repos and ink configurations.").unwrap();
 
         repo.harvest_pending("no-workdir", Uuid::new_v4(), "", None)
             .await
@@ -2725,7 +2944,7 @@ mod tests {
         let pending_path = repo.root().join("pending").join("agents-test.md");
         std::fs::write(
             &pending_path,
-            "# AGENTS.md compilation\n\nShould appear in compiled output.",
+            "# AGENTS.md compilation behavior\n\nShould appear in compiled output after culture harvest completes.",
         )
         .unwrap();
 
@@ -2797,7 +3016,7 @@ mod tests {
         std::fs::write(
             &pending_path,
             format!(
-                "# New auth flow with PKCE\n\nUse PKCE for all OAuth flows.\n\nsupersedes: {}",
+                "# New auth flow with PKCE support\n\nUse PKCE for all OAuth flows going forward.\n\nsupersedes: {}",
                 old.id
             ),
         )
@@ -2817,7 +3036,9 @@ mod tests {
         // New entry should exist
         let items = repo.list(None, None, None, None, None).unwrap();
         assert_eq!(items.len(), 2);
-        let new_item = items.iter().find(|k| k.title == "New auth flow with PKCE");
+        let new_item = items
+            .iter()
+            .find(|k| k.title == "New auth flow with PKCE support");
         assert!(new_item.is_some());
         assert!(!new_item.unwrap().body.contains("supersedes"));
     }

@@ -811,8 +811,17 @@ fn build_curator_prompt(session_name: &str, output: &str, culture_repo_root: &st
          patterns, or things a future agent couldn't figure out from the code.\n\
          3. If you find a learning, write it to:\n\
          `{culture_repo_root}/pending/{session_name}.md`\n\n\
-         Use this format:\n```markdown\n# <Short title>\n\n<Detailed explanation>\n```\n\n\
-         4. If there are no non-obvious learnings, do nothing and exit.\n\
+         Use this format:\n\
+         ```markdown\n\
+         # <Short title (10-120 chars)>\n\n\
+         <Detailed explanation (at least 30 chars). Explain WHY the finding matters,\n\
+         not just WHAT happened.>\n\
+         ```\n\n\
+         Good: `# SQLite WAL mode required for concurrent readers` + explanation of \
+         the failure mode without it.\n\
+         Bad: `# fix` + `Fixed the bug.` — too vague, would be rejected.\n\n\
+         4. If there are no non-obvious learnings, do nothing and exit. Most sessions \
+         have nothing worth writing — that's fine.\n\
          5. Do NOT modify any code. Only write to the pending file."
     )
 }
@@ -891,19 +900,32 @@ fn build_culture_context(
          ```\n\n\
          Use this format:\n\n\
          ```markdown\n\
-         # <Short title describing the learning>\n\n\
-         <Detailed explanation. Focus on things a future agent couldn't figure out\n\
-         from reading the code — environment quirks, gotchas, non-obvious patterns,\n\
-         commands that don't work as expected, etc.>\n\n\
+         # <Short title describing the learning (10-120 chars)>\n\n\
+         <Detailed explanation (at least 30 chars). Focus on things a future agent\n\
+         couldn't figure out from reading the code.>\n\n\
          supersedes: <id of old entry if this replaces one>\n\
+         ```\n\n\
+         Good example:\n\n\
+         ```markdown\n\
+         # SQLite WAL mode must be enabled before concurrent readers\n\n\
+         The default journal mode blocks concurrent reads during writes. Set\n\
+         `PRAGMA journal_mode=WAL` at connection init — without this, the watchdog\n\
+         health checks timeout when a session save is in progress.\n\
+         ```\n\n\
+         Bad example (would be rejected):\n\n\
+         ```markdown\n\
+         # fix\n\n\
+         Fixed the bug.\n\
          ```\n\n\
          Guidelines:\n\
          - Only write things that are NOT obvious from the code itself\n\
+         - Title must be 10-120 characters, body at least 30 characters\n\
+         - Include explanation, not just code blocks\n\
          - One learning per file\n\
          - Skip this if you didn't discover anything non-obvious\n\
          - If your learning corrects or replaces an existing one shown above, \
          add a `supersedes: <id>` line with the old entry's ID\n\
-         - Pulpo will validate and merge your learnings into the culture repo automatically"
+         - Pulpo validates entries automatically and rejects low-quality ones"
     );
 
     ctx
@@ -2983,7 +3005,22 @@ mod tests {
         assert!(ctx.contains("pending/"));
         assert!(ctx.contains(".md"));
         assert!(ctx.contains("non-obvious"));
-        assert!(ctx.contains("Pulpo will validate"));
+        assert!(ctx.contains("Pulpo validates"));
+    }
+
+    #[tokio::test]
+    async fn test_build_culture_context_quality_examples() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let root = repo.root().display().to_string();
+        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root, "test-session");
+        assert!(ctx.contains("Good example"));
+        assert!(ctx.contains("Bad example"));
+        assert!(ctx.contains("would be rejected"));
+        assert!(ctx.contains("10-120 characters"));
+        assert!(ctx.contains("at least 30 characters"));
     }
 
     #[tokio::test]
@@ -3070,6 +3107,14 @@ mod tests {
         assert!(prompt.contains("culture curator"));
         assert!(prompt.contains("non-obvious"));
         assert!(prompt.contains("Do NOT modify any code"));
+    }
+
+    #[test]
+    fn test_build_curator_prompt_contains_quality_guidance() {
+        let prompt = build_curator_prompt("test-session", "output", "/root");
+        assert!(prompt.contains("10-120 chars"));
+        assert!(prompt.contains("at least 30 chars"));
+        assert!(prompt.contains("rejected"));
     }
 
     #[test]
