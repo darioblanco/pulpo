@@ -89,6 +89,7 @@ pub async fn run_notification_loop(
                                 );
                             }
                         }
+                        PulpoEvent::Culture(_) => {} // Culture events not forwarded to webhooks
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(

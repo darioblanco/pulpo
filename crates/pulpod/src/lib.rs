@@ -185,11 +185,20 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         }
     }
 
+    let sync_enabled = config.culture.remote.is_some();
+    let sync_status = std::sync::Arc::new(tokio::sync::RwLock::new(
+        culture::sync::SyncStatus::new(sync_enabled),
+    ));
+
     let manager = SessionManager::new(backend, store, default_guard, config.inks.clone())
         .with_default_provider(config.node.default_provider.clone())
         .with_session_defaults(config.session_defaults.clone())
-        .with_culture_repo(culture_repo, config.culture.inject)
-        .with_event_tx(event_tx.clone(), node_name);
+        .with_culture_repo(culture_repo.clone(), config.culture.inject)
+        .with_curator(
+            config.culture.curator,
+            config.culture.curator_provider.clone(),
+        )
+        .with_event_tx(event_tx.clone(), node_name.clone());
 
     let peer_registry = peers::PeerRegistry::new(&config.peers);
 
@@ -333,6 +342,31 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         info!(webhook = %name, "Webhook notifications enabled");
     }
 
+    // Start culture sync loop if a remote is configured
+    #[cfg(not(coverage))]
+    if culture_repo.has_remote() {
+        let sync_interval = std::time::Duration::from_secs(config.culture.sync_interval_secs);
+        let sync_scopes = config.culture.sync_scopes.clone();
+        let sync_node_name = config.node.name.clone();
+        let sync_event_tx = event_tx.clone();
+        let sync_status_clone = sync_status.clone();
+        let (sync_shutdown_tx, sync_shutdown_rx) = watch::channel(false);
+        tokio::spawn(culture::sync::run_culture_sync_loop(
+            culture_repo,
+            sync_interval,
+            sync_scopes,
+            sync_node_name,
+            sync_event_tx,
+            sync_status_clone,
+            sync_shutdown_rx,
+        ));
+        shutdown_handle.add_sender(sync_shutdown_tx);
+        info!(
+            interval_secs = config.culture.sync_interval_secs,
+            "Culture sync enabled"
+        );
+    }
+
     #[cfg(not(coverage))]
     let wd_tx = watchdog_config_tx;
     #[cfg(coverage)]
@@ -345,6 +379,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         peer_registry,
         event_tx,
         wd_tx,
+        sync_status,
     );
 
     let app = api::router(state);
@@ -504,7 +539,11 @@ pub async fn build_mcp_server(cli: &Cli) -> Result<mcp::PulpoMcp> {
         session::manager::SessionManager::new(backend, store, default_guard, config.inks.clone())
             .with_default_provider(config.node.default_provider.clone())
             .with_session_defaults(config.session_defaults.clone())
-            .with_culture_repo(culture_repo, config.culture.inject);
+            .with_culture_repo(culture_repo, config.culture.inject)
+            .with_curator(
+                config.culture.curator,
+                config.culture.curator_provider.clone(),
+            );
     let peer_registry = peers::PeerRegistry::new(&config.peers);
 
     Ok(mcp::PulpoMcp::new(manager, peer_registry, config))

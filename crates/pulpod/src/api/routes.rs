@@ -76,6 +76,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/culture", get(culture::list))
         .route("/api/v1/culture/context", get(culture::context))
         .route("/api/v1/culture/push", post(culture::push))
+        .route("/api/v1/culture/sync", get(culture::sync_status))
         .route("/api/v1/culture/files", get(culture::list_files))
         .route("/api/v1/culture/files/{*path}", get(culture::read_file))
         .route(
@@ -84,6 +85,7 @@ pub fn build(state: Arc<AppState>) -> Router {
                 .put(culture::update)
                 .delete(culture::delete),
         )
+        .route("/api/v1/culture/{id}/approve", post(culture::approve))
         .route("/api/v1/events", get(events::stream))
         .layer(middleware::from_fn_with_state(
             state.clone(),

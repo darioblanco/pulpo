@@ -5,11 +5,18 @@ import { CultureFilter } from '@/components/culture/culture-filter';
 import { CultureFileBrowser } from '@/components/culture/culture-file-browser';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { listCulture, deleteCulture, pushCulture } from '@/api/client';
-import type { Culture } from '@/api/types';
+import {
+  listCulture,
+  deleteCulture,
+  pushCulture,
+  approveCulture,
+  getCultureSyncStatus,
+} from '@/api/client';
+import type { Culture, SyncStatus } from '@/api/types';
 import { toast } from 'sonner';
-import { Upload } from 'lucide-react';
+import { Upload, RefreshCw } from 'lucide-react';
 
 export interface CultureFilterParams {
   kind?: string;
@@ -23,6 +30,7 @@ export function CulturePage() {
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<CultureFilterParams>({});
   const [pushing, setPushing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
 
   const fetchCulture = useCallback(async (params: CultureFilterParams) => {
     setLoading(true);
@@ -41,6 +49,12 @@ export function CulturePage() {
     fetchCulture(filter);
   }, [filter, fetchCulture]);
 
+  useEffect(() => {
+    getCultureSyncStatus()
+      .then(setSyncStatus)
+      .catch(() => {});
+  }, []);
+
   async function handleDelete(id: string) {
     try {
       await deleteCulture(id);
@@ -48,6 +62,16 @@ export function CulturePage() {
       toast.success('Culture item deleted');
     } catch {
       toast.error('Failed to delete culture item');
+    }
+  }
+
+  async function handleApprove(id: string) {
+    try {
+      const result = await approveCulture(id);
+      setItems((prev) => prev.map((k) => (k.id === id ? result.culture : k)));
+      toast.success('Culture item approved');
+    } catch {
+      toast.error('Failed to approve culture item');
     }
   }
 
@@ -66,6 +90,19 @@ export function CulturePage() {
   return (
     <div data-testid="culture-page">
       <AppHeader title="Culture">
+        {syncStatus?.enabled && (
+          <Badge
+            variant={syncStatus.last_error ? 'destructive' : 'secondary'}
+            data-testid="sync-status-badge"
+          >
+            <RefreshCw className="mr-1 h-3 w-3" />
+            {syncStatus.last_error
+              ? 'Sync error'
+              : syncStatus.last_sync
+                ? `Synced (${syncStatus.total_syncs})`
+                : 'Sync enabled'}
+          </Badge>
+        )}
         <Button
           variant="outline"
           size="sm"
@@ -109,6 +146,7 @@ export function CulturePage() {
               <CultureList
                 items={items}
                 onDelete={handleDelete}
+                onApprove={handleApprove}
                 onRefresh={() => fetchCulture(filter)}
               />
             )}

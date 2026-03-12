@@ -1,32 +1,43 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Trash2 } from 'lucide-react';
+import { CheckCircle, Trash2 } from 'lucide-react';
 import type { Culture } from '@/api/types';
 
 interface CultureListProps {
   items: Culture[];
   onDelete: (id: string) => void;
+  onApprove: (id: string) => void;
   onRefresh: () => void;
 }
 
-export function CultureList({ items, onDelete }: CultureListProps) {
+export function CultureList({ items, onDelete, onApprove }: CultureListProps) {
   return (
     <div className="space-y-3" data-testid="culture-list">
       <p className="text-xs text-muted-foreground">{items.length} items</p>
       {items.map((item) => (
-        <CultureCard key={item.id} item={item} onDelete={onDelete} />
+        <CultureCard key={item.id} item={item} onDelete={onDelete} onApprove={onApprove} />
       ))}
     </div>
   );
 }
 
-function CultureCard({ item, onDelete }: { item: Culture; onDelete: (id: string) => void }) {
+function CultureCard({
+  item,
+  onDelete,
+  onApprove,
+}: {
+  item: Culture;
+  onDelete: (id: string) => void;
+  onApprove: (id: string) => void;
+}) {
   const date = new Date(item.created_at).toLocaleDateString();
   const isStale = item.tags.includes('stale');
+  const isSuperseded = item.tags.includes('superseded');
+  const isDimmed = isStale || isSuperseded;
 
   return (
-    <Card data-testid="culture-card" className={isStale ? 'opacity-60' : ''}>
+    <Card data-testid="culture-card" className={isDimmed ? 'opacity-60' : ''}>
       <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
         <div className="space-y-1">
           <CardTitle className="text-sm font-medium">{item.title}</CardTitle>
@@ -46,15 +57,28 @@ function CultureCard({ item, onDelete }: { item: Culture; onDelete: (id: string)
             </span>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 text-muted-foreground hover:text-destructive"
-          onClick={() => onDelete(item.id)}
-          data-testid="delete-culture-btn"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
+        <div className="flex gap-1">
+          {isStale && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7 text-muted-foreground hover:text-green-600"
+              onClick={() => onApprove(item.id)}
+              data-testid="approve-culture-btn"
+            >
+              <CheckCircle className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+            onClick={() => onDelete(item.id)}
+            data-testid="delete-culture-btn"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         <p className="whitespace-pre-wrap text-sm text-muted-foreground">{item.body}</p>

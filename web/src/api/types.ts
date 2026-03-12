@@ -109,6 +109,14 @@ export interface CultureFileContentResponse {
   content: string;
 }
 
+export interface SyncStatus {
+  enabled: boolean;
+  last_sync: string | null;
+  last_error: string | null;
+  pending_commits: number;
+  total_syncs: number;
+}
+
 export interface InkConfig {
   description: string | null;
   provider: string | null;

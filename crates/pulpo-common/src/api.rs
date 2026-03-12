@@ -373,6 +373,16 @@ pub struct CultureFileContentResponse {
     pub content: String,
 }
 
+/// Response for `GET /api/v1/culture/sync` — sync loop status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncStatusResponse {
+    pub enabled: bool,
+    pub last_sync: Option<String>,
+    pub last_error: Option<String>,
+    pub pending_commits: usize,
+    pub total_syncs: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1984,5 +1994,67 @@ mod tests {
         let parsed: CultureFileContentResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.path, "culture/AGENTS.md");
         assert!(parsed.content.contains("# Culture"));
+    }
+
+    #[test]
+    fn test_sync_status_response_serialize() {
+        let resp = SyncStatusResponse {
+            enabled: true,
+            last_sync: Some("2026-03-12T00:00:00Z".into()),
+            last_error: None,
+            pending_commits: 3,
+            total_syncs: 42,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let parsed: SyncStatusResponse = serde_json::from_str(&json).unwrap();
+        assert!(parsed.enabled);
+        assert_eq!(parsed.last_sync.as_deref(), Some("2026-03-12T00:00:00Z"));
+        assert!(parsed.last_error.is_none());
+        assert_eq!(parsed.pending_commits, 3);
+        assert_eq!(parsed.total_syncs, 42);
+    }
+
+    #[test]
+    fn test_sync_status_response_disabled() {
+        let resp = SyncStatusResponse {
+            enabled: false,
+            last_sync: None,
+            last_error: None,
+            pending_commits: 0,
+            total_syncs: 0,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let parsed: SyncStatusResponse = serde_json::from_str(&json).unwrap();
+        assert!(!parsed.enabled);
+        assert!(parsed.last_sync.is_none());
+    }
+
+    #[test]
+    fn test_sync_status_response_with_error() {
+        let resp = SyncStatusResponse {
+            enabled: true,
+            last_sync: Some("2026-03-12T00:00:00Z".into()),
+            last_error: Some("fetch failed".into()),
+            pending_commits: 1,
+            total_syncs: 10,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let parsed: SyncStatusResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.last_error.as_deref(), Some("fetch failed"));
+    }
+
+    #[test]
+    fn test_sync_status_response_debug_clone() {
+        let resp = SyncStatusResponse {
+            enabled: true,
+            last_sync: None,
+            last_error: None,
+            pending_commits: 0,
+            total_syncs: 0,
+        };
+        let cloned = resp.clone();
+        let debug = format!("{resp:?}");
+        assert!(debug.contains("SyncStatusResponse"));
+        assert_eq!(resp.enabled, cloned.enabled);
     }
 }

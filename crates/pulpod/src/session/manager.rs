@@ -25,6 +25,10 @@ pub struct SessionManager {
     store: Store,
     culture_repo: Option<CultureRepo>,
     inject_culture: bool,
+    #[cfg_attr(coverage, allow(dead_code))]
+    curator_enabled: bool,
+    #[cfg_attr(coverage, allow(dead_code))]
+    curator_provider: Option<String>,
     default_guard: GuardConfig,
     default_provider: Option<String>,
     session_defaults: SessionDefaultsConfig,
@@ -45,6 +49,8 @@ impl SessionManager {
             store,
             culture_repo: None,
             inject_culture: true,
+            curator_enabled: false,
+            curator_provider: None,
             default_guard,
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
@@ -70,6 +76,13 @@ impl SessionManager {
     pub fn with_culture_repo(mut self, repo: CultureRepo, inject: bool) -> Self {
         self.inject_culture = inject;
         self.culture_repo = Some(repo);
+        self
+    }
+
+    #[must_use]
+    pub fn with_curator(mut self, enabled: bool, provider: Option<String>) -> Self {
+        self.curator_enabled = enabled;
+        self.curator_provider = provider;
         self
     }
 
@@ -545,7 +558,8 @@ impl SessionManager {
         };
 
         // Harvest agent write-back from pending/ directory
-        match repo
+        #[cfg_attr(coverage, allow(unused_variables))]
+        let harvested = match repo
             .harvest_pending(
                 &session.name,
                 session.id,
@@ -560,15 +574,94 @@ impl SessionManager {
                     count,
                     "Harvested culture from session"
                 );
+                true
             }
             Err(e) => {
                 warn!(
                     session_id = %session.id,
                     "Failed to harvest culture: {e}"
                 );
+                false
             }
-            _ => {}
+            _ => false,
+        };
+
+        // Curator fallback: spawn a curator session if no pending file was found
+        // and this session is not itself a curator (avoids infinite recursion).
+        #[cfg(not(coverage))]
+        if !harvested
+            && self.curator_enabled
+            && !session
+                .metadata
+                .as_ref()
+                .is_some_and(|m| m.contains_key("curator"))
+        {
+            self.spawn_curator(session);
         }
+    }
+
+    /// Spawn a fire-and-forget curator session to extract learnings from a
+    /// completed session's output.
+    #[cfg(not(coverage))]
+    fn spawn_curator(&self, session: &Session) {
+        let backend_id = self.resolve_backend_id(session);
+        let output = self.capture_output(&session.id.to_string(), &backend_id, 200);
+        if output.trim().is_empty() {
+            return;
+        }
+
+        let repo_root = self
+            .culture_repo
+            .as_ref()
+            .map(|r| r.root().display().to_string())
+            .unwrap_or_default();
+
+        let prompt = build_curator_prompt(&session.name, &output, &repo_root);
+        let provider_str = self
+            .curator_provider
+            .clone()
+            .unwrap_or_else(|| "claude".into());
+        let provider = provider_str.parse::<Provider>().unwrap_or(Provider::Claude);
+
+        let mut metadata = HashMap::new();
+        metadata.insert("curator".into(), session.id.to_string());
+
+        let req = CreateSessionRequest {
+            name: None,
+            workdir: Some(session.workdir.clone()),
+            provider: Some(provider),
+            prompt: Some(prompt),
+            mode: Some(SessionMode::Autonomous),
+            unrestricted: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: Some(metadata),
+            ink: None,
+            max_turns: Some(1),
+            max_budget_usd: None,
+            output_format: None,
+            worktree: None,
+            conversation_id: None,
+        };
+
+        let mgr = self.clone();
+        tokio::spawn(async move {
+            match mgr.create_session(req).await {
+                Ok((s, _)) => {
+                    debug!(
+                        curator_session = %s.id,
+                        original_session = %s.metadata.as_ref()
+                            .and_then(|m| m.get("curator"))
+                            .map_or("?", String::as_str),
+                        "Spawned curator session"
+                    );
+                }
+                Err(e) => {
+                    warn!("Failed to spawn curator session: {e}");
+                }
+            }
+        });
     }
 }
 
@@ -703,6 +796,28 @@ pub(crate) fn build_command(
     format!("bash -c \"{escaped}; echo '[pulpo] Agent exited'; exec bash\"")
 }
 
+/// Build the prompt for a curator session that extracts learnings from
+/// another session's output.
+#[cfg_attr(coverage, allow(dead_code))]
+fn build_curator_prompt(session_name: &str, output: &str, culture_repo_root: &str) -> String {
+    format!(
+        "You are a culture curator for pulpo. Your ONLY job is to extract \
+         non-obvious learnings from the following session output and write them \
+         to a pending file.\n\n\
+         ## Session: {session_name}\n\n\
+         <output>\n{output}\n</output>\n\n\
+         ## Instructions\n\n\
+         1. Read the session output above carefully.\n\
+         2. Identify any non-obvious learnings — environment quirks, gotchas, \
+         patterns, or things a future agent couldn't figure out from the code.\n\
+         3. If you find a learning, write it to:\n\
+         `{culture_repo_root}/pending/{session_name}.md`\n\n\
+         Use this format:\n```markdown\n# <Short title>\n\n<Detailed explanation>\n```\n\n\
+         4. If there are no non-obvious learnings, do nothing and exit.\n\
+         5. Do NOT modify any code. Only write to the pending file."
+    )
+}
+
 /// Build culture context string for injection into agent sessions.
 ///
 /// Reads the compiled AGENTS.md files from relevant scopes (global, repo, ink)
@@ -780,12 +895,15 @@ fn build_culture_context(
          # <Short title describing the learning>\n\n\
          <Detailed explanation. Focus on things a future agent couldn't figure out\n\
          from reading the code — environment quirks, gotchas, non-obvious patterns,\n\
-         commands that don't work as expected, etc.>\n\
+         commands that don't work as expected, etc.>\n\n\
+         supersedes: <id of old entry if this replaces one>\n\
          ```\n\n\
          Guidelines:\n\
          - Only write things that are NOT obvious from the code itself\n\
          - One learning per file\n\
          - Skip this if you didn't discover anything non-obvious\n\
+         - If your learning corrects or replaces an existing one shown above, \
+         add a `supersedes: <id>` line with the old entry's ID\n\
          - Pulpo will validate and merge your learnings into the culture repo automatically"
     );
 
@@ -808,6 +926,7 @@ mod tests {
     fn unwrap_session_event(event: PulpoEvent) -> SessionEvent {
         match event {
             PulpoEvent::Session(se) => se,
+            PulpoEvent::Culture(_) => panic!("expected Session event, got Culture"),
         }
     }
 
@@ -2072,6 +2191,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: None,
             inject_culture: true,
+            curator_enabled: false,
+            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             default_provider: None,
@@ -2147,6 +2268,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: None,
             inject_culture: false,
+            curator_enabled: false,
+            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2168,6 +2291,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: None,
             inject_culture: false,
+            curator_enabled: false,
+            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2203,6 +2328,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: None,
             inject_culture: false,
+            curator_enabled: false,
+            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2241,6 +2368,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: None,
             inject_culture: false,
+            curator_enabled: false,
+            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2284,6 +2413,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: None,
             inject_culture: false,
+            curator_enabled: false,
+            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2324,6 +2455,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: None,
             inject_culture: false,
+            curator_enabled: false,
+            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2371,6 +2504,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: None,
             inject_culture: false,
+            curator_enabled: false,
+            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2407,6 +2542,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: None,
             inject_culture: false,
+            curator_enabled: false,
+            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2444,6 +2581,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: None,
             inject_culture: false,
+            curator_enabled: false,
+            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2847,6 +2986,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_build_culture_context_supersedes_instruction() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let root = repo.root().display().to_string();
+        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root, "test-session");
+        assert!(ctx.contains("supersedes:"));
+        assert!(ctx.contains("corrects or replaces"));
+    }
+
+    #[tokio::test]
     async fn test_build_culture_context_pending_path_uses_session_name() {
         let tmpdir = tempfile::tempdir().unwrap();
         let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
@@ -2902,6 +3053,24 @@ mod tests {
         assert!(!ctx.contains("No previous findings"));
     }
 
+    // -- build_curator_prompt tests --
+
+    #[test]
+    fn test_build_curator_prompt_contains_session_name() {
+        let prompt = build_curator_prompt("indigo-wave", "some output", "/tmp/culture");
+        assert!(prompt.contains("indigo-wave"));
+        assert!(prompt.contains("some output"));
+        assert!(prompt.contains("/tmp/culture/pending/indigo-wave.md"));
+    }
+
+    #[test]
+    fn test_build_curator_prompt_contains_instructions() {
+        let prompt = build_curator_prompt("test-session", "output", "/root");
+        assert!(prompt.contains("culture curator"));
+        assert!(prompt.contains("non-obvious"));
+        assert!(prompt.contains("Do NOT modify any code"));
+    }
+
     #[test]
     fn test_is_empty_agents_md() {
         assert!(is_empty_agents_md(
@@ -2924,6 +3093,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: None,
             inject_culture: false,
+            curator_enabled: false,
+            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
@@ -2945,6 +3116,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: None,
             inject_culture: true,
+            curator_enabled: false,
+            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
@@ -2985,6 +3158,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: Some(repo),
             inject_culture: true,
+            curator_enabled: false,
+            curator_provider: None,
             store: async_store().await,
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
@@ -3021,6 +3196,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: Some(repo),
             inject_culture: true,
+            curator_enabled: false,
+            curator_provider: None,
             store: async_store().await,
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),
@@ -3053,6 +3230,8 @@ mod tests {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             culture_repo: Some(repo),
             inject_culture: true,
+            curator_enabled: false,
+            curator_provider: None,
             store: async_store().await,
             default_guard: GuardConfig::default(),
             inks: HashMap::new(),

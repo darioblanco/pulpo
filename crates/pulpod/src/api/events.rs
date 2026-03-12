@@ -13,6 +13,7 @@ use tokio_stream::wrappers::BroadcastStream;
 fn event_to_sse(event: &PulpoEvent) -> Option<Result<Event, Infallible>> {
     let (event_type, json) = match event {
         PulpoEvent::Session(se) => ("session", serde_json::to_string(se).ok()?),
+        PulpoEvent::Culture(ce) => ("culture", serde_json::to_string(ce).ok()?),
     };
     Some(Ok(Event::default().event(event_type).data(json)))
 }
@@ -138,6 +139,19 @@ mod tests {
             output_snippet: None,
             waiting_for_input: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
+        });
+
+        let result = event_to_sse(&event);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_event_to_sse_culture() {
+        let event = PulpoEvent::Culture(pulpo_common::event::CultureEvent {
+            action: "synced".into(),
+            count: 3,
+            node_name: "test".into(),
+            timestamp: "2026-03-12T00:00:00Z".into(),
         });
 
         let result = event_to_sse(&event);

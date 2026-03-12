@@ -12,8 +12,10 @@ vi.mock('@/api/client', () => ({
   listCulture: vi.fn(),
   deleteCulture: vi.fn(),
   pushCulture: vi.fn(),
+  approveCulture: vi.fn(),
   listCultureFiles: vi.fn(),
   readCultureFile: vi.fn(),
+  getCultureSyncStatus: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
@@ -28,15 +30,27 @@ vi.stubGlobal('localStorage', {
 const mockListCulture = vi.mocked(api.listCulture);
 const mockDeleteCulture = vi.mocked(api.deleteCulture);
 const mockPushCulture = vi.mocked(api.pushCulture);
+const mockApproveCulture = vi.mocked(api.approveCulture);
 const mockListCultureFiles = vi.mocked(api.listCultureFiles);
 const mockReadCultureFile = vi.mocked(api.readCultureFile);
+const mockGetCultureSyncStatus = vi.mocked(api.getCultureSyncStatus);
 
 beforeEach(() => {
   mockListCulture.mockReset();
   mockDeleteCulture.mockReset();
   mockPushCulture.mockReset();
+  mockApproveCulture.mockReset();
   mockListCultureFiles.mockReset();
   mockReadCultureFile.mockReset();
+  mockGetCultureSyncStatus.mockReset();
+  // Default: sync status disabled
+  mockGetCultureSyncStatus.mockResolvedValue({
+    enabled: false,
+    last_sync: null,
+    last_error: null,
+    pending_commits: 0,
+    total_syncs: 0,
+  });
   // Default: file browser returns some files
   mockListCultureFiles.mockResolvedValue({
     files: [
@@ -196,6 +210,63 @@ describe('CulturePage', () => {
     });
   });
 
+  it('shows approve button for stale items', async () => {
+    mockListCulture.mockResolvedValue({
+      culture: [makeCulture({ tags: ['stale', 'claude'], title: 'Stale finding' })],
+    });
+    renderCulture();
+    await switchToEntriesTab();
+    await waitFor(() => {
+      expect(screen.getByTestId('approve-culture-btn')).toBeInTheDocument();
+    });
+  });
+
+  it('does not show approve button for non-stale items', async () => {
+    mockListCulture.mockResolvedValue({ culture: [makeCulture()] });
+    renderCulture();
+    await switchToEntriesTab();
+    await waitFor(() => {
+      expect(screen.getByText('Auth bug fix')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('approve-culture-btn')).not.toBeInTheDocument();
+  });
+
+  it('approves a stale item', async () => {
+    mockListCulture.mockResolvedValue({
+      culture: [makeCulture({ tags: ['stale', 'claude'], title: 'Stale finding' })],
+    });
+    mockApproveCulture.mockResolvedValue({
+      culture: {
+        ...makeCulture({ tags: ['claude'], title: 'Stale finding' }),
+        last_referenced_at: '2025-03-12T00:00:00Z',
+      },
+    });
+    renderCulture();
+    await switchToEntriesTab();
+    await waitFor(() => {
+      expect(screen.getByTestId('approve-culture-btn')).toBeInTheDocument();
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('approve-culture-btn'));
+
+    await waitFor(() => {
+      expect(mockApproveCulture).toHaveBeenCalledWith('k-1');
+    });
+  });
+
+  it('shows superseded items with reduced opacity', async () => {
+    mockListCulture.mockResolvedValue({
+      culture: [makeCulture({ tags: ['superseded'], title: 'Old approach' })],
+    });
+    renderCulture();
+    await switchToEntriesTab();
+    await waitFor(() => {
+      const card = screen.getByTestId('culture-card');
+      expect(card).toHaveClass('opacity-60');
+    });
+  });
+
   it('shows stale items with reduced opacity', async () => {
     mockListCulture.mockResolvedValue({
       culture: [makeCulture({ tags: ['stale', 'claude'], title: 'Old finding' })],
@@ -278,6 +349,72 @@ describe('CultureFileBrowser', () => {
     renderCulture();
     await waitFor(() => {
       expect(screen.getByTestId('file-browser-empty')).toBeInTheDocument();
+    });
+  });
+});
+
+describe('SyncStatusBadge', () => {
+  it('does not show badge when sync disabled', async () => {
+    mockListCulture.mockResolvedValue({ culture: [] });
+    mockGetCultureSyncStatus.mockResolvedValue({
+      enabled: false,
+      last_sync: null,
+      last_error: null,
+      pending_commits: 0,
+      total_syncs: 0,
+    });
+    renderCulture();
+    await waitFor(() => {
+      expect(screen.getByTestId('culture-page')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('sync-status-badge')).not.toBeInTheDocument();
+  });
+
+  it('shows sync badge when enabled', async () => {
+    mockListCulture.mockResolvedValue({ culture: [] });
+    mockGetCultureSyncStatus.mockResolvedValue({
+      enabled: true,
+      last_sync: '2026-03-12T00:00:00Z',
+      last_error: null,
+      pending_commits: 0,
+      total_syncs: 5,
+    });
+    renderCulture();
+    await waitFor(() => {
+      expect(screen.getByTestId('sync-status-badge')).toBeInTheDocument();
+      expect(screen.getByText('Synced (5)')).toBeInTheDocument();
+    });
+  });
+
+  it('shows error badge on sync error', async () => {
+    mockListCulture.mockResolvedValue({ culture: [] });
+    mockGetCultureSyncStatus.mockResolvedValue({
+      enabled: true,
+      last_sync: null,
+      last_error: 'fetch failed',
+      pending_commits: 0,
+      total_syncs: 0,
+    });
+    renderCulture();
+    await waitFor(() => {
+      expect(screen.getByTestId('sync-status-badge')).toBeInTheDocument();
+      expect(screen.getByText('Sync error')).toBeInTheDocument();
+    });
+  });
+
+  it('shows sync enabled badge before first sync', async () => {
+    mockListCulture.mockResolvedValue({ culture: [] });
+    mockGetCultureSyncStatus.mockResolvedValue({
+      enabled: true,
+      last_sync: null,
+      last_error: null,
+      pending_commits: 0,
+      total_syncs: 0,
+    });
+    renderCulture();
+    await waitFor(() => {
+      expect(screen.getByTestId('sync-status-badge')).toBeInTheDocument();
+      expect(screen.getByText('Sync enabled')).toBeInTheDocument();
     });
   });
 });

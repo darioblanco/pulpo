@@ -18,6 +18,7 @@ import type {
   CultureFilesResponse,
   CultureFileContentResponse,
   UpdateCultureRequest,
+  SyncStatus,
 } from './types';
 
 let getBaseUrl: () => string = () => '';
@@ -305,6 +306,12 @@ export async function pushCulture(): Promise<CulturePushResponse> {
   return res.json();
 }
 
+export async function approveCulture(id: string): Promise<CultureItemResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/culture/${id}/approve`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to approve culture item');
+  return res.json();
+}
+
 export async function listCultureFiles(): Promise<CultureFilesResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/culture/files`);
   if (!res.ok) throw new Error('Failed to list culture files');
@@ -314,5 +321,11 @@ export async function listCultureFiles(): Promise<CultureFilesResponse> {
 export async function readCultureFile(path: string): Promise<CultureFileContentResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/culture/files/${path}`);
   if (!res.ok) throw new Error('Failed to read culture file');
+  return res.json();
+}
+
+export async function getCultureSyncStatus(): Promise<SyncStatus> {
+  const res = await authFetch(`${resolveBaseUrl()}/culture/sync`);
+  if (!res.ok) throw new Error('Failed to fetch sync status');
   return res.json();
 }

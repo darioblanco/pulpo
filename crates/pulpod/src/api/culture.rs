@@ -6,7 +6,7 @@ use axum::http::StatusCode;
 use pulpo_common::api::{
     CultureContextQuery, CultureDeleteResponse, CultureFileContentResponse, CultureFileEntry,
     CultureFilesResponse, CultureItemResponse, CulturePushResponse, CultureResponse, ErrorResponse,
-    ListCultureQuery, UpdateCultureRequest,
+    ListCultureQuery, SyncStatusResponse, UpdateCultureRequest,
 };
 
 use super::AppState;
@@ -198,6 +198,56 @@ pub async fn push(
     }
 }
 
+pub async fn approve(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<CultureItemResponse>, ApiError> {
+    let Some(repo) = state.session_manager.culture_repo() else {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "culture repo not configured".into(),
+            }),
+        ));
+    };
+    let approved = repo.approve(&id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    if !approved {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("culture item not found: {id}"),
+            }),
+        ));
+    }
+    // Re-read the approved item
+    let item = repo.get_by_id(&id).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+    item.map_or_else(
+        || {
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "item deleted after approve".into(),
+                }),
+            ))
+        },
+        |culture| Ok(Json(CultureItemResponse { culture })),
+    )
+}
+
 pub async fn list_files(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<CultureFilesResponse>, ApiError> {
@@ -252,6 +302,17 @@ pub async fn read_file(
         )
     })?;
     Ok(Json(CultureFileContentResponse { path, content }))
+}
+
+pub async fn sync_status(State(state): State<Arc<AppState>>) -> Json<SyncStatusResponse> {
+    let status = state.sync_status.read().await;
+    Json(SyncStatusResponse {
+        enabled: status.enabled,
+        last_sync: status.last_sync.clone(),
+        last_error: status.last_error.clone(),
+        pending_commits: status.pending_commits,
+        total_syncs: status.total_syncs,
+    })
 }
 
 #[cfg(test)]
@@ -336,12 +397,14 @@ mod tests {
             .route("/api/v1/culture", routing::get(list))
             .route("/api/v1/culture/context", routing::get(context))
             .route("/api/v1/culture/push", post(push))
+            .route("/api/v1/culture/sync", routing::get(sync_status))
             .route("/api/v1/culture/files", routing::get(list_files))
             .route("/api/v1/culture/files/{*path}", routing::get(read_file))
             .route(
                 "/api/v1/culture/{id}",
                 routing::get(get).put(update).delete(delete),
             )
+            .route("/api/v1/culture/{id}/approve", post(approve))
             .with_state(state);
         TestServer::new(app).unwrap()
     }
@@ -864,6 +927,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_approve_removes_stale_tag() {
+        let (state, repo) = test_state().await;
+        let mut k = make_culture("stale-entry", Some("/repo"), None);
+        k.tags.push("stale".into());
+        let id = k.id.to_string();
+        repo.save(&k).await.unwrap();
+
+        let server = test_router(state);
+        let resp = server.post(&format!("/api/v1/culture/{id}/approve")).await;
+        resp.assert_status_ok();
+        let body: CultureItemResponse = resp.json();
+        assert_eq!(body.culture.title, "stale-entry");
+        assert!(!body.culture.tags.contains(&"stale".into()));
+        assert!(body.culture.last_referenced_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_approve_not_found() {
+        let (state, _repo) = test_state().await;
+        let server = test_router(state);
+        let resp = server.post("/api/v1/culture/nonexistent-id/approve").await;
+        assert_eq!(resp.status_code(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_approve_no_culture_repo() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: crate::config::GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            culture: crate::config::CultureConfig::default(),
+        };
+        let backend = Arc::new(StubBackend);
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        );
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let state = AppState::new(config, manager, peer_registry);
+
+        let server = test_router(state);
+        let resp = server.post("/api/v1/culture/some-id/approve").await;
+        assert_ne!(resp.status_code(), 200);
+    }
+
+    #[tokio::test]
     async fn test_list_files_returns_tree() {
         let (state, _repo) = test_state().await;
         let server = test_router(state);
@@ -973,5 +1098,83 @@ mod tests {
         let server = test_router(state);
         let resp = server.get("/api/v1/culture/files/culture/AGENTS.md").await;
         assert_ne!(resp.status_code(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_sync_status_disabled() {
+        let (state, _repo) = test_state().await;
+        let server = test_router(state);
+        let resp = server.get("/api/v1/culture/sync").await;
+        resp.assert_status_ok();
+        let body: SyncStatusResponse = resp.json();
+        assert!(!body.enabled);
+        assert!(body.last_sync.is_none());
+        assert!(body.last_error.is_none());
+        assert_eq!(body.pending_commits, 0);
+        assert_eq!(body.total_syncs, 0);
+    }
+
+    #[tokio::test]
+    async fn test_sync_status_enabled() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let culture_repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            guards: crate::config::GuardDefaultConfig::default(),
+            session_defaults: crate::config::SessionDefaultsConfig::default(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            culture: crate::config::CultureConfig::default(),
+        };
+        let backend = Arc::new(StubBackend);
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        )
+        .with_culture_repo(culture_repo.clone(), true);
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (event_tx, _) = tokio::sync::broadcast::channel(16);
+        let sync_status = std::sync::Arc::new(tokio::sync::RwLock::new(
+            crate::culture::sync::SyncStatus::new(true),
+        ));
+        // Pre-populate sync status
+        {
+            let mut s = sync_status.write().await;
+            s.last_sync = Some("2026-03-12T00:00:00Z".into());
+            s.total_syncs = 5;
+            s.pending_commits = 2;
+        }
+        let state = AppState::with_watchdog_tx(
+            config,
+            tmpdir.path().join("config.toml"),
+            manager,
+            peer_registry,
+            event_tx,
+            None,
+            sync_status,
+        );
+        let server = test_router(state);
+        let resp = server.get("/api/v1/culture/sync").await;
+        resp.assert_status_ok();
+        let body: SyncStatusResponse = resp.json();
+        assert!(body.enabled);
+        assert_eq!(body.last_sync.as_deref(), Some("2026-03-12T00:00:00Z"));
+        assert_eq!(body.total_syncs, 5);
+        assert_eq!(body.pending_commits, 2);
     }
 }

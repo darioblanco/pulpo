@@ -48,7 +48,7 @@ pub struct InkConfig {
 }
 
 /// Culture repository configuration (git-backed storage for extracted culture).
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CultureConfig {
     /// Optional git remote URL. When set, the culture repo will be pushed
     /// to this remote after each commit, enabling multi-node culture sharing.
@@ -63,6 +63,35 @@ pub struct CultureConfig {
     /// `0` disables TTL-based decay. Defaults to 30 days.
     #[serde(default = "default_ttl_days")]
     pub ttl_days: u32,
+    /// When true, spawn a curator session to extract learnings from completed
+    /// sessions that did not leave a pending write-back file. Defaults to false.
+    #[serde(default)]
+    pub curator: bool,
+    /// Provider for curator sessions. Defaults to "claude" when absent.
+    #[serde(default)]
+    pub curator_provider: Option<String>,
+    /// Interval in seconds between sync pulls from the remote.
+    /// Only active when `remote` is set. Defaults to 300 (5 minutes).
+    #[serde(default = "default_sync_interval_secs")]
+    pub sync_interval_secs: u64,
+    /// Optional scope filter for sync. When set, files outside these paths
+    /// are reverted after pull. E.g. `["repos/my-repo", "culture"]`.
+    #[serde(default)]
+    pub sync_scopes: Option<Vec<String>>,
+}
+
+impl Default for CultureConfig {
+    fn default() -> Self {
+        Self {
+            remote: None,
+            inject: default_inject(),
+            ttl_days: default_ttl_days(),
+            curator: false,
+            curator_provider: None,
+            sync_interval_secs: default_sync_interval_secs(),
+            sync_scopes: None,
+        }
+    }
 }
 
 const fn default_inject() -> bool {
@@ -71,6 +100,10 @@ const fn default_inject() -> bool {
 
 const fn default_ttl_days() -> u32 {
     30
+}
+
+const fn default_sync_interval_secs() -> u64 {
+    300
 }
 
 /// Notification configuration (webhooks for status updates).
@@ -2208,6 +2241,49 @@ provider = "codex"
     fn test_culture_config_ttl_disabled() {
         let config: CultureConfig = toml::from_str("ttl_days = 0").unwrap();
         assert_eq!(config.ttl_days, 0);
+    }
+
+    #[test]
+    fn test_culture_config_curator_default_false() {
+        let config = CultureConfig::default();
+        assert!(!config.curator);
+        assert!(config.curator_provider.is_none());
+    }
+
+    #[test]
+    fn test_culture_config_curator_enabled() {
+        let config: CultureConfig =
+            toml::from_str("curator = true\ncurator_provider = \"codex\"").unwrap();
+        assert!(config.curator);
+        assert_eq!(config.curator_provider, Some("codex".into()));
+    }
+
+    #[test]
+    fn test_culture_config_sync_interval_default() {
+        let config = CultureConfig::default();
+        assert_eq!(config.sync_interval_secs, 300);
+    }
+
+    #[test]
+    fn test_culture_config_sync_interval_custom() {
+        let config: CultureConfig = toml::from_str("sync_interval_secs = 60").unwrap();
+        assert_eq!(config.sync_interval_secs, 60);
+    }
+
+    #[test]
+    fn test_culture_config_sync_scopes_default_none() {
+        let config = CultureConfig::default();
+        assert!(config.sync_scopes.is_none());
+    }
+
+    #[test]
+    fn test_culture_config_sync_scopes_set() {
+        let config: CultureConfig =
+            toml::from_str(r#"sync_scopes = ["repos/my-repo", "culture"]"#).unwrap();
+        let scopes = config.sync_scopes.unwrap();
+        assert_eq!(scopes.len(), 2);
+        assert_eq!(scopes[0], "repos/my-repo");
+        assert_eq!(scopes[1], "culture");
     }
 
     #[test]

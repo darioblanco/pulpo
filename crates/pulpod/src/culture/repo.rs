@@ -1,9 +1,20 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use pulpo_common::culture::{Culture, CultureKind};
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tracing::{debug, warn};
+
+/// Result of a `pull()` operation.
+#[derive(Debug, Clone)]
+pub struct PullResult {
+    /// Whether the working tree was updated by the pull.
+    pub updated: bool,
+    /// Number of rebase conflicts that were auto-resolved via merge.
+    pub conflicts: usize,
+}
 
 /// Git-backed culture repository.
 ///
@@ -28,6 +39,8 @@ use tracing::{debug, warn};
 pub struct CultureRepo {
     root: PathBuf,
     remote: Option<String>,
+    /// Mutex to prevent concurrent git-mutating operations (save/harvest/pull/push).
+    git_lock: Arc<Mutex<()>>,
 }
 
 impl CultureRepo {
@@ -82,7 +95,11 @@ impl CultureRepo {
             }
         }
 
-        Ok(Self { root, remote })
+        Ok(Self {
+            root,
+            remote,
+            git_lock: Arc::new(Mutex::new(())),
+        })
     }
 
     /// Persist a culture item as a Markdown file with YAML frontmatter.
@@ -397,6 +414,60 @@ impl CultureRepo {
         Ok(true)
     }
 
+    /// Mark a culture entry as superseded by tagging it.
+    /// Best-effort: silently succeeds if the entry is not found.
+    fn supersede(&self, id: &str) -> Result<()> {
+        let Some(path) = self.find_by_id(id)? else {
+            debug!("supersede: entry {id} not found, skipping");
+            return Ok(());
+        };
+        let content = std::fs::read_to_string(&path)?;
+        let Some(mut item) = parse_file(&path, &content) else {
+            return Ok(());
+        };
+
+        if !item.tags.iter().any(|t| t == "superseded") {
+            item.tags.push("superseded".into());
+            item.relevance = 0.0;
+            let md = serialize_to_markdown(&item)?;
+            std::fs::write(&path, md)?;
+        }
+        Ok(())
+    }
+
+    /// Approve a stale culture item: remove the "stale" tag and refresh `last_referenced_at`.
+    /// Returns `true` if the item was found and approved, `false` if not found.
+    pub async fn approve(&self, id: &str) -> Result<bool> {
+        let path = self.find_by_id(id)?;
+        let Some(path) = path else {
+            return Ok(false);
+        };
+        let content = std::fs::read_to_string(&path)?;
+        let Some(mut item) = parse_file(&path, &content) else {
+            return Ok(false);
+        };
+
+        item.tags.retain(|t| t != "stale");
+        item.last_referenced_at = Some(chrono::Utc::now());
+
+        let md = serialize_to_markdown(&item)?;
+        std::fs::write(&path, md)?;
+
+        // Recompile AGENTS.md for this scope
+        self.compile_scope_for(&item)?;
+
+        let scope_dir = scope_dir_name(&item);
+        run_git(&self.root, &["add", &scope_dir]).await?;
+        run_git(
+            &self.root,
+            &["commit", "-m", &format!("culture: approve {id}")],
+        )
+        .await?;
+
+        self.fire_and_forget_push();
+        Ok(true)
+    }
+
     /// Explicitly push all local commits to the remote.
     /// Returns an error if no remote is configured or push fails.
     pub async fn push(&self) -> Result<()> {
@@ -593,12 +664,17 @@ impl CultureRepo {
         let content = std::fs::read_to_string(&pending_path)
             .with_context(|| format!("read pending file for {session_name}"))?;
 
-        let Some((title, body)) = parse_pending_file(&content) else {
+        let Some(entry) = parse_pending_file(&content) else {
             warn!("invalid pending file for session {session_name}, skipping");
             // Clean up the invalid file
             std::fs::remove_file(&pending_path)?;
             return Ok(0);
         };
+
+        // If this entry explicitly supersedes an older one, tag the old entry
+        if let Some(ref old_id) = entry.supersedes {
+            self.supersede(old_id)?;
+        }
 
         let culture = Culture {
             id: uuid::Uuid::new_v4(),
@@ -610,8 +686,8 @@ impl CultureRepo {
                 Some(workdir.to_owned())
             },
             scope_ink: ink.map(ToOwned::to_owned),
-            title,
-            body,
+            title: entry.title,
+            body: entry.body,
             tags: vec!["agent-written".into()],
             relevance: 0.8,
             created_at: chrono::Utc::now(),
@@ -631,6 +707,118 @@ impl CultureRepo {
         self.fire_and_forget_push();
 
         Ok(1)
+    }
+
+    /// Whether this repo has a remote configured.
+    pub const fn has_remote(&self) -> bool {
+        self.remote.is_some()
+    }
+
+    /// Pull changes from the remote. Tries `git fetch + rebase`; on conflict,
+    /// aborts the rebase and falls back to a merge with `--ours` strategy.
+    ///
+    /// Returns `Err` if no remote is configured or both strategies fail.
+    pub async fn pull(&self) -> Result<PullResult> {
+        let Some(ref _url) = self.remote else {
+            bail!("no remote configured for culture repo");
+        };
+
+        let _lock = self.git_lock.lock().await;
+
+        // Fetch from remote
+        run_git(&self.root, &["fetch", "origin", "main"]).await?;
+
+        // Check if there are any new commits to pull
+        let log_output = run_git(&self.root, &["log", "HEAD..origin/main", "--oneline"]).await?;
+        if log_output.trim().is_empty() {
+            return Ok(PullResult {
+                updated: false,
+                conflicts: 0,
+            });
+        }
+
+        // Try rebase first
+        if run_git(&self.root, &["rebase", "origin/main"])
+            .await
+            .is_ok()
+        {
+            return Ok(PullResult {
+                updated: true,
+                conflicts: 0,
+            });
+        }
+
+        // Abort the failed rebase
+        let _ = run_git(&self.root, &["rebase", "--abort"]).await;
+
+        // Fall back to merge with ours strategy for conflicts
+        run_git(
+            &self.root,
+            &["merge", "origin/main", "-X", "ours", "--no-edit"],
+        )
+        .await
+        .map(|_| PullResult {
+            updated: true,
+            conflicts: 1,
+        })
+        .map_err(|e| anyhow::anyhow!("culture pull failed (rebase + merge): {e}"))
+    }
+
+    /// Count local commits ahead of the remote (not yet pushed).
+    /// Returns 0 if no remote is configured or the count can't be determined.
+    pub async fn pending_commit_count(&self) -> usize {
+        if self.remote.is_none() {
+            return 0;
+        }
+        // Try to count commits between origin/main and HEAD
+        run_git(&self.root, &["rev-list", "--count", "origin/main..HEAD"])
+            .await
+            .map_or(0, |output| output.trim().parse().unwrap_or(0))
+    }
+
+    /// After a pull, revert files outside the allowed scope paths.
+    /// Does nothing if `scopes` is `None` (all files accepted).
+    pub async fn filter_scopes(&self, scopes: Option<&[String]>) -> Result<()> {
+        let Some(scopes) = scopes else {
+            return Ok(());
+        };
+        if scopes.is_empty() {
+            return Ok(());
+        }
+
+        // List all changed files in the working tree relative to HEAD~1
+        let diff_output = run_git(&self.root, &["diff", "--name-only", "HEAD~1", "HEAD"]).await;
+
+        let Ok(diff_output) = diff_output else {
+            return Ok(()); // No previous commit to diff against
+        };
+
+        let mut reverted = false;
+        for line in diff_output.lines() {
+            let file = line.trim();
+            if file.is_empty() {
+                continue;
+            }
+            let in_scope = scopes.iter().any(|s| file.starts_with(s.as_str()));
+            if !in_scope {
+                // Revert this file to its state before the pull
+                let _ = run_git(&self.root, &["checkout", "HEAD~1", "--", file]).await;
+                reverted = true;
+            }
+        }
+
+        if reverted {
+            // Stage and amend the merge/rebase commit
+            run_git(&self.root, &["add", "."]).await?;
+            // Only amend if there are staged changes
+            let status = run_git(&self.root, &["diff", "--cached", "--quiet"]).await;
+            if status.is_err() {
+                // There are staged changes
+                run_git(&self.root, &["commit", "--amend", "--no-edit"]).await?;
+            }
+        }
+
+        Ok(())
     }
 
     fn fire_and_forget_push(&self) {
@@ -932,17 +1120,28 @@ fn collect_culture_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-/// Parse a pending write-back file into `(title, body)`.
+/// Parsed result from a pending write-back file.
+struct PendingEntry {
+    title: String,
+    body: String,
+    /// Optional ID of an existing culture entry this new one supersedes.
+    supersedes: Option<String>,
+}
+
+/// Parse a pending write-back file into a `PendingEntry`.
 ///
 /// Expected format:
 /// ```text
 /// # Short title describing the learning
 ///
 /// Detailed explanation...
+///
+/// supersedes: <uuid>
 /// ```
 ///
+/// The `supersedes:` line is optional and can appear anywhere in the body.
 /// Returns `None` if the file doesn't have a valid `# title` line or has empty body.
-fn parse_pending_file(content: &str) -> Option<(String, String)> {
+fn parse_pending_file(content: &str) -> Option<PendingEntry> {
     let content = content.trim();
     if content.is_empty() {
         return None;
@@ -961,7 +1160,28 @@ fn parse_pending_file(content: &str) -> Option<(String, String)> {
         return None;
     }
 
-    Some((title, after_title))
+    // Extract optional `supersedes: <id>` line from body
+    let mut supersedes = None;
+    let mut body_lines = Vec::new();
+    for line in after_title.lines() {
+        if let Some(id) = line.strip_prefix("supersedes:").map(str::trim) {
+            if !id.is_empty() {
+                supersedes = Some(id.to_owned());
+            }
+        } else {
+            body_lines.push(line);
+        }
+    }
+    let body = body_lines.join("\n").trim().to_owned();
+    if body.is_empty() {
+        return None;
+    }
+
+    Some(PendingEntry {
+        title,
+        body,
+        supersedes,
+    })
 }
 
 /// The filename used for compiled AGENTS.md files in each scope directory.
@@ -1187,6 +1407,7 @@ mod tests {
         let repo = CultureRepo {
             root: PathBuf::from("/data/culture"),
             remote: None,
+            git_lock: Arc::new(Mutex::new(())),
         };
         let k = make_culture("test", Some("/tmp/myrepo"), None);
         let dir = repo.item_dir(&k);
@@ -1198,6 +1419,7 @@ mod tests {
         let repo = CultureRepo {
             root: PathBuf::from("/data/culture"),
             remote: None,
+            git_lock: Arc::new(Mutex::new(())),
         };
         let k = make_culture("test", None, Some("reviewer"));
         let dir = repo.item_dir(&k);
@@ -1209,6 +1431,7 @@ mod tests {
         let repo = CultureRepo {
             root: PathBuf::from("/data/culture"),
             remote: None,
+            git_lock: Arc::new(Mutex::new(())),
         };
         let k = make_culture("test", None, None);
         let dir = repo.item_dir(&k);
@@ -1220,6 +1443,7 @@ mod tests {
         let repo = CultureRepo {
             root: PathBuf::from("/data/culture"),
             remote: None,
+            git_lock: Arc::new(Mutex::new(())),
         };
         // When both scope_repo and scope_ink are set, repo wins
         let k = make_culture("test", Some("/tmp/myrepo"), Some("coder"));
@@ -1721,6 +1945,7 @@ mod tests {
         let repo = CultureRepo {
             root: PathBuf::from("/tmp"),
             remote: Some("git@github.com:user/culture.git".into()),
+            git_lock: Arc::new(Mutex::new(())),
         };
         #[allow(clippy::redundant_clone)]
         let cloned = repo.clone();
@@ -1733,6 +1958,7 @@ mod tests {
         let repo = CultureRepo {
             root: PathBuf::from("/tmp"),
             remote: None,
+            git_lock: Arc::new(Mutex::new(())),
         };
         let debug = format!("{repo:?}");
         assert!(debug.contains("CultureRepo"));
@@ -2173,6 +2399,7 @@ mod tests {
         let repo = CultureRepo {
             root: PathBuf::from("/nonexistent/path"),
             remote: None,
+            git_lock: Arc::new(Mutex::new(())),
         };
         // Should return Ok, not error
         let result = repo.compile_agents_md("repos/missing");
@@ -2316,10 +2543,11 @@ mod tests {
     #[test]
     fn test_parse_pending_file_valid() {
         let content = "# Auth tokens expire silently\n\nThe OAuth refresh flow fails after 30 days\nbecause the token store doesn't handle rotation.";
-        let (title, body) = parse_pending_file(content).unwrap();
-        assert_eq!(title, "Auth tokens expire silently");
-        assert!(body.contains("OAuth refresh flow"));
-        assert!(body.contains("token store"));
+        let entry = parse_pending_file(content).unwrap();
+        assert_eq!(entry.title, "Auth tokens expire silently");
+        assert!(entry.body.contains("OAuth refresh flow"));
+        assert!(entry.body.contains("token store"));
+        assert!(entry.supersedes.is_none());
     }
 
     #[test]
@@ -2346,9 +2574,26 @@ mod tests {
     #[test]
     fn test_parse_pending_file_with_leading_whitespace() {
         let content = "\n\n# Trimmed title\n\nBody here.";
-        let (title, body) = parse_pending_file(content).unwrap();
-        assert_eq!(title, "Trimmed title");
-        assert_eq!(body, "Body here.");
+        let entry = parse_pending_file(content).unwrap();
+        assert_eq!(entry.title, "Trimmed title");
+        assert_eq!(entry.body, "Body here.");
+    }
+
+    #[test]
+    fn test_parse_pending_file_with_supersedes() {
+        let content = "# Updated auth flow\n\nNew approach uses PKCE.\n\nsupersedes: abc-123-def";
+        let entry = parse_pending_file(content).unwrap();
+        assert_eq!(entry.title, "Updated auth flow");
+        assert!(entry.body.contains("PKCE"));
+        assert!(!entry.body.contains("supersedes"));
+        assert_eq!(entry.supersedes, Some("abc-123-def".into()));
+    }
+
+    #[test]
+    fn test_parse_pending_file_supersedes_empty_value() {
+        let content = "# Title\n\nBody text\n\nsupersedes:   ";
+        let entry = parse_pending_file(content).unwrap();
+        assert!(entry.supersedes.is_none());
     }
 
     // ── harvest_pending tests ────────────────────────────────────────────
@@ -2490,6 +2735,91 @@ mod tests {
 
         let agents_content = repo.read_agents_md("repos/myrepo").unwrap().unwrap();
         assert!(agents_content.contains("AGENTS.md compilation"));
+    }
+
+    // ── supersede / contradiction tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_supersede_tags_and_zeroes_relevance() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let old = make_culture("old approach", Some("/repo"), None);
+        repo.save(&old).await.unwrap();
+
+        repo.supersede(&old.id.to_string()).unwrap();
+
+        let item = repo.get_by_id(&old.id.to_string()).unwrap().unwrap();
+        assert!(item.tags.contains(&"superseded".into()));
+        assert!(item.relevance.abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_supersede_not_found_is_ok() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        // Should not error
+        repo.supersede("nonexistent-id").unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_supersede_idempotent() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let old = make_culture("old approach", None, None);
+        repo.save(&old).await.unwrap();
+
+        repo.supersede(&old.id.to_string()).unwrap();
+        repo.supersede(&old.id.to_string()).unwrap();
+
+        let item = repo.get_by_id(&old.id.to_string()).unwrap().unwrap();
+        assert_eq!(item.tags.iter().filter(|t| *t == "superseded").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_harvest_pending_with_supersedes() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        // Create an existing entry to supersede
+        let old = make_culture("old auth flow", Some("/tmp/repo"), Some("coder"));
+        repo.save(&old).await.unwrap();
+
+        // Write a pending file that supersedes it
+        let pending_path = repo.root().join("pending").join("update-session.md");
+        std::fs::write(
+            &pending_path,
+            format!(
+                "# New auth flow with PKCE\n\nUse PKCE for all OAuth flows.\n\nsupersedes: {}",
+                old.id
+            ),
+        )
+        .unwrap();
+
+        let count = repo
+            .harvest_pending("update-session", Uuid::new_v4(), "/tmp/repo", Some("coder"))
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Old entry should be tagged as superseded with 0 relevance
+        let old_item = repo.get_by_id(&old.id.to_string()).unwrap().unwrap();
+        assert!(old_item.tags.contains(&"superseded".into()));
+        assert!(old_item.relevance.abs() < f64::EPSILON);
+
+        // New entry should exist
+        let items = repo.list(None, None, None, None, None).unwrap();
+        assert_eq!(items.len(), 2);
+        let new_item = items.iter().find(|k| k.title == "New auth flow with PKCE");
+        assert!(new_item.is_some());
+        assert!(!new_item.unwrap().body.contains("supersedes"));
     }
 
     // ── last_referenced_at tests ─────────────────────────────────────────
@@ -2661,5 +2991,240 @@ mod tests {
 
         let item = repo.get_by_id(&old.id.to_string()).unwrap().unwrap();
         assert_eq!(item.tags.iter().filter(|t| *t == "stale").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_approve_removes_stale_and_touches() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let mut k = make_culture("stale finding", Some("/repo"), Some("coder"));
+        k.tags.push("stale".into());
+        repo.save(&k).await.unwrap();
+
+        let approved = repo.approve(&k.id.to_string()).await.unwrap();
+        assert!(approved);
+
+        let item = repo.get_by_id(&k.id.to_string()).unwrap().unwrap();
+        assert!(!item.tags.contains(&"stale".into()));
+        assert!(item.last_referenced_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_approve_not_found() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let approved = repo.approve("nonexistent-id").await.unwrap();
+        assert!(!approved);
+    }
+
+    #[tokio::test]
+    async fn test_approve_non_stale_still_touches() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let k = make_culture("fresh finding", None, None);
+        repo.save(&k).await.unwrap();
+
+        let approved = repo.approve(&k.id.to_string()).await.unwrap();
+        assert!(approved);
+
+        let item = repo.get_by_id(&k.id.to_string()).unwrap().unwrap();
+        assert!(item.last_referenced_at.is_some());
+        // Original tags preserved
+        assert!(item.tags.contains(&"claude".into()));
+    }
+
+    #[test]
+    fn test_has_remote_false() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let tmpdir = tempfile::tempdir().unwrap();
+            let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+                .await
+                .unwrap();
+            assert!(!repo.has_remote());
+        });
+    }
+
+    #[test]
+    fn test_has_remote_true() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let tmpdir = tempfile::tempdir().unwrap();
+            let repo = CultureRepo::init(
+                tmpdir.path().to_str().unwrap(),
+                Some("https://example.com/repo.git".into()),
+            )
+            .await
+            .unwrap();
+            assert!(repo.has_remote());
+        });
+    }
+
+    #[tokio::test]
+    async fn test_pull_no_remote() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let result = repo.pull().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no remote"));
+    }
+
+    #[tokio::test]
+    async fn test_pull_with_remote() {
+        // Create a bare remote
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().to_str().unwrap();
+        tokio::process::Command::new("git")
+            .args(["init", "--bare"])
+            .current_dir(remote_path)
+            .output()
+            .await
+            .unwrap();
+
+        // Init repo A without remote (avoids fire-and-forget push races from save())
+        let dir_a = tempfile::tempdir().unwrap();
+        let repo_a = CultureRepo::init(dir_a.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        // Add remote manually and push initial commit
+        tokio::process::Command::new("git")
+            .args(["remote", "add", "origin", remote_path])
+            .current_dir(repo_a.root())
+            .output()
+            .await
+            .unwrap();
+        tokio::process::Command::new("git")
+            .args(["push", "-u", "origin", "main"])
+            .current_dir(repo_a.root())
+            .output()
+            .await
+            .unwrap();
+
+        // Init repo B (clone from remote)
+        let dir_b = tempfile::tempdir().unwrap();
+        let repo_b =
+            CultureRepo::init(dir_b.path().to_str().unwrap(), Some(remote_path.to_owned()))
+                .await
+                .unwrap();
+
+        // Add content in A and push (save() won't fire-and-forget since has_remote() is false)
+        let k = make_culture("pull-test", Some("/repo"), None);
+        repo_a.save(&k).await.unwrap();
+        tokio::process::Command::new("git")
+            .args(["push", "origin", "main"])
+            .current_dir(repo_a.root())
+            .output()
+            .await
+            .unwrap();
+
+        // Pull in B
+        let result = repo_b.pull().await.unwrap();
+        assert!(result.updated);
+        assert_eq!(result.conflicts, 0);
+
+        // Verify content exists in B
+        let items = repo_b.list(None, None, None, None, None).unwrap();
+        assert!(items.iter().any(|i| i.title == "pull-test"));
+    }
+
+    #[tokio::test]
+    async fn test_pull_no_new_commits() {
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().to_str().unwrap();
+        tokio::process::Command::new("git")
+            .args(["init", "--bare"])
+            .current_dir(remote_path)
+            .output()
+            .await
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(dir.path().to_str().unwrap(), Some(remote_path.to_owned()))
+            .await
+            .unwrap();
+        repo.push().await.unwrap();
+
+        // Pull with nothing new
+        let result = repo.pull().await.unwrap();
+        assert!(!result.updated);
+        assert_eq!(result.conflicts, 0);
+    }
+
+    #[tokio::test]
+    async fn test_pending_commit_count_no_remote() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        assert_eq!(repo.pending_commit_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn test_pending_commit_count_with_remote() {
+        let remote_dir = tempfile::tempdir().unwrap();
+        let remote_path = remote_dir.path().to_str().unwrap();
+        tokio::process::Command::new("git")
+            .args(["init", "--bare"])
+            .current_dir(remote_path)
+            .output()
+            .await
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(dir.path().to_str().unwrap(), Some(remote_path.to_owned()))
+            .await
+            .unwrap();
+        repo.push().await.unwrap();
+
+        // Should be 0 (all pushed)
+        assert_eq!(repo.pending_commit_count().await, 0);
+
+        // Add a commit but don't push
+        let k = make_culture("unpushed", None, None);
+        repo.save(&k).await.unwrap();
+
+        // Should be 1 now
+        assert_eq!(repo.pending_commit_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_filter_scopes_none() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        // Should be a no-op
+        assert!(repo.filter_scopes(None).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_filter_scopes_empty() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let empty: Vec<String> = vec![];
+        assert!(repo.filter_scopes(Some(&empty)).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_pull_result_debug_clone() {
+        let result = super::PullResult {
+            updated: true,
+            conflicts: 2,
+        };
+        let cloned = result.clone();
+        assert!(result.updated);
+        assert_eq!(cloned.conflicts, 2);
+        let debug = format!("{result:?}");
+        assert!(debug.contains("PullResult"));
     }
 }
