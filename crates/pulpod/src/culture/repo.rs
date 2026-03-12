@@ -1088,10 +1088,18 @@ fn build_agents_md_content(scope_dir: &str, entries: &[Culture]) -> String {
         let _ = write!(out, "# {scope_label}\n\n## Session Learnings\n\n");
     }
 
-    if entries.is_empty() {
+    // Filter out stale and superseded entries — they are kept on disk for
+    // browsing but should not be injected into agent context.
+    let active: Vec<_> = entries
+        .iter()
+        .filter(|k| !k.tags.iter().any(|t| t == "stale" || t == "superseded"))
+        .collect();
+    let excluded = entries.len() - active.len();
+
+    if active.is_empty() {
         out.push_str("<!-- No learnings yet -->\n");
     } else {
-        for entry in entries {
+        for entry in &active {
             let kind_tag = match entry.kind {
                 CultureKind::Summary => "summary",
                 CultureKind::Failure => "failure",
@@ -1103,6 +1111,13 @@ fn build_agents_md_content(scope_dir: &str, entries: &[Culture]) -> String {
             }
             out.push('\n');
         }
+    }
+
+    if excluded > 0 {
+        let _ = writeln!(
+            out,
+            "<!-- {excluded} entries excluded (stale/superseded) -->"
+        );
     }
 
     out
@@ -2497,6 +2512,48 @@ mod tests {
         assert!(content.contains("### [summary] first"));
         assert!(content.contains("### [failure] second"));
         assert!(!content.contains("No learnings yet"));
+    }
+
+    #[test]
+    fn test_build_agents_md_content_excludes_stale() {
+        let mut stale = make_culture("stale finding", None, None);
+        stale.tags = vec!["stale".into()];
+        let active = make_culture("active finding", None, None);
+        let entries = vec![active, stale];
+        let content = build_agents_md_content("culture", &entries);
+        assert!(content.contains("### [summary] active finding"));
+        assert!(!content.contains("stale finding"));
+        assert!(content.contains("1 entries excluded (stale/superseded)"));
+    }
+
+    #[test]
+    fn test_build_agents_md_content_excludes_superseded() {
+        let mut superseded = make_culture("old finding", None, None);
+        superseded.tags = vec!["superseded".into()];
+        let active = make_culture("new finding", None, None);
+        let entries = vec![active, superseded];
+        let content = build_agents_md_content("culture", &entries);
+        assert!(content.contains("### [summary] new finding"));
+        assert!(!content.contains("old finding"));
+        assert!(content.contains("1 entries excluded"));
+    }
+
+    #[test]
+    fn test_build_agents_md_content_all_excluded_shows_no_learnings() {
+        let mut stale = make_culture("stale one", None, None);
+        stale.tags = vec!["stale".into()];
+        let entries = vec![stale];
+        let content = build_agents_md_content("culture", &entries);
+        assert!(content.contains("No learnings yet"));
+        assert!(content.contains("1 entries excluded"));
+    }
+
+    #[test]
+    fn test_build_agents_md_content_no_excluded_no_comment() {
+        let entries = vec![make_culture("active", None, None)];
+        let content = build_agents_md_content("culture", &entries);
+        assert!(content.contains("### [summary] active"));
+        assert!(!content.contains("excluded"));
     }
 
     #[test]
