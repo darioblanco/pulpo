@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.20](https://github.com/darioblanco/pulpo/compare/v0.0.19...v0.0.20) (2026-03-12)
+
+
+### Features
+
+* **watchdog:** detect idle via sustained output silence, not just patterns ([6821344](https://github.com/darioblanco/pulpo/commit/682134403f0d81b98c2981360b6eed3504b91fbc))
+
+
+### Bug Fixes
+
+* rename sprite files to match new session status names ([e19b47c](https://github.com/darioblanco/pulpo/commit/e19b47c1c4b7c89dfa2ada2e46f8a967463b22f2))
+
 ## [0.0.19](https://github.com/darioblanco/pulpo/compare/v0.0.18...v0.0.19) (2026-03-12)
 
 
