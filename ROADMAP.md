@@ -77,71 +77,50 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
 - MCP server mode (`pulpod mcp`)
 - Scheduling via crontab wrapper
 - Discord integration in `contrib/`
-- **Culture system**: git-backed culture repo with extraction, injection, and human CRUD
-  - Extraction: rule-based summaries and failure learnings from completed sessions
-  - Storage: JSON files in a local git repo (`<data_dir>/culture/`), optional remote sync
-  - Injection: context breadcrumbs + write-back instructions injected into new sessions at spawn
-  - CRUD API: `GET/PUT/DELETE /api/v1/culture/{id}`, `POST /culture/push`
-  - CLI: `pulpo culture` with `--get`, `--delete`, `--push`, `--context` flags
-  - Web: `/culture` page with filtering, deletion, and push-to-remote
-  - Inks: 6-field universal roles (description, provider, model, mode, unrestricted, instructions)
+- Inks: 6-field universal roles (description, provider, model, mode, unrestricted, instructions)
+- **Culture system** (C1–C4 complete): agent-driven collective learning across nodes
+  - C1 — AGENTS.md as the format: markdown files in scoped directories (`culture/`, `repos/<slug>/`, `inks/<ink>/`), bootstrap template, file browser UI, JSON→markdown migration (`4661f4d`, `d7672a9`)
+  - C2 — Structured write-back and harvest: agents write `pending/<session>.md` files, harvested on session completion, rule-based extraction removed (`e895aa8`, `b5b5b59`)
+  - C3 — Culture lifecycle: relevance scoring via `last_referenced_at`, TTL decay with stale flagging, supersede/contradiction replacement, approve/reject curation, standalone curator fallback (`250d7cf`)
+  - C4 — Cross-node sync: background pull loop with rebase-first conflict resolution, selective scope filtering, `Mutex` concurrency guard, `GET /api/v1/culture/sync` status endpoint, culture SSE events (`caba6f7`)
 
-## What's Next: Culture System Redesign
+## What's Next: Integration Polish and Real-World Hardening
 
-The control-plane fundamentals are solid. The culture system (formerly "knowledge") exists but produces noise — rule-based extraction is shallow, JSON storage is opaque, and agents mostly ignore the write-back instructions. The next phase turns culture into Pulpo's differentiating feature: agents that learn from each other.
+The culture system is feature-complete. The next phase focuses on closing integration gaps, improving real-time UX, and hardening based on actual multi-node usage.
 
-### Design Principles
+### P1 — Real-time culture in web UI
 
-- **AGENTS.md as the format** — the open standard (Linux Foundation, 60K+ repos) that Claude Code, Codex, Gemini CLI, Copilot, Cursor, and others already read natively. No custom formats.
-- **Agents curate their own culture** — the working agent writes learnings as part of its session (via structured write-back instructions in the system prompt). No separate curator sessions, no opt-in, zero extra cost.
-- **Only non-inferable details** — per ETH Zurich research (March 2026), auto-generated agent instructions that repeat what the model already knows add noise. Culture entries must be things a future agent couldn't figure out from the code itself.
-- **Scoped layers** — global culture applies everywhere, repo-scoped culture applies to specific codebases, ink-scoped culture applies to specific roles. Layers merge at spawn.
+The web dashboard doesn't react to culture SSE events — users must manually refresh to see sync updates.
 
-### C1 — Culture as AGENTS.md (foundation)
+- **SSE listener**: add culture event handling in `use-sse.tsx`, invalidate culture list on `synced`/`saved`/`harvested` events
+- **Toast notifications**: brief notification when culture syncs from peers
+- **Live sync status**: sync badge auto-updates without polling
 
-Migrate from JSON blobs to AGENTS.md-formatted markdown in the culture repo.
+### P2 — Discord culture notifications
 
-- **Storage**: `culture/global/AGENTS.md`, `culture/repos/<slug>/AGENTS.md`, `culture/inks/<ink>/AGENTS.md`
-- **Bootstrap**: ship a starter AGENTS.md template with the 6 community-validated sections (commands, testing, architecture, code style, git workflow, boundaries) as empty scaffolding
-- **Injection**: at spawn, merge applicable culture layers (global + repo + ink) into session context
-- **UI**: file browser in the culture page — renders the git-backed markdown tree (read-only initially)
-- **Migration**: convert existing JSON culture entries to markdown format
-- **API/CLI**: update endpoints to work with markdown files instead of JSON
+The Discord bot only listens for session events. Culture events (sync, harvest) are broadcast via SSE but not forwarded to Discord.
 
-### C2 — Structured write-back and harvest (the flywheel)
+- **Culture event listener**: `es.addEventListener('culture', ...)` in `sse.ts`
+- **Embed formatting**: culture sync/harvest summaries as Discord embeds
 
-Replace the vague "please contribute learnings" instruction with a structured write-back protocol.
+### P3 — Node info completeness
 
-- **Write-back instructions**: at spawn, inject a concrete file path and format template into the session prompt:
-  ```
-  When you finish your task, write your non-obvious learnings to:
-    <culture_repo>/pending/<session-id>.md
-  Only include things a future agent couldn't figure out from the code.
-  ```
-- **Harvest**: on session completion (kill/stale/completed), Pulpo checks for pending files, validates format, deduplicates against existing culture, and merges into the appropriate AGENTS.md
-- **Graceful degradation**: if the agent ignores the instruction → no file → nothing happens. If the agent writes garbage → validation rejects it. Partial files from killed sessions are discarded.
-- **Remove rule-based extraction**: the current heuristic extractor (regex error patterns, shallow summaries) is replaced entirely by agent-written learnings
+The `/api/v1/peers` endpoint returns hardcoded `memory_mb: 0` and `gpu: None`. Memory detection logic already exists in the watchdog module but isn't reused for peer info.
 
-### C3 — Culture lifecycle (quality over quantity)
+- **Reuse `watchdog/memory.rs`** for the peers endpoint
+- **GPU detection**: basic check (presence of CUDA/Metal/ROCm devices)
 
-Prevent culture from becoming stale or bloated.
+### P4 — SPEC.md refresh
 
-- **Relevance scoring**: entries track when they were last referenced/useful
-- **TTL and decay**: entries that no session references after N days get flagged for review
-- **Contradiction detection**: new learning that supersedes an old one triggers replacement
-- **Manual curation in UI**: approve/reject/edit culture entries, culture diff view between versions
-- **Standalone curator fallback**: optional config to spawn a lightweight curator session for past sessions that didn't produce write-back files (e.g., `[culture] curator_provider`, `curator_model`)
+SPEC.md still references the pre-culture architecture. Should be updated to reflect the current state:
 
-### C4 — Cross-node culture sync (polish)
-
-Git remote push/pull already works. This phase hardens it.
-
-- **Conflict resolution**: concurrent updates from different nodes merge with union + dedup strategy
-- **Selective sync**: choose which culture scopes to push/pull per node
-- **Culture digest in SSE events**: notify when culture changes propagate from peers
+- Culture system design (AGENTS.md format, scoped layers, harvest protocol)
+- Sync loop and conflict resolution strategy
+- SSE event types (session + culture)
 
 ## Parked (revisit when demanded by real usage)
 
+- MCP server expansion — the existing `pulpod mcp` STDIO server (12 tools, 4 resources) works and is well-tested, but the industry is trending toward REST APIs over MCP for agent integration. Keep as-is; no new MCP tools until demand proves otherwise. STDIO-only transport means no additional attack surface beyond local process access.
 - Node labels/tags and scheduling constraints — useful at fleet scale, premature now
 - Per-ink policy bundles — inks already cover the common case; per-ink budgets/limits add complexity without clear demand
 - SLO metrics endpoint — observability for its own sake; the dashboard already shows what matters
