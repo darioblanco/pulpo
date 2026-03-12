@@ -1,6 +1,7 @@
-<h1 align="center">
-  <img src="web/public/logo.png" alt="" width="48" height="48" />&nbsp;Pulpo
-</h1>
+<p align="center">
+  <img src="web/public/logo.png" alt="Pulpo" width="128" height="128" />
+</p>
+<h1 align="center">Pulpo</h1>
 
 <p align="center">
   <strong>Self-hosted control plane for coding agents across your machines.</strong>
