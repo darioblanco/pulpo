@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <!-- Head -->
+  <ellipse cx="64" cy="44" rx="30" ry="28" fill="#7c3aed"/>
+  <!-- Eyes -->
+  <ellipse cx="54" cy="40" rx="5" ry="6" fill="#fff"/>
+  <ellipse cx="74" cy="40" rx="5" ry="6" fill="#fff"/>
+  <circle cx="55" cy="41" r="2.5" fill="#1e1b4b"/>
+  <circle cx="75" cy="41" r="2.5" fill="#1e1b4b"/>
+  <!-- Eye shine -->
+  <circle cx="56.5" cy="39" r="1" fill="#fff"/>
+  <circle cx="76.5" cy="39" r="1" fill="#fff"/>
+  <!-- Tentacles -->
+  <path d="M38 62 C30 78, 22 90, 18 100 Q16 106, 22 104 C26 102, 30 92, 36 78" fill="#7c3aed"/>
+  <path d="M46 66 C42 82, 36 96, 32 106 Q30 112, 36 110 C40 108, 42 96, 46 80" fill="#7c3aed"/>
+  <path d="M56 68 C54 86, 52 100, 50 112 Q49 118, 55 116 C58 114, 57 100, 56 84" fill="#7c3aed"/>
+  <path d="M72 68 C74 86, 76 100, 78 112 Q79 118, 73 116 C70 114, 71 100, 72 84" fill="#7c3aed"/>
+  <path d="M82 66 C86 82, 92 96, 96 106 Q98 112, 92 110 C88 108, 86 96, 82 80" fill="#7c3aed"/>
+  <path d="M90 62 C98 78, 106 90, 110 100 Q112 106, 106 104 C102 102, 98 92, 92 78" fill="#7c3aed"/>
+  <!-- Suction cups (dots on tentacles) -->
+  <circle cx="24" cy="96" r="2" fill="#a78bfa"/>
+  <circle cx="35" cy="104" r="2" fill="#a78bfa"/>
+  <circle cx="52" cy="108" r="2" fill="#a78bfa"/>
+  <circle cx="76" cy="108" r="2" fill="#a78bfa"/>
+  <circle cx="93" cy="104" r="2" fill="#a78bfa"/>
+  <circle cx="104" cy="96" r="2" fill="#a78bfa"/>
+</svg>

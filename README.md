@@ -1,41 +1,55 @@
-# Pulpo
+<p align="center">
+  <img src="web/public/logo.svg" alt="Pulpo" width="128" height="128" />
+</p>
 
-[![CI](https://github.com/darioblanco/pulpo/actions/workflows/ci.yml/badge.svg)](https://github.com/darioblanco/pulpo/actions/workflows/ci.yml)
-[![Docker Images](https://github.com/darioblanco/pulpo/actions/workflows/docker-images.yml/badge.svg)](https://github.com/darioblanco/pulpo/actions/workflows/docker-images.yml)
-[![Latest Release](https://img.shields.io/github/v/release/darioblanco/pulpo?display_name=tag)](https://github.com/darioblanco/pulpo/releases)
-[![Release Date](https://img.shields.io/github/release-date/darioblanco/pulpo)](https://github.com/darioblanco/pulpo/releases)
-[![Docker Hub: pulpo-base](https://img.shields.io/docker/pulls/darioblanco/pulpo-base)](https://hub.docker.com/r/darioblanco/pulpo-base)
-[![Docker Hub: pulpo-agents](https://img.shields.io/docker/pulls/darioblanco/pulpo-agents)](https://hub.docker.com/r/darioblanco/pulpo-agents)
-[![Docker Hub: pulpo-discord-bot](https://img.shields.io/docker/pulls/darioblanco/pulpo-discord-bot)](https://hub.docker.com/r/darioblanco/pulpo-discord-bot)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](https://github.com/darioblanco/pulpo#license)
+<h1 align="center">Pulpo</h1>
 
-> **⚠️ Experimental** — Pulpo is in early development. APIs, config format, and behavior may change between releases. Feedback and contributions are welcome.
+<p align="center">
+  <strong>Self-hosted control plane for coding agents across your machines.</strong>
+</p>
 
-Self-hosted control plane for coding agents on your own machines.
+<p align="center">
+  <a href="https://github.com/darioblanco/pulpo/actions/workflows/ci.yml"><img src="https://github.com/darioblanco/pulpo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/darioblanco/pulpo/actions/workflows/docker-images.yml"><img src="https://github.com/darioblanco/pulpo/actions/workflows/docker-images.yml/badge.svg" alt="Docker Images"></a>
+  <a href="https://pulpo.darioblanco.com"><img src="https://img.shields.io/badge/docs-pulpo.darioblanco.com-blue" alt="Docs"></a>
+  <a href="https://github.com/darioblanco/pulpo/releases"><img src="https://img.shields.io/github/v/release/darioblanco/pulpo?display_name=tag" alt="Latest Release"></a>
+  <a href="https://github.com/darioblanco/pulpo/releases"><img src="https://img.shields.io/github/release-date/darioblanco/pulpo" alt="Release Date"></a>
+  <a href="https://hub.docker.com/r/darioblanco/pulpo-base"><img src="https://img.shields.io/docker/pulls/darioblanco/pulpo-base" alt="Docker Hub: pulpo-base"></a>
+  <a href="https://hub.docker.com/r/darioblanco/pulpo-agents"><img src="https://img.shields.io/docker/pulls/darioblanco/pulpo-agents" alt="Docker Hub: pulpo-agents"></a>
+  <a href="https://hub.docker.com/r/darioblanco/pulpo-discord-bot"><img src="https://img.shields.io/docker/pulls/darioblanco/pulpo-discord-bot" alt="Docker Hub: pulpo-discord-bot"></a>
+  <a href="https://github.com/darioblanco/pulpo#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a>
+</p>
 
-Pulpo runs as a daemon (`pulpod`) with a CLI (`pulpo`) and embedded web UI. It manages agent sessions (Claude Code, Codex, Gemini CLI, OpenCode) over `tmux`, persists lifecycle state in SQLite, and supports recovery after restarts/reboots.
+> **Experimental** — Pulpo is in early development. APIs, config format, and behavior may change between releases. Feedback and contributions are welcome.
+
+Pulpo runs as a daemon (`pulpod`) with a CLI (`pulpo`) and embedded web UI. It manages coding agent sessions (Claude Code, Codex, Gemini CLI, OpenCode) over `tmux`, persists lifecycle state in SQLite, and supports recovery after restarts and reboots.
 
 ## Why Pulpo
 
-- Manage agents across machines without SSH/tmux juggling.
-- Recover from failures with explicit session states and resume flow.
-- Apply guard controls for safer default execution.
-- Observe behavior through logs, interventions, and SSE events.
-- Stay in control: self-hosted, API-first, open source.
+Coding agents are powerful, but running them across multiple machines is operationally painful. Pulpo is infrastructure that makes agent execution **reliable**, **observable**, and **controllable** — without replacing the agents themselves.
+
+- **Session lifecycle** — explicit states (`active`, `idle`, `finished`, `killed`, `lost`) with resume semantics for crash recovery.
+- **Cross-node operations** — manage agents on multiple machines from a single API/CLI/web surface, with Tailscale, mDNS, or seed-based discovery.
+- **Watchdog interventions** — memory pressure detection, idle handling, and configurable kill policies with audit trails.
+- **Provider-agnostic** — Claude Code, Codex, Gemini CLI, OpenCode, or bare shell. Same lifecycle, same controls.
+- **Collective culture** — agents write learnings back to a shared AGENTS.md-based knowledge base. Culture syncs across nodes, so agents improve from each other's sessions over time.
+- **Self-hosted and open source** — your machines, your data, your control.
 
 ## What Works Today
 
 - `pulpod` daemon with REST API + embedded web UI
 - `pulpo` CLI for local and remote node control
-- Session lifecycle: `creating`, `running`, `completed`, `dead`, `stale`
-- Resume flow for stale sessions (`pulpo resume <name>`)
-- Watchdog interventions (memory pressure, idle handling)
-- Multi-node support (manual peers + mDNS discovery in `public` bind mode)
-- Ink support (`[inks.<name>]` in config)
+- Session lifecycle: `creating`, `active`, `idle`, `finished`, `killed`, `lost`
+- Resume flow for `lost` and `finished` sessions (`pulpo resume <name>`)
+- Watchdog interventions (memory pressure, idle detection, finished TTL cleanup)
+- Multi-node support (Tailscale, mDNS, seed, manual peers)
+- Culture system: agent write-back, cross-node sync, lifecycle pruning, deduplication
+- Inks (`[inks.<name>]` in config) for reusable agent role definitions
 - Schedule management via crontab wrapper (`pulpo schedule ...`)
-- SSE stream: `GET /api/v1/events`
+- SSE event stream: `GET /api/v1/events`
 - MCP server mode: `pulpod mcp`
-- Optional Discord integration in [`contrib/discord-bot/`](contrib/discord-bot/README.md)
+- Discord integration in [`contrib/discord-bot/`](contrib/discord-bot/README.md)
+- Docker images for containerized deployment
 
 ## Quickstart
 
@@ -93,13 +107,13 @@ curl -N http://localhost:7433/api/v1/events
 
 ```bash
 pulpo list
-# my-api   stale   ...
+# my-api   lost   ...
 
 pulpo resume my-api
 pulpo logs my-api --follow
 ```
 
-`resume` is for `stale` sessions (record exists, tmux process gone). `dead` sessions require a new `spawn`.
+`resume` works for `lost` (tmux gone) and `finished` (agent exited) sessions. `killed` sessions require a new `spawn`.
 
 ## CLI At A Glance
 
@@ -231,12 +245,12 @@ See [docker/README.md](docker/README.md) for local build/run and runtime env con
 
 ## Project Docs
 
-- [docs/](docs/README.md): VuePress docs site (install, guides, references)
-- [MISSION.md](MISSION.md): mission and non-goals
-- [SPEC.md](SPEC.md): architecture, lifecycle, API, recovery semantics
-- [ROADMAP.md](ROADMAP.md): shipped work and next steps
-- [CONTRIBUTING.md](CONTRIBUTING.md): local development workflow
-- [examples/README.md](examples/README.md): copy-paste config/API/CLI examples
+- [pulpo.darioblanco.com](https://pulpo.darioblanco.com) — full documentation site
+- [MISSION.md](MISSION.md) — mission and non-goals
+- [SPEC.md](SPEC.md) — architecture, lifecycle, API, recovery semantics
+- [ROADMAP.md](ROADMAP.md) — shipped work and next steps
+- [CONTRIBUTING.md](CONTRIBUTING.md) — local development workflow
+- [examples/README.md](examples/README.md) — copy-paste config/API/CLI examples
 
 ## Contributing
 
