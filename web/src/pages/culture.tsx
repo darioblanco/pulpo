@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { AppHeader } from '@/components/layout/app-header';
 import { CultureList } from '@/components/culture/culture-list';
 import { CultureFilter } from '@/components/culture/culture-filter';
@@ -15,6 +15,7 @@ import {
   getCultureSyncStatus,
 } from '@/api/client';
 import type { Culture, SyncStatus } from '@/api/types';
+import { useSSE } from '@/hooks/use-sse';
 import { toast } from 'sonner';
 import { Upload, RefreshCw } from 'lucide-react';
 
@@ -31,6 +32,8 @@ export function CulturePage() {
   const [filter, setFilter] = useState<CultureFilterParams>({});
   const [pushing, setPushing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null);
+  const { cultureVersion } = useSSE();
+  const prevVersionRef = useRef(cultureVersion);
 
   const fetchCulture = useCallback(async (params: CultureFilterParams) => {
     setLoading(true);
@@ -53,7 +56,16 @@ export function CulturePage() {
     getCultureSyncStatus()
       .then(setSyncStatus)
       .catch(() => {});
-  }, []);
+  }, [cultureVersion]);
+
+  // Auto-refresh when culture changes arrive via SSE
+  useEffect(() => {
+    if (cultureVersion !== prevVersionRef.current) {
+      prevVersionRef.current = cultureVersion;
+      fetchCulture(filter);
+      toast.info('Culture updated from sync');
+    }
+  }, [cultureVersion, filter, fetchCulture]);
 
   async function handleDelete(id: string) {
     try {

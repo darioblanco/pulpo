@@ -6,6 +6,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { ConnectionProvider } from '@/hooks/use-connection';
 import { CulturePage } from './culture';
 import * as api from '@/api/client';
+import * as sseHook from '@/hooks/use-sse';
 import type { Culture } from '@/api/types';
 
 vi.mock('@/api/client', () => ({
@@ -19,6 +20,10 @@ vi.mock('@/api/client', () => ({
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
+}));
+
+vi.mock('@/hooks/use-sse', () => ({
+  useSSE: vi.fn().mockReturnValue({ cultureVersion: 0 }),
 }));
 
 vi.stubGlobal('localStorage', {
@@ -415,6 +420,84 @@ describe('SyncStatusBadge', () => {
     await waitFor(() => {
       expect(screen.getByTestId('sync-status-badge')).toBeInTheDocument();
       expect(screen.getByText('Sync enabled')).toBeInTheDocument();
+    });
+  });
+});
+
+describe('CultureSSE', () => {
+  it('re-fetches culture when cultureVersion changes', async () => {
+    mockListCulture.mockResolvedValue({ culture: [] });
+    const mockUseSSE = vi.mocked(sseHook.useSSE);
+    mockUseSSE.mockReturnValue({
+      cultureVersion: 0,
+      connected: true,
+      sessions: [],
+      setSessions: vi.fn(),
+    });
+
+    const { rerender } = renderCulture();
+
+    await waitFor(() => {
+      expect(mockListCulture).toHaveBeenCalledTimes(1);
+    });
+
+    // Simulate a culture SSE event by bumping the version
+    mockUseSSE.mockReturnValue({
+      cultureVersion: 1,
+      connected: true,
+      sessions: [],
+      setSessions: vi.fn(),
+    });
+    rerender(
+      <ConnectionProvider>
+        <TooltipProvider>
+          <SidebarProvider>
+            <CulturePage />
+          </SidebarProvider>
+        </TooltipProvider>
+      </ConnectionProvider>,
+    );
+
+    await waitFor(() => {
+      // Initial fetch + re-fetch from version change
+      expect(mockListCulture).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('refreshes sync status on culture version change', async () => {
+    mockListCulture.mockResolvedValue({ culture: [] });
+    const mockUseSSE = vi.mocked(sseHook.useSSE);
+    mockUseSSE.mockReturnValue({
+      cultureVersion: 0,
+      connected: true,
+      sessions: [],
+      setSessions: vi.fn(),
+    });
+
+    const { rerender } = renderCulture();
+
+    await waitFor(() => {
+      expect(mockGetCultureSyncStatus).toHaveBeenCalledTimes(1);
+    });
+
+    mockUseSSE.mockReturnValue({
+      cultureVersion: 1,
+      connected: true,
+      sessions: [],
+      setSessions: vi.fn(),
+    });
+    rerender(
+      <ConnectionProvider>
+        <TooltipProvider>
+          <SidebarProvider>
+            <CulturePage />
+          </SidebarProvider>
+        </TooltipProvider>
+      </ConnectionProvider>,
+    );
+
+    await waitFor(() => {
+      expect(mockGetCultureSyncStatus).toHaveBeenCalledTimes(2);
     });
   });
 });
