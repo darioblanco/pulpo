@@ -144,7 +144,7 @@ pub enum Commands {
         name: String,
     },
 
-    /// Resume a stale session
+    /// Resume a lost session
     #[command(visible_alias = "r")]
     Resume {
         /// Session name or ID
@@ -673,7 +673,7 @@ async fn follow_logs(
 
         // Check session status
         let status = fetch_session_status(client, base, name, token).await?;
-        let is_terminal = status == "completed" || status == "dead" || status == "stale";
+        let is_terminal = status == "finished" || status == "killed" || status == "lost";
 
         // Fetch latest output
         let new_output = fetch_output(client, base, name, lines, token).await?;
@@ -917,12 +917,12 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let text = ok_or_api_error(resp).await?;
             let session: Session = serde_json::from_str(&text)?;
             match session.status.to_string().as_str() {
-                "stale" => {
+                "lost" => {
                     anyhow::bail!(
-                        "Session \"{name}\" is stale (agent process died). Resume it first:\n  pulpo resume {name}"
+                        "Session \"{name}\" is lost (agent process died). Resume it first:\n  pulpo resume {name}"
                     );
                 }
-                "completed" | "dead" => {
+                "finished" | "killed" => {
                     anyhow::bail!(
                         "Session \"{name}\" is {} — cannot attach to a finished session.",
                         session.status
@@ -1625,7 +1625,7 @@ mod tests {
     }
 
     /// A valid Session JSON for test responses.
-    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","provider":"claude","prompt":"Fix bug","status":"running","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","provider":"claude","prompt":"Fix bug","status":"active","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
 
     /// A valid `CreateSessionResponse` JSON wrapping the session.
     fn test_create_response_json() -> String {
@@ -1996,7 +1996,7 @@ mod tests {
             post(|| async {
                 (
                     StatusCode::BAD_REQUEST,
-                    "{\"error\":\"session is not stale (status: running)\"}",
+                    "{\"error\":\"session is not lost (status: active)\"}",
                 )
             }),
         );
@@ -2013,7 +2013,7 @@ mod tests {
             },
         };
         let err = execute(&cli).await.unwrap_err();
-        assert_eq!(err.to_string(), "session is not stale (status: running)");
+        assert_eq!(err.to_string(), "session is not lost (status: active)");
     }
 
     #[tokio::test]
@@ -2218,7 +2218,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "Fix the bug".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -2245,7 +2245,7 @@ mod tests {
         let output = format_sessions(&sessions);
         assert!(output.contains("NAME"));
         assert!(output.contains("my-api"));
-        assert!(output.contains("running"));
+        assert!(output.contains("active"));
         assert!(output.contains("claude"));
         assert!(output.contains("Fix the bug"));
     }
@@ -2262,7 +2262,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: Provider::Codex,
             prompt: "A very long prompt that exceeds forty characters in total length".into(),
-            status: SessionStatus::Completed,
+            status: SessionStatus::Finished,
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,
@@ -2302,7 +2302,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: Provider::Claude,
             prompt: "Fix bug".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -2328,7 +2328,8 @@ mod tests {
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("waiting"));
-        assert!(!output.contains("running"));
+        // "interactive" contains "active", so check the status column specifically
+        assert!(!output.contains(" active "));
     }
 
     #[test]
@@ -2848,7 +2849,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_with_backend_session_id() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"my-session","workdir":"/tmp","provider":"claude","prompt":"test","status":"running","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"my-session","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"my-session","workdir":"/tmp","provider":"claude","prompt":"test","status":"active","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"my-session","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -2913,7 +2914,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_stale_session() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"stale-sess","workdir":"/tmp","provider":"claude","prompt":"test","status":"stale","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"stale-sess","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"stale-sess","workdir":"/tmp","provider":"claude","prompt":"test","status":"lost","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"stale-sess","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -2931,14 +2932,14 @@ mod tests {
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("stale"));
+        assert!(err.contains("lost"));
         assert!(err.contains("pulpo resume"));
     }
 
     #[tokio::test]
     async fn test_execute_attach_dead_session() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","provider":"claude","prompt":"test","status":"dead","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","provider":"claude","prompt":"test","status":"killed","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -2956,7 +2957,7 @@ mod tests {
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("dead"));
+        assert!(err.contains("killed"));
         assert!(err.contains("cannot attach"));
     }
 
@@ -3125,7 +3126,7 @@ mod tests {
                     let count = status_count_inner.clone();
                     async move {
                         let n = count.fetch_add(1, Ordering::SeqCst);
-                        let status = if n < 2 { "running" } else { "completed" };
+                        let status = if n < 2 { "active" } else { "finished" };
                         format!(
                             r#"{{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"{status}","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#
                         )
@@ -3213,7 +3214,7 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"dead","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"killed","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 
@@ -3249,7 +3250,7 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"stale","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"lost","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"waiting_for_input":false,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 

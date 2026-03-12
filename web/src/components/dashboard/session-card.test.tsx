@@ -49,7 +49,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     id: 'sess-1',
     name: 'my-api',
     provider: 'claude',
-    status: 'running',
+    status: 'active',
     prompt: 'Fix the bug',
     mode: 'interactive',
     workdir: '/home/user/repo',
@@ -85,7 +85,7 @@ describe('SessionCard', () => {
     expect(screen.getByText('my-api')).toBeInTheDocument();
     expect(screen.getByText('claude')).toBeInTheDocument();
     expect(screen.getByText('interactive')).toBeInTheDocument();
-    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(screen.getByText('active')).toBeInTheDocument();
     expect(screen.getByText('Fix the bug')).toBeInTheDocument();
   });
 
@@ -126,27 +126,27 @@ describe('SessionCard', () => {
 
   // Traffic light buttons
 
-  it('enables kill dot for running sessions', () => {
+  it('enables kill dot for active sessions', () => {
     render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
     expect(screen.getByTestId('btn-kill')).not.toBeDisabled();
   });
 
-  it('enables kill dot for stale sessions', () => {
-    render(<SessionCard session={makeSession({ status: 'stale' })} onRefresh={vi.fn()} />);
+  it('enables kill dot for lost sessions', () => {
+    render(<SessionCard session={makeSession({ status: 'lost' })} onRefresh={vi.fn()} />);
     expect(screen.getByTestId('btn-kill')).not.toBeDisabled();
   });
 
-  it('disables kill dot for completed sessions', () => {
-    render(<SessionCard session={makeSession({ status: 'completed' })} onRefresh={vi.fn()} />);
+  it('disables kill dot for finished sessions', () => {
+    render(<SessionCard session={makeSession({ status: 'finished' })} onRefresh={vi.fn()} />);
     expect(screen.getByTestId('btn-kill')).toBeDisabled();
   });
 
-  it('enables resume dot only for stale sessions', () => {
-    render(<SessionCard session={makeSession({ status: 'stale' })} onRefresh={vi.fn()} />);
+  it('enables resume dot only for lost sessions', () => {
+    render(<SessionCard session={makeSession({ status: 'lost' })} onRefresh={vi.fn()} />);
     expect(screen.getByTestId('btn-resume')).not.toBeDisabled();
   });
 
-  it('disables resume dot for running sessions', () => {
+  it('disables resume dot for active sessions', () => {
     render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
     expect(screen.getByTestId('btn-resume')).toBeDisabled();
   });
@@ -183,29 +183,29 @@ describe('SessionCard', () => {
 
   // View switching
 
-  it('shows TerminalView for running session', () => {
+  it('shows TerminalView for active session', () => {
     render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
     clickExpand();
     expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-output-view')).not.toBeInTheDocument();
   });
 
-  it('shows OutputView for completed session', () => {
-    render(<SessionCard session={makeSession({ status: 'completed' })} onRefresh={vi.fn()} />);
+  it('shows OutputView for finished session', () => {
+    render(<SessionCard session={makeSession({ status: 'finished' })} onRefresh={vi.fn()} />);
     clickExpand();
     expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
   });
 
-  it('shows OutputView for dead session', () => {
-    render(<SessionCard session={makeSession({ status: 'dead' })} onRefresh={vi.fn()} />);
+  it('shows OutputView for killed session', () => {
+    render(<SessionCard session={makeSession({ status: 'killed' })} onRefresh={vi.fn()} />);
     clickExpand();
     expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
   });
 
-  it('shows OutputView for stale session', () => {
-    render(<SessionCard session={makeSession({ status: 'stale' })} onRefresh={vi.fn()} />);
+  it('shows OutputView for lost session', () => {
+    render(<SessionCard session={makeSession({ status: 'lost' })} onRefresh={vi.fn()} />);
     clickExpand();
     expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
@@ -255,9 +255,9 @@ describe('SessionCard', () => {
   // Resume action
 
   it('calls resumeSession on yellow dot click', async () => {
-    mockResumeSession.mockResolvedValue({ id: 'sess-1', status: 'running' });
+    mockResumeSession.mockResolvedValue({ id: 'sess-1', status: 'active' });
     const onRefresh = vi.fn();
-    render(<SessionCard session={makeSession({ status: 'stale' })} onRefresh={onRefresh} />);
+    render(<SessionCard session={makeSession({ status: 'lost' })} onRefresh={onRefresh} />);
     fireEvent.click(screen.getByTestId('btn-resume'));
     await waitFor(() => {
       expect(mockResumeSession).toHaveBeenCalledWith('sess-1');
@@ -268,7 +268,7 @@ describe('SessionCard', () => {
   it('shows toast on resume error', async () => {
     mockResumeSession.mockRejectedValue(new Error('Resume failed'));
     const onRefresh = vi.fn();
-    render(<SessionCard session={makeSession({ status: 'stale' })} onRefresh={onRefresh} />);
+    render(<SessionCard session={makeSession({ status: 'lost' })} onRefresh={onRefresh} />);
     fireEvent.click(screen.getByTestId('btn-resume'));
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Resume failed');
@@ -278,11 +278,11 @@ describe('SessionCard', () => {
 
   // Intervention
 
-  it('shows intervention badge for dead sessions', () => {
+  it('shows intervention badge for killed sessions', () => {
     render(
       <SessionCard
         session={makeSession({
-          status: 'dead',
+          status: 'killed',
           intervention_reason: 'Memory exceeded',
           intervention_at: '2026-01-01T12:00:00Z',
         })}
@@ -294,7 +294,17 @@ describe('SessionCard', () => {
   });
 
   it('does not show intervention badge without reason', () => {
-    render(<SessionCard session={makeSession({ status: 'dead' })} onRefresh={vi.fn()} />);
+    render(<SessionCard session={makeSession({ status: 'killed' })} onRefresh={vi.fn()} />);
+    expect(screen.queryByTestId('intervention-badge')).not.toBeInTheDocument();
+  });
+
+  it('shows intervention badge for killed sessions only', () => {
+    render(
+      <SessionCard
+        session={makeSession({ status: 'finished', intervention_reason: 'test' })}
+        onRefresh={vi.fn()}
+      />,
+    );
     expect(screen.queryByTestId('intervention-badge')).not.toBeInTheDocument();
   });
 
@@ -302,7 +312,7 @@ describe('SessionCard', () => {
     render(
       <SessionCard
         session={makeSession({
-          status: 'dead',
+          status: 'killed',
           intervention_reason: 'Memory exceeded',
           intervention_at: '2026-01-01T12:00:00Z',
         })}
@@ -321,7 +331,7 @@ describe('SessionCard', () => {
     render(
       <SessionCard
         session={makeSession({
-          status: 'dead',
+          status: 'killed',
           intervention_reason: 'Memory exceeded',
           intervention_at: '2026-01-01T12:00:00Z',
         })}

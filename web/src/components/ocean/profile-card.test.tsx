@@ -8,7 +8,7 @@ function makeOctopus(overrides: Partial<OctopusEntity> = {}): OctopusEntity {
   return {
     sessionId: 'sess-1',
     name: 'worker-alpha',
-    status: 'running',
+    status: 'active',
     provider: 'claude',
     ink: null,
     model: null,
@@ -60,14 +60,14 @@ describe('ProfileCard', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'completed' })}
+          octopus={makeOctopus({ status: 'finished' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
         />
       </MemoryRouter>,
     );
-    expect(screen.getByText('completed')).toBeInTheDocument();
+    expect(screen.getByText('finished')).toBeInTheDocument();
   });
 
   it('renders provider', () => {
@@ -256,14 +256,14 @@ describe('ProfileCard', () => {
       </MemoryRouter>,
     );
     const el = screen.getByTestId('profile-duration');
-    expect(el).toHaveTextContent('running for 12m');
+    expect(el).toHaveTextContent('active for 12m');
   });
 
-  it('shows completed duration for terminal statuses', () => {
+  it('shows finished duration for terminal statuses', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'completed' })}
+          octopus={makeOctopus({ status: 'finished' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -271,7 +271,7 @@ describe('ProfileCard', () => {
       </MemoryRouter>,
     );
     const el = screen.getByTestId('profile-duration');
-    expect(el).toHaveTextContent('completed after 12m');
+    expect(el).toHaveTextContent('finished after 12m');
   });
 
   it('renders last active when present', () => {
@@ -430,11 +430,11 @@ describe('ProfileCard', () => {
 
   // --- Kill / Delete action tests ---
 
-  it('shows Kill button for running sessions when onKill provided', () => {
+  it('shows Kill button for active sessions when onKill provided', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'running' })}
+          octopus={makeOctopus({ status: 'active' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -460,11 +460,11 @@ describe('ProfileCard', () => {
     expect(screen.getByTestId('kill-button')).toBeInTheDocument();
   });
 
-  it('does not show Kill button for completed sessions', () => {
+  it('does not show Kill button for finished sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'completed' })}
+          octopus={makeOctopus({ status: 'finished' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -479,7 +479,7 @@ describe('ProfileCard', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'running' })}
+          octopus={makeOctopus({ status: 'active' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -494,7 +494,7 @@ describe('ProfileCard', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'running' })}
+          octopus={makeOctopus({ status: 'active' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -506,11 +506,11 @@ describe('ProfileCard', () => {
     expect(onKill).toHaveBeenCalledWith('worker-alpha');
   });
 
-  it('shows Delete button for stale sessions when onDelete provided', () => {
+  it('shows Delete button for lost sessions when onDelete provided', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'stale' })}
+          octopus={makeOctopus({ status: 'lost' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -521,11 +521,11 @@ describe('ProfileCard', () => {
     expect(screen.getByTestId('delete-button')).toBeInTheDocument();
   });
 
-  it('shows Delete button for dead sessions', () => {
+  it('shows Delete button for killed sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'dead' })}
+          octopus={makeOctopus({ status: 'killed' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -536,11 +536,11 @@ describe('ProfileCard', () => {
     expect(screen.getByTestId('delete-button')).toBeInTheDocument();
   });
 
-  it('shows Delete button for completed sessions', () => {
+  it('shows Delete button for finished sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'completed' })}
+          octopus={makeOctopus({ status: 'finished' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -551,11 +551,11 @@ describe('ProfileCard', () => {
     expect(screen.getByTestId('delete-button')).toBeInTheDocument();
   });
 
-  it('does not show Delete button for running sessions', () => {
+  it('does not show Delete button for active sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'running' })}
+          octopus={makeOctopus({ status: 'active' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -570,7 +570,7 @@ describe('ProfileCard', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'stale' })}
+          octopus={makeOctopus({ status: 'lost' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -585,7 +585,7 @@ describe('ProfileCard', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'dead' })}
+          octopus={makeOctopus({ status: 'killed' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}

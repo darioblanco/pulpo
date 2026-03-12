@@ -38,7 +38,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     id: 'sess-1',
     name: 'my-api',
     provider: 'claude',
-    status: 'running',
+    status: 'active',
     prompt: 'Fix',
     mode: 'interactive',
     workdir: '/repo',

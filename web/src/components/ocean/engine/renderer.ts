@@ -385,7 +385,7 @@ function drawOctopus(
   const { camera } = world;
   const anim = oct.isSwimming ? 'swim' : 'idle';
   const spriteKey = `${oct.status}-${anim}`;
-  const sheet = sprites.octopus[spriteKey] ?? sprites.octopus['running-idle'];
+  const sheet = sprites.octopus[spriteKey] ?? sprites.octopus['active-idle'];
   if (!sheet) return;
 
   // Square frames: height = frame size, width = N * height
@@ -399,8 +399,8 @@ function drawOctopus(
   const drawW = size;
   const drawH = size;
 
-  const bobSpeed = oct.status === 'dead' ? 0.5 : oct.status === 'stale' ? 1.0 : 1.5;
-  const bobAmount = oct.status === 'dead' ? 1 : 2;
+  const bobSpeed = oct.status === 'killed' ? 0.5 : oct.status === 'lost' ? 1.0 : 1.5;
+  const bobAmount = oct.status === 'killed' ? 1 : 2;
   const bob = Math.sin(time * 0.002 * bobSpeed + oct.x * 0.3) * bobAmount * camera.zoom;
 
   const breathe = Math.sin(time * 0.003 + oct.y * 0.2) * 0.03;

@@ -7,8 +7,8 @@ import { FormField } from './form-field';
 import type { PeerInfo } from '@/api/types';
 
 const statusDotColors: Record<string, string> = {
-  online: 'bg-status-completed',
-  offline: 'bg-status-dead',
+  online: 'bg-status-finished',
+  offline: 'bg-status-killed',
   unknown: 'bg-muted-foreground',
 };
 

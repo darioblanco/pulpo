@@ -14,7 +14,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     id: 'sess-1',
     name: 'my-api',
     provider: 'claude',
-    status: 'running',
+    status: 'active',
     prompt: 'Fix the bug',
     mode: 'interactive',
     workdir: '/home/user/repo',
@@ -37,9 +37,9 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('detectStatusChanges', () => {
-  it('detects running → completed transition', () => {
-    const prev = [makeSession({ id: '1', status: 'running' })];
-    const curr = [makeSession({ id: '1', status: 'completed' })];
+  it('detects active → finished transition', () => {
+    const prev = [makeSession({ id: '1', status: 'active' })];
+    const curr = [makeSession({ id: '1', status: 'finished' })];
 
     const changes = detectStatusChanges(prev, curr);
 
@@ -47,24 +47,24 @@ describe('detectStatusChanges', () => {
     expect(changes[0]).toEqual({
       sessionId: '1',
       sessionName: 'my-api',
-      from: 'running',
-      to: 'completed',
+      from: 'active',
+      to: 'finished',
     });
   });
 
-  it('detects running → dead transition', () => {
-    const prev = [makeSession({ id: '1', status: 'running' })];
-    const curr = [makeSession({ id: '1', status: 'dead' })];
+  it('detects active → killed transition', () => {
+    const prev = [makeSession({ id: '1', status: 'active' })];
+    const curr = [makeSession({ id: '1', status: 'killed' })];
 
     const changes = detectStatusChanges(prev, curr);
 
     expect(changes).toHaveLength(1);
-    expect(changes[0].to).toBe('dead');
+    expect(changes[0].to).toBe('killed');
   });
 
-  it('detects stale → running transition', () => {
-    const prev = [makeSession({ id: '1', status: 'stale' })];
-    const curr = [makeSession({ id: '1', status: 'running' })];
+  it('detects lost → active transition', () => {
+    const prev = [makeSession({ id: '1', status: 'lost' })];
+    const curr = [makeSession({ id: '1', status: 'active' })];
 
     const changes = detectStatusChanges(prev, curr);
 
@@ -72,14 +72,14 @@ describe('detectStatusChanges', () => {
     expect(changes[0]).toEqual({
       sessionId: '1',
       sessionName: 'my-api',
-      from: 'stale',
-      to: 'running',
+      from: 'lost',
+      to: 'active',
     });
   });
 
   it('ignores sessions with no status change', () => {
-    const prev = [makeSession({ id: '1', status: 'running' })];
-    const curr = [makeSession({ id: '1', status: 'running' })];
+    const prev = [makeSession({ id: '1', status: 'active' })];
+    const curr = [makeSession({ id: '1', status: 'active' })];
 
     const changes = detectStatusChanges(prev, curr);
 
@@ -88,7 +88,7 @@ describe('detectStatusChanges', () => {
 
   it('ignores non-interesting transitions', () => {
     const prev = [makeSession({ id: '1', status: 'creating' })];
-    const curr = [makeSession({ id: '1', status: 'running' })];
+    const curr = [makeSession({ id: '1', status: 'active' })];
 
     const changes = detectStatusChanges(prev, curr);
 
@@ -97,12 +97,12 @@ describe('detectStatusChanges', () => {
 
   it('detects multiple changes at once', () => {
     const prev = [
-      makeSession({ id: '1', name: 'api-fix', status: 'running' }),
-      makeSession({ id: '2', name: 'refactor', status: 'running' }),
+      makeSession({ id: '1', name: 'api-fix', status: 'active' }),
+      makeSession({ id: '2', name: 'refactor', status: 'active' }),
     ];
     const curr = [
-      makeSession({ id: '1', name: 'api-fix', status: 'completed' }),
-      makeSession({ id: '2', name: 'refactor', status: 'dead' }),
+      makeSession({ id: '1', name: 'api-fix', status: 'finished' }),
+      makeSession({ id: '2', name: 'refactor', status: 'killed' }),
     ];
 
     const changes = detectStatusChanges(prev, curr);
@@ -114,7 +114,7 @@ describe('detectStatusChanges', () => {
 
   it('handles new sessions not in previous list', () => {
     const prev: Session[] = [];
-    const curr = [makeSession({ id: '1', status: 'running' })];
+    const curr = [makeSession({ id: '1', status: 'active' })];
 
     const changes = detectStatusChanges(prev, curr);
 
@@ -122,7 +122,7 @@ describe('detectStatusChanges', () => {
   });
 
   it('handles sessions removed from current list', () => {
-    const prev = [makeSession({ id: '1', status: 'running' })];
+    const prev = [makeSession({ id: '1', status: 'active' })];
     const curr: Session[] = [];
 
     const changes = detectStatusChanges(prev, curr);
@@ -138,26 +138,26 @@ describe('detectStatusChanges', () => {
 });
 
 describe('formatStatusLabel', () => {
-  it('returns completed label', () => {
+  it('returns finished label', () => {
     expect(
       formatStatusLabel({
         sessionId: '1',
         sessionName: 'my-api',
-        from: 'running',
-        to: 'completed',
+        from: 'active',
+        to: 'finished',
       }),
-    ).toBe('my-api completed');
+    ).toBe('my-api finished');
   });
 
-  it('returns died label', () => {
+  it('returns killed label', () => {
     expect(
-      formatStatusLabel({ sessionId: '1', sessionName: 'my-api', from: 'running', to: 'dead' }),
-    ).toBe('my-api died');
+      formatStatusLabel({ sessionId: '1', sessionName: 'my-api', from: 'active', to: 'killed' }),
+    ).toBe('my-api killed');
   });
 
   it('returns resumed label for other transitions', () => {
     expect(
-      formatStatusLabel({ sessionId: '1', sessionName: 'my-api', from: 'stale', to: 'running' }),
+      formatStatusLabel({ sessionId: '1', sessionName: 'my-api', from: 'lost', to: 'active' }),
     ).toBe('my-api resumed');
   });
 });
@@ -166,7 +166,7 @@ describe('processSessionChanges', () => {
   it('does nothing on first call (empty previousSessions)', () => {
     const toast = vi.fn();
     const notify = vi.fn();
-    const current = [makeSession({ id: '1', status: 'running' })];
+    const current = [makeSession({ id: '1', status: 'active' })];
 
     const result = processSessionChanges([], current, toast, notify);
 
@@ -178,33 +178,33 @@ describe('processSessionChanges', () => {
   it('triggers toast and notification on status change', () => {
     const toast = vi.fn();
     const notify = vi.fn();
-    const prev = [makeSession({ id: '1', status: 'running' })];
-    const current = [makeSession({ id: '1', status: 'completed' })];
+    const prev = [makeSession({ id: '1', status: 'active' })];
+    const current = [makeSession({ id: '1', status: 'finished' })];
 
     processSessionChanges(prev, current, toast, notify);
 
-    expect(toast).toHaveBeenCalledWith('my-api completed');
+    expect(toast).toHaveBeenCalledWith('my-api finished');
     expect(notify).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionName: 'my-api', to: 'completed' }),
+      expect.objectContaining({ sessionName: 'my-api', to: 'finished' }),
     );
   });
 
-  it('triggers died label for dead sessions', () => {
+  it('triggers killed label for killed sessions', () => {
     const toast = vi.fn();
     const notify = vi.fn();
-    const prev = [makeSession({ id: '1', status: 'running' })];
-    const current = [makeSession({ id: '1', status: 'dead' })];
+    const prev = [makeSession({ id: '1', status: 'active' })];
+    const current = [makeSession({ id: '1', status: 'killed' })];
 
     processSessionChanges(prev, current, toast, notify);
 
-    expect(toast).toHaveBeenCalledWith('my-api died');
+    expect(toast).toHaveBeenCalledWith('my-api killed');
   });
 
-  it('triggers resumed label for stale to running', () => {
+  it('triggers resumed label for lost to active', () => {
     const toast = vi.fn();
     const notify = vi.fn();
-    const prev = [makeSession({ id: '1', status: 'stale' })];
-    const current = [makeSession({ id: '1', status: 'running' })];
+    const prev = [makeSession({ id: '1', status: 'lost' })];
+    const current = [makeSession({ id: '1', status: 'active' })];
 
     processSessionChanges(prev, current, toast, notify);
 
@@ -284,33 +284,33 @@ describe('showDesktopNotification', () => {
     vi.unstubAllGlobals();
   });
 
-  it('creates notification for completed session', () => {
+  it('creates notification for finished session', () => {
     const change: StatusChange = {
       sessionId: '1',
       sessionName: 'my-api',
-      from: 'running',
-      to: 'completed',
+      from: 'active',
+      to: 'finished',
     };
 
     showDesktopNotification(change);
 
-    expect(NotificationConstructor).toHaveBeenCalledWith('Session completed: my-api', {
+    expect(NotificationConstructor).toHaveBeenCalledWith('Session finished: my-api', {
       body: 'my-api finished successfully',
     });
   });
 
-  it('creates notification for dead session', () => {
+  it('creates notification for killed session', () => {
     const change: StatusChange = {
       sessionId: '1',
       sessionName: 'my-api',
-      from: 'running',
-      to: 'dead',
+      from: 'active',
+      to: 'killed',
     };
 
     showDesktopNotification(change);
 
-    expect(NotificationConstructor).toHaveBeenCalledWith('Session died: my-api', {
-      body: 'my-api has died',
+    expect(NotificationConstructor).toHaveBeenCalledWith('Session killed: my-api', {
+      body: 'my-api has been killed',
     });
   });
 
@@ -318,14 +318,14 @@ describe('showDesktopNotification', () => {
     const change: StatusChange = {
       sessionId: '1',
       sessionName: 'my-api',
-      from: 'stale',
-      to: 'running',
+      from: 'lost',
+      to: 'active',
     };
 
     showDesktopNotification(change);
 
     expect(NotificationConstructor).toHaveBeenCalledWith('Session resumed: my-api', {
-      body: 'my-api is now running',
+      body: 'my-api is now active',
     });
   });
 
@@ -335,8 +335,8 @@ describe('showDesktopNotification', () => {
     showDesktopNotification({
       sessionId: '1',
       sessionName: 'my-api',
-      from: 'running',
-      to: 'completed',
+      from: 'active',
+      to: 'finished',
     });
 
     expect(NotificationConstructor).not.toHaveBeenCalled();
@@ -348,8 +348,8 @@ describe('showDesktopNotification', () => {
     showDesktopNotification({
       sessionId: '1',
       sessionName: 'my-api',
-      from: 'running',
-      to: 'completed',
+      from: 'active',
+      to: 'finished',
     });
 
     // Should not throw

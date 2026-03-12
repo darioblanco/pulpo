@@ -11,7 +11,7 @@ interface SessionFilterProps {
 
 export function SessionFilter({
   onFilter,
-  statusOptions = ['completed', 'dead'],
+  statusOptions = ['finished', 'killed'],
   providerOptions = ['claude', 'codex'],
 }: SessionFilterProps) {
   const [search, setSearch] = useState('');

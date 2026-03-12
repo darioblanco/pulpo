@@ -68,7 +68,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     id: 'sess-1',
     name: 'api-fix',
     provider: 'claude',
-    status: 'running',
+    status: 'active',
     prompt: 'Fix the auth bug',
     mode: 'autonomous',
     workdir: '/tmp/repo',

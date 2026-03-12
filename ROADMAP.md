@@ -83,40 +83,110 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
   - C2 — Structured write-back and harvest: agents write `pending/<session>.md` files, harvested on session completion, rule-based extraction removed (`e895aa8`, `b5b5b59`)
   - C3 — Culture lifecycle: relevance scoring via `last_referenced_at`, TTL decay with stale flagging, supersede/contradiction replacement, approve/reject curation, standalone curator fallback (`250d7cf`)
   - C4 — Cross-node sync: background pull loop with rebase-first conflict resolution, selective scope filtering, `Mutex` concurrency guard, `GET /api/v1/culture/sync` status endpoint, culture SSE events (`caba6f7`)
+- **Integration polish** (P1–P4 complete):
+  - P1 — Real-time culture in web UI: SSE-driven auto-refresh, toast notifications on sync
+  - P2 — Discord culture notifications: culture event listener + embed formatting
+  - P3 — Node info completeness: real memory + GPU detection in peers endpoint
+  - P4 — SPEC.md refresh: culture system, sync, SSE event types documented
 
-## What's Next: Integration Polish and Real-World Hardening
+## What's Next: Session Lifecycle Hardening
 
-The culture system is feature-complete. The next phase focuses on closing integration gaps, improving real-time UX, and hardening based on actual multi-node usage.
+The session state machine has a critical gap: **sessions never automatically reach a terminal state**. When an agent finishes its work, the session stays `Running` forever because `exec bash` keeps the tmux session alive. The `[pulpo] Agent exited` marker is already emitted but never detected. Meanwhile, `Completed` and `Stale` are effectively dead code.
 
-### P1 — Real-time culture in web UI
+This undermines the entire lifecycle model. The fix is a full state rename (Option C) that makes states user-centric, plus new detection logic.
 
-The web dashboard doesn't react to culture SSE events — users must manually refresh to see sync updates.
+### State rename: Running/Completed/Dead/Stale → Active/Idle/Finished/Killed/Lost
 
-- **SSE listener**: add culture event handling in `use-sse.tsx`, invalidate culture list on `synced`/`saved`/`harvested` events
-- **Toast notifications**: brief notification when culture syncs from peers
-- **Live sync status**: sync badge auto-updates without polling
+| Old | New | Meaning |
+|-----|-----|---------|
+| Creating | Creating | Setting up (keep) |
+| Running | **Active** | Agent is working — output is changing |
+| _(new)_ | **Idle** | Agent needs user attention — waiting for input or at its prompt |
+| Completed | **Finished** | Agent process exited — task is done |
+| Dead | **Killed** | Session was terminated (user, watchdog memory, watchdog idle timeout) |
+| Stale | **Lost** | tmux process disappeared unexpectedly (crash, reboot) |
 
-### P2 — Discord culture notifications
+**Key semantics:**
+- `unrestricted` is a **guard toggle** (pass-through to agent CLI flags like `--dangerously-skip-permissions`), NOT a mode. It's orthogonal to Interactive/Autonomous. Pulpo doesn't enforce permissions — the agent binary does. Pulpo only observes terminal output.
+- **Interactive sessions** cycle `Active ⇄ Idle` until the user kills the session or exits the agent. `Idle` fires on permission prompts (if restricted) AND "what's next?" prompts.
+- **Autonomous sessions** go `Active → Finished` (if unrestricted) or `Active → Idle → Active → ... → Finished` (if restricted, due to permission prompts).
+- **Shell sessions** cycle `Active ⇄ Idle` based on whether a command is running in the bash prompt.
+- `Finished` is terminal — no automatic transition back. Resume from `Finished` restarts the agent.
+- `Killed` is terminal — no resume. Create a new session.
+- `Lost` allows resume (recreate tmux session).
 
-The Discord bot only listens for session events. Culture events (sync, harvest) are broadcast via SSE but not forwarded to Discord.
+### S1 — State rename (mechanical refactor)
 
-- **Culture event listener**: `es.addEventListener('culture', ...)` in `sse.ts`
-- **Embed formatting**: culture sync/harvest summaries as Discord embeds
+Rename enum variants, serde strings, Display/FromStr, pattern matches across ~25 files. No new logic — pure rename.
 
-### P3 — Node info completeness
+- `SessionStatus::Running → Active`, `Completed → Finished`, `Dead → Killed`, `Stale → Lost`
+- Add `SessionStatus::Idle` variant
+- Update all Rust crates, web components, CSS vars, ocean sprites, Discord bot, tests
+- Ocean visual mapping: Active = lavender (was running), Idle = amber (was stale), Finished = emerald (was completed), Killed = red (was dead), Lost = red recolor (same sprite as Killed)
+- Ocean behavior: Idle gets minimal movement / small radius (was stale behavior)
+- Update `waiting_for_input` flag → remove it, replaced by `Idle` state
+- DB migration: update `status` column default from `'creating'` to `'creating'`, rename existing status values in-place
+- Config: `notification_events` default changes from `["completed", "dead"]` to `["finished", "killed"]`
 
-The `/api/v1/peers` endpoint returns hardcoded `memory_mb: 0` and `gpu: None`. Memory detection logic already exists in the watchdog module but isn't reused for peer info.
+### S2 — Idle detection (Active ⇄ Idle transitions)
 
-- **Reuse `watchdog/memory.rs`** for the peers endpoint
-- **GPU detection**: basic check (presence of CUDA/Metal/ROCm devices)
+Promote the existing `waiting_for_input` detection into real state transitions.
 
-### P4 — SPEC.md refresh
+- **Active → Idle**: watchdog detects output unchanged for 1 tick AND (waiting patterns matched OR agent at its prompt). Piggybacks on existing output snapshot comparison — no performance cost.
+- **Idle → Active**: watchdog detects output changed since last tick. Transition back to Active.
+- **Shell idle**: detect bash prompt idle (no running command) → Idle. Command running → Active.
+- Remove `waiting_for_input` DB column and session field (replaced by `Idle` status)
+- SSE events emitted on all transitions (web UI needs them). Discord bot filters to only notify on Finished/Killed/Lost.
 
-SPEC.md still references the pre-culture architecture. Should be updated to reflect the current state:
+### S3 — Finished detection (agent exit)
 
-- Culture system design (AGENTS.md format, scoped layers, harvest protocol)
-- Sync loop and conflict resolution strategy
-- SSE event types (session + culture)
+Detect the `[pulpo] Agent exited` marker and transition to `Finished`.
+
+- **Detection**: watchdog checks for `[pulpo] Agent exited` in captured output → `Active/Idle → Finished`
+- **Culture extraction**: trigger on `Finished` (same as current kill/stale paths)
+- **Keep `exec bash`**: tmux shell stays alive for inspection, but session state reflects agent is done
+- **Resume from Finished**: allowed — restarts agent command in new tmux session
+
+### S4 — Lost refinement and cleanup
+
+- **Finished + TTL → cleanup**: configurable auto-kill of tmux shell after grace period once Finished. Keeps the process around briefly for inspection, then cleans up.
+- **Resume semantics**: Lost → recreate tmux + restart agent. Finished → restart agent. Killed → blocked.
+- **Dashboard**: filters for terminal states (Finished/Killed/Lost) are now accurate
+
+### S5 — Session lifecycle documentation
+
+- `docs/session-lifecycle.md`: full state machine diagram, transition rules, detection mechanisms, mode × guard matrix, corner cases, visual mapping
+- Update SPEC.md session lifecycle section
+- Update CLAUDE.md if conventions change
+
+## Future Directions
+
+After session lifecycle is solid, potential next phases:
+
+### Culture quality
+
+- Improve what agents write back (better prompts, validation, deduplication)
+- Culture effectiveness metrics: do agents with culture produce better results?
+- Automated culture pruning based on staleness and contradiction detection
+
+### Fleet observability
+
+- Aggregated metrics across nodes (session counts, culture growth, sync health)
+- Cross-node session routing and load balancing
+- Fleet-wide dashboard view
+
+### Packaging and distribution
+
+- Homebrew formula for macOS
+- Docker image for Linux deployment
+- Streamlined onboarding (guided setup wizard)
+- README and documentation for open-source readiness
+
+### Real-world hardening
+
+- Multi-node stress testing with concurrent sessions
+- Edge case handling for network partitions during culture sync
+- Provider binary upgrade resilience (agent binary updated mid-session)
 
 ## Parked (revisit when demanded by real usage)
 

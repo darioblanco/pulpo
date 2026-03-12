@@ -28,7 +28,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     id: 'sess-1',
     name: 'api-fix',
     provider: 'claude',
-    status: 'running',
+    status: 'active',
     prompt: 'Fix the auth bug',
     mode: 'autonomous',
     workdir: '/tmp/repo',
@@ -158,12 +158,12 @@ describe('world', () => {
       world.octopuses[0].x = 42;
 
       // Sync again with updated status
-      const updated = [makeSession({ id: 's1', name: 'worker-1', status: 'completed' })];
+      const updated = [makeSession({ id: 's1', name: 'worker-1', status: 'finished' })];
       syncData(world, makeNode(), updated, [], {});
 
       expect(world.octopuses[0].animFrame).toBe(3);
       expect(world.octopuses[0].x).toBe(42);
-      expect(world.octopuses[0].status).toBe('completed');
+      expect(world.octopuses[0].status).toBe('finished');
     });
 
     it('updates new session fields on existing octopus', () => {
@@ -263,12 +263,12 @@ describe('world', () => {
       world.octopuses[0].animFrame = 3;
       world.octopuses[0].x = 42;
 
-      const updated = [makeSession({ id: 's1', name: 'worker-1', status: 'completed' })];
+      const updated = [makeSession({ id: 's1', name: 'worker-1', status: 'finished' })];
       syncSingleNode(world, 'mac-studio', true, 'online', updated, '#f472b6');
 
       expect(world.octopuses[0].animFrame).toBe(3);
       expect(world.octopuses[0].x).toBe(42);
-      expect(world.octopuses[0].status).toBe('completed');
+      expect(world.octopuses[0].status).toBe('finished');
     });
 
     it('populates new session fields on octopus', () => {
@@ -414,9 +414,9 @@ describe('world', () => {
       expect(world.bubbles).toHaveLength(0);
     });
 
-    it('makes dead octopuses sink', () => {
+    it('makes killed octopuses sink', () => {
       const world = createWorld(800, 600);
-      syncData(world, makeNode(), [makeSession({ id: 's1', status: 'dead' })], [], {});
+      syncData(world, makeNode(), [makeSession({ id: 's1', status: 'killed' })], [], {});
 
       const oct = world.octopuses[0];
       const startY = oct.y;
@@ -427,9 +427,9 @@ describe('world', () => {
       expect(oct.wanderTargetY).toBeGreaterThan(startY);
     });
 
-    it('makes completed octopuses float up', () => {
+    it('makes finished octopuses float up', () => {
       const world = createWorld(800, 600);
-      syncData(world, makeNode(), [makeSession({ id: 's1', status: 'completed' })], [], {});
+      syncData(world, makeNode(), [makeSession({ id: 's1', status: 'finished' })], [], {});
 
       const oct = world.octopuses[0];
       for (let i = 0; i < 10; i++) update(world, 0.1);

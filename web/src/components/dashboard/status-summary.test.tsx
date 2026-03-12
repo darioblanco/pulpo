@@ -8,7 +8,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     id: 'sess-1',
     name: 'my-api',
     provider: 'claude',
-    status: 'running',
+    status: 'active',
     prompt: 'Fix',
     mode: 'interactive',
     workdir: '/repo',
@@ -33,28 +33,31 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 describe('StatusSummary', () => {
   it('renders zero counts for empty sessions', () => {
     render(<StatusSummary sessions={[]} />);
-    expect(screen.getByTestId('count-running').textContent).toBe('0');
-    expect(screen.getByTestId('count-stale').textContent).toBe('0');
-    expect(screen.getByTestId('count-completed').textContent).toBe('0');
-    expect(screen.getByTestId('count-dead').textContent).toBe('0');
+    expect(screen.getByTestId('count-active').textContent).toBe('0');
+    expect(screen.getByTestId('count-idle').textContent).toBe('0');
+    expect(screen.getByTestId('count-lost').textContent).toBe('0');
+    expect(screen.getByTestId('count-finished').textContent).toBe('0');
+    expect(screen.getByTestId('count-killed').textContent).toBe('0');
   });
 
   it('counts sessions by status', () => {
     const sessions = [
-      makeSession({ id: '1', status: 'running' }),
-      makeSession({ id: '2', status: 'running' }),
+      makeSession({ id: '1', status: 'active' }),
+      makeSession({ id: '2', status: 'active' }),
       makeSession({ id: '3', status: 'creating' }),
-      makeSession({ id: '4', status: 'stale' }),
-      makeSession({ id: '5', status: 'completed' }),
-      makeSession({ id: '6', status: 'completed' }),
-      makeSession({ id: '7', status: 'completed' }),
-      makeSession({ id: '8', status: 'dead' }),
+      makeSession({ id: '4', status: 'lost' }),
+      makeSession({ id: '5', status: 'finished' }),
+      makeSession({ id: '6', status: 'finished' }),
+      makeSession({ id: '7', status: 'finished' }),
+      makeSession({ id: '8', status: 'killed' }),
+      makeSession({ id: '9', status: 'idle' }),
     ];
     render(<StatusSummary sessions={sessions} />);
-    expect(screen.getByTestId('count-running').textContent).toBe('3');
-    expect(screen.getByTestId('count-stale').textContent).toBe('1');
-    expect(screen.getByTestId('count-completed').textContent).toBe('3');
-    expect(screen.getByTestId('count-dead').textContent).toBe('1');
+    expect(screen.getByTestId('count-active').textContent).toBe('3');
+    expect(screen.getByTestId('count-idle').textContent).toBe('1');
+    expect(screen.getByTestId('count-lost').textContent).toBe('1');
+    expect(screen.getByTestId('count-finished').textContent).toBe('3');
+    expect(screen.getByTestId('count-killed').textContent).toBe('1');
   });
 
   it('renders the summary container', () => {
@@ -64,9 +67,10 @@ describe('StatusSummary', () => {
 
   it('renders status labels', () => {
     render(<StatusSummary sessions={[]} />);
-    expect(screen.getByText('running')).toBeInTheDocument();
-    expect(screen.getByText('stale')).toBeInTheDocument();
+    expect(screen.getByText('active')).toBeInTheDocument();
+    expect(screen.getByText('idle')).toBeInTheDocument();
+    expect(screen.getByText('lost')).toBeInTheDocument();
     expect(screen.getByText('done')).toBeInTheDocument();
-    expect(screen.getByText('dead')).toBeInTheDocument();
+    expect(screen.getByText('killed')).toBeInTheDocument();
   });
 });

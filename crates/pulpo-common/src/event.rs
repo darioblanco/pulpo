@@ -36,7 +36,7 @@ mod tests {
         let event = SessionEvent {
             session_id: "abc-123".into(),
             session_name: "my-session".into(),
-            status: "running".into(),
+            status: "active".into(),
             previous_status: Some("creating".into()),
             node_name: "node-1".into(),
             output_snippet: Some("Hello world".into()),
@@ -47,7 +47,7 @@ mod tests {
         let deserialized: SessionEvent = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.session_id, "abc-123");
         assert_eq!(deserialized.session_name, "my-session");
-        assert_eq!(deserialized.status, "running");
+        assert_eq!(deserialized.status, "active");
         assert_eq!(deserialized.previous_status, Some("creating".into()));
         assert_eq!(deserialized.node_name, "node-1");
         assert_eq!(deserialized.output_snippet, Some("Hello world".into()));
@@ -58,7 +58,7 @@ mod tests {
         let event = SessionEvent {
             session_id: "id".into(),
             session_name: "name".into(),
-            status: "dead".into(),
+            status: "killed".into(),
             previous_status: None,
             node_name: "n".into(),
             output_snippet: None,
@@ -75,7 +75,7 @@ mod tests {
         let event = SessionEvent {
             session_id: "id".into(),
             session_name: "name".into(),
-            status: "running".into(),
+            status: "active".into(),
             previous_status: None,
             node_name: "n".into(),
             output_snippet: None,
@@ -156,7 +156,7 @@ mod tests {
         let event = PulpoEvent::Session(SessionEvent {
             session_id: "s1".into(),
             session_name: "test".into(),
-            status: "running".into(),
+            status: "active".into(),
             previous_status: None,
             node_name: "n".into(),
             output_snippet: None,
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_pulpo_event_deserialize_session() {
-        let json = r#"{"kind":"session","session_id":"s1","session_name":"test","status":"running","previous_status":null,"node_name":"n","output_snippet":null,"waiting_for_input":null,"timestamp":"t"}"#;
+        let json = r#"{"kind":"session","session_id":"s1","session_name":"test","status":"active","previous_status":null,"node_name":"n","output_snippet":null,"waiting_for_input":null,"timestamp":"t"}"#;
         let event: PulpoEvent = serde_json::from_str(json).unwrap();
         assert!(matches!(&event, PulpoEvent::Session(se) if se.session_id == "s1"));
     }
@@ -187,7 +187,7 @@ mod tests {
         let event = PulpoEvent::Session(SessionEvent {
             session_id: "id".into(),
             session_name: "name".into(),
-            status: "running".into(),
+            status: "active".into(),
             previous_status: None,
             node_name: "n".into(),
             output_snippet: None,
@@ -203,8 +203,8 @@ mod tests {
         let original = PulpoEvent::Session(SessionEvent {
             session_id: "s1".into(),
             session_name: "test".into(),
-            status: "completed".into(),
-            previous_status: Some("running".into()),
+            status: "finished".into(),
+            previous_status: Some("active".into()),
             node_name: "n".into(),
             output_snippet: Some("done".into()),
             waiting_for_input: None,
@@ -213,7 +213,7 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: PulpoEvent = serde_json::from_str(&json).unwrap();
         assert!(
-            matches!(&deserialized, PulpoEvent::Session(se) if se.session_id == "s1" && se.status == "completed")
+            matches!(&deserialized, PulpoEvent::Session(se) if se.session_id == "s1" && se.status == "finished")
         );
     }
 }

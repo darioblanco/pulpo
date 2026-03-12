@@ -33,7 +33,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
     id: 'sess-1',
     name: 'my-api',
     provider: 'claude',
-    status: 'completed',
+    status: 'finished',
     prompt: 'Fix the bug',
     mode: 'interactive',
     workdir: '/repo',
@@ -99,12 +99,12 @@ describe('HistoryPage', () => {
     });
   });
 
-  it('fetches with default filter (completed,dead)', async () => {
+  it('fetches with default filter (finished,killed)', async () => {
     mockGetSessions.mockResolvedValue([]);
     renderHistory();
     await waitFor(() => {
       expect(mockGetSessions).toHaveBeenCalledWith({
-        status: 'completed,dead',
+        status: 'finished,killed',
       });
     });
   });
@@ -117,11 +117,11 @@ describe('HistoryPage', () => {
     });
 
     // Click a status filter
-    fireEvent.click(screen.getByTestId('status-chip-dead'));
+    fireEvent.click(screen.getByTestId('status-chip-killed'));
     await waitFor(() => {
       expect(mockGetSessions).toHaveBeenCalledWith({
         search: undefined,
-        status: 'dead',
+        status: 'killed',
         provider: undefined,
       });
     });

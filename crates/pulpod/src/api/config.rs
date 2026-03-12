@@ -915,7 +915,7 @@ mod tests {
                     crate::config::WebhookEndpointConfig {
                         name: "ci-hook".into(),
                         url: "https://example.com/hook".into(),
-                        events: vec!["completed".into(), "dead".into()],
+                        events: vec!["finished".into(), "killed".into()],
                         secret: Some("s3cret".into()),
                     },
                     crate::config::WebhookEndpointConfig {
@@ -933,7 +933,7 @@ mod tests {
         let w0 = &resp.notifications.webhooks[0];
         assert_eq!(w0.name, "ci-hook");
         assert_eq!(w0.url, "https://example.com/hook");
-        assert_eq!(w0.events, vec!["completed", "dead"]);
+        assert_eq!(w0.events, vec!["finished", "killed"]);
         assert!(w0.has_secret);
         let w1 = &resp.notifications.webhooks[1];
         assert_eq!(w1.name, "logs-hook");
@@ -949,7 +949,7 @@ mod tests {
             webhooks: Some(vec![WebhookEndpointUpdateRequest {
                 name: "my-hook".into(),
                 url: "https://example.com/webhook".into(),
-                events: vec!["running".into()],
+                events: vec!["active".into()],
                 secret: Some("key".into()),
             }]),
             ..Default::default()
@@ -994,7 +994,7 @@ mod tests {
             webhooks: Some(vec![WebhookEndpointUpdateRequest {
                 name: "hook-3".into(),
                 url: "https://c.com".into(),
-                events: vec!["dead".into()],
+                events: vec!["killed".into()],
                 secret: None,
             }]),
             ..Default::default()

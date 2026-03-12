@@ -22,13 +22,13 @@ beforeEach(() => {
 describe('OutputView', () => {
   it('renders output container', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<OutputView sessionId="sess-1" sessionStatus="completed" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="finished" />);
     expect(screen.getByTestId('output-view')).toBeInTheDocument();
   });
 
   it('fetches and displays output', async () => {
     mockGetSessionOutput.mockResolvedValue({ output: 'Hello from agent' });
-    render(<OutputView sessionId="sess-1" sessionStatus="completed" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="finished" />);
     await waitFor(() => {
       expect(screen.getByText('Hello from agent')).toBeInTheDocument();
     });
@@ -36,7 +36,7 @@ describe('OutputView', () => {
 
   it('strips ANSI codes from output', async () => {
     mockGetSessionOutput.mockResolvedValue({ output: '\x1B[32mGreen text\x1B[0m' });
-    render(<OutputView sessionId="sess-1" sessionStatus="completed" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="finished" />);
     await waitFor(() => {
       expect(screen.getByText('Green text')).toBeInTheDocument();
     });
@@ -44,40 +44,40 @@ describe('OutputView', () => {
 
   it('shows "No output yet" when output is empty', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<OutputView sessionId="sess-1" sessionStatus="completed" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="finished" />);
     expect(screen.getByText('No output yet')).toBeInTheDocument();
   });
 
-  it('shows input field for running sessions', () => {
+  it('shows input field for active sessions', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<OutputView sessionId="sess-1" sessionStatus="running" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="active" />);
     expect(screen.getByTestId('output-input')).toBeInTheDocument();
     expect(screen.getByText('Send')).toBeInTheDocument();
   });
 
-  it('shows input field for stale sessions', () => {
+  it('shows input field for lost sessions', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<OutputView sessionId="sess-1" sessionStatus="stale" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="lost" />);
     expect(screen.getByTestId('output-input')).toBeInTheDocument();
     expect(screen.getByText('Send')).toBeInTheDocument();
   });
 
-  it('hides input field for completed sessions', () => {
+  it('hides input field for finished sessions', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<OutputView sessionId="sess-1" sessionStatus="completed" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="finished" />);
     expect(screen.queryByTestId('output-input')).not.toBeInTheDocument();
   });
 
-  it('hides input field for dead sessions', () => {
+  it('hides input field for killed sessions', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<OutputView sessionId="sess-1" sessionStatus="dead" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="killed" />);
     expect(screen.queryByTestId('output-input')).not.toBeInTheDocument();
   });
 
   it('sends input on button click', async () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
     mockSendInput.mockResolvedValue(undefined);
-    render(<OutputView sessionId="sess-1" sessionStatus="running" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="active" />);
 
     const input = screen.getByTestId('output-input');
     fireEvent.change(input, { target: { value: 'Hello' } });
@@ -91,7 +91,7 @@ describe('OutputView', () => {
   it('sends input on Enter key', async () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
     mockSendInput.mockResolvedValue(undefined);
-    render(<OutputView sessionId="sess-1" sessionStatus="running" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="active" />);
 
     const input = screen.getByTestId('output-input');
     fireEvent.change(input, { target: { value: 'Test' } });
@@ -104,7 +104,7 @@ describe('OutputView', () => {
 
   it('does not send empty input', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<OutputView sessionId="sess-1" sessionStatus="running" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="active" />);
 
     fireEvent.click(screen.getByText('Send'));
     expect(mockSendInput).not.toHaveBeenCalled();
@@ -118,7 +118,7 @@ describe('OutputView', () => {
       return { output: 'Part 1Part 2' };
     });
 
-    render(<OutputView sessionId="sess-1" sessionStatus="running" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="active" />);
 
     await waitFor(() => {
       expect(screen.getByText('Part 1')).toBeInTheDocument();
@@ -132,7 +132,7 @@ describe('OutputView', () => {
     );
   });
 
-  it('polls output for stale sessions', async () => {
+  it('polls output for lost sessions', async () => {
     let callCount = 0;
     mockGetSessionOutput.mockImplementation(async () => {
       callCount++;
@@ -140,7 +140,7 @@ describe('OutputView', () => {
       return { output: 'Updated' };
     });
 
-    render(<OutputView sessionId="sess-1" sessionStatus="stale" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="lost" />);
 
     await waitFor(() => {
       expect(screen.getByText('Initial')).toBeInTheDocument();
@@ -156,7 +156,7 @@ describe('OutputView', () => {
 
   it('handles fetch errors silently', async () => {
     mockGetSessionOutput.mockRejectedValue(new Error('Network error'));
-    render(<OutputView sessionId="sess-1" sessionStatus="completed" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="finished" />);
     await waitFor(() => {
       expect(screen.getByTestId('output-view')).toBeInTheDocument();
     });

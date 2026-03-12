@@ -815,7 +815,7 @@ data_dir = "{}"
 
 [notifications.discord]
 webhook_url = "https://discord.com/api/webhooks/123/abc"
-events = ["completed", "dead"]
+events = ["finished", "killed"]
 "#,
                 data_dir.display()
             ),
@@ -1041,7 +1041,7 @@ data_dir = "{}"
 [[notifications.webhooks]]
 name = "test-hook"
 url = "http://127.0.0.1:1/hook"
-events = ["dead"]
+events = ["killed"]
 "#,
                 data_dir.display()
             ),

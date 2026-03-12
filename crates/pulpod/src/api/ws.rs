@@ -39,7 +39,7 @@ pub async fn stream(
             )
         })?;
 
-    if session.status != SessionStatus::Running {
+    if session.status != SessionStatus::Active {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
@@ -260,7 +260,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_ne!(fetched.status, SessionStatus::Running);
+        assert_ne!(fetched.status, SessionStatus::Active);
     }
 
     #[test]
@@ -295,7 +295,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: Provider::Claude,
             prompt: String::new(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -336,7 +336,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: Provider::Claude,
             prompt: String::new(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,

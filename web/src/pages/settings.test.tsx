@@ -152,7 +152,7 @@ describe('SettingsPage', () => {
       notifications: {
         discord: {
           webhook_url: 'https://discord.com/api/webhooks/test',
-          events: ['session.created', 'session.completed'],
+          events: ['session.created', 'session.finished'],
         },
         webhooks: [],
       },
@@ -173,7 +173,7 @@ describe('SettingsPage', () => {
         'https://discord.com/api/webhooks/test',
       );
       expect(within(discordContent).getByLabelText('Events')).toHaveValue(
-        'session.created, session.completed',
+        'session.created, session.finished',
       );
     });
   });

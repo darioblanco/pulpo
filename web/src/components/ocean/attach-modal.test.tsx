@@ -16,7 +16,7 @@ describe('AttachModal', () => {
       <AttachModal
         sessionName="worker-alpha"
         sessionId="sess-1"
-        sessionStatus="running"
+        sessionStatus="active"
         open={true}
         onOpenChange={vi.fn()}
       />,
@@ -29,7 +29,7 @@ describe('AttachModal', () => {
       <AttachModal
         sessionName="worker-alpha"
         sessionId="sess-1"
-        sessionStatus="running"
+        sessionStatus="active"
         open={true}
         onOpenChange={vi.fn()}
       />,
@@ -42,7 +42,7 @@ describe('AttachModal', () => {
       <AttachModal
         sessionName="worker-alpha"
         sessionId="sess-1"
-        sessionStatus="running"
+        sessionStatus="active"
         open={true}
         onOpenChange={vi.fn()}
       />,
@@ -55,7 +55,7 @@ describe('AttachModal', () => {
       <AttachModal
         sessionName="worker-alpha"
         sessionId="sess-1"
-        sessionStatus="running"
+        sessionStatus="active"
         open={true}
         onOpenChange={vi.fn()}
       />,
@@ -68,7 +68,7 @@ describe('AttachModal', () => {
       <AttachModal
         sessionName="worker-alpha"
         sessionId="sess-1"
-        sessionStatus="running"
+        sessionStatus="active"
         open={false}
         onOpenChange={vi.fn()}
       />,
@@ -81,7 +81,7 @@ describe('AttachModal', () => {
       <AttachModal
         sessionName="worker-alpha"
         sessionId="sess-1"
-        sessionStatus="running"
+        sessionStatus="active"
         open={true}
         onOpenChange={vi.fn()}
       />,

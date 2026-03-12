@@ -3,8 +3,8 @@ import type { NodeInfo, Session } from '@/api/types';
 import { SessionCard } from './session-card';
 
 const statusDotColors: Record<string, string> = {
-  online: 'bg-status-completed',
-  offline: 'bg-status-dead',
+  online: 'bg-status-finished',
+  offline: 'bg-status-killed',
   unknown: 'bg-muted-foreground',
 };
 

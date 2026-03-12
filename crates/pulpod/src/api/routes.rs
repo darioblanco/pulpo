@@ -298,7 +298,7 @@ mod tests {
         resp.assert_status(StatusCode::CREATED);
         let body = resp.text();
         assert!(body.contains("tmp"));
-        assert!(body.contains("running"));
+        assert!(body.contains("active"));
     }
 
     #[tokio::test]
@@ -853,7 +853,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
+        assert_eq!(fetched.status, SessionStatus::Killed);
 
         // WebSocket should fail (session not running)
         let result = tokio_tungstenite::connect_async(format!(
@@ -1478,7 +1478,7 @@ mod tests {
             .send(PulpoEvent::Session(SessionEvent {
                 session_id: "sse-test-id".into(),
                 session_name: "sse-session".into(),
-                status: "running".into(),
+                status: "active".into(),
                 previous_status: Some("creating".into()),
                 node_name: "test-node".into(),
                 output_snippet: None,
@@ -1562,7 +1562,7 @@ mod tests {
             .json(&serde_json::json!({
                 "discord": {
                     "webhook_url": "https://discord.com/api/webhooks/test",
-                    "events": ["running"]
+                    "events": ["active"]
                 }
             }))
             .await;
@@ -1572,6 +1572,6 @@ mod tests {
             body["discord"]["webhook_url"],
             "https://discord.com/api/webhooks/test"
         );
-        assert_eq!(body["discord"]["events"], serde_json::json!(["running"]));
+        assert_eq!(body["discord"]["events"], serde_json::json!(["active"]));
     }
 }

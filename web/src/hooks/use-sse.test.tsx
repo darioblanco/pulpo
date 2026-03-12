@@ -118,7 +118,7 @@ describe('useSSE', () => {
         id: 'sess-1',
         name: 'my-api',
         provider: 'claude',
-        status: 'running',
+        status: 'active',
         prompt: 'Fix',
         mode: 'interactive',
         workdir: '/repo',
@@ -155,7 +155,7 @@ describe('useSSE', () => {
         id: 'sess-1',
         name: 'my-api',
         provider: 'claude',
-        status: 'running',
+        status: 'active',
         prompt: 'Fix',
         mode: 'interactive',
         workdir: '/repo',
@@ -191,14 +191,14 @@ describe('useSSE', () => {
         JSON.stringify({
           session_id: 'sess-1',
           session_name: 'my-api',
-          status: 'completed',
+          status: 'finished',
           output_snippet: null,
           waiting_for_input: null,
         }),
       );
     });
 
-    expect(result.current.sessions[0].status).toBe('completed');
+    expect(result.current.sessions[0].status).toBe('finished');
   });
 
   it('setSessions updates sessions', () => {
@@ -211,7 +211,7 @@ describe('useSSE', () => {
           id: 'x',
           name: 'test',
           provider: 'claude',
-          status: 'running',
+          status: 'active',
           prompt: 'p',
           mode: 'interactive',
           workdir: '/repo',
@@ -242,7 +242,7 @@ describe('useSSE', () => {
         id: 'sess-1',
         name: 'my-api',
         provider: 'claude',
-        status: 'running',
+        status: 'active',
         prompt: 'Fix',
         mode: 'interactive',
         workdir: '/repo',
@@ -312,7 +312,7 @@ describe('useSSE', () => {
         id: 'sess-1',
         name: 'my-api',
         provider: 'claude',
-        status: 'running',
+        status: 'active',
         prompt: 'Fix',
         mode: 'interactive',
         workdir: '/repo',
@@ -348,7 +348,7 @@ describe('useSSE', () => {
         id: 'sess-2',
         name: 'new-session',
         provider: 'claude',
-        status: 'running',
+        status: 'active',
         prompt: 'New',
         mode: 'interactive',
         workdir: '/repo',
@@ -376,7 +376,7 @@ describe('useSSE', () => {
         JSON.stringify({
           session_id: 'sess-unknown',
           session_name: 'unknown',
-          status: 'running',
+          status: 'active',
           output_snippet: null,
           waiting_for_input: null,
         }),
@@ -394,7 +394,7 @@ describe('useSSE', () => {
         id: 'sess-1',
         name: 'my-api',
         provider: 'claude',
-        status: 'running',
+        status: 'active',
         prompt: 'Fix',
         mode: 'interactive',
         workdir: '/repo',
@@ -429,7 +429,7 @@ describe('useSSE', () => {
         JSON.stringify({
           session_id: 'sess-1',
           session_name: 'my-api',
-          status: 'running',
+          status: 'active',
           output_snippet: null,
           waiting_for_input: true,
         }),
@@ -445,7 +445,7 @@ describe('useSSE', () => {
         id: 'sess-1',
         name: 'eager',
         provider: 'claude',
-        status: 'running',
+        status: 'active',
         prompt: 'Fix',
         mode: 'interactive',
         workdir: '/repo',

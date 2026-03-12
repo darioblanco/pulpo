@@ -139,7 +139,7 @@ export function NotificationsSettings({
                         id={`webhook-events-${i}`}
                         value={wh.events.join(', ')}
                         onChange={(e) => updateWebhook(i, 'events', e.target.value)}
-                        placeholder="completed, dead, stale"
+                        placeholder="finished, killed, lost"
                       />
                     </FormField>
                     <FormField
@@ -199,13 +199,13 @@ export function NotificationsSettings({
               <FormField
                 label="Events"
                 htmlFor="discord-events"
-                description="Comma-separated list: session.created, session.completed, session.stale, session.dead, session.intervention"
+                description="Comma-separated list: session.created, session.finished, session.lost, session.killed, session.intervention"
               >
                 <Input
                   id="discord-events"
                   value={discordEvents}
                   onChange={(e) => onDiscordEventsChange(e.target.value)}
-                  placeholder="session.created, session.completed"
+                  placeholder="session.created, session.finished"
                 />
               </FormField>
             </div>

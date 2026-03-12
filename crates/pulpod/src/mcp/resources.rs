@@ -79,10 +79,10 @@ async fn read_cluster_status(mcp: &PulpoMcp, uri: &str) -> Result<ReadResourceRe
         .filter(|p| p.status == pulpo_common::peer::PeerStatus::Online)
         .count();
 
-    let running_count = by_status.get("running").copied().unwrap_or(0);
-    let completed_count = by_status.get("completed").copied().unwrap_or(0);
+    let running_count = by_status.get("active").copied().unwrap_or(0);
+    let completed_count = by_status.get("finished").copied().unwrap_or(0);
     let summary = format!(
-        "{total} sessions ({running_count} running, {completed_count} completed). {available_count} nodes online."
+        "{total} sessions ({running_count} active, {completed_count} finished). {available_count} nodes online."
     );
 
     let peer_list: Vec<_> = peers
@@ -442,7 +442,7 @@ mod tests {
         let result = read_resource(&mcp, "pulpo://cluster/status").await.unwrap();
         let json = serde_json::to_string(&result.contents[0]).unwrap();
         assert!(json.contains("1 sessions"));
-        assert!(json.contains("running"));
+        assert!(json.contains("active"));
     }
 
     #[tokio::test]

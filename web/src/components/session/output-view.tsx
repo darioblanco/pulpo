@@ -30,7 +30,7 @@ export function OutputView({ sessionId, sessionStatus }: OutputViewProps) {
 
   useEffect(() => {
     fetchOutput();
-    if (sessionStatus === 'running' || sessionStatus === 'stale') {
+    if (sessionStatus === 'active' || sessionStatus === 'lost') {
       const interval = setInterval(fetchOutput, 2000);
       return () => clearInterval(interval);
     }
@@ -49,7 +49,7 @@ export function OutputView({ sessionId, sessionStatus }: OutputViewProps) {
     setInputText('');
   }
 
-  const canSendInput = sessionStatus === 'running' || sessionStatus === 'stale';
+  const canSendInput = sessionStatus === 'active' || sessionStatus === 'lost';
 
   return (
     <div data-testid="output-view">

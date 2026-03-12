@@ -110,11 +110,12 @@ interface BehaviorConfig {
 }
 
 const BEHAVIOR: Record<string, BehaviorConfig> = {
-  running: { radius: 60, speed: 30, intervalMin: 1.5, intervalMax: 3 },
+  active: { radius: 60, speed: 30, intervalMin: 1.5, intervalMax: 3 },
   creating: { radius: 30, speed: 15, intervalMin: 2, intervalMax: 4 },
-  stale: { radius: 8, speed: 5, intervalMin: 4, intervalMax: 8 },
-  completed: { radius: 40, speed: 10, intervalMin: 3, intervalMax: 6 },
-  dead: { radius: 5, speed: 2, intervalMin: 5, intervalMax: 10 },
+  idle: { radius: 8, speed: 5, intervalMin: 4, intervalMax: 8 },
+  lost: { radius: 8, speed: 5, intervalMin: 4, intervalMax: 8 },
+  finished: { radius: 40, speed: 10, intervalMin: 3, intervalMax: 6 },
+  killed: { radius: 5, speed: 2, intervalMin: 5, intervalMax: 10 },
 };
 
 function randomBetween(min: number, max: number): number {
@@ -487,7 +488,7 @@ export function update(world: WorldState, dt: number): void {
 
   // Update octopuses
   for (const oct of world.octopuses) {
-    const behavior = BEHAVIOR[oct.status] ?? BEHAVIOR.running;
+    const behavior = BEHAVIOR[oct.status] ?? BEHAVIOR.active;
 
     // Wander: pick new target periodically
     oct.wanderTimer -= cappedDt;
@@ -500,9 +501,9 @@ export function update(world: WorldState, dt: number): void {
     }
 
     // Special status overrides
-    if (oct.status === 'completed') {
+    if (oct.status === 'finished') {
       oct.wanderTargetY = Math.max(SWIM_ZONE_TOP - 20, oct.homeY - 30);
-    } else if (oct.status === 'dead') {
+    } else if (oct.status === 'killed') {
       oct.wanderTargetY = SWIM_ZONE_BOTTOM + 10;
     }
 

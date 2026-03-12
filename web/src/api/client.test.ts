@@ -111,9 +111,9 @@ describe('getSessions', () => {
     const sessions = [{ id: '1', name: 'test' }];
     mockFetch.mockResolvedValue(jsonResponse(sessions));
 
-    const result = await getSessions({ status: 'running', provider: 'claude' });
+    const result = await getSessions({ status: 'active', provider: 'claude' });
 
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=running&provider=claude', {
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=active&provider=claude', {
       headers: {},
     });
     expect(result).toEqual(sessions);
@@ -123,9 +123,9 @@ describe('getSessions', () => {
     const sessions: unknown[] = [];
     mockFetch.mockResolvedValue(jsonResponse(sessions));
 
-    await getSessions({ status: 'completed', provider: undefined });
+    await getSessions({ status: 'finished', provider: undefined });
 
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=completed', { headers: {} });
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=finished', { headers: {} });
   });
 
   it('uses absolute URL when base is set', async () => {
@@ -133,9 +133,9 @@ describe('getSessions', () => {
     const sessions = [{ id: '1', name: 'test' }];
     mockFetch.mockResolvedValue(jsonResponse(sessions));
 
-    const result = await getSessions({ status: 'running' });
+    const result = await getSessions({ status: 'active' });
 
-    expect(mockFetch).toHaveBeenCalledWith('http://mac-mini:7433/api/v1/sessions?status=running', {
+    expect(mockFetch).toHaveBeenCalledWith('http://mac-mini:7433/api/v1/sessions?status=active', {
       headers: {},
     });
     expect(result).toEqual(sessions);
@@ -366,7 +366,7 @@ describe('sendInput', () => {
 
 describe('resumeSession', () => {
   it('posts to /api/v1/sessions/:id/resume', async () => {
-    const resumed = { id: 'abc', status: 'running' };
+    const resumed = { id: 'abc', status: 'active' };
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(resumed) });
 
     const result = await resumeSession('abc');
@@ -381,10 +381,10 @@ describe('resumeSession', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
-      json: () => Promise.resolve({ error: 'session is not stale' }),
+      json: () => Promise.resolve({ error: 'session is not lost' }),
     });
 
-    await expect(resumeSession('abc')).rejects.toThrow('session is not stale');
+    await expect(resumeSession('abc')).rejects.toThrow('session is not lost');
   });
 
   it('throws generic message when no error field', async () => {

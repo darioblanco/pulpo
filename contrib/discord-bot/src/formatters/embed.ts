@@ -2,10 +2,11 @@ import { EmbedBuilder } from 'discord.js';
 import type { CultureEvent, InkConfig, Session, SessionEvent } from '../api/pulpod.js';
 
 const STATUS_COLORS: Record<string, number> = {
-  running: 0x2ecc71,
-  completed: 0x3498db,
-  dead: 0xe74c3c,
-  stale: 0xe67e22,
+  active: 0x2ecc71,
+  finished: 0x3498db,
+  killed: 0xe74c3c,
+  lost: 0xe67e22,
+  idle: 0xf59e0b,
   creating: 0x95a5a6,
 };
 
@@ -15,10 +16,11 @@ function statusColor(status: string): number {
 
 function statusEmoji(status: string): string {
   const emojis: Record<string, string> = {
-    running: '\u{1F7E2}',
-    completed: '\u{1F535}',
-    dead: '\u{1F534}',
-    stale: '\u{1F7E0}',
+    active: '\u{1F7E2}',
+    finished: '\u{1F535}',
+    killed: '\u{1F534}',
+    lost: '\u{1F7E0}',
+    idle: '\u{1F7E1}',
     creating: '\u{26AA}',
   };
   return emojis[status] ?? '\u{26AA}';

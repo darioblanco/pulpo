@@ -189,15 +189,15 @@ pub async fn download_output(
             )
         })?;
 
-    let output =
-        if session.status == SessionStatus::Running || session.status == SessionStatus::Stale {
-            let backend_id = state.session_manager.resolve_backend_id(&session);
-            state
-                .session_manager
-                .capture_output(&id, &backend_id, 10_000)
-        } else {
-            session.output_snapshot.unwrap_or_default()
-        };
+    let output = if session.status == SessionStatus::Active || session.status == SessionStatus::Lost
+    {
+        let backend_id = state.session_manager.resolve_backend_id(&session);
+        state
+            .session_manager
+            .capture_output(&id, &backend_id, 10_000)
+    } else {
+        session.output_snapshot.unwrap_or_default()
+    };
 
     let filename = format!("{}.log", session.name);
     Ok((
@@ -377,14 +377,14 @@ mod tests {
         let _ = create(State(state.clone()), Json(req)).await.unwrap();
 
         let query = ListSessionsQuery {
-            status: Some("running".into()),
+            status: Some("active".into()),
             ..Default::default()
         };
         let Json(sessions) = list(State(state.clone()), Query(query)).await.unwrap();
         assert_eq!(sessions.len(), 1);
 
         let query = ListSessionsQuery {
-            status: Some("completed".into()),
+            status: Some("finished".into()),
             ..Default::default()
         };
         let Json(sessions) = list(State(state), Query(query)).await.unwrap();
@@ -1001,7 +1001,7 @@ mod tests {
             .await
             .unwrap();
         let query = ListSessionsQuery {
-            status: Some("running".into()),
+            status: Some("active".into()),
             ..Default::default()
         };
         let result = list(State(state), Query(query)).await;
@@ -1054,7 +1054,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: pulpo_common::session::Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Dead,
+            status: SessionStatus::Killed,
             mode: pulpo_common::session::SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1397,10 +1397,7 @@ mod tests {
         let result = resume(State(state), Path(session.id.to_string())).await;
         assert!(result.is_ok());
         let Json(resumed) = result.unwrap();
-        assert_eq!(
-            resumed.status,
-            pulpo_common::session::SessionStatus::Running
-        );
+        assert_eq!(resumed.status, pulpo_common::session::SessionStatus::Active);
     }
 
     /// Backend that makes sessions stale and then fails on create (for resume internal error).

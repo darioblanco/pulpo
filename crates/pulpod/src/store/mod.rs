@@ -239,6 +239,28 @@ impl Store {
                 .await?;
         }
 
+        // Idempotent migration: rename session status values
+        // running→active, completed→finished, dead→killed, stale→lost
+        let has_old_statuses: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sessions WHERE status IN ('running', 'completed', 'dead', 'stale')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_old_statuses > 0 {
+            sqlx::query("UPDATE sessions SET status = 'active' WHERE status = 'running'")
+                .execute(&self.pool)
+                .await?;
+            sqlx::query("UPDATE sessions SET status = 'finished' WHERE status = 'completed'")
+                .execute(&self.pool)
+                .await?;
+            sqlx::query("UPDATE sessions SET status = 'killed' WHERE status = 'dead'")
+                .execute(&self.pool)
+                .await?;
+            sqlx::query("UPDATE sessions SET status = 'lost' WHERE status = 'stale'")
+                .execute(&self.pool)
+                .await?;
+        }
+
         Ok(())
     }
 
@@ -418,7 +440,7 @@ impl Store {
         let now = Utc::now().to_rfc3339();
         let code_str = code.to_string();
         sqlx::query(
-            "UPDATE sessions SET intervention_code = ?, intervention_reason = ?, intervention_at = ?, status = 'dead', updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET intervention_code = ?, intervention_reason = ?, intervention_at = ?, status = 'killed', updated_at = ? WHERE id = ?",
         )
         .bind(&code_str)
         .bind(reason)
@@ -634,7 +656,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "Fix the bug".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: Some("conv-123".into()),
             exit_code: None,
@@ -730,7 +752,7 @@ mod tests {
         assert_eq!(fetched.workdir, "/tmp/repo");
         assert_eq!(fetched.provider, Provider::Claude);
         assert_eq!(fetched.prompt, "Fix the bug");
-        assert_eq!(fetched.status, SessionStatus::Running);
+        assert_eq!(fetched.status, SessionStatus::Active);
         assert_eq!(fetched.mode, SessionMode::Interactive);
         assert_eq!(fetched.conversation_id, Some("conv-123".into()));
         assert_eq!(fetched.exit_code, None);
@@ -792,7 +814,7 @@ mod tests {
         store.insert_session(&session).await.unwrap();
 
         store
-            .update_session_status(&session.id.to_string(), SessionStatus::Completed)
+            .update_session_status(&session.id.to_string(), SessionStatus::Finished)
             .await
             .unwrap();
 
@@ -801,7 +823,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Completed);
+        assert_eq!(fetched.status, SessionStatus::Finished);
     }
 
     #[tokio::test]
@@ -925,7 +947,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
                 created_at, updated_at)
-             VALUES (?, 'test', '/tmp', 'invalid_provider', 'test', 'running', 'interactive',
+             VALUES (?, 'test', '/tmp', 'invalid_provider', 'test', 'active', 'interactive',
                 '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
         )
         .bind(TEST_UUID)
@@ -959,7 +981,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
                 created_at, updated_at)
-             VALUES (?, 'test', '/tmp', 'claude', 'test', 'running', 'bad_mode',
+             VALUES (?, 'test', '/tmp', 'claude', 'test', 'active', 'bad_mode',
                 '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
         )
         .bind(TEST_UUID)
@@ -976,7 +998,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
                 created_at, updated_at)
-             VALUES ('not-a-uuid', 'test', '/tmp', 'claude', 'test', 'running', 'interactive',
+             VALUES ('not-a-uuid', 'test', '/tmp', 'claude', 'test', 'active', 'interactive',
                 '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
         )
         .execute(store.pool())
@@ -992,7 +1014,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
                 created_at, updated_at)
-             VALUES (?, 'test', '/tmp', 'claude', 'test', 'running', 'interactive',
+             VALUES (?, 'test', '/tmp', 'claude', 'test', 'active', 'interactive',
                 'not-a-date', '2024-01-01T00:00:00+00:00')",
         )
         .bind(TEST_UUID)
@@ -1045,7 +1067,7 @@ mod tests {
             .await
             .unwrap();
         let result = store
-            .update_session_status("test-id", SessionStatus::Dead)
+            .update_session_status("test-id", SessionStatus::Killed)
             .await;
         assert!(result.is_err());
     }
@@ -1128,7 +1150,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
                 guard_config, created_at, updated_at)
-             VALUES (?, 'test', '/tmp', 'claude', 'test', 'running', 'interactive',
+             VALUES (?, 'test', '/tmp', 'claude', 'test', 'active', 'interactive',
                 'not-valid-json', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
         )
         .bind(TEST_UUID)
@@ -1150,36 +1172,36 @@ mod tests {
     async fn test_list_sessions_filtered_by_status() {
         let store = test_store().await;
         let mut s1 = make_session("running-1");
-        s1.status = SessionStatus::Running;
+        s1.status = SessionStatus::Active;
         let mut s2 = make_session("completed-1");
-        s2.status = SessionStatus::Completed;
+        s2.status = SessionStatus::Finished;
         store.insert_session(&s1).await.unwrap();
         store.insert_session(&s2).await.unwrap();
 
         let query = ListSessionsQuery {
-            status: Some("running".into()),
+            status: Some("active".into()),
             ..Default::default()
         };
         let sessions = store.list_sessions_filtered(&query).await.unwrap();
         assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].status, SessionStatus::Running);
+        assert_eq!(sessions[0].status, SessionStatus::Active);
     }
 
     #[tokio::test]
     async fn test_list_sessions_filtered_by_multiple_statuses() {
         let store = test_store().await;
         let mut s1 = make_session("running-2");
-        s1.status = SessionStatus::Running;
+        s1.status = SessionStatus::Active;
         let mut s2 = make_session("completed-2");
-        s2.status = SessionStatus::Completed;
+        s2.status = SessionStatus::Finished;
         let mut s3 = make_session("dead-1");
-        s3.status = SessionStatus::Dead;
+        s3.status = SessionStatus::Killed;
         store.insert_session(&s1).await.unwrap();
         store.insert_session(&s2).await.unwrap();
         store.insert_session(&s3).await.unwrap();
 
         let query = ListSessionsQuery {
-            status: Some("running,completed".into()),
+            status: Some("active,finished".into()),
             ..Default::default()
         };
         let sessions = store.list_sessions_filtered(&query).await.unwrap();
@@ -1293,20 +1315,20 @@ mod tests {
     async fn test_list_sessions_filtered_combined_filters() {
         let store = test_store().await;
         let mut s1 = make_session("api-fix");
-        s1.status = SessionStatus::Running;
+        s1.status = SessionStatus::Active;
         s1.prompt = "Fix the API".into();
         let mut s2 = make_session("api-refactor");
-        s2.status = SessionStatus::Completed;
+        s2.status = SessionStatus::Finished;
         s2.prompt = "Refactor the API".into();
         let mut s3 = make_session("ui-fix");
-        s3.status = SessionStatus::Running;
+        s3.status = SessionStatus::Active;
         s3.prompt = "Fix the UI".into();
         store.insert_session(&s1).await.unwrap();
         store.insert_session(&s2).await.unwrap();
         store.insert_session(&s3).await.unwrap();
 
         let query = ListSessionsQuery {
-            status: Some("running".into()),
+            status: Some("active".into()),
             search: Some("API".into()),
             ..Default::default()
         };
@@ -1319,9 +1341,9 @@ mod tests {
     async fn test_list_sessions_filtered_sort_by_status() {
         let store = test_store().await;
         let mut s1 = make_session("first");
-        s1.status = SessionStatus::Running;
+        s1.status = SessionStatus::Active;
         let mut s2 = make_session("second");
-        s2.status = SessionStatus::Completed;
+        s2.status = SessionStatus::Finished;
         store.insert_session(&s1).await.unwrap();
         store.insert_session(&s2).await.unwrap();
 
@@ -1372,7 +1394,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
+        assert_eq!(fetched.status, SessionStatus::Killed);
         assert_eq!(
             fetched.intervention_code,
             Some(InterventionCode::MemoryPressure)
@@ -1505,7 +1527,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
                 intervention_at, created_at, updated_at)
-             VALUES (?, 'test', '/tmp', 'claude', 'test', 'running', 'interactive',
+             VALUES (?, 'test', '/tmp', 'claude', 'test', 'active', 'interactive',
                 'not-a-date', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
         )
         .bind(TEST_UUID)
@@ -1543,7 +1565,7 @@ mod tests {
 
         // Simulate a second intervention (e.g., session was resumed and hit pressure again)
         // Reset session to running first so the scenario makes sense
-        sqlx::query("UPDATE sessions SET status = 'running' WHERE id = ?")
+        sqlx::query("UPDATE sessions SET status = 'active' WHERE id = ?")
             .bind(&sid)
             .execute(store.pool())
             .await
@@ -1902,7 +1924,7 @@ mod tests {
         // Insert a row using the old column name
         sqlx::query(
             "INSERT INTO sessions (id, name, repo_path, provider, prompt, status, mode, created_at, updated_at)
-             VALUES ('test-id', 'test', '/old/path', 'claude', 'test', 'running', 'interactive',
+             VALUES ('test-id', 'test', '/old/path', 'claude', 'test', 'active', 'interactive',
                      '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
         )
         .execute(store.pool())
@@ -1954,7 +1976,7 @@ mod tests {
         // Insert a row using the old column name
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode, tmux_session, created_at, updated_at)
-             VALUES ('test-id', 'test', '/tmp', 'claude', 'test', 'running', 'interactive', 'pulpo-test',
+             VALUES ('test-id', 'test', '/tmp', 'claude', 'test', 'active', 'interactive', 'pulpo-test',
                      '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
         )
         .execute(store.pool())
@@ -2055,7 +2077,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
                 intervention_code, created_at, updated_at)
-             VALUES (?, 'test', '/tmp', 'claude', 'test', 'running', 'interactive',
+             VALUES (?, 'test', '/tmp', 'claude', 'test', 'active', 'interactive',
                 'invalid_code', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
         )
         .bind(TEST_UUID)
@@ -2101,5 +2123,68 @@ mod tests {
 
         let events = store.list_intervention_events(&sid).await.unwrap();
         assert_eq!(events[0].code, Some(InterventionCode::UserKill));
+    }
+
+    #[tokio::test]
+    async fn test_migrate_renames_old_status_values() {
+        let store = test_store().await;
+
+        // Insert sessions with old status values directly via SQL
+        let id_a = uuid::Uuid::new_v4().to_string();
+        let id_b = uuid::Uuid::new_v4().to_string();
+        let id_c = uuid::Uuid::new_v4().to_string();
+        let id_d = uuid::Uuid::new_v4().to_string();
+        let ts = "2026-01-01T00:00:00Z";
+        for (id, name, status) in [
+            (&id_a, "old-running", "running"),
+            (&id_b, "old-completed", "completed"),
+            (&id_c, "old-dead", "dead"),
+            (&id_d, "old-stale", "stale"),
+        ] {
+            sqlx::query(
+                "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode, created_at, updated_at)
+                 VALUES (?, ?, '/tmp', 'claude', 'p', ?, 'interactive', ?, ?)",
+            )
+            .bind(id)
+            .bind(name)
+            .bind(status)
+            .bind(ts)
+            .bind(ts)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        }
+
+        // Re-run migration
+        store.migrate().await.unwrap();
+
+        // Verify all statuses were renamed
+        let a = store.get_session(&id_a).await.unwrap().unwrap();
+        assert_eq!(a.status, SessionStatus::Active);
+        let b = store.get_session(&id_b).await.unwrap().unwrap();
+        assert_eq!(b.status, SessionStatus::Finished);
+        let c = store.get_session(&id_c).await.unwrap().unwrap();
+        assert_eq!(c.status, SessionStatus::Killed);
+        let d = store.get_session(&id_d).await.unwrap().unwrap();
+        assert_eq!(d.status, SessionStatus::Lost);
+    }
+
+    #[tokio::test]
+    async fn test_idle_status_roundtrip() {
+        let store = test_store().await;
+        let session = make_session("idle-test");
+        store.insert_session(&session).await.unwrap();
+
+        store
+            .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Idle);
     }
 }

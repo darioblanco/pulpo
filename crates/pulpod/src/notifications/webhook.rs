@@ -145,11 +145,11 @@ mod tests {
 
     #[test]
     fn test_build_payload_contains_all_fields() {
-        let event = test_event("running");
+        let event = test_event("active");
         let payload = build_webhook_payload(&event);
         assert_eq!(payload["session_id"], "abc-123");
         assert_eq!(payload["session_name"], "my-session");
-        assert_eq!(payload["status"], "running");
+        assert_eq!(payload["status"], "active");
         assert_eq!(payload["node_name"], "node-1");
         assert_eq!(payload["timestamp"], "2026-01-01T00:00:00Z");
     }
@@ -157,13 +157,13 @@ mod tests {
     #[test]
     fn test_build_payload_with_optionals() {
         let event = SessionEvent {
-            previous_status: Some("stale".into()),
+            previous_status: Some("lost".into()),
             output_snippet: Some("hello".into()),
             waiting_for_input: Some(true),
-            ..test_event("running")
+            ..test_event("active")
         };
         let payload = build_webhook_payload(&event);
-        assert_eq!(payload["previous_status"], "stale");
+        assert_eq!(payload["previous_status"], "lost");
         assert_eq!(payload["output_snippet"], "hello");
         assert_eq!(payload["waiting_for_input"], true);
     }
@@ -204,19 +204,19 @@ mod tests {
     #[test]
     fn test_should_notify_empty_filter_allows_all() {
         let config = test_config();
-        assert!(should_notify(&config, "running"));
-        assert!(should_notify(&config, "dead"));
+        assert!(should_notify(&config, "active"));
+        assert!(should_notify(&config, "killed"));
     }
 
     #[test]
     fn test_should_notify_with_filter() {
         let config = WebhookEndpointConfig {
-            events: vec!["completed".into(), "dead".into()],
+            events: vec!["finished".into(), "killed".into()],
             ..test_config()
         };
-        assert!(!should_notify(&config, "running"));
-        assert!(should_notify(&config, "dead"));
-        assert!(should_notify(&config, "completed"));
+        assert!(!should_notify(&config, "active"));
+        assert!(should_notify(&config, "killed"));
+        assert!(should_notify(&config, "finished"));
     }
 
     // --- WebhookNotifier tests ---
@@ -257,13 +257,13 @@ mod tests {
             ..test_config()
         };
         let notifier = WebhookNotifier::new(config);
-        let result = notifier.send(&test_event("running")).await;
+        let result = notifier.send(&test_event("active")).await;
         assert!(result.is_ok());
 
         let headers = captured_headers.lock().await;
         let has_event = headers
             .iter()
-            .any(|(k, v)| k == "x-pulpo-event" && v == "running");
+            .any(|(k, v)| k == "x-pulpo-event" && v == "active");
         let has_sig = headers.iter().any(|(k, _)| k == "x-pulpo-signature");
         drop(headers);
         assert!(has_event, "Missing X-Pulpo-Event header");
@@ -295,7 +295,7 @@ mod tests {
             ..test_config()
         };
         let notifier = WebhookNotifier::new(config);
-        let result = notifier.send(&test_event("running")).await;
+        let result = notifier.send(&test_event("active")).await;
         assert!(result.is_ok());
 
         let sig = captured_headers
@@ -326,7 +326,7 @@ mod tests {
             ..test_config()
         };
         let notifier = WebhookNotifier::new(config);
-        let result = notifier.send(&test_event("running")).await;
+        let result = notifier.send(&test_event("active")).await;
         assert!(result.is_err());
     }
 
@@ -368,7 +368,7 @@ mod tests {
     #[tokio::test]
     async fn test_notification_loop_filtered_event() {
         let config = WebhookEndpointConfig {
-            events: vec!["dead".into()],
+            events: vec!["killed".into()],
             ..test_config()
         };
         let notifier = WebhookNotifier::new(config);
@@ -376,7 +376,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         event_tx
-            .send(PulpoEvent::Session(test_event("running")))
+            .send(PulpoEvent::Session(test_event("active")))
             .unwrap();
 
         let handle = tokio::spawn(run_notification_loop(notifier, rx, shutdown_rx));
@@ -401,7 +401,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         event_tx
-            .send(PulpoEvent::Session(test_event("running")))
+            .send(PulpoEvent::Session(test_event("active")))
             .unwrap();
 
         let handle = tokio::spawn(run_notification_loop(notifier, rx, shutdown_rx));
@@ -418,7 +418,7 @@ mod tests {
     #[tokio::test]
     async fn test_notification_loop_lagged() {
         let config = WebhookEndpointConfig {
-            events: vec!["dead".into()],
+            events: vec!["killed".into()],
             ..test_config()
         };
         let notifier = WebhookNotifier::new(config);
@@ -429,7 +429,7 @@ mod tests {
             let _ = event_tx.send(PulpoEvent::Session(SessionEvent {
                 session_id: format!("id-{i}"),
                 session_name: "s".into(),
-                status: "running".into(),
+                status: "active".into(),
                 previous_status: None,
                 node_name: "n".into(),
                 output_snippet: None,

@@ -77,7 +77,7 @@ describe('AppSidebar', () => {
     renderSidebar();
     const dots = screen.getAllByTestId('connection-dot');
     expect(dots.length).toBeGreaterThanOrEqual(1);
-    // Not connected by default — should show dead color
-    expect(dots[0].className).toContain('bg-status-dead');
+    // Not connected by default — should show killed color
+    expect(dots[0].className).toContain('bg-status-killed');
   });
 });

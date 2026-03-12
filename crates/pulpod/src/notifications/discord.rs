@@ -35,18 +35,18 @@ struct DiscordPayload {
 
 /// Returns the Discord embed color for a given session status.
 ///
-/// - running  → green  (`0x2ecc71`)
-/// - completed → blue  (`0x3498db`)
-/// - dead     → red    (`0xe74c3c`)
-/// - stale    → orange (`0xe67e22`)
+/// - active   → green  (`0x2ecc71`)
+/// - finished → blue   (`0x3498db`)
+/// - killed   → red    (`0xe74c3c`)
+/// - lost     → orange (`0xe67e22`)
 /// - other    → gray   (`0x95a5a6`)
 pub const fn status_color(status: &str) -> u32 {
     // const fn can't use match on &str, so use byte comparison
     match status.as_bytes() {
-        b"running" => 0x2e_cc71,
-        b"completed" => 0x34_98db,
-        b"dead" => 0xe7_4c3c,
-        b"stale" => 0xe6_7e22,
+        b"active" => 0x2e_cc71,
+        b"finished" => 0x34_98db,
+        b"killed" => 0xe7_4c3c,
+        b"lost" => 0xe6_7e22,
         _ => 0x95_a5a6,
     }
 }
@@ -190,22 +190,22 @@ mod tests {
 
     #[test]
     fn test_status_color_running() {
-        assert_eq!(status_color("running"), 0x2e_cc71);
+        assert_eq!(status_color("active"), 0x2e_cc71);
     }
 
     #[test]
     fn test_status_color_completed() {
-        assert_eq!(status_color("completed"), 0x34_98db);
+        assert_eq!(status_color("finished"), 0x34_98db);
     }
 
     #[test]
     fn test_status_color_dead() {
-        assert_eq!(status_color("dead"), 0xe7_4c3c);
+        assert_eq!(status_color("killed"), 0xe7_4c3c);
     }
 
     #[test]
     fn test_status_color_stale() {
-        assert_eq!(status_color("stale"), 0xe6_7e22);
+        assert_eq!(status_color("lost"), 0xe6_7e22);
     }
 
     #[test]
@@ -222,28 +222,28 @@ mod tests {
             webhook_url: "https://example.com".into(),
             events: vec![],
         };
-        assert!(should_notify(&config, "running"));
-        assert!(should_notify(&config, "dead"));
-        assert!(should_notify(&config, "completed"));
+        assert!(should_notify(&config, "active"));
+        assert!(should_notify(&config, "killed"));
+        assert!(should_notify(&config, "finished"));
     }
 
     #[test]
     fn test_should_notify_with_filter() {
         let config = DiscordWebhookConfig {
             webhook_url: "https://example.com".into(),
-            events: vec!["completed".into(), "dead".into()],
+            events: vec!["finished".into(), "killed".into()],
         };
-        assert!(!should_notify(&config, "running"));
-        assert!(should_notify(&config, "dead"));
-        assert!(should_notify(&config, "completed"));
-        assert!(!should_notify(&config, "stale"));
+        assert!(!should_notify(&config, "active"));
+        assert!(should_notify(&config, "killed"));
+        assert!(should_notify(&config, "finished"));
+        assert!(!should_notify(&config, "lost"));
     }
 
     // --- build_discord_payload tests ---
 
     #[test]
     fn test_build_payload_basic() {
-        let event = test_event("running");
+        let event = test_event("active");
         let payload = build_discord_payload(&event);
 
         let embeds = payload["embeds"].as_array().unwrap();
@@ -257,7 +257,7 @@ mod tests {
         let fields = embed["fields"].as_array().unwrap();
         assert_eq!(fields.len(), 2); // Status + Node
         assert_eq!(fields[0]["name"], "Status");
-        assert_eq!(fields[0]["value"], "running");
+        assert_eq!(fields[0]["value"], "active");
         assert_eq!(fields[1]["name"], "Node");
         assert_eq!(fields[1]["value"], "node-1");
     }
@@ -266,7 +266,7 @@ mod tests {
     fn test_build_payload_with_previous_status() {
         let event = SessionEvent {
             previous_status: Some("creating".into()),
-            ..test_event("running")
+            ..test_event("active")
         };
         let payload = build_discord_payload(&event);
 
@@ -280,7 +280,7 @@ mod tests {
     fn test_build_payload_with_output_snippet() {
         let event = SessionEvent {
             output_snippet: Some("hello world".into()),
-            ..test_event("completed")
+            ..test_event("finished")
         };
         let payload = build_discord_payload(&event);
 
@@ -294,9 +294,9 @@ mod tests {
     #[test]
     fn test_build_payload_with_all_optionals() {
         let event = SessionEvent {
-            previous_status: Some("stale".into()),
+            previous_status: Some("lost".into()),
             output_snippet: Some("output".into()),
-            ..test_event("running")
+            ..test_event("active")
         };
         let payload = build_discord_payload(&event);
 
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_build_payload_dead_color() {
-        let event = test_event("dead");
+        let event = test_event("killed");
         let payload = build_discord_payload(&event);
         assert_eq!(payload["embeds"][0]["color"], 0xe7_4c3c);
     }
@@ -350,7 +350,7 @@ mod tests {
             events: vec![],
         };
         let notifier = DiscordNotifier::new(config);
-        let result = notifier.send(&test_event("running")).await;
+        let result = notifier.send(&test_event("active")).await;
         assert!(result.is_ok());
     }
 
@@ -374,7 +374,7 @@ mod tests {
             events: vec![],
         };
         let notifier = DiscordNotifier::new(config);
-        let result = notifier.send(&test_event("running")).await;
+        let result = notifier.send(&test_event("active")).await;
         assert!(result.is_err());
     }
 
@@ -428,15 +428,15 @@ mod tests {
     async fn test_notification_loop_filtered_event() {
         let config = DiscordWebhookConfig {
             webhook_url: "https://example.com/webhook".into(),
-            events: vec!["dead".into()], // Only dead events
+            events: vec!["killed".into()], // Only dead events
         };
         let notifier = DiscordNotifier::new(config);
         let (event_tx, rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        // Send a "running" event — should be filtered out (won't attempt HTTP)
+        // Send an "active" event — should be filtered out (won't attempt HTTP)
         event_tx
-            .send(PulpoEvent::Session(test_event("running")))
+            .send(PulpoEvent::Session(test_event("active")))
             .unwrap();
 
         // Then shutdown
@@ -465,7 +465,7 @@ mod tests {
 
         // Send an event that passes the filter — will attempt HTTP and fail
         event_tx
-            .send(PulpoEvent::Session(test_event("running")))
+            .send(PulpoEvent::Session(test_event("active")))
             .unwrap();
 
         let handle = tokio::spawn(run_notification_loop(notifier, rx, shutdown_rx));
@@ -485,7 +485,7 @@ mod tests {
         // Filter everything so the loop doesn't attempt HTTP after processing lag
         let config = DiscordWebhookConfig {
             webhook_url: "https://example.com/webhook".into(),
-            events: vec!["dead".into()],
+            events: vec!["killed".into()],
         };
         let notifier = DiscordNotifier::new(config);
         // Tiny buffer to force lag
@@ -497,7 +497,7 @@ mod tests {
             let _ = event_tx.send(PulpoEvent::Session(SessionEvent {
                 session_id: format!("id-{i}"),
                 session_name: "s".into(),
-                status: "running".into(),
+                status: "active".into(),
                 previous_status: None,
                 node_name: "n".into(),
                 output_snippet: None,

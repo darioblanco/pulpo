@@ -9,7 +9,7 @@ function mockSession(overrides: Partial<Session> = {}): Session {
     workdir: '/code/repo',
     provider: 'claude',
     prompt: 'Fix the tests',
-    status: 'running',
+    status: 'active',
     mode: 'autonomous',
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
@@ -21,7 +21,7 @@ function mockEvent(overrides: Partial<SessionEvent> = {}): SessionEvent {
   return {
     session_id: 'abc-123',
     session_name: 'my-session',
-    status: 'running',
+    status: 'active',
     node_name: 'node-1',
     timestamp: '2026-01-01T00:00:00Z',
     ...overrides,
@@ -36,7 +36,7 @@ describe('sessionEmbed', () => {
     expect(json.title).toContain('my-session');
     expect(json.color).toBe(0x2ecc71);
     expect(json.fields).toBeDefined();
-    expect(json.fields!.some((f) => f.name === 'Status' && f.value === 'running')).toBe(true);
+    expect(json.fields!.some((f) => f.name === 'Status' && f.value === 'active')).toBe(true);
     expect(json.fields!.some((f) => f.name === 'Provider' && f.value === 'claude')).toBe(true);
     expect(json.fields!.some((f) => f.name === 'ID')).toBe(true);
     expect(json.fields!.some((f) => f.name === 'Prompt')).toBe(true);
@@ -64,10 +64,11 @@ describe('sessionEmbed', () => {
   });
 
   it('uses correct colors for different statuses', () => {
-    expect(sessionEmbed(mockSession({ status: 'running' })).toJSON().color).toBe(0x2ecc71);
-    expect(sessionEmbed(mockSession({ status: 'completed' })).toJSON().color).toBe(0x3498db);
-    expect(sessionEmbed(mockSession({ status: 'dead' })).toJSON().color).toBe(0xe74c3c);
-    expect(sessionEmbed(mockSession({ status: 'stale' })).toJSON().color).toBe(0xe67e22);
+    expect(sessionEmbed(mockSession({ status: 'active' })).toJSON().color).toBe(0x2ecc71);
+    expect(sessionEmbed(mockSession({ status: 'finished' })).toJSON().color).toBe(0x3498db);
+    expect(sessionEmbed(mockSession({ status: 'killed' })).toJSON().color).toBe(0xe74c3c);
+    expect(sessionEmbed(mockSession({ status: 'lost' })).toJSON().color).toBe(0xe67e22);
+    expect(sessionEmbed(mockSession({ status: 'idle' })).toJSON().color).toBe(0xf59e0b);
     expect(sessionEmbed(mockSession({ status: 'creating' })).toJSON().color).toBe(0x95a5a6);
     expect(sessionEmbed(mockSession({ status: 'unknown' })).toJSON().color).toBe(0x95a5a6);
   });
@@ -80,9 +81,9 @@ describe('eventEmbed', () => {
 
     expect(json.title).toContain('my-session');
     expect(json.description).toContain('abc-123');
-    expect(json.description).toContain('running');
+    expect(json.description).toContain('active');
     expect(json.color).toBe(0x2ecc71);
-    expect(json.fields!.some((f) => f.name === 'Status' && f.value === 'running')).toBe(true);
+    expect(json.fields!.some((f) => f.name === 'Status' && f.value === 'active')).toBe(true);
     expect(json.fields!.some((f) => f.name === 'Node' && f.value === 'node-1')).toBe(true);
   });
 
@@ -109,8 +110,8 @@ describe('eventEmbed', () => {
     expect(outputField!.value.length).toBeLessThan(1020);
   });
 
-  it('uses dead color for dead events', () => {
-    const embed = eventEmbed(mockEvent({ status: 'dead' }));
+  it('uses killed color for killed events', () => {
+    const embed = eventEmbed(mockEvent({ status: 'killed' }));
     expect(embed.toJSON().color).toBe(0xe74c3c);
   });
 });
@@ -152,15 +153,15 @@ describe('sessionListEmbed', () => {
 
   it('lists sessions with status emojis', () => {
     const sessions = [
-      mockSession({ name: 'session-1', status: 'running', provider: 'claude' }),
-      mockSession({ name: 'session-2', status: 'completed', provider: 'codex' }),
+      mockSession({ name: 'session-1', status: 'active', provider: 'claude' }),
+      mockSession({ name: 'session-2', status: 'finished', provider: 'codex' }),
     ];
     const embed = sessionListEmbed(sessions);
     const json = embed.toJSON();
     expect(json.description).toContain('session-1');
     expect(json.description).toContain('session-2');
-    expect(json.description).toContain('running');
-    expect(json.description).toContain('completed');
+    expect(json.description).toContain('active');
+    expect(json.description).toContain('finished');
   });
 
   it('truncates to 25 sessions and shows footer', () => {

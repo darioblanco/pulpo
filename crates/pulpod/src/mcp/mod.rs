@@ -66,7 +66,7 @@ pub struct SpawnSessionParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListSessionsParams {
-    /// Filter by status (creating, running, completed, dead, stale).
+    /// Filter by status (creating, active, finished, killed, lost).
     pub status: Option<String>,
     /// Filter by provider (claude, codex).
     pub provider: Option<String>,
@@ -403,7 +403,7 @@ impl PulpoMcp {
                 Ok(Some(session)) => {
                     let is_terminal = matches!(
                         session.status,
-                        SessionStatus::Completed | SessionStatus::Dead | SessionStatus::Stale
+                        SessionStatus::Finished | SessionStatus::Killed | SessionStatus::Lost
                     );
                     if is_terminal {
                         let output = self.fetch_output(session_id, node, output_lines).await;
@@ -573,7 +573,7 @@ impl PulpoMcp {
 
     #[tool(
         name = "list_sessions",
-        description = "List all agent sessions, optionally filtered by status (running, completed, dead, stale) or provider (claude, codex)."
+        description = "List all agent sessions, optionally filtered by status (active, finished, killed, lost) or provider (claude, codex)."
     )]
     async fn list_sessions(&self, Parameters(params): Parameters<ListSessionsParams>) -> String {
         let result = if self.is_local(params.node.as_deref()) {
@@ -623,7 +623,7 @@ impl PulpoMcp {
 
     #[tool(
         name = "kill_session",
-        description = "Kill a running session. Terminates the terminal process and marks the session as dead."
+        description = "Kill an active session. Terminates the terminal process and marks the session as killed."
     )]
     async fn kill_session(&self, Parameters(params): Parameters<KillSessionParams>) -> String {
         let result = if self.is_local(params.node.as_deref()) {
@@ -641,7 +641,7 @@ impl PulpoMcp {
 
     #[tool(
         name = "resume_session",
-        description = "Resume a stale session. Only works on sessions with 'stale' status. Re-creates the terminal with the original prompt and conversation context."
+        description = "Resume a lost session. Only works on sessions with 'lost' status. Re-creates the terminal with the original prompt and conversation context."
     )]
     async fn resume_session(&self, Parameters(params): Parameters<ResumeSessionParams>) -> String {
         let result = if self.is_local(params.node.as_deref()) {
@@ -685,7 +685,7 @@ impl PulpoMcp {
 
     #[tool(
         name = "send_input",
-        description = "Send text input to a running session's terminal. Use this to interact with interactive sessions or provide follow-up instructions."
+        description = "Send text input to an active session's terminal. Use this to interact with interactive sessions or provide follow-up instructions."
     )]
     async fn send_input(&self, Parameters(params): Parameters<SendInputParams>) -> String {
         if self.is_local(params.node.as_deref()) {
@@ -727,7 +727,7 @@ impl PulpoMcp {
 
     #[tool(
         name = "wait_for_session",
-        description = "Poll a session until it reaches a terminal status (completed, dead, stale) or times out. Returns the final session state, last output lines, and whether it timed out. Useful for autonomous workflows that need to wait for a session to finish."
+        description = "Poll a session until it reaches a terminal status (finished, killed, lost) or times out. Returns the final session state, last output lines, and whether it timed out. Useful for autonomous workflows that need to wait for a session to finish."
     )]
     async fn wait_for_session(
         &self,
@@ -1164,7 +1164,7 @@ mod tests {
         let result = mcp.spawn_session(Parameters(params)).await;
         // Name is auto-generated when not provided
         assert!(result.contains("\"name\":"));
-        assert!(result.contains("running"));
+        assert!(result.contains("active"));
     }
 
     #[tokio::test]
@@ -1185,7 +1185,7 @@ mod tests {
         };
         let result = mcp.spawn_session(Parameters(params)).await;
         assert!(result.contains("custom-name"));
-        assert!(result.contains("running"));
+        assert!(result.contains("active"));
     }
 
     #[tokio::test]
@@ -1255,7 +1255,7 @@ mod tests {
     async fn test_list_sessions_with_filters() {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = ListSessionsParams {
-            status: Some("running".into()),
+            status: Some("active".into()),
             provider: Some("claude".into()),
             node: None,
         };
@@ -1407,7 +1407,7 @@ mod tests {
             node: None,
         };
         let get_result = mcp.get_session(Parameters(get_params)).await;
-        assert!(get_result.contains("stale"));
+        assert!(get_result.contains("lost"));
 
         // Resume
         let params = ResumeSessionParams {
@@ -1418,7 +1418,7 @@ mod tests {
         // Backend still returns alive=false so create_session succeeds but
         // the resume itself may fail or succeed depending on backend
         // In our mock, create_session returns Ok so it should succeed
-        assert!(result.contains("running") || result.contains("Error"));
+        assert!(result.contains("active") || result.contains("Error"));
     }
 
     #[tokio::test]
@@ -1657,7 +1657,7 @@ mod tests {
         let result = mcp.wait_for_session(Parameters(params)).await;
         let wait: WaitResult = serde_json::from_str(&result).unwrap();
         assert!(!wait.timed_out);
-        assert_eq!(wait.session.status, SessionStatus::Stale);
+        assert_eq!(wait.session.status, SessionStatus::Lost);
     }
 
     #[tokio::test]
@@ -1853,7 +1853,7 @@ mod tests {
                 workdir: "/tmp".into(),
                 provider: Provider::Claude,
                 prompt: "test".into(),
-                status: SessionStatus::Completed,
+                status: SessionStatus::Finished,
                 mode: SessionMode::Interactive,
                 conversation_id: None,
                 exit_code: Some(0),
@@ -1920,9 +1920,9 @@ mod tests {
 
     #[test]
     fn test_list_sessions_params_deserialize() {
-        let json = r#"{"status":"running"}"#;
+        let json = r#"{"status":"active"}"#;
         let params: ListSessionsParams = serde_json::from_str(json).unwrap();
-        assert_eq!(params.status, Some("running".into()));
+        assert_eq!(params.status, Some("active".into()));
     }
 
     #[test]
@@ -1985,7 +1985,7 @@ mod tests {
                 workdir: "/tmp".into(),
                 provider: Provider::Claude,
                 prompt: "test".into(),
-                status: SessionStatus::Completed,
+                status: SessionStatus::Finished,
                 mode: SessionMode::Interactive,
                 conversation_id: None,
                 exit_code: None,
@@ -2218,7 +2218,7 @@ mod tests {
             workdir: "/tmp/remote".into(),
             provider: Provider::Claude,
             prompt: "remote test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -2251,7 +2251,7 @@ mod tests {
             workdir: "/tmp/remote".into(),
             provider: Provider::Claude,
             prompt: "done".into(),
-            status: SessionStatus::Completed,
+            status: SessionStatus::Finished,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: Some(0),
@@ -2434,7 +2434,7 @@ mod tests {
         let (addr, _session) = start_mock_remote_server().await;
         let mcp = test_mcp_with_remote(&addr).await;
         let params = ListSessionsParams {
-            status: Some("running".into()),
+            status: Some("active".into()),
             provider: None,
             node: Some("remote".into()),
         };
@@ -2448,7 +2448,7 @@ mod tests {
         let (addr, _session) = start_mock_remote_server().await;
         let mcp = test_mcp_with_remote(&addr).await;
         let params = ListSessionsParams {
-            status: Some("running".into()),
+            status: Some("active".into()),
             provider: Some("claude".into()),
             node: Some("remote".into()),
         };
@@ -2556,7 +2556,7 @@ mod tests {
         let result = mcp.wait_for_session(Parameters(params)).await;
         let wait: WaitResult = serde_json::from_str(&result).unwrap();
         assert!(!wait.timed_out);
-        assert_eq!(wait.session.status, SessionStatus::Completed);
+        assert_eq!(wait.session.status, SessionStatus::Finished);
         // Remote path returns empty output (line 484)
         assert!(wait.output.is_empty());
     }
@@ -2685,7 +2685,7 @@ mod tests {
         let result = mcp_clone.wait_for_session(Parameters(params)).await;
         let wait: WaitResult = serde_json::from_str(&result).unwrap();
         assert!(!wait.timed_out);
-        assert_eq!(wait.session.status, SessionStatus::Stale);
+        assert_eq!(wait.session.status, SessionStatus::Lost);
     }
 
     // -- ServerHandler list_resources / read_resource tests (lines 538-552) --
@@ -2800,7 +2800,7 @@ mod tests {
         let result = mcp.spawn_and_wait(Parameters(params)).await;
         let wait: WaitResult = serde_json::from_str(&result).unwrap();
         assert!(!wait.timed_out);
-        assert_eq!(wait.session.status, SessionStatus::Stale);
+        assert_eq!(wait.session.status, SessionStatus::Lost);
         assert!(wait.output.contains("test output"));
     }
 
@@ -2825,7 +2825,7 @@ mod tests {
         let result = mcp.spawn_and_wait(Parameters(params)).await;
         let wait: WaitResult = serde_json::from_str(&result).unwrap();
         assert!(wait.timed_out);
-        assert_eq!(wait.session.status, SessionStatus::Running);
+        assert_eq!(wait.session.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -3244,7 +3244,7 @@ mod tests {
             .poll_until_terminal(&session.id.to_string(), None, 5, 0, 100)
             .await;
         let (s, output, timed_out) = result.unwrap();
-        assert_eq!(s.status, SessionStatus::Stale);
+        assert_eq!(s.status, SessionStatus::Lost);
         assert!(!timed_out);
         assert!(output.contains("test output"));
     }
@@ -3433,7 +3433,7 @@ mod tests {
         let result = mcp.spawn_and_wait(Parameters(params)).await;
         let wait: WaitResult = serde_json::from_str(&result).unwrap();
         assert!(!wait.timed_out);
-        assert_eq!(wait.session.status, SessionStatus::Completed);
+        assert_eq!(wait.session.status, SessionStatus::Finished);
         // Remote returns empty output
         assert!(wait.output.is_empty());
     }

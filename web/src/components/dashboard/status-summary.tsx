@@ -5,25 +5,22 @@ interface StatusSummaryProps {
 }
 
 export function StatusSummary({ sessions }: StatusSummaryProps) {
-  const running = sessions.filter((s) => s.status === 'running' || s.status === 'creating').length;
-  const stale = sessions.filter((s) => s.status === 'stale').length;
-  const completed = sessions.filter((s) => s.status === 'completed').length;
-  const dead = sessions.filter((s) => s.status === 'dead').length;
+  const active = sessions.filter((s) => s.status === 'active' || s.status === 'creating').length;
+  const idle = sessions.filter((s) => s.status === 'idle').length;
+  const lost = sessions.filter((s) => s.status === 'lost').length;
+  const finished = sessions.filter((s) => s.status === 'finished').length;
+  const killed = sessions.filter((s) => s.status === 'killed').length;
 
   return (
     <div
       data-testid="status-summary"
       className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm"
     >
-      <StatusDot color="bg-status-running" label="running" count={running} testId="count-running" />
-      <StatusDot color="bg-status-stale" label="stale" count={stale} testId="count-stale" />
-      <StatusDot
-        color="bg-status-completed"
-        label="done"
-        count={completed}
-        testId="count-completed"
-      />
-      <StatusDot color="bg-status-dead" label="dead" count={dead} testId="count-dead" />
+      <StatusDot color="bg-status-active" label="active" count={active} testId="count-active" />
+      <StatusDot color="bg-status-idle" label="idle" count={idle} testId="count-idle" />
+      <StatusDot color="bg-status-lost" label="lost" count={lost} testId="count-lost" />
+      <StatusDot color="bg-status-finished" label="done" count={finished} testId="count-finished" />
+      <StatusDot color="bg-status-killed" label="killed" count={killed} testId="count-killed" />
     </div>
   );
 }

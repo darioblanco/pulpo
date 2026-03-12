@@ -27,8 +27,8 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
   const [interventionEvents, setInterventionEvents] = useState<InterventionEvent[]>([]);
   const [interventionsExpanded, setInterventionsExpanded] = useState(false);
 
-  const canKill = session.status === 'running' || session.status === 'stale';
-  const canResume = session.status === 'stale';
+  const canKill = session.status === 'active' || session.status === 'lost';
+  const canResume = session.status === 'lost';
 
   async function handleKill() {
     try {
@@ -70,7 +70,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
               <button
                 data-testid="btn-kill"
                 type="button"
-                title={canKill ? 'Kill session' : 'Session not running'}
+                title={canKill ? 'Kill session' : 'Session not active'}
                 disabled={!canKill}
                 className={`h-3 w-3 rounded-full ${canKill ? 'bg-[#ff5f57] hover:brightness-110 cursor-pointer' : 'bg-[#ff5f57]/30'}`}
               />
@@ -79,7 +79,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
               <AlertDialogHeader>
                 <AlertDialogTitle>Kill session "{session.name}"?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This will terminate the session and stop the running agent. This action cannot be
+                  This will terminate the session and stop the active agent. This action cannot be
                   undone.
                 </AlertDialogDescription>
               </AlertDialogHeader>
@@ -141,7 +141,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
               {session.guard_config.unrestricted ? 'unrestricted' : 'restricted'}
             </Badge>
           )}
-          {session.status === 'dead' && session.intervention_reason && (
+          {session.status === 'killed' && session.intervention_reason && (
             <Badge
               data-testid="intervention-badge"
               variant="destructive"
@@ -187,15 +187,15 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
       {/* Expanded body */}
       {expanded && (
         <div className="bg-[#0a1628]">
-          {session.status === 'running' && <TerminalView sessionId={session.id} />}
+          {session.status === 'active' && <TerminalView sessionId={session.id} />}
 
-          {(session.status === 'stale' ||
-            session.status === 'completed' ||
-            session.status === 'dead') && (
+          {(session.status === 'lost' ||
+            session.status === 'finished' ||
+            session.status === 'killed') && (
             <OutputView sessionId={session.id} sessionStatus={session.status} />
           )}
 
-          {session.status === 'dead' && session.intervention_reason && (
+          {session.status === 'killed' && session.intervention_reason && (
             <div className="mx-3 mb-2 rounded-md border border-destructive/30 p-3">
               <p className="mb-1 text-sm font-medium text-destructive">
                 Intervention: {session.intervention_reason}

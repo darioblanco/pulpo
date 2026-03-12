@@ -226,7 +226,7 @@ mod tests {
         let req = UpdateNotificationsRequest {
             discord: Some(DiscordWebhookUpdateRequest {
                 webhook_url: "https://discord.com/api/webhooks/test".into(),
-                events: vec!["running".into(), "dead".into()],
+                events: vec!["active".into(), "killed".into()],
             }),
             webhooks: None,
         };
@@ -235,7 +235,7 @@ mod tests {
             .unwrap();
         let discord = resp.discord.as_ref().unwrap();
         assert_eq!(discord.webhook_url, "https://discord.com/api/webhooks/test");
-        assert_eq!(discord.events, vec!["running", "dead"]);
+        assert_eq!(discord.events, vec!["active", "killed"]);
 
         // Verify persisted
         let Json(current) = get_notifications(State(state)).await.unwrap();
@@ -277,7 +277,7 @@ mod tests {
                 WebhookEndpointUpdateRequest {
                     name: "ci-hook".into(),
                     url: "https://example.com/hook".into(),
-                    events: vec!["completed".into()],
+                    events: vec!["finished".into()],
                     secret: Some("s3cret".into()),
                 },
                 WebhookEndpointUpdateRequest {
@@ -318,7 +318,7 @@ mod tests {
             webhooks: Some(vec![WebhookEndpointUpdateRequest {
                 name: "new".into(),
                 url: "https://new.com".into(),
-                events: vec!["dead".into()],
+                events: vec!["killed".into()],
                 secret: None,
             }]),
         };
@@ -367,7 +367,7 @@ mod tests {
         let req = UpdateNotificationsRequest {
             discord: Some(DiscordWebhookUpdateRequest {
                 webhook_url: "https://discord.com/api/webhooks/save-test".into(),
-                events: vec!["running".into()],
+                events: vec!["active".into()],
             }),
             webhooks: None,
         };
@@ -394,7 +394,7 @@ mod tests {
         let config = crate::config::NotificationsConfig {
             discord: Some(crate::config::DiscordWebhookConfig {
                 webhook_url: "https://test.com".into(),
-                events: vec!["dead".into()],
+                events: vec!["killed".into()],
             }),
             webhooks: vec![crate::config::WebhookEndpointConfig {
                 name: "hook".into(),
@@ -406,7 +406,7 @@ mod tests {
         let resp = to_response(&config);
         let d = resp.discord.unwrap();
         assert_eq!(d.webhook_url, "https://test.com");
-        assert_eq!(d.events, vec!["dead"]);
+        assert_eq!(d.events, vec!["killed"]);
         assert_eq!(resp.webhooks.len(), 1);
         assert!(resp.webhooks[0].has_secret);
     }

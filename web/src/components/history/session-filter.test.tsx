@@ -6,8 +6,8 @@ describe('SessionFilter', () => {
   it('renders search input and filter chips', () => {
     render(<SessionFilter onFilter={vi.fn()} />);
     expect(screen.getByTestId('search-input')).toBeInTheDocument();
-    expect(screen.getByTestId('status-chip-completed')).toBeInTheDocument();
-    expect(screen.getByTestId('status-chip-dead')).toBeInTheDocument();
+    expect(screen.getByTestId('status-chip-finished')).toBeInTheDocument();
+    expect(screen.getByTestId('status-chip-killed')).toBeInTheDocument();
     expect(screen.getByTestId('provider-chip-claude')).toBeInTheDocument();
     expect(screen.getByTestId('provider-chip-codex')).toBeInTheDocument();
   });
@@ -39,13 +39,13 @@ describe('SessionFilter', () => {
   it('toggles status chip on click', () => {
     const onFilter = vi.fn();
     render(<SessionFilter onFilter={onFilter} />);
-    const chip = screen.getByTestId('status-chip-completed');
+    const chip = screen.getByTestId('status-chip-finished');
     expect(chip).toHaveAttribute('aria-pressed', 'false');
     fireEvent.click(chip);
     expect(chip).toHaveAttribute('aria-pressed', 'true');
     expect(onFilter).toHaveBeenCalledWith({
       search: undefined,
-      status: 'completed',
+      status: 'finished',
       provider: undefined,
     });
   });
@@ -53,7 +53,7 @@ describe('SessionFilter', () => {
   it('deactivates status chip on second click', () => {
     const onFilter = vi.fn();
     render(<SessionFilter onFilter={onFilter} />);
-    const chip = screen.getByTestId('status-chip-completed');
+    const chip = screen.getByTestId('status-chip-finished');
     fireEvent.click(chip);
     fireEvent.click(chip);
     expect(chip).toHaveAttribute('aria-pressed', 'false');
@@ -94,10 +94,10 @@ describe('SessionFilter', () => {
 
   it('accepts custom status and provider options', () => {
     render(
-      <SessionFilter onFilter={vi.fn()} statusOptions={['running']} providerOptions={['codex']} />,
+      <SessionFilter onFilter={vi.fn()} statusOptions={['active']} providerOptions={['codex']} />,
     );
-    expect(screen.getByTestId('status-chip-running')).toBeInTheDocument();
+    expect(screen.getByTestId('status-chip-active')).toBeInTheDocument();
     expect(screen.getByTestId('provider-chip-codex')).toBeInTheDocument();
-    expect(screen.queryByTestId('status-chip-completed')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('status-chip-finished')).not.toBeInTheDocument();
   });
 });

@@ -114,7 +114,7 @@ mod tests {
         let event = PulpoEvent::Session(SessionEvent {
             session_id: "id-1".into(),
             session_name: "test-session".into(),
-            status: "running".into(),
+            status: "active".into(),
             previous_status: Some("creating".into()),
             node_name: "test".into(),
             output_snippet: None,
@@ -124,7 +124,7 @@ mod tests {
         state.event_tx.send(event.clone()).unwrap();
         let received = rx.recv().await.unwrap();
         assert!(
-            matches!(&received, PulpoEvent::Session(se) if se.session_id == "id-1" && se.status == "running")
+            matches!(&received, PulpoEvent::Session(se) if se.session_id == "id-1" && se.status == "active")
         );
     }
 
@@ -133,7 +133,7 @@ mod tests {
         let event = PulpoEvent::Session(SessionEvent {
             session_id: "id-1".into(),
             session_name: "test-session".into(),
-            status: "running".into(),
+            status: "active".into(),
             previous_status: None,
             node_name: "test".into(),
             output_snippet: None,
@@ -168,7 +168,7 @@ mod tests {
             let _ = tx.send(PulpoEvent::Session(SessionEvent {
                 session_id: format!("id-{i}"),
                 session_name: "s".into(),
-                status: "running".into(),
+                status: "active".into(),
                 previous_status: None,
                 node_name: "n".into(),
                 output_snippet: None,

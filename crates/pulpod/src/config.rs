@@ -1771,7 +1771,7 @@ data_dir = "/tmp/test"
 
 [notifications.discord]
 webhook_url = "https://discord.com/api/webhooks/123/abc"
-events = ["completed", "dead"]
+events = ["finished", "killed"]
 "#,
         )
         .unwrap();
@@ -1781,7 +1781,7 @@ events = ["completed", "dead"]
             discord.webhook_url,
             "https://discord.com/api/webhooks/123/abc"
         );
-        assert_eq!(discord.events, vec!["completed", "dead"]);
+        assert_eq!(discord.events, vec!["finished", "killed"]);
     }
 
     #[test]
@@ -1830,7 +1830,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
             notifications: NotificationsConfig {
                 discord: Some(DiscordWebhookConfig {
                     webhook_url: "https://discord.com/api/webhooks/789/xyz".into(),
-                    events: vec!["dead".into()],
+                    events: vec!["killed".into()],
                 }),
                 webhooks: vec![],
             },
@@ -1843,7 +1843,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
             discord.webhook_url,
             "https://discord.com/api/webhooks/789/xyz"
         );
-        assert_eq!(discord.events, vec!["dead"]);
+        assert_eq!(discord.events, vec!["killed"]);
     }
 
     #[test]
@@ -1869,7 +1869,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
     fn test_discord_webhook_config_debug_clone() {
         let config = DiscordWebhookConfig {
             webhook_url: "url".into(),
-            events: vec!["dead".into()],
+            events: vec!["killed".into()],
         };
         let cloned = config.clone();
         assert_eq!(format!("{config:?}"), format!("{cloned:?}"));
@@ -1886,7 +1886,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
         let config = WebhookEndpointConfig {
             name: "hook".into(),
             url: "https://example.com".into(),
-            events: vec!["dead".into()],
+            events: vec!["killed".into()],
             secret: Some("key".into()),
         };
         let cloned = config.clone();
@@ -1898,14 +1898,14 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
         let config = WebhookEndpointConfig {
             name: "ci".into(),
             url: "https://ci.example.com/hook".into(),
-            events: vec!["completed".into()],
+            events: vec!["finished".into()],
             secret: Some("s3cret".into()),
         };
         let toml_str = toml::to_string(&config).unwrap();
         let parsed: WebhookEndpointConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.name, "ci");
         assert_eq!(parsed.url, "https://ci.example.com/hook");
-        assert_eq!(parsed.events, vec!["completed"]);
+        assert_eq!(parsed.events, vec!["finished"]);
         assert_eq!(parsed.secret, Some("s3cret".into()));
     }
 
@@ -1937,7 +1937,7 @@ url = "https://example.com"
                 webhooks: vec![WebhookEndpointConfig {
                     name: "test-hook".into(),
                     url: "https://example.com/hook".into(),
-                    events: vec!["dead".into()],
+                    events: vec!["killed".into()],
                     secret: Some("key".into()),
                 }],
             },
@@ -1949,7 +1949,7 @@ url = "https://example.com"
         let wh = &loaded.notifications.webhooks[0];
         assert_eq!(wh.name, "test-hook");
         assert_eq!(wh.url, "https://example.com/hook");
-        assert_eq!(wh.events, vec!["dead"]);
+        assert_eq!(wh.events, vec!["killed"]);
         assert_eq!(wh.secret, Some("key".into()));
     }
 

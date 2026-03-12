@@ -221,13 +221,13 @@ impl SessionManager {
             .create_session(&backend_id, &session.workdir, &command)
         {
             self.store
-                .update_session_status(&id.to_string(), SessionStatus::Dead)
+                .update_session_status(&id.to_string(), SessionStatus::Killed)
                 .await?;
             return Err(e);
         }
 
         self.store
-            .update_session_status(&id.to_string(), SessionStatus::Running)
+            .update_session_status(&id.to_string(), SessionStatus::Active)
             .await?;
 
         // Set up output logging
@@ -238,7 +238,7 @@ impl SessionManager {
 
         // Return the session with updated status (avoids unnecessary re-fetch)
         let mut session = session;
-        session.status = SessionStatus::Running;
+        session.status = SessionStatus::Active;
         session.updated_at = Utc::now();
         self.emit_event(&session, Some(SessionStatus::Creating));
         Ok((session, warnings))
@@ -380,7 +380,7 @@ impl SessionManager {
         match session {
             Some(mut s) => {
                 if self.check_and_mark_stale(&mut s).await? {
-                    self.emit_event(&s, Some(SessionStatus::Running));
+                    self.emit_event(&s, Some(SessionStatus::Active));
                 }
                 Ok(Some(s))
             }
@@ -410,7 +410,7 @@ impl SessionManager {
     /// Check if a running session is still alive; if not, mark it stale.
     /// Returns `Ok(true)` if the session was transitioned to stale.
     async fn check_and_mark_stale(&self, session: &mut Session) -> Result<bool> {
-        if session.status != SessionStatus::Running {
+        if session.status != SessionStatus::Active {
             return Ok(false);
         }
         let backend_id = self.resolve_backend_id(session);
@@ -419,9 +419,9 @@ impl SessionManager {
             return Ok(false);
         }
         self.store
-            .update_session_status(&session.id.to_string(), SessionStatus::Stale)
+            .update_session_status(&session.id.to_string(), SessionStatus::Lost)
             .await?;
-        session.status = SessionStatus::Stale;
+        session.status = SessionStatus::Lost;
         self.extract_and_store_culture(session).await;
         Ok(true)
     }
@@ -441,10 +441,10 @@ impl SessionManager {
         let previous = session.status;
         let session_id = session.id.to_string();
         self.store
-            .update_session_status(&session_id, SessionStatus::Dead)
+            .update_session_status(&session_id, SessionStatus::Killed)
             .await?;
         let mut dead_session = session;
-        dead_session.status = SessionStatus::Dead;
+        dead_session.status = SessionStatus::Killed;
         self.extract_and_store_culture(&dead_session).await;
         self.emit_event(&dead_session, Some(previous));
         Ok(())
@@ -458,7 +458,7 @@ impl SessionManager {
             .ok_or_else(|| anyhow!("session not found: {id}"))?;
 
         match session.status {
-            SessionStatus::Running | SessionStatus::Creating => {
+            SessionStatus::Active | SessionStatus::Creating => {
                 bail!(
                     "cannot delete session in '{}' state — kill it first",
                     session.status
@@ -500,7 +500,7 @@ impl SessionManager {
             .await?
             .ok_or_else(|| anyhow!("session not found: {id}"))?;
 
-        if session.status != SessionStatus::Stale {
+        if session.status != SessionStatus::Lost {
             bail!("session is not stale (status: {})", session.status);
         }
 
@@ -536,13 +536,13 @@ impl SessionManager {
 
         let session_id = session.id.to_string();
         self.store
-            .update_session_status(&session_id, SessionStatus::Running)
+            .update_session_status(&session_id, SessionStatus::Active)
             .await?;
 
         let mut session = session;
-        session.status = SessionStatus::Running;
+        session.status = SessionStatus::Active;
         session.updated_at = Utc::now();
-        self.emit_event(&session, Some(SessionStatus::Stale));
+        self.emit_event(&session, Some(SessionStatus::Lost));
         Ok(session)
     }
 
@@ -1081,7 +1081,7 @@ mod tests {
         assert_eq!(session.name.split('-').count(), 2);
         assert_eq!(session.provider, Provider::Claude);
         assert_eq!(session.mode, SessionMode::Interactive);
-        assert_eq!(session.status, SessionStatus::Running);
+        assert_eq!(session.status, SessionStatus::Active);
         assert_eq!(session.workdir, "/tmp");
         assert_eq!(session.prompt, "Fix the bug");
         // MockBackend.session_id() returns just the name
@@ -1458,7 +1458,7 @@ mod tests {
         // Session should be marked Dead in store
         let sessions = mgr.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].status, SessionStatus::Dead);
+        assert_eq!(sessions[0].status, SessionStatus::Killed);
     }
 
     #[tokio::test]
@@ -1471,7 +1471,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Running);
+        assert_eq!(fetched.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -1484,7 +1484,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stale);
+        assert_eq!(fetched.status, SessionStatus::Lost);
     }
 
     #[tokio::test]
@@ -1503,7 +1503,7 @@ mod tests {
         assert_eq!(sessions.len(), 1);
         // is_alive returns false, so Running → Stale
         assert_eq!(sessions[0].id, s1.id);
-        assert_eq!(sessions[0].status, SessionStatus::Stale);
+        assert_eq!(sessions[0].status, SessionStatus::Lost);
     }
 
     #[tokio::test]
@@ -1518,7 +1518,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
+        assert_eq!(fetched.status, SessionStatus::Killed);
     }
 
     #[tokio::test]
@@ -1697,13 +1697,13 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stale);
+        assert_eq!(fetched.status, SessionStatus::Lost);
 
         // Now resume it — backend session is still alive, so it should skip create_session
         *backend.alive.lock().unwrap() = true;
         backend.calls.lock().unwrap().clear();
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Running);
+        assert_eq!(resumed.status, SessionStatus::Active);
 
         // Verify create_session was NOT called (backend session already exists)
         let calls: Vec<_> = backend.calls.lock().unwrap().clone();
@@ -1728,7 +1728,7 @@ mod tests {
         // Resume while backend session is dead — should recreate
         backend.calls.lock().unwrap().clear();
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Running);
+        assert_eq!(resumed.status, SessionStatus::Active);
 
         // Verify create_session WAS called
         let calls: Vec<_> = backend.calls.lock().unwrap().clone();
@@ -1774,7 +1774,7 @@ mod tests {
 
         // Resume
         let resumed = mgr.resume_session(&id).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Running);
+        assert_eq!(resumed.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -1789,7 +1789,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,
@@ -1816,12 +1816,12 @@ mod tests {
         mgr.store().insert_session(&session).await.unwrap();
         // Mark stale
         mgr.store()
-            .update_session_status(&id.to_string(), SessionStatus::Stale)
+            .update_session_status(&id.to_string(), SessionStatus::Lost)
             .await
             .unwrap();
 
         let resumed = mgr.resume_session(&id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Running);
+        assert_eq!(resumed.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -2214,7 +2214,7 @@ mod tests {
         let _ = mgr.create_session(make_req("filter-test")).await.unwrap().0;
 
         let query = pulpo_common::api::ListSessionsQuery {
-            status: Some("running".into()),
+            status: Some("active".into()),
             ..Default::default()
         };
         let sessions = mgr.list_sessions_filtered(&query).await.unwrap();
@@ -2227,7 +2227,7 @@ mod tests {
         let _ = mgr.create_session(make_req("filter-test")).await.unwrap().0;
 
         let query = pulpo_common::api::ListSessionsQuery {
-            status: Some("completed".into()),
+            status: Some("finished".into()),
             ..Default::default()
         };
         let sessions = mgr.list_sessions_filtered(&query).await.unwrap();
@@ -2246,7 +2246,7 @@ mod tests {
         let query = pulpo_common::api::ListSessionsQuery::default();
         let sessions = mgr.list_sessions_filtered(&query).await.unwrap();
         assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].status, SessionStatus::Stale);
+        assert_eq!(sessions[0].status, SessionStatus::Lost);
     }
 
     #[tokio::test]
@@ -2650,7 +2650,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: Provider::Claude,
             prompt: "fix bug".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,
@@ -2678,7 +2678,7 @@ mod tests {
         mgr.emit_event(&session, Some(SessionStatus::Creating));
         let event = unwrap_session_event(rx.recv().await.unwrap());
         assert_eq!(event.session_name, "test-session");
-        assert_eq!(event.status, "running");
+        assert_eq!(event.status, "active");
         assert_eq!(event.previous_status, Some("creating".into()));
         assert_eq!(event.node_name, "node-1");
         assert_eq!(event.output_snippet, Some("output".into()));
@@ -2694,7 +2694,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: Provider::Claude,
             prompt: "p".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,
@@ -2729,7 +2729,7 @@ mod tests {
 
         let _ = mgr.create_session(make_req("do it")).await.unwrap();
         let event = unwrap_session_event(rx.recv().await.unwrap());
-        assert_eq!(event.status, "running");
+        assert_eq!(event.status, "active");
         assert_eq!(event.previous_status, Some("creating".into()));
     }
 
@@ -2745,8 +2745,8 @@ mod tests {
 
         mgr.kill_session(&session.id.to_string()).await.unwrap();
         let event = unwrap_session_event(rx.recv().await.unwrap());
-        assert_eq!(event.status, "dead");
-        assert_eq!(event.previous_status, Some("running".into()));
+        assert_eq!(event.status, "killed");
+        assert_eq!(event.previous_status, Some("active".into()));
     }
 
     #[tokio::test]
@@ -2756,7 +2756,7 @@ mod tests {
         let (tx, mut rx) = broadcast::channel(16);
         let mgr = mgr.with_event_tx(tx, "n".into());
 
-        // Insert a session that appears "running" in DB
+        // Insert a session that appears "active" in DB
         let req = CreateSessionRequest {
             mode: Some(SessionMode::Interactive),
             ..make_req("test")
@@ -2773,11 +2773,11 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stale);
+        assert_eq!(fetched.status, SessionStatus::Lost);
 
         let event = unwrap_session_event(rx.recv().await.unwrap());
-        assert_eq!(event.status, "stale");
-        assert_eq!(event.previous_status, Some("running".into()));
+        assert_eq!(event.status, "lost");
+        assert_eq!(event.previous_status, Some("active".into()));
     }
 
     #[tokio::test]
@@ -2796,11 +2796,11 @@ mod tests {
         // Now resume — but we need the backend to succeed on create_session
         // The MockBackend already has create_result = Ok, and is_alive doesn't matter for resume
         let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Running);
+        assert_eq!(resumed.status, SessionStatus::Active);
 
         let event = unwrap_session_event(rx.recv().await.unwrap());
-        assert_eq!(event.status, "running");
-        assert_eq!(event.previous_status, Some("stale".into()));
+        assert_eq!(event.status, "active");
+        assert_eq!(event.previous_status, Some("lost".into()));
     }
 
     #[tokio::test]
@@ -2814,7 +2814,7 @@ mod tests {
         // emit_event should not panic even with no subscribers
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         // Just verify the session was created successfully (emit silently failed)
-        assert_eq!(session.status, SessionStatus::Running);
+        assert_eq!(session.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -2838,8 +2838,8 @@ mod tests {
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
 
-        // Manually set status to Completed
-        sqlx::query("UPDATE sessions SET status = 'completed' WHERE id = ?")
+        // Manually set status to Finished
+        sqlx::query("UPDATE sessions SET status = 'finished' WHERE id = ?")
             .bind(&id)
             .execute(&pool)
             .await
@@ -2855,8 +2855,8 @@ mod tests {
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
 
-        // Manually set status to Stale
-        sqlx::query("UPDATE sessions SET status = 'stale' WHERE id = ?")
+        // Manually set status to Lost
+        sqlx::query("UPDATE sessions SET status = 'lost' WHERE id = ?")
             .bind(&id)
             .execute(&pool)
             .await
@@ -3267,7 +3267,7 @@ mod tests {
 
         // Session should still be Running (not Dead)
         let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Running);
+        assert_eq!(fetched.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -3281,13 +3281,13 @@ mod tests {
         // First kill — succeeds
         mgr.kill_session(&id).await.unwrap();
         let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
+        assert_eq!(fetched.status, SessionStatus::Killed);
 
         // Second kill — backend kill called again, DB stays Dead
         backend.calls.lock().unwrap().clear();
         mgr.kill_session(&id).await.unwrap();
         let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
+        assert_eq!(fetched.status, SessionStatus::Killed);
 
         let has_kill = backend
             .calls
@@ -3307,13 +3307,13 @@ mod tests {
 
         // Mark stale via get_session
         let fetched = mgr.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stale);
+        assert_eq!(fetched.status, SessionStatus::Lost);
 
         // Kill the stale session — backend kill is still called (best-effort cleanup)
         backend.calls.lock().unwrap().clear();
         mgr.kill_session(&id).await.unwrap();
         let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
+        assert_eq!(fetched.status, SessionStatus::Killed);
     }
 
     #[tokio::test]
@@ -3335,7 +3335,7 @@ mod tests {
 
         // Session remains Stale (not Dead, not Running)
         let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stale);
+        assert_eq!(fetched.status, SessionStatus::Lost);
     }
 
     #[tokio::test]
@@ -3357,7 +3357,7 @@ mod tests {
 
         // Session must still be Stale
         let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Stale);
+        assert_eq!(fetched.status, SessionStatus::Lost);
     }
 
     #[tokio::test]
@@ -3372,7 +3372,7 @@ mod tests {
         let fetched = mgr.get_session(&id).await.unwrap().unwrap();
         assert_eq!(
             fetched.status,
-            SessionStatus::Stale,
+            SessionStatus::Lost,
             "Running session with dead backend should be reconciled to Stale"
         );
     }
@@ -3389,7 +3389,7 @@ mod tests {
         for s in &sessions {
             assert_eq!(
                 s.status,
-                SessionStatus::Stale,
+                SessionStatus::Lost,
                 "Session {} should be Stale after reconciliation",
                 s.name
             );
@@ -3408,8 +3408,8 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(db_s1.status, SessionStatus::Stale);
-        assert_eq!(db_s2.status, SessionStatus::Stale);
+        assert_eq!(db_s1.status, SessionStatus::Lost);
+        assert_eq!(db_s2.status, SessionStatus::Lost);
     }
 
     #[tokio::test]
@@ -3442,7 +3442,7 @@ mod tests {
 
         // Mark completed
         mgr.store
-            .update_session_status(&id, SessionStatus::Completed)
+            .update_session_status(&id, SessionStatus::Finished)
             .await
             .unwrap();
 
@@ -3480,6 +3480,6 @@ mod tests {
 
         // get_session on a Dead session should not transition it further
         let fetched = mgr.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
+        assert_eq!(fetched.status, SessionStatus::Killed);
     }
 }

@@ -87,20 +87,22 @@ impl FromStr for Provider {
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     Creating,
-    Running,
-    Completed,
-    Dead,
-    Stale,
+    Active,
+    Idle,
+    Finished,
+    Killed,
+    Lost,
 }
 
 impl fmt::Display for SessionStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Creating => write!(f, "creating"),
-            Self::Running => write!(f, "running"),
-            Self::Completed => write!(f, "completed"),
-            Self::Dead => write!(f, "dead"),
-            Self::Stale => write!(f, "stale"),
+            Self::Active => write!(f, "active"),
+            Self::Idle => write!(f, "idle"),
+            Self::Finished => write!(f, "finished"),
+            Self::Killed => write!(f, "killed"),
+            Self::Lost => write!(f, "lost"),
         }
     }
 }
@@ -111,10 +113,11 @@ impl FromStr for SessionStatus {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "creating" => Ok(Self::Creating),
-            "running" => Ok(Self::Running),
-            "completed" => Ok(Self::Completed),
-            "dead" => Ok(Self::Dead),
-            "stale" => Ok(Self::Stale),
+            "active" => Ok(Self::Active),
+            "idle" => Ok(Self::Idle),
+            "finished" => Ok(Self::Finished),
+            "killed" => Ok(Self::Killed),
+            "lost" => Ok(Self::Lost),
             other => Err(format!("unknown session status: {other}")),
         }
     }
@@ -193,7 +196,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "Fix the bug".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: Some("conv-123".into()),
             exit_code: None,
@@ -306,20 +309,24 @@ mod tests {
             "\"creating\""
         );
         assert_eq!(
-            serde_json::to_string(&SessionStatus::Running).unwrap(),
-            "\"running\""
+            serde_json::to_string(&SessionStatus::Active).unwrap(),
+            "\"active\""
         );
         assert_eq!(
-            serde_json::to_string(&SessionStatus::Completed).unwrap(),
-            "\"completed\""
+            serde_json::to_string(&SessionStatus::Idle).unwrap(),
+            "\"idle\""
         );
         assert_eq!(
-            serde_json::to_string(&SessionStatus::Dead).unwrap(),
-            "\"dead\""
+            serde_json::to_string(&SessionStatus::Finished).unwrap(),
+            "\"finished\""
         );
         assert_eq!(
-            serde_json::to_string(&SessionStatus::Stale).unwrap(),
-            "\"stale\""
+            serde_json::to_string(&SessionStatus::Killed).unwrap(),
+            "\"killed\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SessionStatus::Lost).unwrap(),
+            "\"lost\""
         );
     }
 
@@ -330,20 +337,24 @@ mod tests {
             SessionStatus::Creating
         );
         assert_eq!(
-            serde_json::from_str::<SessionStatus>("\"running\"").unwrap(),
-            SessionStatus::Running
+            serde_json::from_str::<SessionStatus>("\"active\"").unwrap(),
+            SessionStatus::Active
         );
         assert_eq!(
-            serde_json::from_str::<SessionStatus>("\"completed\"").unwrap(),
-            SessionStatus::Completed
+            serde_json::from_str::<SessionStatus>("\"idle\"").unwrap(),
+            SessionStatus::Idle
         );
         assert_eq!(
-            serde_json::from_str::<SessionStatus>("\"dead\"").unwrap(),
-            SessionStatus::Dead
+            serde_json::from_str::<SessionStatus>("\"finished\"").unwrap(),
+            SessionStatus::Finished
         );
         assert_eq!(
-            serde_json::from_str::<SessionStatus>("\"stale\"").unwrap(),
-            SessionStatus::Stale
+            serde_json::from_str::<SessionStatus>("\"killed\"").unwrap(),
+            SessionStatus::Killed
+        );
+        assert_eq!(
+            serde_json::from_str::<SessionStatus>("\"lost\"").unwrap(),
+            SessionStatus::Lost
         );
     }
 
@@ -355,10 +366,11 @@ mod tests {
     #[test]
     fn test_session_status_display() {
         assert_eq!(SessionStatus::Creating.to_string(), "creating");
-        assert_eq!(SessionStatus::Running.to_string(), "running");
-        assert_eq!(SessionStatus::Completed.to_string(), "completed");
-        assert_eq!(SessionStatus::Dead.to_string(), "dead");
-        assert_eq!(SessionStatus::Stale.to_string(), "stale");
+        assert_eq!(SessionStatus::Active.to_string(), "active");
+        assert_eq!(SessionStatus::Idle.to_string(), "idle");
+        assert_eq!(SessionStatus::Finished.to_string(), "finished");
+        assert_eq!(SessionStatus::Killed.to_string(), "killed");
+        assert_eq!(SessionStatus::Lost.to_string(), "lost");
     }
 
     #[test]
@@ -368,20 +380,24 @@ mod tests {
             SessionStatus::Creating
         );
         assert_eq!(
-            "running".parse::<SessionStatus>().unwrap(),
-            SessionStatus::Running
+            "active".parse::<SessionStatus>().unwrap(),
+            SessionStatus::Active
         );
         assert_eq!(
-            "completed".parse::<SessionStatus>().unwrap(),
-            SessionStatus::Completed
+            "idle".parse::<SessionStatus>().unwrap(),
+            SessionStatus::Idle
         );
         assert_eq!(
-            "dead".parse::<SessionStatus>().unwrap(),
-            SessionStatus::Dead
+            "finished".parse::<SessionStatus>().unwrap(),
+            SessionStatus::Finished
         );
         assert_eq!(
-            "stale".parse::<SessionStatus>().unwrap(),
-            SessionStatus::Stale
+            "killed".parse::<SessionStatus>().unwrap(),
+            SessionStatus::Killed
+        );
+        assert_eq!(
+            "lost".parse::<SessionStatus>().unwrap(),
+            SessionStatus::Lost
         );
     }
 
@@ -529,7 +545,7 @@ mod tests {
 
     #[test]
     fn test_session_status_clone_and_copy() {
-        let s = SessionStatus::Running;
+        let s = SessionStatus::Active;
         let s2 = s;
         #[allow(clippy::clone_on_copy)]
         let s3 = s.clone();
@@ -544,7 +560,7 @@ mod tests {
 
     #[test]
     fn test_session_status_debug() {
-        assert_eq!(format!("{:?}", SessionStatus::Running), "Running");
+        assert_eq!(format!("{:?}", SessionStatus::Active), "Active");
     }
 
     #[test]
@@ -555,7 +571,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -592,7 +608,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: Provider::Codex,
             prompt: "test".into(),
-            status: SessionStatus::Completed,
+            status: SessionStatus::Finished,
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: Some(0),
@@ -633,7 +649,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Autonomous,
             conversation_id: None,
             exit_code: None,

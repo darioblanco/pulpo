@@ -123,7 +123,7 @@ describe('CulturePage', () => {
     await switchToEntriesTab();
     await waitFor(() => {
       expect(
-        screen.getByText('No culture items yet. Culture is extracted from completed sessions.'),
+        screen.getByText('No culture items yet. Culture is extracted from finished sessions.'),
       ).toBeInTheDocument();
     });
   });

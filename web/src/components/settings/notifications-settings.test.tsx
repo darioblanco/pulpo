@@ -76,7 +76,7 @@ describe('NotificationsSettings', () => {
       <NotificationsSettings
         {...defaults}
         discordWebhookUrl="https://discord.com/api/webhooks/test"
-        discordEvents="session.created, session.completed"
+        discordEvents="session.created, session.finished"
       />,
     );
     fireEvent.click(screen.getByTestId('tab-discord'));
@@ -85,7 +85,7 @@ describe('NotificationsSettings', () => {
       'https://discord.com/api/webhooks/test',
     );
     expect(within(discordContent).getByLabelText('Events')).toHaveValue(
-      'session.created, session.completed',
+      'session.created, session.finished',
     );
   });
 
@@ -108,9 +108,9 @@ describe('NotificationsSettings', () => {
     fireEvent.click(screen.getByTestId('tab-discord'));
     const discordContent = screen.getByTestId('discord-content');
     fireEvent.change(within(discordContent).getByLabelText('Events'), {
-      target: { value: 'session.stale' },
+      target: { value: 'session.lost' },
     });
-    expect(onDiscordEventsChange).toHaveBeenCalledWith('session.stale');
+    expect(onDiscordEventsChange).toHaveBeenCalledWith('session.lost');
   });
 
   it('adds a webhook', () => {
@@ -189,13 +189,13 @@ describe('NotificationsSettings', () => {
     );
     const webhookSection = screen.getByTestId('webhook-0');
     fireEvent.change(within(webhookSection).getByLabelText('Events'), {
-      target: { value: 'dead, completed' },
+      target: { value: 'killed, finished' },
     });
     expect(onWebhooksChange).toHaveBeenCalledWith([
       {
         name: 'hook',
         url: 'https://a.com',
-        events: ['dead', 'completed'],
+        events: ['killed', 'finished'],
         has_secret: false,
         secret: '',
       },
@@ -248,7 +248,7 @@ describe('NotificationsSettings', () => {
           {
             name: 'ci-hook',
             url: 'https://ci.example.com',
-            events: ['dead'],
+            events: ['killed'],
             has_secret: true,
             secret: '',
           },

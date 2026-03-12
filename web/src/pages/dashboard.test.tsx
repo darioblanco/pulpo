@@ -244,7 +244,7 @@ describe('DashboardPage', () => {
         id: 'sess-1',
         name: 'running-task',
         provider: 'claude',
-        status: 'running',
+        status: 'active',
         prompt: 'Fix',
         mode: 'interactive',
         workdir: '/repo',
@@ -267,7 +267,7 @@ describe('DashboardPage', () => {
         id: 'sess-2',
         name: 'done-task',
         provider: 'claude',
-        status: 'completed',
+        status: 'finished',
         prompt: 'Done',
         mode: 'interactive',
         workdir: '/repo',
@@ -332,9 +332,9 @@ describe('DashboardPage', () => {
     const es = MockEventSource.instances[0];
     es.onopen?.();
 
-    // Active sessions should be filtered (only running, creating, stale)
+    // Active sessions should be filtered (only active, creating, idle, lost)
     await waitFor(() => {
-      expect(screen.getByTestId('count-running').textContent).toBe('1');
+      expect(screen.getByTestId('count-active').textContent).toBe('1');
     });
     // Only the running session shows on the local node card
     expect(screen.getByText('running-task')).toBeInTheDocument();
@@ -346,7 +346,7 @@ describe('DashboardPage', () => {
         id: 'sess-1',
         name: 'my-task',
         provider: 'claude',
-        status: 'running',
+        status: 'active',
         prompt: 'Fix',
         mode: 'interactive',
         workdir: '/repo',
@@ -413,17 +413,17 @@ describe('DashboardPage', () => {
 
     // Wait for initial sessions to load
     await waitFor(() => {
-      expect(screen.getByTestId('count-running').textContent).toBe('1');
+      expect(screen.getByTestId('count-active').textContent).toBe('1');
     });
 
-    // Now send a session event changing status to completed
+    // Now send a session event changing status to finished
     const sessionHandler = es.listeners['session']?.[0];
     expect(sessionHandler).toBeDefined();
     sessionHandler({
       data: JSON.stringify({
         session_id: 'sess-1',
         session_name: 'my-task',
-        status: 'completed',
+        status: 'finished',
         output_snippet: null,
         waiting_for_input: null,
       }),
@@ -431,7 +431,7 @@ describe('DashboardPage', () => {
 
     // The notification processing should fire (previousRef has length > 0)
     await waitFor(() => {
-      expect(screen.getByTestId('count-completed').textContent).toBe('1');
+      expect(screen.getByTestId('count-finished').textContent).toBe('1');
     });
   });
 

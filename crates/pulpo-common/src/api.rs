@@ -1114,14 +1114,14 @@ mod tests {
     #[test]
     fn test_list_sessions_query_debug() {
         let q = ListSessionsQuery {
-            status: Some("running".into()),
+            status: Some("active".into()),
             provider: None,
             search: None,
             sort: None,
             order: None,
         };
         let debug = format!("{q:?}");
-        assert!(debug.contains("running"));
+        assert!(debug.contains("active"));
     }
 
     #[test]
@@ -1242,7 +1242,7 @@ mod tests {
         let resp = WebhookEndpointConfigResponse {
             name: "ci-hook".into(),
             url: "https://example.com/hook".into(),
-            events: vec!["completed".into()],
+            events: vec!["finished".into()],
             has_secret: true,
         };
         let json = serde_json::to_string(&resp).unwrap();
@@ -1255,7 +1255,7 @@ mod tests {
         let original = WebhookEndpointConfigResponse {
             name: "hook".into(),
             url: "https://example.com".into(),
-            events: vec!["dead".into(), "running".into()],
+            events: vec!["killed".into(), "active".into()],
             has_secret: false,
         };
         let json = serde_json::to_string(&original).unwrap();
@@ -1282,11 +1282,11 @@ mod tests {
     #[test]
     fn test_webhook_endpoint_update_request_deserialize() {
         let json =
-            r#"{"name":"hook","url":"https://example.com","events":["dead"],"secret":"key"}"#;
+            r#"{"name":"hook","url":"https://example.com","events":["killed"],"secret":"key"}"#;
         let req: WebhookEndpointUpdateRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.name, "hook");
         assert_eq!(req.url, "https://example.com");
-        assert_eq!(req.events, vec!["dead"]);
+        assert_eq!(req.events, vec!["killed"]);
         assert_eq!(req.secret, Some("key".into()));
     }
 
@@ -1332,7 +1332,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: crate::session::Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1376,7 +1376,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: crate::session::Provider::OpenCode,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1420,7 +1420,7 @@ mod tests {
             workdir: "/tmp".into(),
             provider: crate::session::Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1760,11 +1760,11 @@ mod tests {
 
     #[test]
     fn test_update_notifications_request_deserialize() {
-        let json = r#"{"discord":{"webhook_url":"https://test.com","events":["dead"]}}"#;
+        let json = r#"{"discord":{"webhook_url":"https://test.com","events":["killed"]}}"#;
         let req: UpdateNotificationsRequest = serde_json::from_str(json).unwrap();
         let discord = req.discord.unwrap();
         assert_eq!(discord.webhook_url, "https://test.com");
-        assert_eq!(discord.events, vec!["dead"]);
+        assert_eq!(discord.events, vec!["killed"]);
         assert!(req.webhooks.is_none());
     }
 
@@ -1785,10 +1785,10 @@ mod tests {
 
     #[test]
     fn test_discord_webhook_update_request_deserialize() {
-        let json = r#"{"webhook_url":"https://test.com","events":["running","dead"]}"#;
+        let json = r#"{"webhook_url":"https://test.com","events":["active","killed"]}"#;
         let req: DiscordWebhookUpdateRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.webhook_url, "https://test.com");
-        assert_eq!(req.events, vec!["running", "dead"]);
+        assert_eq!(req.events, vec!["active", "killed"]);
     }
 
     #[test]

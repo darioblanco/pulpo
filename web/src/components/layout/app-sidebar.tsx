@@ -32,7 +32,7 @@ export function AppSidebar() {
           <span className="font-display text-lg font-semibold text-primary">pulpo</span>
           <span
             data-testid="connection-dot"
-            className={`h-2 w-2 rounded-full ${connected ? 'bg-status-completed' : 'bg-status-dead'}`}
+            className={`h-2 w-2 rounded-full ${connected ? 'bg-status-finished' : 'bg-status-killed'}`}
           />
         </div>
       </SidebarHeader>

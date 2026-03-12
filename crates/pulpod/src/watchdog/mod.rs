@@ -149,7 +149,7 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
 
     let running: Vec<_> = sessions
         .into_iter()
-        .filter(|s| s.status == SessionStatus::Running)
+        .filter(|s| s.status == SessionStatus::Active)
         .collect();
 
     if running.is_empty() {
@@ -240,7 +240,7 @@ async fn check_idle_sessions(backend: &Arc<dyn Backend>, store: &Store, idle_con
 
     let running: Vec<_> = sessions
         .into_iter()
-        .filter(|s| s.status == SessionStatus::Running)
+        .filter(|s| s.status == SessionStatus::Active)
         .collect();
 
     let now = chrono::Utc::now();
@@ -577,7 +577,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -610,7 +610,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -855,7 +855,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
+        assert_eq!(fetched.status, SessionStatus::Killed);
         assert!(fetched.intervention_reason.is_some());
         assert!(fetched.intervention_at.is_some());
         assert!(fetched.output_snapshot.is_some());
@@ -997,7 +997,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
+        assert_eq!(fetched.status, SessionStatus::Killed);
         assert!(fetched.intervention_reason.is_some());
         // No snapshot since capture failed
         assert!(fetched.output_snapshot.is_none());
@@ -1054,7 +1054,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Running);
+        assert_eq!(fetched.status, SessionStatus::Active);
         assert!(fetched.intervention_reason.is_none());
     }
 
@@ -1070,7 +1070,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1396,7 +1396,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1441,7 +1441,7 @@ mod tests {
             .unwrap();
         assert!(fetched.idle_since.is_some());
         // Session should still be running (alert mode doesn't kill)
-        assert_eq!(fetched.status, SessionStatus::Running);
+        assert_eq!(fetched.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -1455,7 +1455,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1497,7 +1497,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
+        assert_eq!(fetched.status, SessionStatus::Killed);
         assert!(fetched.intervention_reason.unwrap().contains("Idle"));
 
         // Kill should have been called
@@ -1522,7 +1522,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1564,7 +1564,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(fetched.idle_since.is_none());
-        assert_eq!(fetched.status, SessionStatus::Running);
+        assert_eq!(fetched.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -1579,7 +1579,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Completed,
+            status: SessionStatus::Finished,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: Some(0),
@@ -1620,7 +1620,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Completed);
+        assert_eq!(fetched.status, SessionStatus::Finished);
     }
 
     #[tokio::test]
@@ -1640,7 +1640,7 @@ mod tests {
 
         // Session should remain running — capture failed so idle check skipped
         let sessions = store.list_sessions().await.unwrap();
-        assert_eq!(sessions[0].status, SessionStatus::Running);
+        assert_eq!(sessions[0].status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -1655,7 +1655,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1712,7 +1712,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1754,7 +1754,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(fetched.idle_since.is_some());
-        assert_eq!(fetched.status, SessionStatus::Running);
+        assert_eq!(fetched.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -1768,7 +1768,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1809,7 +1809,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Running);
+        assert_eq!(fetched.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -1846,7 +1846,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1926,7 +1926,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -1998,7 +1998,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -2043,7 +2043,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -2083,7 +2083,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -2147,7 +2147,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -2212,7 +2212,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -2453,12 +2453,12 @@ mod tests {
 
         // success-session should be Dead with intervention reason
         let success = store.get_session("success-session").await.unwrap().unwrap();
-        assert_eq!(success.status, SessionStatus::Dead);
+        assert_eq!(success.status, SessionStatus::Killed);
         assert!(success.intervention_reason.is_some());
 
         // fail-session should remain Running (kill failed)
         let fail = store.get_session("fail-session").await.unwrap().unwrap();
-        assert_eq!(fail.status, SessionStatus::Running);
+        assert_eq!(fail.status, SessionStatus::Active);
         assert!(fail.intervention_reason.is_none());
     }
 
@@ -2471,7 +2471,7 @@ mod tests {
         let running = create_running_session(&store, "running-one").await;
         let stale = create_running_session(&store, "stale-one").await;
         store
-            .update_session_status(&stale.id.to_string(), SessionStatus::Stale)
+            .update_session_status(&stale.id.to_string(), SessionStatus::Lost)
             .await
             .unwrap();
 
@@ -2493,14 +2493,14 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(r.status, SessionStatus::Dead);
+        assert_eq!(r.status, SessionStatus::Killed);
 
         let s = store
             .get_session(&stale.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(s.status, SessionStatus::Stale);
+        assert_eq!(s.status, SessionStatus::Lost);
     }
 
     #[tokio::test]
@@ -2517,7 +2517,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             provider: Provider::Claude,
             prompt: "test".into(),
-            status: SessionStatus::Running,
+            status: SessionStatus::Active,
             mode: SessionMode::Interactive,
             conversation_id: None,
             exit_code: None,
@@ -2642,7 +2642,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Dead);
+        assert_eq!(fetched.status, SessionStatus::Killed);
     }
 
     #[tokio::test]

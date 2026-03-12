@@ -72,7 +72,7 @@ export function DashboardPage() {
       const changes = detectStatusChanges(previousSessionsRef.current, sessions);
       for (const change of changes) {
         const label =
-          change.to === 'completed' ? 'completed' : change.to === 'dead' ? 'died' : 'resumed';
+          change.to === 'finished' ? 'finished' : change.to === 'killed' ? 'killed' : 'resumed';
         toast(`${change.sessionName} ${label}`);
         showDesktopNotification(change);
       }
@@ -81,7 +81,11 @@ export function DashboardPage() {
   }, [sessions]);
 
   const activeSessions = sessions.filter(
-    (s) => s.status === 'creating' || s.status === 'running' || s.status === 'stale',
+    (s) =>
+      s.status === 'creating' ||
+      s.status === 'active' ||
+      s.status === 'idle' ||
+      s.status === 'lost',
   );
 
   const hasMultipleNodes = peers.length > 0;
@@ -108,7 +112,7 @@ export function DashboardPage() {
               <Tabs defaultValue="local" data-testid="node-tabs">
                 <TabsList>
                   <TabsTrigger value="local" data-testid="tab-local">
-                    <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-status-completed" />
+                    <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-status-finished" />
                     {localNode?.name ?? 'local'}
                     <span className="ml-1.5 text-xs text-muted-foreground">
                       ({activeSessions.length})
@@ -119,9 +123,9 @@ export function DashboardPage() {
                       <span
                         className={`mr-1.5 inline-block h-2 w-2 rounded-full ${
                           peer.status === 'online'
-                            ? 'bg-status-completed'
+                            ? 'bg-status-finished'
                             : peer.status === 'offline'
-                              ? 'bg-status-dead'
+                              ? 'bg-status-killed'
                               : 'bg-muted-foreground'
                         }`}
                       />

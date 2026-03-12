@@ -10,11 +10,12 @@
   --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
   --font-display: 'Space Grotesk', sans-serif;
 
-  --color-status-running: oklch(0.623 0.214 259.815);
-  --color-status-idle: oklch(0.795 0.184 86.047);
-  --color-status-completed: oklch(0.765 0.177 163.223);
-  --color-status-dead: oklch(0.704 0.191 22.216);
-  --color-status-stale: oklch(0.738 0.173 66.947);
+  --color-status-active: oklch(0.623 0.214 259.815);
+  --color-status-creating: oklch(0.795 0.184 86.047);
+  --color-status-finished: oklch(0.765 0.177 163.223);
+  --color-status-killed: oklch(0.704 0.191 22.216);
+  --color-status-lost: oklch(0.738 0.173 66.947);
+  --color-status-idle: oklch(0.738 0.173 66.947);
 
   --radius-sm: 0.625rem;
   --radius-md: 0.75rem;

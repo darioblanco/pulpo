@@ -5,11 +5,12 @@ import { deleteSession, downloadSessionOutput } from '@/api/client';
 import type { Session } from '@/api/types';
 
 const statusColors: Record<string, string> = {
-  completed: 'bg-status-completed',
-  dead: 'bg-status-dead',
-  running: 'bg-status-running',
-  stale: 'bg-status-stale',
-  creating: 'bg-status-idle',
+  finished: 'bg-status-finished',
+  killed: 'bg-status-killed',
+  active: 'bg-status-active',
+  lost: 'bg-status-lost',
+  creating: 'bg-status-creating',
+  idle: 'bg-status-idle',
 };
 
 interface SessionListProps {

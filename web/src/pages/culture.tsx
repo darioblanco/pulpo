@@ -152,7 +152,7 @@ export function CulturePage() {
               <p className="py-8 text-center text-destructive">{error}</p>
             ) : items.length === 0 ? (
               <p className="py-8 text-center text-muted-foreground">
-                No culture items yet. Culture is extracted from completed sessions.
+                No culture items yet. Culture is extracted from finished sessions.
               </p>
             ) : (
               <CultureList

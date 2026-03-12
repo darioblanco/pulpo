@@ -13,16 +13,17 @@ interface ProfileCardProps {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  running: '#a78bfa',
+  active: '#a78bfa',
   creating: '#60a5fa',
-  stale: '#fbbf24',
-  completed: '#34d399',
-  dead: '#f87171',
+  idle: '#fbbf24',
+  lost: '#fbbf24',
+  finished: '#34d399',
+  killed: '#f87171',
 };
 
-const ENDED_STATUSES = ['completed', 'dead'];
-const KILLABLE_STATUSES = ['running', 'creating'];
-const DELETABLE_STATUSES = ['completed', 'dead', 'stale'];
+const ENDED_STATUSES = ['finished', 'killed'];
+const KILLABLE_STATUSES = ['active', 'creating'];
+const DELETABLE_STATUSES = ['finished', 'killed', 'lost', 'idle'];
 
 function shortenModel(model: string): string {
   // e.g. "claude-sonnet-4-20250514" -> "sonnet-4"
@@ -62,7 +63,7 @@ export function ProfileCard({
 
   const duration = useMemo(() => {
     const dur = formatDuration(octopus.createdAt);
-    return isEnded ? `completed after ${dur}` : `running for ${dur}`;
+    return isEnded ? `finished after ${dur}` : `active for ${dur}`;
   }, [octopus.createdAt, isEnded]);
 
   const lastActive = useMemo(() => {
