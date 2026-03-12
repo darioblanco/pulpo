@@ -47,6 +47,13 @@ export interface SessionEvent {
   timestamp: string;
 }
 
+export interface CultureEvent {
+  action: string;
+  count: number;
+  node_name: string;
+  timestamp: string;
+}
+
 export class PulpodClient {
   private baseUrl: string;
   private token: string;
