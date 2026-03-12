@@ -94,16 +94,16 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
   - S3 — Finished detection: `[pulpo] Agent exited` marker detection, culture harvest on finish, resume from Finished (`5d4c1d2`)
   - S4 — Lost refinement: finished TTL cleanup, resume semantics (Lost + Finished allowed, Killed blocked) (`36ad150`)
   - S5 — Session lifecycle documentation: full state machine reference at `docs/operations/session-lifecycle.md`, SPEC.md updated
+- **Culture quality** (Q1–Q5 complete): validation, deduplication, and dynamic relevance
+  - Q1 — Content validation: reject low-quality entries (title 10-120 chars, body 30+ chars, no code-only, no title=body), good/bad examples in write-back instructions (`3835740`)
+  - Q2 — Deduplication: case-insensitive title similarity check, auto-supersede when new entry is longer (`5e2b66b`)
+  - Q3 — Clean compiled output: exclude stale/superseded entries from AGENTS.md, HTML comment with excluded count (`cd307bd`)
+  - Q4 — Dynamic relevance: age decay (0.1/month, capped at 6 months) + reference boost (0.05/ref, capped at 4), `reference_count` field (`abfc4b7`)
+  - Q5 — Robust pending format: optional YAML frontmatter for kind/supersedes/tags, graceful fallback (`95b55fa`)
 
-## What's Next: Culture Quality
+## What's Next
 
-With session lifecycle hardened, the next focus is improving what agents learn and share.
-
-### Culture quality improvements
-
-- Improve what agents write back (better prompts, validation, deduplication)
-- Culture effectiveness metrics: do agents with culture produce better results?
-- Automated culture pruning based on staleness and contradiction detection
+Culture effectiveness metrics and automated pruning. See Future Directions below.
 
 ## Future Directions
 
