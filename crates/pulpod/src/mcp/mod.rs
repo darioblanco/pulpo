@@ -1446,7 +1446,7 @@ mod tests {
         };
         let result = mcp.resume_session(Parameters(params)).await;
         assert!(result.contains("Error"));
-        assert!(result.contains("not stale"));
+        assert!(result.contains("cannot be resumed"));
     }
 
     #[tokio::test]

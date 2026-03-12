@@ -498,8 +498,9 @@ impl SessionManager {
             .await?
             .ok_or_else(|| anyhow!("session not found: {id}"))?;
 
-        if session.status != SessionStatus::Lost {
-            bail!("session is not stale (status: {})", session.status);
+        let previous_status = session.status;
+        if previous_status != SessionStatus::Lost && previous_status != SessionStatus::Finished {
+            bail!("session cannot be resumed (status: {previous_status})");
         }
 
         // If the backend session is still alive, just re-mark it as running.
@@ -540,7 +541,7 @@ impl SessionManager {
         let mut session = session;
         session.status = SessionStatus::Active;
         session.updated_at = Utc::now();
-        self.emit_event(&session, Some(SessionStatus::Lost));
+        self.emit_event(&session, Some(previous_status));
         Ok(session)
     }
 
@@ -1741,10 +1742,15 @@ mod tests {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
 
-        // Session is Running, not Stale
+        // Session is Active, not Lost/Finished
         let result = mgr.resume_session(&session.id.to_string()).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not stale"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot be resumed")
+        );
     }
 
     #[tokio::test]
@@ -3429,21 +3435,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resume_completed_session_fails() {
-        // A completed session (not stale) should not be resumable.
+    async fn test_resume_finished_session_succeeds() {
+        // A finished session should be resumable (restarts agent).
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
 
-        // Mark completed
+        // Mark finished
         mgr.store
             .update_session_status(&id, SessionStatus::Finished)
             .await
             .unwrap();
 
-        let result = mgr.resume_session(&id).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not stale"));
+        let resumed = mgr.resume_session(&id).await.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -3457,7 +3462,12 @@ mod tests {
 
         let result = mgr.resume_session(&id).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not stale"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot be resumed")
+        );
     }
 
     #[tokio::test]

@@ -156,7 +156,7 @@ pub async fn resume(
             let msg = e.to_string();
             if msg.contains("not found") {
                 (StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg }))
-            } else if msg.contains("not stale") {
+            } else if msg.contains("cannot be resumed") {
                 (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg }))
             } else {
                 internal_error(&msg)

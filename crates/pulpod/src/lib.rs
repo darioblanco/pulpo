@@ -230,12 +230,18 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                 breach_count = wd_runtime.breach_count,
                 "Starting memory watchdog"
             );
+            let finished_ctx = watchdog::FinishedContext {
+                event_tx: Some(event_tx.clone()),
+                node_name: node_name.clone(),
+                culture_repo: Some(culture_repo.clone()),
+            };
             tokio::spawn(watchdog::run_watchdog_loop(
                 watchdog_backend,
                 watchdog_store,
                 Box::new(reader),
                 wd_config_rx,
                 wd_shutdown_rx,
+                finished_ctx,
             ));
             shutdown_handle.add_sender(wd_shutdown_tx);
             Some(wd_config_tx)

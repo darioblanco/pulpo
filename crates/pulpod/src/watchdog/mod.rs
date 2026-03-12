@@ -4,13 +4,24 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use memory::{MemoryReader, MemorySnapshot};
+use pulpo_common::event::{PulpoEvent, SessionEvent};
 use pulpo_common::session::SessionStatus;
+use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
 use pulpo_common::session::{InterventionCode, Session};
 
 use crate::backend::Backend;
+use crate::culture::repo::CultureRepo;
 use crate::store::Store;
+
+/// The marker emitted by the agent wrapper when the agent process exits.
+const AGENT_EXIT_MARKER: &str = "[pulpo] Agent exited";
+
+/// Check if the terminal output contains the agent exit marker.
+pub fn detect_agent_exited(output: &str) -> bool {
+    output.contains(AGENT_EXIT_MARKER)
+}
 
 /// Resolve the backend session ID from a session, falling back to session name.
 fn resolve_backend_id(session: &Session, backend: &dyn Backend) -> String {
@@ -54,6 +65,14 @@ pub struct WatchdogRuntimeConfig {
     pub idle: IdleConfig,
 }
 
+/// Context for handling agent-finished transitions (culture harvest + events).
+#[cfg_attr(coverage, allow(dead_code))]
+pub struct FinishedContext {
+    pub event_tx: Option<broadcast::Sender<PulpoEvent>>,
+    pub node_name: String,
+    pub culture_repo: Option<CultureRepo>,
+}
+
 /// Runs the watchdog loop that monitors system memory and intervenes when sustained pressure
 /// is detected. Kills running sessions after `breach_count` consecutive checks above `threshold`.
 ///
@@ -64,6 +83,7 @@ pub async fn run_watchdog_loop(
     reader: Box<dyn MemoryReader>,
     config_rx: tokio::sync::watch::Receiver<WatchdogRuntimeConfig>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    finished_ctx: FinishedContext,
 ) {
     let initial = config_rx.borrow().clone();
     let mut current_interval = initial.interval;
@@ -125,9 +145,9 @@ pub async fn run_watchdog_loop(
                     }
                 }
 
-                // Idle detection runs on every tick, independent of memory checks
+                // Idle + finished detection runs on every tick, independent of memory checks
                 if cfg.idle.enabled {
-                    check_idle_sessions(&backend, &store, &cfg.idle).await;
+                    check_idle_sessions(&backend, &store, &cfg.idle, &finished_ctx).await;
                 }
             }
             _ = shutdown_rx.changed() => {
@@ -258,7 +278,12 @@ pub fn detect_waiting_for_input(output: &str) -> bool {
     false
 }
 
-async fn check_idle_sessions(backend: &Arc<dyn Backend>, store: &Store, idle_config: &IdleConfig) {
+async fn check_idle_sessions(
+    backend: &Arc<dyn Backend>,
+    store: &Store,
+    idle_config: &IdleConfig,
+    finished_ctx: &FinishedContext,
+) {
     let sessions = match store.list_sessions().await {
         Ok(s) => s,
         Err(e) => {
@@ -278,7 +303,16 @@ async fn check_idle_sessions(backend: &Arc<dyn Backend>, store: &Store, idle_con
         chrono::Duration::seconds(idle_config.timeout_secs.try_into().unwrap_or(i64::MAX));
 
     for session in &live {
-        check_session_idle(backend, store, idle_config, session, now, timeout).await;
+        check_session_idle(
+            backend,
+            store,
+            idle_config,
+            session,
+            now,
+            timeout,
+            finished_ctx,
+        )
+        .await;
     }
 }
 
@@ -289,6 +323,7 @@ async fn check_session_idle(
     session: &pulpo_common::session::Session,
     now: chrono::DateTime<chrono::Utc>,
     timeout: chrono::Duration,
+    finished_ctx: &FinishedContext,
 ) {
     // Capture current output to track activity
     let bid = resolve_backend_id(session, backend.as_ref());
@@ -302,6 +337,12 @@ async fn check_session_idle(
             return;
         }
     };
+
+    // Check for agent exit marker → transition to Finished
+    if detect_agent_exited(&current_output) {
+        handle_session_finished(store, session, finished_ctx).await;
+        return;
+    }
 
     // Update snapshot (conditionally sets last_output_at if content changed)
     if let Err(e) = store
@@ -339,6 +380,67 @@ async fn check_session_idle(
             return;
         }
         handle_idle_session(backend, store, idle_config, session, &bid, now, timeout).await;
+    }
+}
+
+/// Handle a session whose agent has exited: transition to Finished, emit event, harvest culture.
+async fn handle_session_finished(store: &Store, session: &Session, ctx: &FinishedContext) {
+    let previous = session.status;
+    info!(
+        session_name = %session.name,
+        "Agent exited, transitioning to finished"
+    );
+    if let Err(e) = store
+        .update_session_status(&session.id.to_string(), SessionStatus::Finished)
+        .await
+    {
+        warn!(
+            session_name = %session.name,
+            "Failed to transition to finished: {e}"
+        );
+        return;
+    }
+
+    // Emit SSE event
+    if let Some(tx) = &ctx.event_tx {
+        let event = SessionEvent {
+            session_id: session.id.to_string(),
+            session_name: session.name.clone(),
+            status: SessionStatus::Finished.to_string(),
+            previous_status: Some(previous.to_string()),
+            node_name: ctx.node_name.clone(),
+            output_snippet: session.output_snapshot.clone(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
+        let _ = tx.send(PulpoEvent::Session(event));
+    }
+
+    // Harvest culture (best-effort)
+    if let Some(repo) = &ctx.culture_repo {
+        match repo
+            .harvest_pending(
+                &session.name,
+                session.id,
+                &session.workdir,
+                session.ink.as_deref(),
+            )
+            .await
+        {
+            Ok(count) if count > 0 => {
+                debug!(
+                    session_id = %session.id,
+                    count,
+                    "Harvested culture from finished session"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    session_id = %session.id,
+                    "Failed to harvest culture from finished session: {e}"
+                );
+            }
+            _ => {}
+        }
     }
 }
 
@@ -585,6 +687,14 @@ mod tests {
         store
     }
 
+    fn test_finished_ctx() -> FinishedContext {
+        FinishedContext {
+            event_tx: None,
+            node_name: "test-node".into(),
+            culture_repo: None,
+        }
+    }
+
     async fn create_running_session(store: &Store, name: &str) -> Session {
         let session = Session {
             id: uuid::Uuid::new_v4(),
@@ -674,6 +784,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         // Let it run briefly then shutdown
@@ -717,6 +828,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         time::sleep(Duration::from_millis(50)).await;
@@ -766,6 +878,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -815,6 +928,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -880,6 +994,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -911,6 +1026,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         time::sleep(Duration::from_millis(50)).await;
@@ -958,6 +1074,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -1023,6 +1140,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -1108,6 +1226,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -1171,6 +1290,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         time::sleep(Duration::from_millis(100)).await;
@@ -1222,6 +1342,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -1410,7 +1531,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
         // Session should now have idle_since set
         let fetched = store
@@ -1467,7 +1588,7 @@ mod tests {
 
         let backend_clone = backend.clone();
         let dyn_backend: Arc<dyn Backend> = backend_clone;
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
         // Session should be dead with intervention reason
         let fetched = store
@@ -1532,7 +1653,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
         // idle_since should be cleared (output changed from "old output" to "test output")
         let fetched = store
@@ -1588,7 +1709,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
         // Session should remain completed
         let fetched = store
@@ -1612,7 +1733,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
         // Session should remain running — capture failed so idle check skipped
         let sessions = store.list_sessions().await.unwrap();
@@ -1663,7 +1784,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
         // Should NOT be marked idle (not enough time elapsed)
         let fetched = store
@@ -1719,7 +1840,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
         // idle_since should still be set (already marked, not re-marked)
         let fetched = store
@@ -1774,7 +1895,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
         // Session should remain running since kill failed
         let fetched = store
@@ -1804,7 +1925,7 @@ mod tests {
 
         let dyn_backend: Arc<dyn Backend> = backend;
         // Should not panic
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
     }
 
     #[tokio::test]
@@ -1851,7 +1972,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
         // Should be marked idle (created_at is used as fallback)
         let fetched = store
@@ -1882,7 +2003,7 @@ mod tests {
 
         let dyn_backend: Arc<dyn Backend> = backend;
         // Should not panic
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
     }
 
     #[tokio::test]
@@ -1944,6 +2065,7 @@ mod tests {
             Box::new(reader),
             make_config(90, Duration::from_millis(10), 3, idle_config),
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         time::sleep(Duration::from_millis(50)).await;
@@ -2214,7 +2336,16 @@ mod tests {
         let dyn_backend: Arc<dyn Backend> = backend;
 
         // Should use session.name for backend calls
-        check_session_idle(&dyn_backend, &store, &idle_config, &session, now, timeout).await;
+        check_session_idle(
+            &dyn_backend,
+            &store,
+            &idle_config,
+            &session,
+            now,
+            timeout,
+            &test_finished_ctx(),
+        )
+        .await;
 
         let fetched = store
             .get_session(&session.id.to_string())
@@ -2446,6 +2577,7 @@ mod tests {
             Box::new(reader),
             config_rx,
             shutdown_rx,
+            test_finished_ctx(),
         ));
 
         // Let it run a tick with high threshold — no intervention
@@ -2597,7 +2729,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
         let fetched = store
             .get_session(&session.id.to_string())
@@ -2652,7 +2784,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
         let fetched = store
             .get_session(&session.id.to_string())
@@ -2720,7 +2852,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend.clone();
-        check_idle_sessions(&dyn_backend, &store, &idle_config).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
         // Both Active and Idle sessions should have been processed
         let capture_count = backend.capture_calls.lock().unwrap().len();
@@ -2748,5 +2880,169 @@ mod tests {
                 .unwrap()
                 .contains(&"dead-one".to_string())
         );
+    }
+
+    // --- S3: Agent exit / Finished detection tests ---
+
+    #[test]
+    fn test_detect_agent_exited_present() {
+        let output = "doing work...\n[pulpo] Agent exited\n$ ";
+        assert!(detect_agent_exited(output));
+    }
+
+    #[test]
+    fn test_detect_agent_exited_absent() {
+        let output = "doing work...\nsome other output\n$ ";
+        assert!(!detect_agent_exited(output));
+    }
+
+    #[test]
+    fn test_detect_agent_exited_empty() {
+        assert!(!detect_agent_exited(""));
+    }
+
+    #[test]
+    fn test_detect_agent_exited_partial() {
+        // Should NOT match partial marker
+        assert!(!detect_agent_exited("[pulpo] Agent"));
+        assert!(!detect_agent_exited("Agent exited"));
+    }
+
+    #[tokio::test]
+    async fn test_finished_transition_on_agent_exit() {
+        // Backend returns output containing agent exit marker
+        let backend =
+            Arc::new(MockBackend::new().with_output("work done\n[pulpo] Agent exited\n$ "));
+        let store = test_store().await;
+        let session = create_running_session(&store, "finish-me").await;
+
+        let idle_config = IdleConfig {
+            enabled: true,
+            timeout_secs: 600,
+            action: IdleAction::Alert,
+        };
+
+        let dyn_backend: Arc<dyn Backend> = backend;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+
+        // Session should now be Finished
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Finished);
+    }
+
+    #[tokio::test]
+    async fn test_finished_transition_emits_event() {
+        let backend = Arc::new(MockBackend::new().with_output("done\n[pulpo] Agent exited\n$ "));
+        let store = test_store().await;
+        let session = create_running_session(&store, "event-me").await;
+
+        let (event_tx, mut event_rx) = broadcast::channel::<PulpoEvent>(16);
+        let ctx = FinishedContext {
+            event_tx: Some(event_tx),
+            node_name: "test-node".into(),
+            culture_repo: None,
+        };
+
+        let idle_config = IdleConfig {
+            enabled: true,
+            timeout_secs: 600,
+            action: IdleAction::Alert,
+        };
+
+        let dyn_backend: Arc<dyn Backend> = backend;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &ctx).await;
+
+        // Should have received a Finished event
+        let event = event_rx.try_recv().unwrap();
+        match event {
+            PulpoEvent::Session(se) => {
+                assert_eq!(se.session_id, session.id.to_string());
+                assert_eq!(se.status, "finished");
+                assert_eq!(se.previous_status, Some("active".into()));
+                assert_eq!(se.node_name, "test-node");
+            }
+            PulpoEvent::Culture(_) => panic!("Expected Session event"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_finished_skips_idle_logic() {
+        // If agent exited, session should NOT go through idle detection
+        let backend = Arc::new(MockBackend::new().with_output("[pulpo] Agent exited"));
+        let store = test_store().await;
+        let session = create_running_session(&store, "skip-idle").await;
+        // Set old last_output_at so it would normally trigger idle
+        store
+            .update_session_idle_since(&session.id.to_string())
+            .await
+            .unwrap();
+
+        let idle_config = IdleConfig {
+            enabled: true,
+            timeout_secs: 1, // very short, would trigger idle action
+            action: IdleAction::Kill,
+        };
+
+        let dyn_backend: Arc<dyn Backend> = backend;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+
+        // Should be Finished, NOT Killed
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Finished);
+    }
+
+    #[tokio::test]
+    async fn test_finished_from_idle_state() {
+        // An Idle session should also transition to Finished if agent exits
+        let backend =
+            Arc::new(MockBackend::new().with_output("waiting...\n[pulpo] Agent exited\n$ "));
+        let store = test_store().await;
+        let mut session = create_running_session(&store, "idle-to-finish").await;
+        // Mark as Idle first
+        store
+            .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+            .await
+            .unwrap();
+        session.status = SessionStatus::Idle;
+
+        let (event_tx, mut event_rx) = broadcast::channel::<PulpoEvent>(16);
+        let ctx = FinishedContext {
+            event_tx: Some(event_tx),
+            node_name: "n".into(),
+            culture_repo: None,
+        };
+
+        let idle_config = IdleConfig {
+            enabled: true,
+            timeout_secs: 600,
+            action: IdleAction::Alert,
+        };
+
+        let dyn_backend: Arc<dyn Backend> = backend;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &ctx).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Finished);
+
+        // Event should say previous was "idle"
+        let event = event_rx.try_recv().unwrap();
+        match event {
+            PulpoEvent::Session(se) => {
+                assert_eq!(se.previous_status, Some("idle".into()));
+            }
+            PulpoEvent::Culture(_) => panic!("Expected Session event"),
+        }
     }
 }
