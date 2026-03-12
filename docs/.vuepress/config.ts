@@ -6,7 +6,7 @@ export default defineUserConfig({
   lang: 'en-US',
   title: 'Pulpo Docs',
   description: 'Self-hosted control plane docs for coding agents',
-  base: '/pulpo/',
+  base: '/',
   theme: defaultTheme({
     logo: 'https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.png',
     repo: 'darioblanco/pulpo',
@@ -34,7 +34,10 @@ export default defineUserConfig({
         '/reference/api',
       ],
       '/architecture/': ['/architecture/overview'],
-      '/operations/': ['/operations/release-and-distribution'],
+      '/operations/': [
+        '/operations/session-lifecycle',
+        '/operations/release-and-distribution',
+      ],
     },
   }),
   bundler: viteBundler(),
