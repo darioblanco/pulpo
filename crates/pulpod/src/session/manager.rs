@@ -15,7 +15,6 @@ use tracing::{debug, warn};
 
 use crate::backend::Backend;
 use crate::config::{InkConfig, SessionDefaultsConfig};
-use crate::culture;
 use crate::culture::repo::CultureRepo;
 use crate::guard::check_capability_warnings;
 use crate::store::Store;
@@ -126,10 +125,8 @@ impl SessionManager {
     ) -> Result<(Session, Vec<String>)> {
         let mut req = self.apply_defaults(req);
         req = self.resolve_ink(req)?;
-        req = self.inject_culture_context(req);
         let workdir = req.workdir.clone().unwrap_or_default();
         validate_workdir(&workdir)?;
-        let prompt = req.prompt.clone().unwrap_or_default();
         let id = Uuid::new_v4();
         let provider = req.provider.unwrap_or(Provider::Claude);
 
@@ -139,7 +136,7 @@ impl SessionManager {
         }
         let mode = req.mode.unwrap_or_default();
         let guards = resolve_guard_config(&req, &self.default_guard);
-        let name = if let Some(n) = req.name {
+        let name = if let Some(n) = req.name.take() {
             n
         } else {
             let existing: std::collections::HashSet<String> = self
@@ -151,6 +148,9 @@ impl SessionManager {
                 .collect();
             super::names::generate_name(&|candidate| existing.contains(candidate))
         };
+        // Inject culture context after name is determined (write-back path uses session name)
+        req = self.inject_culture_context(req, &name);
+        let prompt = req.prompt.clone().unwrap_or_default();
         let backend_id = self.backend.session_id(&name);
         let mut spawn_params = build_spawn_params(
             &prompt,
@@ -326,7 +326,11 @@ impl SessionManager {
     /// Inject culture context into the request `prompt`/`system_prompt`.
     /// Reads the compiled AGENTS.md files (global + repo + ink scopes) and
     /// merges them into the session prompt, along with write-back instructions.
-    fn inject_culture_context(&self, mut req: CreateSessionRequest) -> CreateSessionRequest {
+    fn inject_culture_context(
+        &self,
+        mut req: CreateSessionRequest,
+        session_name: &str,
+    ) -> CreateSessionRequest {
         if !self.inject_culture {
             return req;
         }
@@ -340,7 +344,7 @@ impl SessionManager {
 
         let workdir = req.workdir.as_deref().unwrap_or_default();
         let root = repo.root().display().to_string();
-        let context = build_culture_context(repo, workdir, req.ink.as_deref(), &root);
+        let context = build_culture_context(repo, workdir, req.ink.as_deref(), &root, session_name);
 
         let provider = req.provider.unwrap_or(Provider::Claude);
         if crate::guard::provider_capabilities(provider).system_prompt {
@@ -539,22 +543,31 @@ impl SessionManager {
         let Some(repo) = &self.culture_repo else {
             return;
         };
-        let items = culture::extract(session);
-        for item in &items {
-            if let Err(e) = repo.save(item).await {
-                warn!(
+
+        // Harvest agent write-back from pending/ directory
+        match repo
+            .harvest_pending(
+                &session.name,
+                session.id,
+                &session.workdir,
+                session.ink.as_deref(),
+            )
+            .await
+        {
+            Ok(count) if count > 0 => {
+                debug!(
                     session_id = %session.id,
-                    kind = %item.kind,
-                    "Failed to store culture: {e}"
+                    count,
+                    "Harvested culture from session"
                 );
             }
-        }
-        if !items.is_empty() {
-            debug!(
-                session_id = %session.id,
-                count = items.len(),
-                "Extracted culture from session"
-            );
+            Err(e) => {
+                warn!(
+                    session_id = %session.id,
+                    "Failed to harvest culture: {e}"
+                );
+            }
+            _ => {}
         }
     }
 }
@@ -696,10 +709,11 @@ pub(crate) fn build_command(
 /// and merges them. Includes write-back instructions so the agent can contribute
 /// new learnings.
 fn build_culture_context(
-    repo: &culture::repo::CultureRepo,
+    repo: &CultureRepo,
     workdir: &str,
     ink: Option<&str>,
     repo_root: &str,
+    session_name: &str,
 ) -> String {
     use std::fmt::Write;
     let mut ctx = String::new();
@@ -759,7 +773,7 @@ fn build_culture_context(
         "## Write-back: share your learnings\n\n\
          When you finish your task, write any non-obvious learnings to:\n\n\
          ```\n\
-         {repo_root}/pending/<any-name>.md\n\
+         {repo_root}/pending/{session_name}.md\n\
          ```\n\n\
          Use this format:\n\n\
          ```markdown\n\
@@ -770,7 +784,7 @@ fn build_culture_context(
          ```\n\n\
          Guidelines:\n\
          - Only write things that are NOT obvious from the code itself\n\
-         - One learning per file (you can create multiple files)\n\
+         - One learning per file\n\
          - Skip this if you didn't discover anything non-obvious\n\
          - Pulpo will validate and merge your learnings into the culture repo automatically"
     );
@@ -2068,7 +2082,7 @@ mod tests {
         };
         let mut req = make_req("shell-culture-test");
         req.provider = Some(Provider::Shell);
-        let result = mgr.inject_culture_context(req);
+        let result = mgr.inject_culture_context(req, "test-session");
         // Shell sessions should skip culture injection
         assert_eq!(result.system_prompt, None);
     }
@@ -2772,7 +2786,7 @@ mod tests {
             .await
             .unwrap();
         let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root);
+        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root, "test-session");
         assert!(ctx.contains("No previous findings"));
         assert!(ctx.contains("pending/"));
         assert!(ctx.contains("Write-back"));
@@ -2798,7 +2812,7 @@ mod tests {
         .unwrap();
 
         let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root);
+        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root, "test-session");
         assert!(ctx.contains("[failure] Auth race condition"));
         assert!(ctx.contains("[summary] Uses pnpm not npm"));
         assert!(!ctx.contains("No previous findings"));
@@ -2811,7 +2825,8 @@ mod tests {
             .await
             .unwrap();
         let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/home/user/my-project", None, &root);
+        let ctx =
+            build_culture_context(&repo, "/home/user/my-project", None, &root, "test-session");
         assert!(ctx.contains(&root));
     }
 
@@ -2822,7 +2837,7 @@ mod tests {
             .await
             .unwrap();
         let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root);
+        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root, "test-session");
         assert!(ctx.contains("Write-back: share your learnings"));
         assert!(ctx.contains("pending/"));
         assert!(ctx.contains(".md"));
@@ -2831,15 +2846,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_build_culture_context_pending_path_uses_repo_root() {
+    async fn test_build_culture_context_pending_path_uses_session_name() {
         let tmpdir = tempfile::tempdir().unwrap();
         let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
             .await
             .unwrap();
         let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root);
-        // The pending path should reference the culture repo root
-        let expected = format!("{root}/pending/");
+        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root, "indigo-wave");
+        // The pending path should reference the culture repo root and session name
+        let expected = format!("{root}/pending/indigo-wave.md");
         assert!(ctx.contains(&expected));
     }
 
@@ -2874,7 +2889,7 @@ mod tests {
         repo.save(&ink_item).await.unwrap();
 
         let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/tmp/repo", Some("coder"), &root);
+        let ctx = build_culture_context(&repo, "/tmp/repo", Some("coder"), &root, "test-session");
 
         // Should contain all three scopes
         assert!(ctx.contains("Global culture"));
@@ -2917,7 +2932,7 @@ mod tests {
             node_name: String::new(),
         };
         let req = make_req("test");
-        let result = mgr.inject_culture_context(req);
+        let result = mgr.inject_culture_context(req, "test-session");
         // No modification when disabled
         assert_eq!(result.prompt.as_deref(), Some("test"));
         assert_eq!(result.system_prompt, None);
@@ -2938,7 +2953,7 @@ mod tests {
             node_name: String::new(),
         };
         let req = make_req("test");
-        let result = mgr.inject_culture_context(req);
+        let result = mgr.inject_culture_context(req, "test-session");
         assert_eq!(result.prompt.as_deref(), Some("test"));
         assert_eq!(result.system_prompt, None);
     }
@@ -2980,7 +2995,7 @@ mod tests {
         let mut req = make_req("test");
         req.provider = Some(Provider::Claude);
         req.workdir = Some("/tmp/repo".into());
-        let result = mgr.inject_culture_context(req);
+        let result = mgr.inject_culture_context(req, "test-session");
         // Claude: culture goes to system_prompt
         let sp = result.system_prompt.unwrap();
         assert!(sp.contains("DB needs migration"));
@@ -3016,7 +3031,7 @@ mod tests {
         let mut req = make_req("test");
         req.provider = Some(Provider::Codex);
         req.workdir = Some("/tmp/repo".into());
-        let result = mgr.inject_culture_context(req);
+        let result = mgr.inject_culture_context(req, "test-session");
         // Codex: culture prepended to prompt
         let prompt = result.prompt.as_ref().unwrap();
         assert!(prompt.starts_with("## Culture from previous sessions"));
@@ -3049,7 +3064,7 @@ mod tests {
         req.provider = Some(Provider::Claude);
         req.workdir = Some("/tmp/repo".into());
         req.system_prompt = Some("Be careful with auth module.".into());
-        let result = mgr.inject_culture_context(req);
+        let result = mgr.inject_culture_context(req, "test-session");
         let sp = result.system_prompt.unwrap();
         // Existing system prompt preserved, culture appended
         assert!(sp.starts_with("Be careful with auth module."));

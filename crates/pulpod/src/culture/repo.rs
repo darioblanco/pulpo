@@ -45,17 +45,25 @@ impl CultureRepo {
             run_git(&root, &["config", "user.name", "pulpo"]).await?;
         }
 
+        // Bootstrap: create pending/ directory for agent write-back
+        let pending_dir = root.join("pending");
+        std::fs::create_dir_all(&pending_dir)?;
+        let gitkeep = pending_dir.join(".gitkeep");
+        if !gitkeep.exists() {
+            std::fs::write(&gitkeep, "")?;
+        }
+
         // Bootstrap: write starter AGENTS.md if it doesn't exist
         let global_dir = root.join("culture");
         std::fs::create_dir_all(&global_dir)?;
         let agents_md = global_dir.join(AGENTS_MD_FILENAME);
         if !agents_md.exists() {
             std::fs::write(&agents_md, BOOTSTRAP_TEMPLATE)?;
-            // Stage and commit the bootstrap template
-            run_git(&root, &["add", "culture/AGENTS.md"]).await?;
+            // Stage and commit the bootstrap files
+            run_git(&root, &["add", "culture/AGENTS.md", "pending/.gitkeep"]).await?;
             run_git(
                 &root,
-                &["commit", "-m", "culture: bootstrap AGENTS.md template"],
+                &["commit", "-m", "culture: bootstrap AGENTS.md and pending/"],
             )
             .await?;
         }
@@ -497,6 +505,69 @@ impl CultureRepo {
         Ok(paths)
     }
 
+    /// Harvest a pending write-back file left by an agent session.
+    ///
+    /// Looks for `pending/{session_name}.md`, parses `# title` + body,
+    /// creates a Culture entry, saves it (which compiles AGENTS.md),
+    /// and deletes the pending file.
+    ///
+    /// Returns the number of entries harvested (0 or 1).
+    /// No pending file → 0 (no-op). Invalid file → 0 with warning.
+    pub async fn harvest_pending(
+        &self,
+        session_name: &str,
+        session_id: uuid::Uuid,
+        workdir: &str,
+        ink: Option<&str>,
+    ) -> Result<usize> {
+        let pending_path = self.root.join("pending").join(format!("{session_name}.md"));
+        if !pending_path.exists() {
+            debug!("no pending file for session {session_name}");
+            return Ok(0);
+        }
+
+        let content = std::fs::read_to_string(&pending_path)
+            .with_context(|| format!("read pending file for {session_name}"))?;
+
+        let Some((title, body)) = parse_pending_file(&content) else {
+            warn!("invalid pending file for session {session_name}, skipping");
+            // Clean up the invalid file
+            std::fs::remove_file(&pending_path)?;
+            return Ok(0);
+        };
+
+        let culture = Culture {
+            id: uuid::Uuid::new_v4(),
+            session_id,
+            kind: CultureKind::Summary,
+            scope_repo: if workdir.is_empty() {
+                None
+            } else {
+                Some(workdir.to_owned())
+            },
+            scope_ink: ink.map(ToOwned::to_owned),
+            title,
+            body,
+            tags: vec!["agent-written".into()],
+            relevance: 0.8,
+            created_at: chrono::Utc::now(),
+        };
+
+        self.save(&culture).await?;
+
+        // Delete the pending file after successful save
+        std::fs::remove_file(&pending_path)
+            .with_context(|| format!("delete pending file for {session_name}"))?;
+
+        // Stage the pending/ deletion and amend the save commit
+        run_git(&self.root, &["add", "pending/"]).await?;
+        run_git(&self.root, &["commit", "--amend", "--no-edit"]).await?;
+
+        self.fire_and_forget_push();
+
+        Ok(1)
+    }
+
     fn fire_and_forget_push(&self) {
         if self.remote.is_some() {
             let root = self.root.clone();
@@ -790,6 +861,38 @@ fn collect_culture_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Parse a pending write-back file into `(title, body)`.
+///
+/// Expected format:
+/// ```text
+/// # Short title describing the learning
+///
+/// Detailed explanation...
+/// ```
+///
+/// Returns `None` if the file doesn't have a valid `# title` line or has empty body.
+fn parse_pending_file(content: &str) -> Option<(String, String)> {
+    let content = content.trim();
+    if content.is_empty() {
+        return None;
+    }
+
+    // Find the first `# ` line (title)
+    let title_line = content.lines().find(|l| l.starts_with("# "))?;
+    let title = title_line.strip_prefix("# ")?.trim().to_owned();
+    if title.is_empty() {
+        return None;
+    }
+
+    // Body is everything after the title line
+    let after_title = content.split_once(title_line)?.1.trim().to_owned();
+    if after_title.is_empty() {
+        return None;
+    }
+
+    Some((title, after_title))
 }
 
 /// The filename used for compiled AGENTS.md files in each scope directory.
@@ -1731,6 +1834,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_init_creates_pending_directory() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let pending = repo.root().join("pending");
+        assert!(pending.is_dir());
+        assert!(pending.join(".gitkeep").exists());
+    }
+
+    #[tokio::test]
+    async fn test_init_pending_is_committed() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let log = run_git(repo.root(), &["log", "--oneline"]).await.unwrap();
+        assert!(log.contains("pending"));
+    }
+
+    #[tokio::test]
     async fn test_init_does_not_overwrite_existing_agents_md() {
         let tmpdir = tempfile::tempdir().unwrap();
         let data_dir = tmpdir.path().to_str().unwrap();
@@ -2030,8 +2156,9 @@ mod tests {
             paths.contains(&"culture/AGENTS.md"),
             "should list culture/AGENTS.md"
         );
-        // .git should be excluded
-        assert!(!paths.iter().any(|p| p.contains(".git")));
+        assert!(paths.contains(&"pending"), "should list pending dir");
+        // .git directory should be excluded (but .gitkeep files are fine)
+        assert!(!paths.iter().any(|p| *p == ".git" || p.starts_with(".git/")));
     }
 
     #[tokio::test]
@@ -2112,5 +2239,186 @@ mod tests {
         let result = repo.read_file("culture");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("directory"));
+    }
+
+    // ── parse_pending_file tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_parse_pending_file_valid() {
+        let content = "# Auth tokens expire silently\n\nThe OAuth refresh flow fails after 30 days\nbecause the token store doesn't handle rotation.";
+        let (title, body) = parse_pending_file(content).unwrap();
+        assert_eq!(title, "Auth tokens expire silently");
+        assert!(body.contains("OAuth refresh flow"));
+        assert!(body.contains("token store"));
+    }
+
+    #[test]
+    fn test_parse_pending_file_empty() {
+        assert!(parse_pending_file("").is_none());
+        assert!(parse_pending_file("   ").is_none());
+    }
+
+    #[test]
+    fn test_parse_pending_file_no_title() {
+        assert!(parse_pending_file("just some text without a heading").is_none());
+    }
+
+    #[test]
+    fn test_parse_pending_file_empty_title() {
+        assert!(parse_pending_file("# \n\nsome body").is_none());
+    }
+
+    #[test]
+    fn test_parse_pending_file_no_body() {
+        assert!(parse_pending_file("# Title only").is_none());
+    }
+
+    #[test]
+    fn test_parse_pending_file_with_leading_whitespace() {
+        let content = "\n\n# Trimmed title\n\nBody here.";
+        let (title, body) = parse_pending_file(content).unwrap();
+        assert_eq!(title, "Trimmed title");
+        assert_eq!(body, "Body here.");
+    }
+
+    // ── harvest_pending tests ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_harvest_pending_no_file() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let count = repo
+            .harvest_pending("nonexistent-session", Uuid::new_v4(), "/tmp/repo", None)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_harvest_pending_valid_file() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let session_id = Uuid::new_v4();
+        let pending_path = repo.root().join("pending").join("indigo-wave.md");
+        std::fs::write(
+            &pending_path,
+            "# Build requires nightly toolchain\n\nThe project uses unstable features that need nightly Rust.",
+        )
+        .unwrap();
+
+        let count = repo
+            .harvest_pending("indigo-wave", session_id, "/tmp/repo", Some("coder"))
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Pending file should be deleted
+        assert!(!pending_path.exists());
+
+        // Culture entry should be saved
+        let items = repo.list(None, None, None, None, None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Build requires nightly toolchain");
+        assert!(items[0].body.contains("unstable features"));
+        assert_eq!(items[0].session_id, session_id);
+        assert_eq!(items[0].scope_repo, Some("/tmp/repo".into()));
+        assert_eq!(items[0].scope_ink, Some("coder".into()));
+        assert_eq!(items[0].kind, CultureKind::Summary);
+        assert!((items[0].relevance - 0.8).abs() < f64::EPSILON);
+        assert!(items[0].tags.contains(&"agent-written".into()));
+    }
+
+    #[tokio::test]
+    async fn test_harvest_pending_invalid_file() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let pending_path = repo.root().join("pending").join("bad-session.md");
+        std::fs::write(&pending_path, "no title heading here").unwrap();
+
+        let count = repo
+            .harvest_pending("bad-session", Uuid::new_v4(), "/tmp/repo", None)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+
+        // Invalid file should still be cleaned up
+        assert!(!pending_path.exists());
+
+        // No culture entries should be created
+        let items = repo.list(None, None, None, None, None).unwrap();
+        assert!(items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_harvest_pending_creates_git_commit() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let pending_path = repo.root().join("pending").join("test-session.md");
+        std::fs::write(
+            &pending_path,
+            "# Git commit test\n\nVerify commits are made.",
+        )
+        .unwrap();
+
+        repo.harvest_pending("test-session", Uuid::new_v4(), "/tmp/repo", None)
+            .await
+            .unwrap();
+
+        let log = run_git(repo.root(), &["log", "--oneline"]).await.unwrap();
+        assert!(log.contains("culture:"));
+    }
+
+    #[tokio::test]
+    async fn test_harvest_pending_empty_workdir_sets_none_scope() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let pending_path = repo.root().join("pending").join("no-workdir.md");
+        std::fs::write(&pending_path, "# Global learning\n\nApplies everywhere.").unwrap();
+
+        repo.harvest_pending("no-workdir", Uuid::new_v4(), "", None)
+            .await
+            .unwrap();
+
+        let items = repo.list(None, None, None, None, None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert!(items[0].scope_repo.is_none());
+        assert!(items[0].scope_ink.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_harvest_pending_compiles_agents_md() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let pending_path = repo.root().join("pending").join("agents-test.md");
+        std::fs::write(
+            &pending_path,
+            "# AGENTS.md compilation\n\nShould appear in compiled output.",
+        )
+        .unwrap();
+
+        repo.harvest_pending("agents-test", Uuid::new_v4(), "/tmp/myrepo", None)
+            .await
+            .unwrap();
+
+        let agents_content = repo.read_agents_md("repos/myrepo").unwrap().unwrap();
+        assert!(agents_content.contains("AGENTS.md compilation"));
     }
 }

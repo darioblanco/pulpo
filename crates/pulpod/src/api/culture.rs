@@ -876,8 +876,9 @@ mod tests {
             paths.contains(&"culture/AGENTS.md"),
             "should list culture/AGENTS.md"
         );
-        // .git should be excluded
-        assert!(!paths.iter().any(|p| p.contains(".git")));
+        assert!(paths.contains(&"pending"), "should list pending dir");
+        // .git directory should be excluded (but .gitkeep files are fine)
+        assert!(!paths.iter().any(|p| *p == ".git" || p.starts_with(".git/")));
     }
 
     #[tokio::test]
