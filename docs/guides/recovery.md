@@ -1,31 +1,51 @@
 # Recovery Guide
 
-Session states:
+## Session States
 
-- `creating`
-- `running`
-- `completed`
-- `dead`
-- `stale`
+| State | Meaning | Terminal? |
+|-------|---------|-----------|
+| **Creating** | tmux session is being set up | No |
+| **Active** | Agent is working — terminal output is changing | No |
+| **Idle** | Agent needs attention — waiting for input or at its prompt | No |
+| **Finished** | Agent process exited — task is done | Yes (resumable) |
+| **Killed** | Session was terminated by user, watchdog, or TTL cleanup | Yes (not resumable) |
+| **Lost** | tmux process disappeared unexpectedly (crash, reboot) | Yes (resumable) |
 
-## Common recovery path
+## Common Recovery Path
 
 ```bash
 pulpo list
-pulpo resume <name>
-pulpo logs <name> --follow
+# my-api   lost   ...
+
+pulpo resume my-api
+pulpo logs my-api --follow
 ```
 
-Use `resume` only for `stale` sessions (record exists, backend session gone).
+`resume` works for **lost** (tmux gone after crash/reboot) and **finished** (agent exited normally) sessions. The agent is restarted with `--resume` to continue from its previous conversation.
 
-If state is `dead`, start a new session with `spawn`.
+**Killed** sessions cannot be resumed — start a new session with `pulpo spawn`.
+
+## Recovery After Daemon Restart
+
+When `pulpod` starts, it checks all previously active sessions:
+- If the tmux session is still alive → stays **active**
+- If the tmux session is gone → marked **lost**
+
+Lost sessions appear in `pulpo list` and can be resumed.
 
 ## Interventions
 
-Inspect intervention history:
+Inspect intervention history to understand why a session was killed:
 
 ```bash
 pulpo interventions <name>
 ```
 
-This helps distinguish watchdog action from provider/process failures.
+Common intervention reasons:
+- `memory_pressure` — system memory exceeded the configured threshold
+- `idle_timeout` — session was idle longer than allowed (when `idle_action = "kill"`)
+- `finished_ttl` — finished session exceeded its TTL grace period
+
+## Culture on Recovery
+
+When a session finishes or is killed, Pulpo automatically harvests any culture entries the agent wrote to the `pending/` directory. These entries are committed to the culture repo and become available to future sessions. This means even sessions that are killed by the watchdog can still contribute learnings.

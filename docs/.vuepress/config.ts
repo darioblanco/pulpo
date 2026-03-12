@@ -5,7 +5,7 @@ import { defineUserConfig } from 'vuepress';
 export default defineUserConfig({
   lang: 'en-US',
   title: 'Pulpo Docs',
-  description: 'Self-hosted control plane docs for coding agents',
+  description: 'Self-hosted control plane for coding agents',
   base: '/',
   theme: defaultTheme({
     logo: 'https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.png',
@@ -16,28 +16,19 @@ export default defineUserConfig({
       { text: 'Guides', link: '/guides/configuration' },
       { text: 'Reference', link: '/reference/cli' },
       { text: 'Architecture', link: '/architecture/overview' },
-      { text: 'Operations', link: '/operations/release-and-distribution' },
+      { text: 'Operations', link: '/operations/session-lifecycle' },
     ],
     sidebar: {
-      '/getting-started/': [
-        '/getting-started/install',
-        '/getting-started/quickstart',
-      ],
+      '/getting-started/': ['/getting-started/install', '/getting-started/quickstart'],
       '/guides/': [
         '/guides/configuration',
+        '/guides/culture',
         '/guides/discovery',
         '/guides/recovery',
       ],
-      '/reference/': [
-        '/reference/cli',
-        '/reference/config',
-        '/reference/api',
-      ],
+      '/reference/': ['/reference/cli', '/reference/config', '/reference/api'],
       '/architecture/': ['/architecture/overview'],
-      '/operations/': [
-        '/operations/session-lifecycle',
-        '/operations/release-and-distribution',
-      ],
+      '/operations/': ['/operations/session-lifecycle', '/operations/release-and-distribution'],
     },
   }),
   bundler: viteBundler(),

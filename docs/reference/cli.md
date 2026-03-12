@@ -1,69 +1,93 @@
 # CLI Reference
 
-Top-level commands:
+## Commands
 
 ```text
-pulpo spawn [OPTIONS] [PROMPT...]
-pulpo list
-pulpo logs <NAME> [--follow]
-pulpo attach <NAME>
-pulpo input <NAME> [TEXT]
-pulpo kill <NAME>
-pulpo delete <NAME>
-pulpo resume <NAME>
-pulpo interventions <NAME>
-pulpo culture [--session] [--kind] [--repo] [--context] [--get] [--delete] [--push]
-pulpo nodes
-pulpo schedule <install|list|pause|resume|remove>
-pulpo ui
+pulpo spawn [OPTIONS] [PROMPT...]     Spawn a new agent session
+pulpo list                            List sessions (alias: ls)
+pulpo logs <NAME> [--follow]          Show session output
+pulpo attach <NAME>                   Attach to tmux session
+pulpo input <NAME> [TEXT]             Send text input to a session
+pulpo kill <NAME>                     Kill a running session
+pulpo delete <NAME>                   Delete session record (alias: rm)
+pulpo resume <NAME>                   Resume a lost or finished session
+pulpo interventions <NAME>            Show watchdog interventions
+pulpo culture [OPTIONS]               Query and manage culture entries
+pulpo nodes                           List known nodes/peers
+pulpo schedule <SUBCOMMAND>           Manage scheduled sessions (crontab)
+pulpo ui                              Open web UI in browser
 ```
 
-## Spawn options
+## Spawn Options
 
 | Flag | Description | Providers |
 |------|-------------|-----------|
-| `--workdir <PATH>` | Working directory (defaults to current directory) | All |
+| `--workdir <PATH>` | Working directory (default: current) | All |
 | `--name <NAME>` | Session name (auto-generated if omitted) | All |
-| `--provider <NAME>` | Agent provider (claude, codex, gemini, opencode) | All |
-| `--auto` | Run in autonomous mode (fire-and-forget) | All |
+| `--provider <NAME>` | Agent provider | All |
+| `--auto` | Autonomous mode (fire-and-forget) | All |
 | `--ink <NAME>` | Ink preset from config | All |
-| `--unrestricted` | Disable all safety guardrails | Claude, Gemini |
-| `--model <MODEL>` | Model override (e.g. opus, sonnet) | Claude, Codex, Gemini |
-| `--worktree` | Use git worktree isolation (see below) | Claude |
-| `--system-prompt <TEXT>` | System prompt to append | Claude |
-| `--allowed-tools <TOOLS>` | Explicit allowed tools (comma-separated) | Claude |
-| `--max-turns <N>` | Maximum agent turns before stopping | Claude |
-| `--max-budget <USD>` | Maximum budget in USD before stopping | Claude |
-| `--output-format <FMT>` | Output format (e.g. json, stream-json) | Claude, Gemini, OpenCode |
+| `--unrestricted` | Disable safety guardrails | Claude, Gemini |
+| `--model <MODEL>` | Model override | Claude, Codex, Gemini |
+| `--worktree` | Git worktree isolation | Claude |
+| `--system-prompt <TEXT>` | System prompt | Claude |
+| `--allowed-tools <TOOLS>` | Allowed tools (comma-separated) | Claude |
+| `--max-turns <N>` | Max agent turns | Claude |
+| `--max-budget <USD>` | Max budget in USD | Claude |
+| `--output-format <FMT>` | Output format | Claude, Gemini, OpenCode |
 
-## Worktree isolation
+### Providers
 
-The `--worktree` flag enables git worktree isolation (Claude only). Each session gets its own git worktree — an isolated copy of the repo on a separate branch — so the agent's changes don't interfere with your working tree or other sessions.
+Available providers: `claude`, `codex`, `gemini`, `opencode`, `shell`
 
-This is essential when running multiple agents on the same repository concurrently:
+Provider availability is checked at spawn time. Use `shell` for a bare tmux session without any agent.
+
+### Worktree Isolation
+
+The `--worktree` flag (Claude only) gives each session its own git worktree — an isolated copy of the repo on a separate branch:
 
 ```bash
-# Two agents working on the same repo in parallel, each in their own branch
+# Two agents working on the same repo in parallel
 pulpo spawn --worktree --workdir ~/myproject "add caching layer"
 pulpo spawn --worktree --workdir ~/myproject "refactor auth module"
-
-# When agents finish, review and merge the branches
-git branch                    # see worktree branches
-git merge <session-name>      # merge when ready
 ```
 
-Without `--worktree`, all agents edit the same files simultaneously. For a single session, `--worktree` is optional — omit it if you want the agent to work directly in your tree.
+Worktrees are created at `<repo>/.claude/worktrees/<session-name>`. Other providers can work in a Claude-created worktree by pointing `--workdir` at it.
 
-While `--worktree` is Claude-only, other providers can work in a worktree that Claude created by pointing `--workdir` at it. Claude creates worktrees at `<repo>/.claude/worktrees/<session-name>`:
+## Culture Options
 
-```bash
-# Claude creates an isolated worktree
-pulpo spawn --worktree --workdir ~/myproject "scaffold the API"
-# Once the worktree exists, point other providers at it
-pulpo spawn --provider codex --workdir ~/myproject/.claude/worktrees/<session-name> "write tests"
+```text
+pulpo culture                              List all entries
+pulpo culture --context                    Show compiled context (what agents receive)
+pulpo culture --context --repo <PATH>      Context scoped to a repo
+pulpo culture --context --ink <NAME>       Context scoped to an ink
+pulpo culture --get <ID>                   Get a specific entry
+pulpo culture --delete <ID>                Delete an entry
+pulpo culture --push                       Push culture repo to remote
+pulpo culture --kind <KIND>                Filter by kind (summary, failure)
+pulpo culture --session <ID>               Filter by session
 ```
 
-For exact options, run:
+## Schedule Subcommands
+
+```text
+pulpo schedule install <CRON> [SPAWN_ARGS]   Install a cron job
+pulpo schedule list                           List installed jobs
+pulpo schedule pause <ID>                     Pause a job
+pulpo schedule resume <ID>                    Resume a paused job
+pulpo schedule remove <ID>                    Remove a job
+```
+
+## Global Options
+
+```text
+--host <HOST>     pulpod host (default: localhost)
+--port <PORT>     pulpod port (default: 7433)
+--token <TOKEN>   Auth token (for remote nodes)
+--json            Output as JSON
+```
+
+For full options on any command:
 
 ```bash
 pulpo --help

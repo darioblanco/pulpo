@@ -2,6 +2,7 @@
 
 Project: Pulpo
 Repo: https://github.com/darioblanco/pulpo
+Docs: https://pulpo.darioblanco.com
 Purpose: Self-hosted control plane for coding agents across multiple machines.
 
 Primary docs:
@@ -14,20 +15,25 @@ Primary docs:
 - /docs/guides/configuration.md
 - /docs/guides/discovery.md
 - /docs/guides/recovery.md
+- /docs/guides/culture.md
 - /docs/reference/cli.md
 - /docs/reference/config.md
 - /docs/reference/api.md
 - /docs/architecture/overview.md
+- /docs/operations/session-lifecycle.md
 - /docs/operations/release-and-distribution.md
 
 Canonical runtime concepts:
-- Session states: creating, running, completed, dead, stale.
-- Resume only applies to stale sessions.
+- Session states: creating, active, idle, finished, killed, lost.
+- Resume applies to lost and finished sessions. Killed sessions cannot be resumed.
+- Providers: Claude Code, Codex, Gemini CLI, OpenCode, Shell (bare tmux).
+- Culture: agents write learnings back to AGENTS.md-formatted files; syncs across nodes via git.
 - pulpod exposes REST and SSE on port 7433 by default.
 - Config path defaults to ~/.pulpo/config.toml.
 
 Installation:
 - Homebrew: brew install darioblanco/tap/pulpo
+- Docker: darioblanco/pulpo-base, darioblanco/pulpo-agents
 - Source: make setup && make build && make install
 
 CLI binaries:

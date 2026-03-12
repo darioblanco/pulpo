@@ -23,7 +23,7 @@ features:
   - title: Watchdog & Guardrails
     details: Memory pressure detection, idle handling, configurable kill policies, and intervention audit trails.
   - title: API First
-    details: REST, SSE, MCP, and CLI surfaces for integration with tools and automation.
+    details: REST, SSE, MCP, CLI, web UI, and Discord bot — integrate with anything.
 ---
 
 ## Quick Links
@@ -31,6 +31,9 @@ features:
 - [Install](/getting-started/install)
 - [Quickstart](/getting-started/quickstart)
 - [Configuration Guide](/guides/configuration)
+- [Culture Guide](/guides/culture)
+- [Discovery Guide](/guides/discovery)
+- [Recovery Guide](/guides/recovery)
 - [CLI Reference](/reference/cli)
 - [Config Reference](/reference/config)
 - [API Reference](/reference/api)
