@@ -10,17 +10,54 @@ use pulpo_common::node::NodeInfo;
 use pulpo_common::peer::PeerEntry;
 
 use super::node::get_hostname;
+use crate::watchdog::memory::{MemoryReader, SystemMemoryReader};
+
+/// Best-effort GPU detection. Returns a label like "Apple Metal" or "NVIDIA" if
+/// a GPU is likely present, `None` otherwise.
+fn detect_gpu() -> Option<String> {
+    detect_gpu_inner()
+}
+
+#[cfg(target_os = "macos")]
+fn detect_gpu_inner() -> Option<String> {
+    // All supported Macs (Apple Silicon) have Metal GPU
+    if std::env::consts::ARCH == "aarch64" {
+        Some("Apple Metal".into())
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn detect_gpu_inner() -> Option<String> {
+    if std::path::Path::new("/dev/nvidia0").exists() {
+        return Some("NVIDIA".into());
+    }
+    if std::path::Path::new("/dev/dri").exists() {
+        return Some("GPU (DRI)".into());
+    }
+    None
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn detect_gpu_inner() -> Option<String> {
+    None
+}
 
 pub async fn list_peers(State(state): State<Arc<super::AppState>>) -> Json<PeersResponse> {
     let config = state.config.read().await;
+    let memory_mb = SystemMemoryReader
+        .read_memory()
+        .map(|s| s.total_mb)
+        .unwrap_or(0);
     let local = NodeInfo {
         name: config.node.name.clone(),
         hostname: get_hostname(),
         os: crate::platform::os_name().into(),
         arch: std::env::consts::ARCH.into(),
         cpus: num_cpus::get(),
-        memory_mb: 0, // TODO: get system memory
-        gpu: None,    // TODO: detect GPU
+        memory_mb,
+        gpu: detect_gpu(),
     };
     drop(config);
 
@@ -250,6 +287,7 @@ mod tests {
         assert!(!resp.local.os.is_empty());
         assert!(!resp.local.arch.is_empty());
         assert!(resp.local.cpus > 0);
+        assert!(resp.local.memory_mb > 0);
     }
 
     #[tokio::test]
@@ -336,5 +374,16 @@ mod tests {
         let (status, Json(err)) = result.unwrap_err();
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert!(err.error.contains("not found"));
+    }
+
+    #[test]
+    fn test_detect_gpu_returns_value() {
+        // On macOS aarch64 this should return Some("Apple Metal")
+        // On Linux it depends on /dev paths
+        // Just verify it doesn't panic
+        let result = detect_gpu();
+        if cfg!(target_os = "macos") && std::env::consts::ARCH == "aarch64" {
+            assert_eq!(result, Some("Apple Metal".into()));
+        }
     }
 }
