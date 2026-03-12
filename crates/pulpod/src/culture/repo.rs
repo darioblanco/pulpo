@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use pulpo_common::culture::{Culture, CultureKind};
 use tokio::process::Command;
 use tokio::sync::Mutex;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Result of a `pull()` operation.
 #[derive(Debug, Clone)]
@@ -640,6 +640,45 @@ impl CultureRepo {
         Ok(paths)
     }
 
+    /// Check if a culture entry with a similar title already exists in the same scope.
+    ///
+    /// Returns `Some((id, body_len))` of the duplicate if found. Compares titles
+    /// case-insensitively and checks for substring matches. Excludes entries
+    /// tagged `superseded` or `stale`.
+    pub fn find_duplicate(
+        &self,
+        title: &str,
+        scope_repo: Option<&str>,
+        scope_ink: Option<&str>,
+    ) -> Option<(uuid::Uuid, usize)> {
+        let items = self.read_all().ok()?;
+        let normalized = title.to_lowercase();
+
+        items.into_iter().find_map(|k| {
+            // Skip superseded/stale entries
+            if k.tags.iter().any(|t| t == "superseded" || t == "stale") {
+                return None;
+            }
+
+            // Must be in the same scope
+            if k.scope_repo.as_deref() != scope_repo || k.scope_ink.as_deref() != scope_ink {
+                return None;
+            }
+
+            let existing = k.title.to_lowercase();
+
+            // Exact match or substring match (either direction)
+            if normalized == existing
+                || normalized.contains(&existing)
+                || existing.contains(&normalized)
+            {
+                Some((k.id, k.body.len()))
+            } else {
+                None
+            }
+        })
+    }
+
     /// Harvest a pending write-back file left by an agent session.
     ///
     /// Looks for `pending/{session_name}.md`, parses `# title` + body,
@@ -676,6 +715,32 @@ impl CultureRepo {
             warn!("rejected pending file for session {session_name}: {reason}");
             std::fs::remove_file(&pending_path)?;
             return Ok(0);
+        }
+
+        // Check for duplicates in the same scope
+        let scope_repo = if workdir.is_empty() {
+            None
+        } else {
+            Some(workdir)
+        };
+        if entry.supersedes.is_none()
+            && let Some((dup_id, existing_body_len)) =
+                self.find_duplicate(&entry.title, scope_repo, ink)
+        {
+            if entry.body.len() > existing_body_len {
+                // New entry is more detailed — supersede the old one
+                info!(
+                    "superseding duplicate culture {dup_id} with longer entry for session {session_name}"
+                );
+                self.supersede(&dup_id.to_string())?;
+            } else {
+                // Existing entry is equal or better — skip
+                info!(
+                    "skipping duplicate culture for session {session_name} (existing {dup_id} is equal or longer)"
+                );
+                std::fs::remove_file(&pending_path)?;
+                return Ok(0);
+            }
         }
 
         // If this entry explicitly supersedes an older one, tag the old entry
@@ -3041,6 +3106,191 @@ mod tests {
             .find(|k| k.title == "New auth flow with PKCE support");
         assert!(new_item.is_some());
         assert!(!new_item.unwrap().body.contains("supersedes"));
+    }
+
+    // ── find_duplicate tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_find_duplicate_no_match() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let item = make_culture("Existing finding about auth", Some("/tmp/repo"), None);
+        repo.save(&item).await.unwrap();
+
+        assert!(
+            repo.find_duplicate("Completely different topic here", Some("/tmp/repo"), None)
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_find_duplicate_exact_match() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let item = make_culture("Auth tokens expire silently", Some("/tmp/repo"), None);
+        repo.save(&item).await.unwrap();
+
+        let dup = repo.find_duplicate("Auth tokens expire silently", Some("/tmp/repo"), None);
+        assert!(dup.is_some());
+        assert_eq!(dup.unwrap().0, item.id);
+    }
+
+    #[tokio::test]
+    async fn test_find_duplicate_case_insensitive() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let item = make_culture("Auth Tokens Expire Silently", Some("/tmp/repo"), None);
+        repo.save(&item).await.unwrap();
+
+        let dup = repo.find_duplicate("auth tokens expire silently", Some("/tmp/repo"), None);
+        assert!(dup.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_find_duplicate_substring_match() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let item = make_culture("Auth tokens expire", Some("/tmp/repo"), None);
+        repo.save(&item).await.unwrap();
+
+        // New title is a superset of existing
+        let dup = repo.find_duplicate(
+            "Auth tokens expire silently after 30 days",
+            Some("/tmp/repo"),
+            None,
+        );
+        assert!(dup.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_find_duplicate_excludes_superseded() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let mut item = make_culture("Auth tokens expire silently", Some("/tmp/repo"), None);
+        item.tags = vec!["superseded".into()];
+        repo.save(&item).await.unwrap();
+
+        assert!(
+            repo.find_duplicate("Auth tokens expire silently", Some("/tmp/repo"), None)
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_find_duplicate_excludes_stale() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let mut item = make_culture("Auth tokens expire silently", Some("/tmp/repo"), None);
+        item.tags = vec!["stale".into()];
+        repo.save(&item).await.unwrap();
+
+        assert!(
+            repo.find_duplicate("Auth tokens expire silently", Some("/tmp/repo"), None)
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_find_duplicate_different_scope_no_match() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+        let item = make_culture("Auth tokens expire silently", Some("/tmp/repo-a"), None);
+        repo.save(&item).await.unwrap();
+
+        // Different repo scope — not a duplicate
+        assert!(
+            repo.find_duplicate("Auth tokens expire silently", Some("/tmp/repo-b"), None)
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_harvest_pending_skips_duplicate_shorter_body() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        // Create an existing entry with a long body
+        let mut existing = make_culture("Auth tokens expire silently", Some("/tmp/repo"), None);
+        existing.body =
+            "The OAuth refresh flow fails after 30 days because the token store doesn't handle rotation properly."
+                .into();
+        repo.save(&existing).await.unwrap();
+
+        // Write a shorter duplicate pending file
+        let pending_path = repo.root().join("pending").join("dup-session.md");
+        std::fs::write(
+            &pending_path,
+            "# Auth tokens expire silently\n\nRefresh tokens stop working after 30 days.",
+        )
+        .unwrap();
+
+        let count = repo
+            .harvest_pending("dup-session", Uuid::new_v4(), "/tmp/repo", None)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(!pending_path.exists());
+
+        // Only the original entry should remain (no new entry)
+        let items = repo.list(None, None, None, None, None).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, existing.id);
+    }
+
+    #[tokio::test]
+    async fn test_harvest_pending_supersedes_duplicate_longer_body() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        // Create an existing entry with a short body
+        let mut existing = make_culture("Auth tokens expire silently", Some("/tmp/repo"), None);
+        existing.body = "Tokens expire after 30 days.".into();
+        repo.save(&existing).await.unwrap();
+
+        // Write a longer duplicate pending file
+        let pending_path = repo.root().join("pending").join("better-session.md");
+        std::fs::write(
+            &pending_path,
+            "# Auth tokens expire silently\n\nThe OAuth refresh flow fails after 30 days because the token store doesn't handle rotation. Set up a cron job to rotate tokens every 25 days.",
+        )
+        .unwrap();
+
+        let count = repo
+            .harvest_pending("better-session", Uuid::new_v4(), "/tmp/repo", None)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Old entry should be superseded
+        let old = repo.get_by_id(&existing.id.to_string()).unwrap().unwrap();
+        assert!(old.tags.contains(&"superseded".into()));
+
+        // New entry should exist
+        let items = repo.list(None, None, None, None, None).unwrap();
+        let active: Vec<_> = items
+            .iter()
+            .filter(|k| !k.tags.contains(&"superseded".into()))
+            .collect();
+        assert_eq!(active.len(), 1);
+        assert!(active[0].body.contains("cron job"));
     }
 
     // ── last_referenced_at tests ─────────────────────────────────────────
