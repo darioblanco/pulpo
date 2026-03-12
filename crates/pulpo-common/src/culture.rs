@@ -53,6 +53,9 @@ pub struct Culture {
     /// When this entry was last used in context injection. `None` if never referenced.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_referenced_at: Option<DateTime<Utc>>,
+    /// How many times this entry has been referenced in context injection.
+    #[serde(default)]
+    pub reference_count: u32,
 }
 
 #[cfg(test)]
@@ -72,6 +75,7 @@ mod tests {
             relevance: 0.5,
             created_at: Utc::now(),
             last_referenced_at: None,
+            reference_count: 0,
         }
     }
 

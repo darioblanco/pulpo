@@ -223,6 +223,8 @@ impl CultureRepo {
                 && let Some(mut item) = parse_file(&path, &content)
             {
                 item.last_referenced_at = Some(now);
+                item.reference_count += 1;
+                item.relevance = compute_relevance(item.created_at, item.reference_count);
                 if let Ok(md) = serialize_to_markdown(&item) {
                     let _ = std::fs::write(&path, md);
                 }
@@ -761,9 +763,10 @@ impl CultureRepo {
             title: entry.title,
             body: entry.body,
             tags: vec!["agent-written".into()],
-            relevance: 0.8,
+            relevance: compute_relevance(chrono::Utc::now(), 0),
             created_at: chrono::Utc::now(),
             last_referenced_at: None,
+            reference_count: 0,
         };
 
         self.save(&culture).await?;
@@ -923,6 +926,31 @@ struct CultureFrontmatter {
     created_at: chrono::DateTime<chrono::Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_referenced_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    reference_count: u32,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn is_zero(v: &u32) -> bool {
+    *v == 0
+}
+
+/// Compute dynamic relevance based on age and reference frequency.
+///
+/// - Base: 0.8
+/// - Age decay: loses up to 0.6 over 6 months (0.1 per month)
+/// - Reference boost: up to 0.2 (0.05 per reference, capped at 4)
+/// - Result clamped to 0.0–1.0
+#[allow(clippy::cast_precision_loss)]
+fn compute_relevance(created_at: chrono::DateTime<chrono::Utc>, reference_count: u32) -> f64 {
+    let age_days = (chrono::Utc::now() - created_at).num_days().max(0) as f64;
+    let age_months = age_days / 30.0;
+
+    let base = 0.8;
+    let age_decay = 0.1 * age_months.min(6.0);
+    let ref_boost = 0.05 * f64::from(reference_count.min(4));
+
+    (base - age_decay + ref_boost).clamp(0.0, 1.0)
 }
 
 /// Serialize a `Culture` item to Markdown with YAML frontmatter.
@@ -953,6 +981,7 @@ fn serialize_to_markdown(k: &Culture) -> Result<String> {
         relevance: k.relevance,
         created_at: k.created_at,
         last_referenced_at: k.last_referenced_at,
+        reference_count: k.reference_count,
     };
     let yaml = serde_yaml::to_string(&frontmatter)?;
     Ok(format!("---\n{yaml}---\n\n{}\n", k.body))
@@ -987,6 +1016,7 @@ fn parse_from_markdown(content: &str) -> Result<Culture> {
         relevance: fm.relevance,
         created_at: fm.created_at,
         last_referenced_at: fm.last_referenced_at,
+        reference_count: fm.reference_count,
     })
 }
 
@@ -1392,6 +1422,7 @@ mod tests {
             relevance: 0.5,
             created_at: Utc::now(),
             last_referenced_at: None,
+            reference_count: 0,
         }
     }
 
@@ -2912,6 +2943,59 @@ mod tests {
         assert!(!result.contains("code"));
     }
 
+    // ── compute_relevance tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_compute_relevance_brand_new() {
+        let now = chrono::Utc::now();
+        let r = compute_relevance(now, 0);
+        assert!(
+            (r - 0.8).abs() < 0.01,
+            "brand new entry should be ~0.8, got {r}"
+        );
+    }
+
+    #[test]
+    fn test_compute_relevance_with_references() {
+        let now = chrono::Utc::now();
+        let r0 = compute_relevance(now, 0);
+        let r2 = compute_relevance(now, 2);
+        let r4 = compute_relevance(now, 4);
+        let r10 = compute_relevance(now, 10); // capped at 4
+
+        assert!(r2 > r0, "references should increase relevance");
+        assert!(r4 > r2);
+        assert!((r10 - r4).abs() < f64::EPSILON, "capped at 4 references");
+        assert!((r4 - 1.0).abs() < f64::EPSILON, "4 refs on new entry = 1.0");
+    }
+
+    #[test]
+    fn test_compute_relevance_age_decay() {
+        let three_months_ago = chrono::Utc::now() - chrono::Duration::days(90);
+        let r = compute_relevance(three_months_ago, 0);
+        // 0.8 - 0.1*3 = 0.5
+        assert!(
+            (r - 0.5).abs() < 0.05,
+            "3-month-old entry should be ~0.5, got {r}"
+        );
+    }
+
+    #[test]
+    fn test_compute_relevance_max_decay() {
+        let year_ago = chrono::Utc::now() - chrono::Duration::days(365);
+        let r = compute_relevance(year_ago, 0);
+        // 0.8 - 0.6 = 0.2 (capped at 6 months decay)
+        assert!((r - 0.2).abs() < 0.05, "old entry should be ~0.2, got {r}");
+    }
+
+    #[test]
+    fn test_compute_relevance_clamped_to_zero() {
+        // Very old, no references — should not go below 0.0
+        let ancient = chrono::Utc::now() - chrono::Duration::days(3650);
+        let r = compute_relevance(ancient, 0);
+        assert!(r >= 0.0, "relevance should not go below 0.0");
+    }
+
     // ── harvest_pending tests ────────────────────────────────────────────
 
     #[tokio::test]
@@ -3386,6 +3470,27 @@ mod tests {
         assert!(parsed.last_referenced_at.is_none());
     }
 
+    #[test]
+    fn test_parse_legacy_without_reference_count() {
+        // Simulate a file written before reference_count existed
+        let k = make_culture("legacy-no-refcount", None, None);
+        let md = serialize_to_markdown(&k).unwrap();
+        // reference_count is 0 so skip_serializing_if omits it
+        assert!(!md.contains("reference_count"));
+        let parsed = parse_from_markdown(&md).unwrap();
+        assert_eq!(parsed.reference_count, 0);
+    }
+
+    #[test]
+    fn test_serialize_reference_count_nonzero() {
+        let mut k = make_culture("with-refs", None, None);
+        k.reference_count = 3;
+        let md = serialize_to_markdown(&k).unwrap();
+        assert!(md.contains("reference_count: 3"));
+        let parsed = parse_from_markdown(&md).unwrap();
+        assert_eq!(parsed.reference_count, 3);
+    }
+
     // ── touch_referenced tests ───────────────────────────────────────────
 
     #[tokio::test]
@@ -3409,6 +3514,54 @@ mod tests {
         // Now it should have a timestamp
         let item = repo.get_by_id(&id.to_string()).unwrap().unwrap();
         assert!(item.last_referenced_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_touch_referenced_increments_reference_count() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_culture("countable", Some("/tmp"), None);
+        let id = k.id;
+        repo.save(&k).await.unwrap();
+
+        assert_eq!(
+            repo.get_by_id(&id.to_string())
+                .unwrap()
+                .unwrap()
+                .reference_count,
+            0
+        );
+
+        repo.touch_referenced(&[id]);
+        let item = repo.get_by_id(&id.to_string()).unwrap().unwrap();
+        assert_eq!(item.reference_count, 1);
+
+        repo.touch_referenced(&[id]);
+        let item = repo.get_by_id(&id.to_string()).unwrap().unwrap();
+        assert_eq!(item.reference_count, 2);
+    }
+
+    #[tokio::test]
+    async fn test_touch_referenced_updates_relevance() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
+            .await
+            .unwrap();
+
+        let k = make_culture("relevance-test", Some("/tmp"), None);
+        let id = k.id;
+        repo.save(&k).await.unwrap();
+
+        let before = repo.get_by_id(&id.to_string()).unwrap().unwrap().relevance;
+
+        repo.touch_referenced(&[id]);
+        let after = repo.get_by_id(&id.to_string()).unwrap().unwrap().relevance;
+
+        // Relevance should increase (reference boost of 0.05)
+        assert!(after > before);
     }
 
     #[tokio::test]

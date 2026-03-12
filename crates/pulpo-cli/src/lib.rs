@@ -3659,6 +3659,7 @@ mod tests {
                 relevance: 0.7,
                 created_at: Utc::now(),
                 last_referenced_at: None,
+                reference_count: 0,
             },
             Culture {
                 id: Uuid::new_v4(),
@@ -3672,6 +3673,7 @@ mod tests {
                 relevance: 0.9,
                 created_at: Utc::now(),
                 last_referenced_at: None,
+                reference_count: 0,
             },
         ];
 
@@ -3703,6 +3705,7 @@ mod tests {
             relevance: 0.5,
             created_at: Utc::now(),
             last_referenced_at: None,
+            reference_count: 0,
         }];
 
         let output = format_culture(&items);
@@ -3760,6 +3763,7 @@ mod tests {
             relevance: 0.5,
             created_at: Utc::now(),
             last_referenced_at: None,
+            reference_count: 0,
         }];
 
         let output = format_culture(&items);

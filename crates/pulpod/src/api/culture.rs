@@ -422,6 +422,7 @@ mod tests {
             relevance: 0.5,
             created_at: chrono::Utc::now(),
             last_referenced_at: None,
+            reference_count: 0,
         }
     }
 

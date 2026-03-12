@@ -229,6 +229,7 @@ mod tests {
             relevance: 0.5,
             created_at: chrono::Utc::now(),
             last_referenced_at: None,
+            reference_count: 0,
         };
         repo_a.save(&culture).await.unwrap();
         git_push(&repo_a).await;
@@ -325,6 +326,7 @@ mod tests {
             relevance: 0.5,
             created_at: chrono::Utc::now(),
             last_referenced_at: None,
+            reference_count: 0,
         };
         repo_a.save(&culture_a).await.unwrap();
         git_push(&repo_a).await;
@@ -342,6 +344,7 @@ mod tests {
             relevance: 0.5,
             created_at: chrono::Utc::now(),
             last_referenced_at: None,
+            reference_count: 0,
         };
         repo_b.save(&culture_b).await.unwrap();
 
@@ -427,6 +430,7 @@ mod tests {
             relevance: 0.5,
             created_at: chrono::Utc::now(),
             last_referenced_at: None,
+            reference_count: 0,
         };
         repo_a.save(&culture_global).await.unwrap();
 
@@ -442,6 +446,7 @@ mod tests {
             relevance: 0.5,
             created_at: chrono::Utc::now(),
             last_referenced_at: None,
+            reference_count: 0,
         };
         repo_a.save(&culture_repo).await.unwrap();
         git_push(&repo_a).await;
