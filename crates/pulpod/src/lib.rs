@@ -402,13 +402,25 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
 
     // Set up tailscale serve for HTTPS access over tailnet
     if bind_mode == pulpo_common::auth::BindMode::Tailscale {
-        tailscale_serve_start(port)?;
-        shutdown_handle.tailscale_serve_active = true;
+        match tailscale_serve_start(port) {
+            Ok(()) => {
+                shutdown_handle.tailscale_serve_active = true;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Tailscale serve unavailable ({e}). \
+                     Dashboard will only be accessible locally at http://localhost:{port}. \
+                     Start Tailscale to enable HTTPS access over your tailnet."
+                );
+            }
+        }
     }
 
     let addr = format!("{bind_ip}:{port}");
     info!("pulpod v{} starting", env!("CARGO_PKG_VERSION"));
-    if bind_mode == pulpo_common::auth::BindMode::Tailscale {
+    if bind_mode == pulpo_common::auth::BindMode::Tailscale
+        && shutdown_handle.tailscale_serve_active
+    {
         let ts_name = resolve_tailscale_name().unwrap_or_else(|_| "your-machine".into());
         info!("Dashboard: https://{ts_name}");
     } else {
