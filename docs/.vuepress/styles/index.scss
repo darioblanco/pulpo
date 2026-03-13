@@ -1,0 +1,355 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap');
+
+// ─── Global dark theme ───
+
+html,
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  background-color: #0a1018;
+  color: #e3e8ee;
+}
+
+// ─── Navbar ───
+
+.vp-navbar {
+  background-color: rgba(5, 12, 19, 0.85) !important;
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+
+  .site-name {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 600;
+    color: #e3e8ee !important;
+  }
+
+  a {
+    color: #e3e8ee !important;
+
+    &:hover,
+    &.router-link-active {
+      color: #2e7eff !important;
+    }
+  }
+}
+
+// ─── Sidebar ───
+
+.vp-sidebar {
+  background-color: #060e17 !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+
+  .sidebar-item {
+    color: #97a3b2;
+
+    &:hover {
+      color: #e3e8ee;
+    }
+
+    &.active {
+      color: #2e7eff;
+      border-left-color: #2e7eff;
+    }
+  }
+
+  .sidebar-heading {
+    color: #e3e8ee;
+    font-weight: 600;
+  }
+
+  a {
+    color: #97a3b2 !important;
+
+    &:hover {
+      color: #e3e8ee !important;
+    }
+
+    &.active,
+    &.router-link-active {
+      color: #2e7eff !important;
+      font-weight: 500;
+    }
+  }
+}
+
+// ─── Content area ───
+
+.theme-default-content {
+  color: #e3e8ee;
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: 'Space Grotesk', sans-serif;
+    color: #e3e8ee;
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+  }
+
+  a {
+    color: #5a9aff;
+
+    &:hover {
+      color: #2e7eff;
+    }
+  }
+
+  strong {
+    color: #e3e8ee;
+  }
+
+  // Tables
+  table {
+    border-collapse: collapse;
+
+    tr {
+      border-top-color: rgba(255, 255, 255, 0.08);
+
+      &:nth-child(2n) {
+        background-color: rgba(255, 255, 255, 0.03);
+      }
+    }
+
+    th,
+    td {
+      border-color: rgba(255, 255, 255, 0.08);
+      color: #e3e8ee;
+    }
+
+    th {
+      background-color: rgba(255, 255, 255, 0.05);
+    }
+  }
+
+  // Code blocks
+  code {
+    color: #5a9aff;
+    background-color: rgba(46, 126, 255, 0.1);
+    border-radius: 4px;
+    padding: 0.15em 0.4em;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', monospace;
+    font-size: 0.875em;
+  }
+
+  div[class*='language-'] {
+    background-color: #091521 !important;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+
+    pre {
+      background-color: transparent !important;
+    }
+
+    code {
+      color: #e3e8ee;
+      background-color: transparent;
+      padding: 0;
+    }
+
+    .line-number {
+      color: #657383;
+    }
+  }
+
+  // Blockquotes
+  blockquote {
+    border-left-color: #2e7eff;
+    color: #97a3b2;
+    background-color: rgba(46, 126, 255, 0.05);
+  }
+
+  // HR
+  hr {
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+
+  // Lists
+  li {
+    color: #e3e8ee;
+  }
+}
+
+// ─── Custom containers (tip, warning, danger) ───
+
+.custom-container {
+  border-radius: 8px;
+
+  &.tip {
+    background-color: rgba(46, 126, 255, 0.08);
+    border-color: #2e7eff;
+    color: #e3e8ee;
+
+    .custom-container-title {
+      color: #5a9aff;
+    }
+
+    a {
+      color: #5a9aff;
+    }
+  }
+
+  &.warning {
+    background-color: rgba(241, 179, 0, 0.08);
+    border-color: #f1b300;
+    color: #e3e8ee;
+
+    .custom-container-title {
+      color: #f1b300;
+    }
+  }
+
+  &.danger {
+    background-color: rgba(255, 99, 103, 0.08);
+    border-color: #ff6367;
+    color: #e3e8ee;
+
+    .custom-container-title {
+      color: #ff6367;
+    }
+  }
+
+  &.details {
+    background-color: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.08);
+    color: #e3e8ee;
+  }
+}
+
+// ─── Badge ───
+
+.badge {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75em;
+}
+
+// ─── Page navigation ───
+
+.page-nav {
+  border-top-color: rgba(255, 255, 255, 0.08) !important;
+
+  a {
+    color: #5a9aff !important;
+
+    &:hover {
+      color: #2e7eff !important;
+    }
+  }
+}
+
+// ─── Page meta ───
+
+.page-meta {
+  border-top-color: rgba(255, 255, 255, 0.08) !important;
+  color: #657383;
+
+  a {
+    color: #5a9aff !important;
+  }
+}
+
+// ─── Search ───
+
+.search-box {
+  input {
+    background-color: rgba(255, 255, 255, 0.05) !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    color: #e3e8ee !important;
+
+    &::placeholder {
+      color: #657383;
+    }
+  }
+}
+
+// ─── Home page ───
+
+.home {
+  .hero {
+    h1 {
+      font-family: 'Space Grotesk', sans-serif;
+      color: #e3e8ee;
+    }
+
+    .description {
+      color: #97a3b2;
+    }
+
+    .action-button {
+      background-color: #2e7eff;
+      border-color: #2e7eff;
+      color: #fff;
+      border-radius: 8px;
+      font-weight: 500;
+      transition: all 0.2s ease;
+
+      &:hover {
+        background-color: #5a9aff;
+        border-color: #5a9aff;
+      }
+
+      &.action-button-secondary {
+        background-color: rgba(46, 126, 255, 0.1);
+        border-color: rgba(46, 126, 255, 0.3);
+        color: #5a9aff;
+
+        &:hover {
+          background-color: rgba(46, 126, 255, 0.2);
+        }
+      }
+    }
+  }
+
+  .features {
+    border-top-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .feature {
+    h2 {
+      font-family: 'Space Grotesk', sans-serif;
+      color: #e3e8ee;
+      border-bottom: none;
+    }
+
+    p {
+      color: #97a3b2;
+    }
+  }
+}
+
+// ─── External link icon ───
+
+.external-link-icon {
+  color: #657383;
+}
+
+// ─── Scrollbar ───
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+
+  &:hover {
+    background-color: rgba(255, 255, 255, 0.25);
+  }
+}
+
+// ─── Toggle color mode button override ───
+
+.toggle-color-mode-button {
+  display: none !important;
+}

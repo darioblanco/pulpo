@@ -7,10 +7,21 @@ export default defineUserConfig({
   title: 'Pulpo Docs',
   description: 'Self-hosted control plane for coding agents',
   base: '/',
+  head: [
+    [
+      'link',
+      {
+        rel: 'icon',
+        href: 'https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.png',
+      },
+    ],
+  ],
   theme: defaultTheme({
     logo: 'https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.png',
     repo: 'darioblanco/pulpo',
     docsDir: 'docs',
+    colorMode: 'dark',
+    colorModeSwitch: false,
     navbar: [
       { text: 'Getting Started', link: '/getting-started/install' },
       { text: 'Guides', link: '/guides/configuration' },

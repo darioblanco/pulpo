@@ -1,0 +1,36 @@
+// Pulpo brand palette — matches web/src/index.css dark theme
+// Converted from OKLCh to hex
+
+// Brand primary: oklch(0.62 0.21 260) → vibrant purple-blue
+$accentColor: #2e7eff;
+$accentColorT10: rgba(46, 126, 255, 0.1);
+$accentColorLight: #5a9aff;
+
+// Text
+$textColor: #e3e8ee;
+$textColorLight: #657383;
+
+// Background
+$bgColor: #0a1018;
+$bgColorLight: #101a26;
+$bgColorBlur: rgba(10, 16, 24, 0.9);
+
+// Borders
+$borderColor: rgba(255, 255, 255, 0.1);
+$borderColorLight: rgba(255, 255, 255, 0.06);
+
+// Code
+$codeColor: #5a9aff;
+$codeBgColor: #091521;
+
+// Sidebar
+$sidebarBgColor: #060e17;
+$sidebarWidth: 18rem;
+
+// Badge / tip
+$badgeTipColor: #2e7eff;
+$badgeWarningColor: #f1b300;
+$badgeDangerColor: #ff6367;
+
+// Code group tabs
+$codeGroupColor: #2e7eff;
