@@ -357,7 +357,7 @@ mod tests {
     async fn test_list_with_status_filter() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: Some("filter-test".into()),
+            name: "filter-test".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -405,7 +405,7 @@ mod tests {
     async fn test_create_returns_created() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: Some("test".into()),
+            name: "test".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("Do something".into()),
@@ -442,7 +442,7 @@ mod tests {
     async fn test_kill_returns_no_content() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: Some("kill-test".into()),
+            name: "kill-test".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -470,7 +470,7 @@ mod tests {
     async fn test_output_for_session() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: Some("output-test".into()),
+            name: "output-test".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -511,7 +511,7 @@ mod tests {
     async fn test_input_for_session() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: Some("input-test".into()),
+            name: "input-test".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -663,7 +663,7 @@ mod tests {
         let state = failing_state().await;
         // Create a session first (create_session succeeds on FailingBackend)
         let req = CreateSessionRequest {
-            name: Some("err-test".into()),
+            name: "err-test".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -694,7 +694,7 @@ mod tests {
     async fn test_kill_internal_error() {
         let state = failing_state().await;
         let req = CreateSessionRequest {
-            name: Some("kill-err".into()),
+            name: "kill-err".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -758,7 +758,7 @@ mod tests {
         );
 
         let req = CreateSessionRequest {
-            name: Some("fail".into()),
+            name: "fail".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -785,7 +785,7 @@ mod tests {
     async fn test_output_internal_error() {
         let state = failing_state().await;
         let req = CreateSessionRequest {
-            name: Some("out-err".into()),
+            name: "out-err".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -817,7 +817,7 @@ mod tests {
     async fn test_input_internal_error() {
         let state = failing_state().await;
         let req = CreateSessionRequest {
-            name: Some("in-err".into()),
+            name: "in-err".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -886,7 +886,7 @@ mod tests {
     async fn test_output_capture_fallback_to_log() {
         let state = capture_fail_state().await;
         let req = CreateSessionRequest {
-            name: Some("cap-err".into()),
+            name: "cap-err".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -918,7 +918,7 @@ mod tests {
     async fn test_input_send_error() {
         let state = capture_fail_state().await;
         let req = CreateSessionRequest {
-            name: Some("send-err".into()),
+            name: "send-err".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1014,7 +1014,7 @@ mod tests {
     async fn test_download_output_running_session() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: Some("dl-test".into()),
+            name: "dl-test".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1095,7 +1095,7 @@ mod tests {
     async fn test_download_output_dead_session_no_snapshot() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: Some("no-snap".into()),
+            name: "no-snap".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1137,7 +1137,7 @@ mod tests {
     async fn test_download_output_internal_error() {
         let state = failing_state().await;
         let req = CreateSessionRequest {
-            name: Some("dl-err".into()),
+            name: "dl-err".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1168,7 +1168,7 @@ mod tests {
     async fn test_list_interventions_empty() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: Some("int-empty".into()),
+            name: "int-empty".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1197,7 +1197,7 @@ mod tests {
     async fn test_list_interventions_with_events() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: Some("int-events".into()),
+            name: "int-events".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1270,7 +1270,7 @@ mod tests {
     async fn test_resume_not_stale() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: Some("resume-test".into()),
+            name: "resume-test".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1369,7 +1369,7 @@ mod tests {
 
         // Create a session (StaleBackend.is_alive returns false)
         let req = CreateSessionRequest {
-            name: Some("stale-test".into()),
+            name: "stale-test".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1485,7 +1485,7 @@ mod tests {
 
         // Create a session
         let req = CreateSessionRequest {
-            name: Some("resume-fail".into()),
+            name: "resume-fail".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1519,7 +1519,7 @@ mod tests {
     async fn test_delete_dead_session() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: Some("del-test".into()),
+            name: "del-test".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1550,7 +1550,7 @@ mod tests {
     async fn test_delete_running_session_rejected() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: Some("del-run".into()),
+            name: "del-run".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),

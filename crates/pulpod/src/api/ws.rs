@@ -235,7 +235,7 @@ mod tests {
         // Create a session, then kill it, verify it would fail the running check
         let state = test_state_with_backend(Arc::new(DeadBackend)).await;
         let req = CreateSessionRequest {
-            name: Some("dead-test".into()),
+            name: "dead-test".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),

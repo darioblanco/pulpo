@@ -26,7 +26,7 @@ use crate::session::manager::SessionManager;
 /// Request body sent to a remote node when proxying `spawn_session`.
 #[derive(Serialize)]
 struct RemoteSpawnReq {
-    name: Option<String>,
+    name: String,
     workdir: Option<String>,
     provider: Option<Provider>,
     prompt: Option<String>,
@@ -50,8 +50,8 @@ pub struct SpawnSessionParams {
     pub mode: Option<SessionMode>,
     /// If true, disables all guard restrictions for this session.
     pub unrestricted: Option<bool>,
-    /// Custom session name. Auto-derived from `workdir` if omitted.
-    pub name: Option<String>,
+    /// Session name (required).
+    pub name: String,
     /// Ink preset from config (e.g. "reviewer", "coder").
     pub ink: Option<String>,
     /// Model override (e.g. "opus", "sonnet").
@@ -148,8 +148,8 @@ pub struct SpawnAndWaitParams {
     pub mode: Option<SessionMode>,
     /// If true, disables all guard restrictions for this session.
     pub unrestricted: Option<bool>,
-    /// Custom session name. Auto-derived from `workdir` if omitted.
-    pub name: Option<String>,
+    /// Session name (required).
+    pub name: String,
     /// Ink from config.
     pub ink: Option<String>,
     /// Model override (e.g. "opus", "sonnet").
@@ -177,8 +177,8 @@ pub struct FanOutTask {
     pub mode: Option<SessionMode>,
     /// If true, disables all guard restrictions for this session.
     pub unrestricted: Option<bool>,
-    /// Custom session name. Auto-derived from `workdir` if omitted.
-    pub name: Option<String>,
+    /// Session name (required).
+    pub name: String,
     /// Ink from config.
     pub ink: Option<String>,
     /// Model override (e.g. "opus", "sonnet").
@@ -206,7 +206,7 @@ struct SpawnAndWaitRequest {
     provider: Option<Provider>,
     mode: Option<SessionMode>,
     unrestricted: Option<bool>,
-    name: Option<String>,
+    name: String,
     ink: Option<String>,
     model: Option<String>,
     node: Option<String>,
@@ -1154,7 +1154,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1162,8 +1162,7 @@ mod tests {
             node: None,
         };
         let result = mcp.spawn_session(Parameters(params)).await;
-        // Name is auto-generated when not provided
-        assert!(result.contains("\"name\":"));
+        assert!(result.contains("\"name\": \"test\""));
         assert!(result.contains("active"));
     }
 
@@ -1176,7 +1175,7 @@ mod tests {
             provider: Some(Provider::Claude),
             mode: Some(SessionMode::Autonomous),
             unrestricted: Some(true),
-            name: Some("custom-name".into()),
+            name: "custom-name".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1197,7 +1196,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1233,7 +1232,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1298,7 +1297,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1339,7 +1338,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1391,7 +1390,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1430,7 +1429,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1471,7 +1470,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1499,7 +1498,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1553,7 +1552,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1630,7 +1629,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1669,7 +1668,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1749,7 +1748,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -1903,8 +1902,9 @@ mod tests {
 
     #[test]
     fn test_spawn_session_params_deserialize() {
-        let json = r#"{"workdir":"/tmp","prompt":"test"}"#;
+        let json = r#"{"name":"my-session","workdir":"/tmp","prompt":"test"}"#;
         let params: SpawnSessionParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.name, "my-session");
         assert_eq!(params.workdir.as_deref(), Some("/tmp"));
         assert!(params.node.is_none());
         assert!(params.conversation_id.is_none());
@@ -1912,7 +1912,7 @@ mod tests {
 
     #[test]
     fn test_spawn_session_params_deserialize_with_conversation_id() {
-        let json = r#"{"workdir":"/tmp","prompt":"test","conversation_id":"conv-abc"}"#;
+        let json = r#"{"name":"my-session","workdir":"/tmp","prompt":"test","conversation_id":"conv-abc"}"#;
         let params: SpawnSessionParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.conversation_id.as_deref(), Some("conv-abc"));
     }
@@ -2187,7 +2187,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -2399,7 +2399,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -2586,7 +2586,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -2651,7 +2651,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -2785,7 +2785,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             node: None,
@@ -2810,7 +2810,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             node: None,
@@ -2834,7 +2834,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             node: Some("nonexistent-node".into()),
@@ -2857,7 +2857,7 @@ mod tests {
             provider: Some(Provider::Claude),
             mode: Some(SessionMode::Autonomous),
             unrestricted: Some(false),
-            name: Some("custom-name".into()),
+            name: "custom-name".into(),
             ink: None,
             model: Some("opus".into()),
             node: None,
@@ -2879,7 +2879,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             node: None,
@@ -2893,7 +2893,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_spawn_and_wait_params_deserialize() {
-        let json = r#"{"workdir":"/tmp","prompt":"test"}"#;
+        let json = r#"{"name":"test","workdir":"/tmp","prompt":"test"}"#;
         let params: SpawnAndWaitParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.workdir.as_deref(), Some("/tmp"));
         assert!(params.timeout_secs.is_none());
@@ -2926,7 +2926,7 @@ mod tests {
                 provider: None,
                 mode: None,
                 unrestricted: None,
-                name: None,
+                name: "test".into(),
                 ink: None,
                 model: None,
                 node: None,
@@ -2955,7 +2955,7 @@ mod tests {
                     provider: None,
                     mode: None,
                     unrestricted: None,
-                    name: Some("task-a".into()),
+                    name: "task-a".into(),
                     ink: None,
                     model: None,
                     node: None,
@@ -2966,7 +2966,7 @@ mod tests {
                     provider: Some(Provider::Codex),
                     mode: Some(SessionMode::Autonomous),
                     unrestricted: Some(true),
-                    name: Some("task-b".into()),
+                    name: "task-b".into(),
                     ink: None,
                     model: None,
                     node: None,
@@ -2997,7 +2997,7 @@ mod tests {
                     provider: None,
                     mode: None,
                     unrestricted: None,
-                    name: None,
+                    name: "good-task".into(),
                     ink: None,
                     model: None,
                     node: None,
@@ -3008,7 +3008,7 @@ mod tests {
                     provider: None,
                     mode: None,
                     unrestricted: None,
-                    name: None,
+                    name: "bad-task".into(),
                     ink: None,
                     model: None,
                     node: Some("nonexistent-node".into()),
@@ -3050,7 +3050,7 @@ mod tests {
                 provider: None,
                 mode: None,
                 unrestricted: None,
-                name: None,
+                name: "test".into(),
                 ink: None,
                 model: None,
                 node: None,
@@ -3076,7 +3076,7 @@ mod tests {
                 provider: None,
                 mode: None,
                 unrestricted: None,
-                name: None,
+                name: "test".into(),
                 ink: None,
                 model: None,
                 node: None,
@@ -3107,7 +3107,7 @@ mod tests {
 
     #[test]
     fn test_fan_out_params_deserialize() {
-        let json = r#"{"tasks":[{"workdir":"/tmp","prompt":"test"}]}"#;
+        let json = r#"{"tasks":[{"name":"test","workdir":"/tmp","prompt":"test"}]}"#;
         let params: FanOutParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.tasks.len(), 1);
         assert!(params.timeout_secs.is_none());
@@ -3121,7 +3121,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             node: None,
@@ -3132,7 +3132,7 @@ mod tests {
 
     #[test]
     fn test_fan_out_task_deserialize() {
-        let json = r#"{"workdir":"/tmp","prompt":"test","provider":"codex","mode":"autonomous"}"#;
+        let json = r#"{"name":"test","workdir":"/tmp","prompt":"test","provider":"codex","mode":"autonomous"}"#;
         let task: FanOutTask = serde_json::from_str(json).unwrap();
         assert_eq!(task.provider, Some(Provider::Codex));
         assert_eq!(task.mode, Some(SessionMode::Autonomous));
@@ -3219,7 +3219,7 @@ mod tests {
                 provider: None,
                 mode: None,
                 unrestricted: None,
-                name: None,
+                name: "test".into(),
                 ink: None,
                 model: None,
                 worktree: None,
@@ -3257,7 +3257,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             worktree: None,
@@ -3364,7 +3364,7 @@ mod tests {
                 provider: None,
                 mode: None,
                 unrestricted: None,
-                name: None,
+                name: "test".into(),
                 ink: None,
                 model: None,
                 node: None,
@@ -3418,7 +3418,7 @@ mod tests {
             provider: None,
             mode: None,
             unrestricted: None,
-            name: None,
+            name: "test".into(),
             ink: None,
             model: None,
             node: Some("remote".into()),

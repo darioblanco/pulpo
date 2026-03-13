@@ -81,6 +81,7 @@ describe('NewSessionDialog', () => {
     render(<NewSessionDialog onCreated={onCreated} />);
     const user = await openDialog();
 
+    await user.type(screen.getByLabelText('Name'), 'my-session');
     await user.type(screen.getByLabelText('Working directory'), '/home/user/repo');
     await user.type(screen.getByLabelText('Prompt'), 'Fix the bug');
 
@@ -89,6 +90,7 @@ describe('NewSessionDialog', () => {
 
     await waitFor(() => {
       expect(mockCreateSession).toHaveBeenCalledWith({
+        name: 'my-session',
         workdir: '/home/user/repo',
         prompt: 'Fix the bug',
         provider: 'claude',
@@ -126,6 +128,7 @@ describe('NewSessionDialog', () => {
     render(<NewSessionDialog onCreated={vi.fn()} />);
     const user = await openDialog();
 
+    await user.type(screen.getByLabelText('Name'), 'err-test');
     await user.type(screen.getByLabelText('Working directory'), '/repo');
     await user.type(screen.getByLabelText('Prompt'), 'Test');
 
@@ -142,6 +145,7 @@ describe('NewSessionDialog', () => {
     render(<NewSessionDialog onCreated={vi.fn()} />);
     const user = await openDialog();
 
+    await user.type(screen.getByLabelText('Name'), 'str-err');
     await user.type(screen.getByLabelText('Working directory'), '/repo');
     await user.type(screen.getByLabelText('Prompt'), 'Test');
 
@@ -170,6 +174,7 @@ describe('NewSessionDialog', () => {
     render(<NewSessionDialog peers={peers} onCreated={onCreated} />);
     const user = await openDialog();
 
+    await user.type(screen.getByLabelText('Name'), 'remote-test');
     await user.type(screen.getByLabelText('Working directory'), '/repo');
     await user.type(screen.getByLabelText('Prompt'), 'Fix it');
 
@@ -189,6 +194,7 @@ describe('NewSessionDialog', () => {
 
     await waitFor(() => {
       expect(mockCreateRemoteSession).toHaveBeenCalledWith('remote:7433', {
+        name: 'remote-test',
         workdir: '/repo',
         prompt: 'Fix it',
         provider: 'claude',
@@ -316,6 +322,7 @@ describe('NewSessionDialog', () => {
     if (listboxOption) await user.click(listboxOption);
 
     // Fill required fields and submit
+    await user.type(screen.getByLabelText('Name'), 'ink-test');
     await user.type(screen.getByLabelText('Working directory'), '/repo');
     await user.type(screen.getByLabelText('Prompt'), 'Review code');
 

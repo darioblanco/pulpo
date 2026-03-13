@@ -376,11 +376,8 @@ async fn check_session_idle(
         // false positives during brief pauses in output.
         if session.status == SessionStatus::Active {
             let immediate = detect_waiting_for_input(&current_output);
-            let sustained = session.last_output_at.is_some_and(|t| {
-                let elapsed = now - t;
-                // At least 2 ticks of unchanged output (check_interval default 10s)
-                elapsed.num_seconds() >= 20
-            });
+            let last_change = session.last_output_at.unwrap_or(session.created_at);
+            let sustained = (now - last_change).num_seconds() >= 20;
             if immediate || sustained {
                 info!(
                     "Session {} idle ({}), transitioning to idle",
@@ -2055,13 +2052,13 @@ mod tests {
         let dyn_backend: Arc<dyn Backend> = backend;
         check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
 
-        // Should be marked idle (created_at is used as fallback)
+        // Should transition to Idle (created_at used as fallback for last_output_at)
         let fetched = store
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert!(fetched.idle_since.is_some());
+        assert_eq!(fetched.status, SessionStatus::Idle);
     }
 
     #[tokio::test]

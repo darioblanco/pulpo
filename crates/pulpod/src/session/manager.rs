@@ -148,18 +148,7 @@ impl SessionManager {
         }
         let mode = req.mode.unwrap_or_default();
         let guards = resolve_guard_config(&req, &self.default_guard);
-        let name = if let Some(n) = req.name.take() {
-            n
-        } else {
-            let existing: std::collections::HashSet<String> = self
-                .store
-                .list_sessions()
-                .await?
-                .into_iter()
-                .map(|s| s.name)
-                .collect();
-            super::names::generate_name(&|candidate| existing.contains(candidate))
-        };
+        let name = req.name.clone();
         // Inject culture context after name is determined (write-back path uses session name)
         req = self.inject_culture_context(req, &name);
         let prompt = req.prompt.clone().unwrap_or_default();
@@ -407,8 +396,11 @@ impl SessionManager {
 
     /// Check if a running session is still alive; if not, mark it stale.
     /// Returns `Ok(true)` if the session was transitioned to stale.
+    ///
+    /// Checks both `Active` and `Idle` sessions — after a reboot, tmux
+    /// sessions are gone but DB status may still say Idle.
     async fn check_and_mark_stale(&self, session: &mut Session) -> Result<bool> {
-        if session.status != SessionStatus::Active {
+        if session.status != SessionStatus::Active && session.status != SessionStatus::Idle {
             return Ok(false);
         }
         let backend_id = self.resolve_backend_id(session);
@@ -625,8 +617,9 @@ impl SessionManager {
         let mut metadata = HashMap::new();
         metadata.insert("curator".into(), session.id.to_string());
 
+        let curator_name = format!("curator-{}", session.name);
         let req = CreateSessionRequest {
-            name: None,
+            name: curator_name,
             workdir: Some(session.workdir.clone()),
             provider: Some(provider),
             prompt: Some(prompt),
@@ -1088,12 +1081,12 @@ mod tests {
         (manager, backend, pool)
     }
 
-    fn make_req(prompt: &str) -> CreateSessionRequest {
+    fn make_req(name: &str) -> CreateSessionRequest {
         CreateSessionRequest {
-            name: None,
+            name: name.to_owned(),
             workdir: Some("/tmp".into()),
             provider: None,
-            prompt: Some(prompt.into()),
+            prompt: Some(name.into()),
             mode: None,
             unrestricted: None,
             model: None,
@@ -1112,25 +1105,23 @@ mod tests {
     #[tokio::test]
     async fn test_create_session_defaults() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("Fix the bug")).await.unwrap();
+        let (session, _) = mgr.create_session(make_req("fix-the-bug")).await.unwrap();
 
-        // Name is auto-generated (adjective-noun) when not provided
-        assert_eq!(session.name.split('-').count(), 2);
+        assert_eq!(session.name, "fix-the-bug");
         assert_eq!(session.provider, Provider::Claude);
         assert_eq!(session.mode, SessionMode::Interactive);
         assert_eq!(session.status, SessionStatus::Active);
         assert_eq!(session.workdir, "/tmp");
-        assert_eq!(session.prompt, "Fix the bug");
+        assert_eq!(session.prompt, "fix-the-bug");
         // MockBackend.session_id() returns just the name
         assert_eq!(session.backend_session_id, Some(session.name.clone()));
 
         let calls = backend.calls.lock().unwrap();
-        let name = &session.name;
         // All commands wrapped in bash -c for session survival
-        assert!(calls[0].contains(&format!("create:{name}:/tmp:bash -c")));
+        assert!(calls[0].contains("create:fix-the-bug:/tmp:bash -c"));
         assert!(calls[0].contains("claude"));
-        assert!(calls[0].contains("Fix the bug"));
-        assert!(calls[1].starts_with(&format!("setup_logging:{name}:")));
+        assert!(calls[0].contains("fix-the-bug"));
+        assert!(calls[1].starts_with("setup_logging:fix-the-bug:"));
         assert_eq!(calls.len(), 2);
         drop(calls);
     }
@@ -1139,7 +1130,7 @@ mod tests {
     async fn test_apply_defaults_fills_workdir_and_prompt() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
-            name: None,
+            name: "defaults-test".into(),
             workdir: None,
             provider: None,
             prompt: None,
@@ -1166,7 +1157,7 @@ mod tests {
     async fn test_apply_defaults_preserves_explicit_values() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
-            name: None,
+            name: "explicit-test".into(),
             workdir: Some("/my/dir".into()),
             provider: Some(Provider::Codex),
             prompt: Some("do stuff".into()),
@@ -1194,7 +1185,7 @@ mod tests {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let mgr = mgr.with_default_provider(Some("codex".into()));
         let req = CreateSessionRequest {
-            name: None,
+            name: "defaults-test".into(),
             workdir: None,
             provider: None,
             prompt: None,
@@ -1248,7 +1239,7 @@ mod tests {
             output_format: Some("json".into()),
         });
         let req = CreateSessionRequest {
-            name: None,
+            name: "session-defaults-test".into(),
             workdir: Some("/tmp".into()),
             provider: Some(Provider::Claude),
             prompt: Some("test".into()),
@@ -1328,7 +1319,7 @@ mod tests {
     async fn test_create_session_with_no_args() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
-            name: None,
+            name: "defaults-test".into(),
             workdir: None,
             provider: None,
             prompt: None,
@@ -1368,7 +1359,7 @@ mod tests {
     async fn test_create_session_explicit_name() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
-            name: Some("custom-name".into()),
+            name: "custom-name".into(),
             ..make_req("test")
         };
         let (session, _) = mgr.create_session(req).await.unwrap();
@@ -1522,6 +1513,59 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(fetched.status, SessionStatus::Lost);
+    }
+
+    #[tokio::test]
+    async fn test_get_session_idle_with_dead_backend_transitions_to_lost() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+
+        // Manually set session to Idle (simulates watchdog marking it idle before reboot)
+        mgr.store()
+            .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+            .await
+            .unwrap();
+
+        // When fetched, check_and_mark_stale should detect dead backend and mark Lost
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Lost);
+    }
+
+    #[tokio::test]
+    async fn test_get_session_idle_with_alive_backend_stays_idle() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(true)).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+
+        mgr.store()
+            .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+            .await
+            .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Idle);
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_idle_with_dead_backend_transitions_to_lost() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+
+        // Manually set session to Idle
+        mgr.store()
+            .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+            .await
+            .unwrap();
+
+        let sessions = mgr.list_sessions().await.unwrap();
+        assert_eq!(sessions[0].status, SessionStatus::Lost);
     }
 
     #[tokio::test]

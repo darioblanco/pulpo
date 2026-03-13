@@ -10,7 +10,7 @@ use crate::session::{Provider, Session, SessionMode};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
-    pub name: Option<String>,
+    pub name: String,
     pub workdir: Option<String>,
     pub provider: Option<Provider>,
     pub prompt: Option<String>,
@@ -642,11 +642,11 @@ mod tests {
 
     #[test]
     fn test_create_session_request_deserialize() {
-        let json = r#"{"workdir":"/tmp/repo","prompt":"Fix bug"}"#;
+        let json = r#"{"name":"my-task","workdir":"/tmp/repo","prompt":"Fix bug"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "my-task");
         assert_eq!(req.workdir.as_deref(), Some("/tmp/repo"));
         assert_eq!(req.prompt.as_deref(), Some("Fix bug"));
-        assert!(req.name.is_none());
         assert!(req.provider.is_none());
         assert!(req.mode.is_none());
         assert!(req.model.is_none());
@@ -660,7 +660,7 @@ mod tests {
     fn test_create_session_request_with_all_fields() {
         let json = r#"{"name":"my-session","workdir":"/repo","provider":"claude","prompt":"Do it","mode":"autonomous","model":"opus","allowed_tools":["Read","Grep"],"system_prompt":"Be concise","metadata":{"discord_channel":"123"},"ink":"coder"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.name, Some("my-session".into()));
+        assert_eq!(req.name, "my-session");
         assert_eq!(req.provider, Some(crate::session::Provider::Claude));
         assert_eq!(req.mode, Some(SessionMode::Autonomous));
         assert_eq!(req.model, Some("opus".into()));
@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn test_create_session_request_all_optional() {
-        let json = r#"{"workdir":"/tmp"}"#;
+        let json = r#"{"name":"my-task","workdir":"/tmp"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.workdir.as_deref(), Some("/tmp"));
         assert!(req.prompt.is_none());
@@ -746,7 +746,7 @@ mod tests {
     #[test]
     fn test_create_session_request_debug() {
         let req = CreateSessionRequest {
-            name: None,
+            name: "test".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -769,35 +769,36 @@ mod tests {
 
     #[test]
     fn test_create_session_request_with_conversation_id() {
-        let json = r#"{"workdir":"/repo","prompt":"test","conversation_id":"conv-abc"}"#;
+        let json =
+            r#"{"name":"test","workdir":"/repo","prompt":"test","conversation_id":"conv-abc"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.conversation_id.as_deref(), Some("conv-abc"));
     }
 
     #[test]
     fn test_create_session_request_without_conversation_id() {
-        let json = r#"{"workdir":"/repo","prompt":"test"}"#;
+        let json = r#"{"name":"test","workdir":"/repo","prompt":"test"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert!(req.conversation_id.is_none());
     }
 
     #[test]
     fn test_create_session_request_with_interactive_mode() {
-        let json = r#"{"workdir":"/repo","prompt":"test","mode":"interactive"}"#;
+        let json = r#"{"name":"test","workdir":"/repo","prompt":"test","mode":"interactive"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.mode, Some(SessionMode::Interactive));
     }
 
     #[test]
     fn test_create_session_request_with_unrestricted() {
-        let json = r#"{"workdir":"/repo","prompt":"test","unrestricted":true}"#;
+        let json = r#"{"name":"test","workdir":"/repo","prompt":"test","unrestricted":true}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.unrestricted, Some(true));
     }
 
     #[test]
     fn test_create_session_request_without_unrestricted() {
-        let json = r#"{"workdir":"/repo","prompt":"test"}"#;
+        let json = r#"{"name":"test","workdir":"/repo","prompt":"test"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert!(req.unrestricted.is_none());
     }

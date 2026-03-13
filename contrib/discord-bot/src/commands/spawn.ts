@@ -22,10 +22,7 @@ export const data: SlashCommandOptionsOnlyBuilder = new SlashCommandBuilder()
     opt.setName('model').setDescription('Model override (e.g. opus, sonnet)').setRequired(false),
   )
   .addStringOption((opt) =>
-    opt
-      .setName('name')
-      .setDescription('Session name (auto-generated if omitted)')
-      .setRequired(false),
+    opt.setName('name').setDescription('Session name').setRequired(true),
   );
 
 export async function execute(
@@ -38,7 +35,7 @@ export async function execute(
   const prompt = interaction.options.getString('prompt', true);
   const ink = interaction.options.getString('ink') ?? undefined;
   const model = interaction.options.getString('model') ?? undefined;
-  const name = interaction.options.getString('name') ?? undefined;
+  const name = interaction.options.getString('name', true);
 
   try {
     const session = await client.createSession({

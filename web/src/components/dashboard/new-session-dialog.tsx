@@ -69,12 +69,12 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!repoPath || !prompt) return;
+    if (!name.trim() || !repoPath || !prompt) return;
     setSubmitting(true);
     setError(null);
     try {
       const data = {
-        ...(name.trim() ? { name: name.trim() } : {}),
+        name: name.trim(),
         workdir: repoPath,
         prompt,
         provider,

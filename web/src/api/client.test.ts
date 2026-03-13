@@ -184,6 +184,7 @@ describe('createSession', () => {
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(created) });
 
     const data = {
+      name: 'my-session',
       workdir: '/home/user/repo',
       prompt: 'Fix the bug',
       provider: 'claude',
@@ -205,7 +206,7 @@ describe('createSession', () => {
     const created = { id: 'new-1', name: 'my-api' };
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(created) });
 
-    const data = { workdir: '/repo', prompt: 'Do it' };
+    const data = { name: 'auth-test', workdir: '/repo', prompt: 'Do it' };
     await createSession(data);
 
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions', {
@@ -221,9 +222,9 @@ describe('createSession', () => {
       json: () => Promise.resolve({ error: 'working directory does not exist: /bad/path' }),
     });
 
-    await expect(createSession({ workdir: '/bad/path', prompt: 'test' })).rejects.toThrow(
-      'working directory does not exist',
-    );
+    await expect(
+      createSession({ name: 'err-test', workdir: '/bad/path', prompt: 'test' }),
+    ).rejects.toThrow('working directory does not exist');
   });
 
   it('throws generic message when no error field', async () => {
@@ -232,9 +233,9 @@ describe('createSession', () => {
       json: () => Promise.resolve({}),
     });
 
-    await expect(createSession({ workdir: '/repo', prompt: 'test' })).rejects.toThrow(
-      'Failed to create session',
-    );
+    await expect(
+      createSession({ name: 'gen-err', workdir: '/repo', prompt: 'test' }),
+    ).rejects.toThrow('Failed to create session');
   });
 });
 
@@ -243,7 +244,7 @@ describe('createRemoteSession', () => {
     const created = { id: 'remote-1', name: 'remote-api' };
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(created) });
 
-    const data = { workdir: '/repo', prompt: 'Do stuff' };
+    const data = { name: 'remote-test', workdir: '/repo', prompt: 'Do stuff' };
     const result = await createRemoteSession('macbook:7433', data);
 
     expect(mockFetch).toHaveBeenCalledWith('http://macbook:7433/api/v1/sessions', {
@@ -261,7 +262,7 @@ describe('createRemoteSession', () => {
     });
 
     await expect(
-      createRemoteSession('macbook:7433', { workdir: '/repo', prompt: 'test' }),
+      createRemoteSession('macbook:7433', { name: 'remote-err', workdir: '/repo', prompt: 'test' }),
     ).rejects.toThrow('provider not installed');
   });
 });

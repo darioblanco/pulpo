@@ -51,13 +51,12 @@ pub enum Commands {
     /// Spawn a new agent session
     #[command(visible_alias = "s")]
     Spawn {
+        /// Session name
+        name: String,
+
         /// Working directory (defaults to current directory)
         #[arg(long)]
         workdir: Option<String>,
-
-        /// Session name (auto-generated if omitted)
-        #[arg(long)]
-        name: Option<String>,
 
         /// Agent provider (claude, codex, gemini, opencode). Uses config `default_provider` or claude.
         #[arg(long)]
@@ -106,6 +105,10 @@ pub enum Commands {
         /// Resume an existing conversation by ID (Claude, Codex, Gemini)
         #[arg(long)]
         conversation_id: Option<String>,
+
+        /// Don't attach to the session after spawning
+        #[arg(short, long)]
+        detach: bool,
 
         /// Task prompt
         prompt: Vec<String>,
@@ -987,6 +990,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             output_format,
             worktree,
             conversation_id,
+            detach,
             prompt,
         } => {
             let prompt_text = prompt.join(" ");
@@ -997,6 +1001,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                     .map_or_else(|_| ".".into(), |p| p.to_string_lossy().into_owned())
             });
             let mut body = serde_json::json!({
+                "name": name,
                 "workdir": resolved_workdir,
                 "mode": mode,
             });
@@ -1010,9 +1015,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             if *unrestricted {
                 body["unrestricted"] = serde_json::json!(true);
-            }
-            if let Some(n) = name {
-                body["name"] = serde_json::json!(n);
             }
             if let Some(m) = model {
                 body["model"] = serde_json::json!(m);
@@ -1055,6 +1057,16 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             for w in &resp.warnings {
                 use std::fmt::Write;
                 let _ = write!(msg, "\n  Warning: {w}");
+            }
+            if !detach {
+                let backend_id = resp
+                    .session
+                    .backend_session_id
+                    .as_deref()
+                    .unwrap_or(&resp.session.name);
+                eprintln!("{msg}");
+                attach_session(backend_id)?;
+                return Ok(format!("Detached from session \"{}\".", resp.session.name));
             }
             Ok(msg)
         }
@@ -1138,7 +1150,13 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             .map_err(|e| friendly_error(&e, node))?;
             let text = ok_or_api_error(resp).await?;
             let session: Session = serde_json::from_str(&text)?;
-            Ok(format!("Resumed session \"{}\"", session.name))
+            let backend_id = session
+                .backend_session_id
+                .as_deref()
+                .unwrap_or(&session.name);
+            eprintln!("Resumed session \"{}\"", session.name);
+            attach_session(backend_id)?;
+            Ok(format!("Detached from session \"{}\".", session.name))
         }
         Commands::Culture {
             session,
@@ -1370,6 +1388,7 @@ mod tests {
         let cli = Cli::try_parse_from([
             "pulpo",
             "spawn",
+            "my-task",
             "--workdir",
             "/tmp/repo",
             "Fix",
@@ -1379,24 +1398,18 @@ mod tests {
         .unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { workdir, provider, auto, unrestricted, prompt, .. }
-                if workdir.as_deref() == Some("/tmp/repo") && provider.is_none() && !auto
-                && !unrestricted && prompt == &["Fix", "the", "bug"]
+            Commands::Spawn { name, workdir, provider, auto, unrestricted, prompt, .. }
+                if name == "my-task" && workdir.as_deref() == Some("/tmp/repo")
+                && provider.is_none() && !auto && !unrestricted
+                && prompt == &["Fix", "the", "bug"]
         ));
     }
 
     #[test]
     fn test_cli_parse_spawn_with_provider() {
-        let cli = Cli::try_parse_from([
-            "pulpo",
-            "spawn",
-            "--workdir",
-            "/tmp",
-            "--provider",
-            "codex",
-            "Do it",
-        ])
-        .unwrap();
+        let cli =
+            Cli::try_parse_from(["pulpo", "spawn", "my-task", "--provider", "codex", "Do it"])
+                .unwrap();
         assert!(matches!(
             &cli.command,
             Commands::Spawn { provider, .. } if provider.as_deref() == Some("codex")
@@ -1405,8 +1418,7 @@ mod tests {
 
     #[test]
     fn test_cli_parse_spawn_auto() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "--workdir", "/tmp", "--auto", "Do it"])
-            .unwrap();
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--auto", "Do it"]).unwrap();
         assert!(matches!(
             &cli.command,
             Commands::Spawn { auto, .. } if *auto
@@ -1415,15 +1427,8 @@ mod tests {
 
     #[test]
     fn test_cli_parse_spawn_unrestricted() {
-        let cli = Cli::try_parse_from([
-            "pulpo",
-            "spawn",
-            "--workdir",
-            "/tmp",
-            "--unrestricted",
-            "Do it",
-        ])
-        .unwrap();
+        let cli =
+            Cli::try_parse_from(["pulpo", "spawn", "my-task", "--unrestricted", "Do it"]).unwrap();
         assert!(matches!(
             &cli.command,
             Commands::Spawn { unrestricted, .. } if *unrestricted
@@ -1432,7 +1437,7 @@ mod tests {
 
     #[test]
     fn test_cli_parse_spawn_unrestricted_default() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "--workdir", "/tmp", "Do it"]).unwrap();
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "Do it"]).unwrap();
         assert!(matches!(
             &cli.command,
             Commands::Spawn { unrestricted, .. } if !unrestricted
@@ -1440,31 +1445,12 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_spawn_with_name() {
-        let cli = Cli::try_parse_from([
-            "pulpo",
-            "spawn",
-            "--workdir",
-            "/tmp/repo",
-            "--name",
-            "my-task",
-            "Fix it",
-        ])
-        .unwrap();
+    fn test_cli_parse_spawn_name_positional() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "portal", "Fix", "it"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { workdir, name, .. }
-                if workdir.as_deref() == Some("/tmp/repo") && name.as_deref() == Some("my-task")
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_spawn_without_name() {
-        let cli =
-            Cli::try_parse_from(["pulpo", "spawn", "--workdir", "/tmp/repo", "Fix it"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Commands::Spawn { name, .. } if name.is_none()
+            Commands::Spawn { name, prompt, .. }
+                if name == "portal" && prompt == &["Fix", "it"]
         ));
     }
 
@@ -1473,8 +1459,7 @@ mod tests {
         let cli = Cli::try_parse_from([
             "pulpo",
             "spawn",
-            "--workdir",
-            "/tmp/repo",
+            "my-task",
             "--conversation-id",
             "conv-abc-123",
             "Fix it",
@@ -1489,11 +1474,37 @@ mod tests {
 
     #[test]
     fn test_cli_parse_spawn_without_conversation_id() {
-        let cli =
-            Cli::try_parse_from(["pulpo", "spawn", "--workdir", "/tmp/repo", "Fix it"]).unwrap();
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "Fix it"]).unwrap();
         assert!(matches!(
             &cli.command,
             Commands::Spawn { conversation_id, .. } if conversation_id.is_none()
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_detach() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--detach", "Do it"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { detach, .. } if *detach
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_detach_short() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "-d", "Do it"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { detach, .. } if *detach
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_detach_default() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "Do it"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { detach, .. } if !detach
         ));
     }
 
@@ -1716,8 +1727,8 @@ mod tests {
             node,
             token: None,
             command: Commands::Spawn {
+                name: "test".into(),
                 workdir: Some("/tmp/repo".into()),
-                name: None,
                 provider: Some("claude".into()),
                 auto: false,
                 unrestricted: false,
@@ -1730,6 +1741,7 @@ mod tests {
                 output_format: None,
                 worktree: false,
                 conversation_id: None,
+                detach: true,
                 prompt: vec!["Fix".into(), "bug".into()],
             },
         };
@@ -1745,8 +1757,8 @@ mod tests {
             node,
             token: None,
             command: Commands::Spawn {
+                name: "test".into(),
                 workdir: Some("/tmp/repo".into()),
-                name: None,
                 provider: Some("claude".into()),
                 auto: false,
                 unrestricted: false,
@@ -1759,6 +1771,7 @@ mod tests {
                 output_format: Some("json".into()),
                 worktree: false,
                 conversation_id: None,
+                detach: true,
                 prompt: vec!["Fix".into(), "bug".into()],
             },
         };
@@ -1773,8 +1786,8 @@ mod tests {
             node,
             token: None,
             command: Commands::Spawn {
+                name: "test".into(),
                 workdir: Some("/tmp/repo".into()),
-                name: None,
                 provider: Some("claude".into()),
                 auto: true,
                 unrestricted: false,
@@ -1787,6 +1800,7 @@ mod tests {
                 output_format: None,
                 worktree: false,
                 conversation_id: None,
+                detach: true,
                 prompt: vec!["Do it".into()],
             },
         };
@@ -1801,8 +1815,8 @@ mod tests {
             node,
             token: None,
             command: Commands::Spawn {
+                name: "my-task".into(),
                 workdir: Some("/tmp/repo".into()),
-                name: Some("my-task".into()),
                 provider: Some("claude".into()),
                 auto: false,
                 unrestricted: false,
@@ -1815,11 +1829,42 @@ mod tests {
                 output_format: None,
                 worktree: false,
                 conversation_id: None,
+                detach: true,
                 prompt: vec!["Fix".into(), "bug".into()],
             },
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Created session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_spawn_auto_attach() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Commands::Spawn {
+                name: "test".into(),
+                workdir: Some("/tmp/repo".into()),
+                provider: Some("claude".into()),
+                auto: false,
+                unrestricted: false,
+                model: None,
+                system_prompt: None,
+                allowed_tools: None,
+                ink: None,
+                max_turns: None,
+                max_budget: None,
+                output_format: None,
+                worktree: false,
+                conversation_id: None,
+                detach: false,
+                prompt: vec!["Fix".into(), "bug".into()],
+            },
+        };
+        let result = execute(&cli).await.unwrap();
+        // When not detached, spawn prints creation to stderr and returns detach message
+        assert!(result.contains("Detached from session"));
     }
 
     #[tokio::test]
@@ -2034,8 +2079,8 @@ mod tests {
             node,
             token: None,
             command: Commands::Spawn {
+                name: "test".into(),
                 workdir: Some("/tmp/repo".into()),
-                name: None,
                 provider: Some("claude".into()),
                 auto: false,
                 unrestricted: false,
@@ -2048,6 +2093,7 @@ mod tests {
                 output_format: None,
                 worktree: false,
                 conversation_id: None,
+                detach: true,
                 prompt: vec!["test".into()],
             },
         };
@@ -2095,8 +2141,7 @@ mod tests {
             },
         };
         let result = execute(&cli).await.unwrap();
-        assert!(result.contains("Resumed session"));
-        assert!(result.contains("repo"));
+        assert!(result.contains("Detached from session"));
     }
 
     #[tokio::test]
@@ -2366,8 +2411,8 @@ mod tests {
             node: "localhost:1".into(),
             token: None,
             command: Commands::Spawn {
+                name: "test".into(),
                 workdir: Some("/tmp".into()),
-                name: None,
                 provider: Some("claude".into()),
                 auto: false,
                 unrestricted: false,
@@ -2380,6 +2425,7 @@ mod tests {
                 output_format: None,
                 worktree: false,
                 conversation_id: None,
+                detach: true,
                 prompt: vec!["test".into()],
             },
         };
@@ -2917,7 +2963,7 @@ mod tests {
 
     #[test]
     fn test_cli_parse_alias_spawn() {
-        let cli = Cli::try_parse_from(["pulpo", "s", "--workdir", "/tmp", "Do it"]).unwrap();
+        let cli = Cli::try_parse_from(["pulpo", "s", "my-task", "Do it"]).unwrap();
         assert!(matches!(&cli.command, Commands::Spawn { .. }));
     }
 
@@ -3269,8 +3315,7 @@ mod tests {
         let cli = Cli::try_parse_from([
             "pulpo",
             "spawn",
-            "--workdir",
-            "/tmp",
+            "my-task",
             "--max-turns",
             "10",
             "--max-budget",

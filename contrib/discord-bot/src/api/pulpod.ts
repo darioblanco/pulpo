@@ -16,7 +16,7 @@ export interface Session {
 }
 
 export interface CreateSessionRequest {
-  name?: string;
+  name: string;
   workdir: string;
   provider?: string;
   prompt: string;

@@ -291,6 +291,7 @@ mod tests {
         let resp = server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "create-test",
                 "workdir": "/tmp",
                 "prompt": "Do something"
             }))
@@ -307,6 +308,7 @@ mod tests {
         server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "list-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
@@ -324,6 +326,7 @@ mod tests {
         let create_resp = server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "get-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
@@ -343,6 +346,7 @@ mod tests {
         let create_resp = server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "kill-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
@@ -367,6 +371,7 @@ mod tests {
         let create_resp = server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "del-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
@@ -391,6 +396,7 @@ mod tests {
         let create_resp = server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "delrun-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
@@ -468,6 +474,7 @@ mod tests {
         let create_resp = server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "out-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
@@ -496,6 +503,7 @@ mod tests {
         let create_resp = server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "inp-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
@@ -526,6 +534,7 @@ mod tests {
         let create_resp = server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "interv-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
@@ -553,6 +562,7 @@ mod tests {
         let create_resp = server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "resume-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
@@ -722,6 +732,7 @@ mod tests {
         let create_resp = server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
+                "name": "dl-test",
                 "workdir": "/tmp",
                 "prompt": "test"
             }))
@@ -822,7 +833,7 @@ mod tests {
         let (addr, state) = ws_test_server().await;
         // Create a session, then kill it so it's not running
         let req = pulpo_common::api::CreateSessionRequest {
-            name: Some("ws-dead".into()),
+            name: "ws-dead".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -935,7 +946,7 @@ mod tests {
 
         // Create a session (create works, but later get_session will call is_alive → error)
         let req = pulpo_common::api::CreateSessionRequest {
-            name: Some("ws-err".into()),
+            name: "ws-err".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -974,7 +985,7 @@ mod tests {
     async fn test_ws_stream_upgrade_succeeds() {
         let (addr, state) = ws_test_server().await;
         let req = pulpo_common::api::CreateSessionRequest {
-            name: Some("ws-upgrade".into()),
+            name: "ws-upgrade".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1012,7 +1023,7 @@ mod tests {
 
         let (addr, state) = ws_test_server().await;
         let req = pulpo_common::api::CreateSessionRequest {
-            name: Some("ws-echo-bin".into()),
+            name: "ws-echo-bin".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1060,7 +1071,7 @@ mod tests {
 
         let (addr, state) = ws_test_server().await;
         let req = pulpo_common::api::CreateSessionRequest {
-            name: Some("ws-echo-txt".into()),
+            name: "ws-echo-txt".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
@@ -1106,7 +1117,7 @@ mod tests {
 
         let (addr, state) = ws_test_server().await;
         let req = pulpo_common::api::CreateSessionRequest {
-            name: Some("ws-close".into()),
+            name: "ws-close".into(),
             workdir: Some("/tmp".into()),
             provider: None,
             prompt: Some("test".into()),
