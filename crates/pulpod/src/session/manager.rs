@@ -1145,6 +1145,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_create_session_with_worktree() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let mut req = make_req("worktree-test");
+        req.worktree = Some(true);
+        let (session, _) = mgr.create_session(req).await.unwrap();
+
+        assert_eq!(session.name, "worktree-test");
+        // Worktree flag should add --worktree to the claude command
+        assert!(backend.calls.lock().unwrap()[0].contains("worktree-test"));
+    }
+
+    #[tokio::test]
     async fn test_apply_defaults_fills_workdir_and_prompt() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
