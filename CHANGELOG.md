@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.21](https://github.com/darioblanco/pulpo/compare/v0.0.20...v0.0.21) (2026-03-13)
+
+
+### Bug Fixes
+
+* add staleness grace period to prevent race on fresh spawns ([b116865](https://github.com/darioblanco/pulpo/commit/b1168653a58933c1fa388297045219ffb0969f1d))
+* detect lost sessions after reboot, require session name, auto-attach on spawn/resume ([b698c2d](https://github.com/darioblanco/pulpo/commit/b698c2d272a04bc6c97ef580357d0501536cf48f))
+* gracefully degrade when tailscale serve is unavailable ([0dd466e](https://github.com/darioblanco/pulpo/commit/0dd466ebded81441dcedbdcde0e5ba07f6a1a1aa))
+
 ## [0.0.20](https://github.com/darioblanco/pulpo/compare/v0.0.19...v0.0.20) (2026-03-12)
 
 
