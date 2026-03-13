@@ -1047,7 +1047,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -1066,7 +1067,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&peers);
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -1083,7 +1085,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         (PulpoMcp::new(manager, peer_registry, test_config()), pool)
     }
@@ -2068,7 +2071,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -2634,7 +2638,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -3327,7 +3332,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let mcp = PulpoMcp::new(manager, peer_registry, test_config());
 

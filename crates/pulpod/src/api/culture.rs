@@ -623,7 +623,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
 
@@ -762,7 +763,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
 
@@ -799,7 +801,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
 
@@ -842,7 +845,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
 
@@ -879,7 +883,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
 
@@ -916,7 +921,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
 
@@ -980,7 +986,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
 
@@ -1036,7 +1043,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
 
@@ -1092,7 +1100,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
 

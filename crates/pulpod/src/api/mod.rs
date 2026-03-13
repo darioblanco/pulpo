@@ -183,7 +183,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
         assert_eq!(state.config.read().await.node.name, "test");
@@ -218,7 +219,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let state = AppState::with_event_tx(
@@ -271,7 +273,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let initial = crate::watchdog::WatchdogRuntimeConfig {
@@ -322,7 +325,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let sync_status = Arc::new(RwLock::new(SyncStatus::new(false)));
@@ -365,7 +369,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
         let _router = router(state);

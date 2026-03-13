@@ -161,7 +161,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -196,7 +197,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let config_path = tmpdir.path().join("config.toml");
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
@@ -394,7 +396,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let initial = crate::watchdog::WatchdogRuntimeConfig {
             threshold: 90,

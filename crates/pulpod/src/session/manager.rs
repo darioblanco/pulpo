@@ -35,6 +35,9 @@ pub struct SessionManager {
     inks: HashMap<String, InkConfig>,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
     node_name: String,
+    /// Grace period (seconds) after session creation before staleness checks apply.
+    /// Prevents race where `is_alive()` returns false before tmux is fully ready.
+    stale_grace_secs: i64,
 }
 
 impl SessionManager {
@@ -57,7 +60,15 @@ impl SessionManager {
             inks,
             event_tx: None,
             node_name: String::new(),
+            stale_grace_secs: 5,
         }
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub const fn with_no_stale_grace(mut self) -> Self {
+        self.stale_grace_secs = 0;
+        self
     }
 
     #[must_use]
@@ -401,6 +412,12 @@ impl SessionManager {
     /// sessions are gone but DB status may still say Idle.
     async fn check_and_mark_stale(&self, session: &mut Session) -> Result<bool> {
         if session.status != SessionStatus::Active && session.status != SessionStatus::Idle {
+            return Ok(false);
+        }
+        // Grace period: skip staleness check for recently created sessions to avoid a
+        // race where `is_alive()` returns false before tmux is fully ready.
+        let age = Utc::now() - session.created_at;
+        if age.num_seconds() < self.stale_grace_secs {
             return Ok(false);
         }
         let backend_id = self.resolve_backend_id(session);
@@ -1077,7 +1094,8 @@ mod tests {
             store,
             pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
-        );
+        )
+        .with_no_stale_grace();
         (manager, backend, pool)
     }
 
@@ -1847,6 +1865,7 @@ mod tests {
     async fn test_resume_with_conversation_id() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+
         let id = session.id.to_string();
 
         // Set conversation_id
@@ -1914,6 +1933,7 @@ mod tests {
         let backend = MockBackend::new().with_alive(false);
         let (mgr, backend_ref, _pool) = test_manager(backend).await;
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+
         let id = session.id.to_string();
 
         // Mark stale
@@ -2285,6 +2305,7 @@ mod tests {
             inks: HashMap::new(),
             event_tx: None,
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let mut req = make_req("shell-culture-test");
         req.provider = Some(Provider::Shell);
@@ -2362,6 +2383,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let req = make_req("test");
         let resolved = mgr.resolve_ink(req).unwrap();
@@ -2385,6 +2407,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let req = CreateSessionRequest {
             ink: Some("nonexistent".into()),
@@ -2422,6 +2445,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let req = CreateSessionRequest {
             ink: Some("reviewer".into()),
@@ -2462,6 +2486,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let req = CreateSessionRequest {
             ink: Some("coder".into()),
@@ -2507,6 +2532,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let req = CreateSessionRequest {
             ink: Some("coder".into()),
@@ -2549,6 +2575,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let req = CreateSessionRequest {
             provider: Some(Provider::Codex),
@@ -2598,6 +2625,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let req = CreateSessionRequest {
             unrestricted: Some(true),
@@ -2636,6 +2664,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let req = CreateSessionRequest {
             ink: Some("safe-agent".into()),
@@ -2675,6 +2704,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let req = CreateSessionRequest {
             ink: Some("safe-agent".into()),
@@ -2870,6 +2900,7 @@ mod tests {
         let mgr = mgr.with_event_tx(tx, "n".into());
 
         let (session, _) = mgr.create_session(make_req("work")).await.unwrap();
+
         let _ = rx.recv().await.unwrap(); // drain create event
 
         // Mark stale via get_session
@@ -3209,6 +3240,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let req = make_req("test");
         let result = mgr.inject_culture_context(req, "test-session");
@@ -3232,6 +3264,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let req = make_req("test");
         let result = mgr.inject_culture_context(req, "test-session");
@@ -3274,6 +3307,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let mut req = make_req("test");
         req.provider = Some(Provider::Claude);
@@ -3312,6 +3346,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let mut req = make_req("test");
         req.provider = Some(Provider::Codex);
@@ -3346,6 +3381,7 @@ mod tests {
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
             node_name: String::new(),
+            stale_grace_secs: 0,
         };
         let mut req = make_req("test");
         req.provider = Some(Provider::Claude);
@@ -3410,6 +3446,7 @@ mod tests {
         // Killing a stale session should succeed even if backend session is already gone.
         let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+
         let id = session.id.to_string();
 
         // Mark stale via get_session
@@ -3430,6 +3467,7 @@ mod tests {
         let backend = MockBackend::new().with_alive(false);
         let (mgr, backend_ref, _pool) = test_manager(backend).await;
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+
         let id = session.id.to_string();
 
         // Mark stale
@@ -3452,6 +3490,7 @@ mod tests {
         let backend = MockBackend::new().with_alive(false);
         let (mgr, backend_ref, _pool) = test_manager(backend).await;
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+
         let id = session.id.to_string();
 
         // Mark stale
@@ -3473,6 +3512,7 @@ mod tests {
         // process (tmux) is gone. get_session should detect this and mark Stale.
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+
         let id = session.id.to_string();
 
         // Session was just created as Running. Backend says it's dead.
@@ -3490,6 +3530,7 @@ mod tests {
         // backend should be reconciled to Stale.
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
         let (s1, _) = mgr.create_session(make_req("test1")).await.unwrap();
+
         let (s2, _) = mgr.create_session(make_req("test2")).await.unwrap();
 
         let sessions = mgr.list_sessions().await.unwrap();
@@ -3526,6 +3567,7 @@ mod tests {
         let backend = MockBackend::new().with_alive(false);
         let (mgr, backend_ref, _pool) = test_manager(backend).await;
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+
         let id = session.id.to_string();
 
         // Mark stale first (delete requires non-running status)
@@ -3577,11 +3619,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_stale_grace_period_protects_new_sessions() {
+        // A freshly created session should NOT be marked stale even if the backend
+        // reports it as dead — the tmux session may not be fully ready yet.
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let backend = Arc::new(MockBackend::new().with_alive(false));
+        // Use default grace period (5 seconds) — do NOT call with_no_stale_grace.
+        let mgr = SessionManager::new(
+            backend as Arc<dyn Backend>,
+            store,
+            GuardConfig::default(),
+            HashMap::new(),
+        );
+        let (session, _) = mgr.create_session(make_req("fresh")).await.unwrap();
+        let id = session.id.to_string();
+
+        // Despite dead backend, session should remain Active due to grace period.
+        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Active);
+    }
+
+    #[tokio::test]
     async fn test_stale_detection_skips_non_running_statuses() {
         // check_and_mark_stale should only affect Running sessions.
         // Dead, Completed, Stale, Creating sessions should not be touched.
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
         let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+
         let id = session.id.to_string();
 
         // Kill the session
