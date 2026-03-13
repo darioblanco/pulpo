@@ -3,27 +3,35 @@
 ## Commands
 
 ```text
-pulpo spawn [OPTIONS] [PROMPT...]     Spawn a new agent session
-pulpo list                            List sessions (alias: ls)
-pulpo logs <NAME> [--follow]          Show session output
-pulpo attach <NAME>                   Attach to tmux session
-pulpo input <NAME> [TEXT]             Send text input to a session
-pulpo kill <NAME>                     Kill a running session
-pulpo delete <NAME>                   Delete session record (alias: rm)
-pulpo resume <NAME>                   Resume a lost or finished session
-pulpo interventions <NAME>            Show watchdog interventions
-pulpo culture [OPTIONS]               Query and manage culture entries
-pulpo nodes                           List known nodes/peers
-pulpo schedule <SUBCOMMAND>           Manage scheduled sessions (crontab)
-pulpo ui                              Open web UI in browser
+pulpo spawn <NAME> [OPTIONS] [PROMPT...]  Spawn a new agent session (auto-attaches)
+pulpo list                                List sessions (alias: ls)
+pulpo logs <NAME> [--follow]              Show session output
+pulpo attach <NAME>                       Attach to tmux session
+pulpo input <NAME> [TEXT]                 Send text input to a session
+pulpo kill <NAME>                         Kill a running session
+pulpo delete <NAME>                       Delete session record (alias: rm)
+pulpo resume <NAME>                       Resume a lost or finished session (auto-attaches)
+pulpo interventions <NAME>                Show watchdog interventions
+pulpo culture [OPTIONS]                   Query and manage culture entries
+pulpo nodes                               List known nodes/peers
+pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
+pulpo ui                                  Open web UI in browser
 ```
 
 ## Spawn Options
 
+The first positional argument is the session **name** (required). Remaining positional arguments form the **prompt**.
+
+```bash
+pulpo spawn my-api --workdir ~/repos/my-api "Fix failing auth tests"
+```
+
+By default, `spawn` auto-attaches to the tmux session. Use `--detach` / `-d` to skip attachment (useful in scripts and the web UI).
+
 | Flag | Description | Providers |
 |------|-------------|-----------|
 | `--workdir <PATH>` | Working directory (default: current) | All |
-| `--name <NAME>` | Session name (auto-generated if omitted) | All |
+| `--detach` / `-d` | Don't attach to the session after spawning | All |
 | `--provider <NAME>` | Agent provider | All |
 | `--auto` | Autonomous mode (fire-and-forget) | All |
 | `--ink <NAME>` | Ink preset from config | All |
@@ -48,8 +56,8 @@ The `--worktree` flag (Claude only) gives each session its own git worktree — 
 
 ```bash
 # Two agents working on the same repo in parallel
-pulpo spawn --worktree --workdir ~/myproject "add caching layer"
-pulpo spawn --worktree --workdir ~/myproject "refactor auth module"
+pulpo spawn caching --worktree --workdir ~/myproject "add caching layer"
+pulpo spawn auth-refactor --worktree --workdir ~/myproject "refactor auth module"
 ```
 
 Worktrees are created at `<repo>/.claude/worktrees/<session-name>`. Other providers can work in a Claude-created worktree by pointing `--workdir` at it.

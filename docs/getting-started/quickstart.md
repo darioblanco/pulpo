@@ -22,8 +22,10 @@ The web UI is available at [http://localhost:7433](http://localhost:7433).
 ## 3. Spawn a session
 
 ```bash
-pulpo spawn --workdir ~/repos/my-api "Fix failing auth tests"
+pulpo spawn my-api --workdir ~/repos/my-api "Fix failing auth tests"
 ```
+
+This auto-attaches to the tmux session. Detach with `Ctrl-b d` to return to your shell. Use `--detach` / `-d` to skip auto-attach.
 
 ## 4. Watch progress
 

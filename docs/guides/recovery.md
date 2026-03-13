@@ -18,10 +18,11 @@ pulpo list
 # my-api   lost   ...
 
 pulpo resume my-api
-pulpo logs my-api --follow
 ```
 
-`resume` works for **lost** (tmux gone after crash/reboot) and **finished** (agent exited normally) sessions. The agent is restarted with `--resume` to continue from its previous conversation.
+`resume` auto-attaches to the tmux session after restarting the agent. Detach with `Ctrl-b d`.
+
+It works for **lost** (tmux gone after crash/reboot) and **finished** (agent exited normally) sessions. The agent is restarted with `--resume` to continue from its previous conversation.
 
 **Killed** sessions cannot be resumed — start a new session with `pulpo spawn`.
 

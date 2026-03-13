@@ -92,16 +92,16 @@ want to manage sessions from a terminal instead of the web UI.
 
 ```bash
 # Local usage (talks to local pulpod)
-pulpo spawn --workdir ~/repos/my-api --provider claude "Fix the auth bug"
+pulpo spawn my-api --workdir ~/repos/my-api --provider claude "Fix the auth bug"
 pulpo list
 pulpo logs my-api
 pulpo kill my-api
-pulpo resume my-api         # after reboot, resume Claude conversation
+pulpo resume my-api         # after reboot, resume Claude conversation (auto-attaches)
 pulpo nodes                 # list all pulpod peers on the Tailnet
 pulpo list --node server    # list sessions on a remote node
 
 # Remote usage (talks to remote pulpod)
-pulpo --node server spawn --workdir ~/repos/ml-model --provider claude "Train it"
+pulpo --node server spawn ml-train --workdir ~/repos/ml-model --provider claude "Train it"
 ```
 
 #### 3. Web UI
@@ -156,12 +156,12 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 
 | Status     | Meaning                         | How it happens                    | What to do next                 |
 | ---------- | ------------------------------- | --------------------------------- | ------------------------------- |
-| `creating` | tmux session being set up       | `pulpo spawn` just ran            | Wait                            |
+| `creating` | tmux session being set up       | `pulpo spawn <name>` just ran     | Wait (auto-attached)            |
 | `active`   | Agent is working                | Session started / output changed  | `logs`, `attach`, `kill`        |
 | `idle`     | Agent waiting for input         | Watchdog detected waiting pattern | `attach` to interact, or `kill` |
 | `finished` | Agent exited                    | `[pulpo] Agent exited` detected   | `resume` or `delete`            |
 | `killed`   | Session terminated              | User, watchdog, or TTL cleanup    | `spawn` new or `delete`         |
-| `lost`     | tmux process disappeared        | Daemon restart / reboot / crash   | `resume`                        |
+| `lost`     | tmux process disappeared        | Daemon restart / reboot / crash   | `resume` (auto-attaches)        |
 
 Key distinctions:
 - **Idle** is a live state — the agent process is running but waiting. **Finished** means the agent exited.
@@ -364,7 +364,7 @@ WS     /sessions/:id/stream   Stream terminal output (WebSocket)
 }
 ```
 
-All fields are optional. `workdir` defaults to the user's home directory,
+`name` is required. All other fields are optional. `workdir` defaults to the user's home directory,
 `prompt` defaults to empty, and `provider` defaults to the configured
 `default_provider` (or `"claude"` if unset). `mode` is `"interactive"`
 (default) or `"autonomous"`. If `ink` is set, its config is used as

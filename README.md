@@ -39,7 +39,7 @@ brew install darioblanco/tap/pulpo
 pulpod
 
 # Spawn a session
-pulpo spawn --workdir ~/repos/my-api "Fix failing auth tests"
+pulpo spawn my-api --workdir ~/repos/my-api "Fix failing auth tests"
 
 # Watch progress
 pulpo logs my-api --follow

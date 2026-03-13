@@ -64,7 +64,7 @@ unrestricted = true
 instructions = "Fix the issue quickly with minimal changes."
 ```
 
-Use with: `pulpo spawn --ink reviewer "Review the auth module"`
+Use with: `pulpo spawn auth-review --ink reviewer "Review the auth module"`
 
 Instructions routing:
 - **Claude**: instructions are passed as `--system-prompt`

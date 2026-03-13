@@ -49,6 +49,7 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 
 ```json
 {
+  "name": "my-api",
   "workdir": "/path/to/repo",
   "prompt": "Fix the auth bug",
   "provider": "claude",
@@ -65,7 +66,7 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 }
 ```
 
-All fields are optional. Defaults are applied from session_defaults → inks → node config.
+`name` is required. All other fields are optional. Defaults are applied from session_defaults → inks → node config.
 
 ## Providers
 
