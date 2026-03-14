@@ -108,9 +108,14 @@ async fn handle_stream(
                 return;
             }
         };
+        // Drop the slave end in the parent — child has its own copy.
+        // Keeps the PTY open only as long as the child runs.
+        drop(pts);
 
         info!("PTY bridge started for {session_id}");
-        let (reader, writer) = tokio::io::split(pty);
+        // Use pty-process's own split (not tokio::io::split) — it handles
+        // the AsyncFd polling correctly. OwnedWritePty also exposes resize().
+        let (reader, writer) = pty.into_split();
         let (ws_sender, ws_receiver) = socket.split();
         let name_owned = session_id.to_owned();
         let result =
