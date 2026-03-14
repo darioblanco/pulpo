@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.22](https://github.com/darioblanco/pulpo/compare/v0.0.21...v0.0.22) (2026-03-14)
+
+
+### Features
+
+* **docs:** add dark theme matching Pulpo web UI color scheme ([293c2da](https://github.com/darioblanco/pulpo/commit/293c2da0f35a5a1701fc5365048bd8664d551183))
+
+
+### Bug Fixes
+
+* escape backticks in bash -c wrapper to prevent command substitution ([1452504](https://github.com/darioblanco/pulpo/commit/14525041b7978dbc8d2b5a3fbd499f37e1c27365))
+
 ## [0.0.21](https://github.com/darioblanco/pulpo/compare/v0.0.20...v0.0.21) (2026-03-13)
 
 
