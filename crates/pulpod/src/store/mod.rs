@@ -323,6 +323,16 @@ impl Store {
         row.map(|r| row_to_session(&r)).transpose()
     }
 
+    pub async fn has_active_session_by_name(&self, name: &str) -> Result<bool> {
+        let row = sqlx::query(
+            "SELECT 1 FROM sessions WHERE name = ? AND status IN ('creating', 'active', 'idle') LIMIT 1",
+        )
+        .bind(name)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.is_some())
+    }
+
     pub async fn list_sessions(&self) -> Result<Vec<Session>> {
         let rows = sqlx::query("SELECT * FROM sessions ORDER BY created_at DESC")
             .fetch_all(&self.pool)
@@ -755,6 +765,76 @@ mod tests {
 
         let result = store.get_session("nonexistent-name").await.unwrap();
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_has_active_session_by_name_true() {
+        let store = test_store().await;
+        let session = make_session("my-session");
+        store.insert_session(&session).await.unwrap();
+
+        assert!(
+            store
+                .has_active_session_by_name("my-session")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_has_active_session_by_name_false_no_match() {
+        let store = test_store().await;
+        assert!(
+            !store
+                .has_active_session_by_name("nonexistent")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_has_active_session_by_name_false_killed() {
+        let store = test_store().await;
+        let mut session = make_session("killed-session");
+        session.status = SessionStatus::Killed;
+        store.insert_session(&session).await.unwrap();
+
+        assert!(
+            !store
+                .has_active_session_by_name("killed-session")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_has_active_session_by_name_stale() {
+        let store = test_store().await;
+        let mut session = make_session("idle-session");
+        session.status = SessionStatus::Idle;
+        store.insert_session(&session).await.unwrap();
+
+        assert!(
+            store
+                .has_active_session_by_name("idle-session")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_has_active_session_by_name_creating() {
+        let store = test_store().await;
+        let mut session = make_session("creating-session");
+        session.status = SessionStatus::Creating;
+        store.insert_session(&session).await.unwrap();
+
+        assert!(
+            store
+                .has_active_session_by_name("creating-session")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]

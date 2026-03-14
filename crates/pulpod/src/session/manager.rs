@@ -150,6 +150,15 @@ impl SessionManager {
         req = self.resolve_ink(req)?;
         let workdir = req.workdir.clone().unwrap_or_default();
         validate_workdir(&workdir)?;
+
+        // Reject duplicate names among live sessions
+        if self.store.has_active_session_by_name(&req.name).await? {
+            bail!(
+                "a session named '{}' is already active — kill it first or use a different name",
+                req.name
+            );
+        }
+
         let id = Uuid::new_v4();
         let provider = req.provider.unwrap_or(Provider::Claude);
 
@@ -1518,6 +1527,26 @@ mod tests {
         let sessions = mgr.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].status, SessionStatus::Killed);
+    }
+
+    #[tokio::test]
+    async fn test_create_session_duplicate_name_rejected() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        mgr.create_session(make_req("dupe")).await.unwrap();
+        let err = mgr.create_session(make_req("dupe")).await.unwrap_err();
+        assert!(
+            err.to_string().contains("already active"),
+            "expected duplicate name error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_session_reuse_name_after_kill() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        mgr.create_session(make_req("reuse")).await.unwrap();
+        mgr.kill_session("reuse").await.unwrap();
+        // Should succeed — the old session is killed
+        mgr.create_session(make_req("reuse")).await.unwrap();
     }
 
     #[tokio::test]

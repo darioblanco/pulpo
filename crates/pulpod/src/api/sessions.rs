@@ -72,7 +72,14 @@ pub async fn create(
         .session_manager
         .create_session(req)
         .await
-        .map_err(|e| internal_error(&e.to_string()))?;
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("already active") {
+                (StatusCode::CONFLICT, Json(ErrorResponse { error: msg }))
+            } else {
+                internal_error(&msg)
+            }
+        })?;
     Ok((
         StatusCode::CREATED,
         Json(CreateSessionResponse { session, warnings }),
@@ -428,6 +435,35 @@ mod tests {
         let (status, Json(resp)) = result.unwrap();
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(resp.session.name, "test");
+    }
+
+    #[tokio::test]
+    async fn test_create_duplicate_name_returns_conflict() {
+        let state = test_state().await;
+        let req = || CreateSessionRequest {
+            name: "dupe".into(),
+            workdir: Some("/tmp".into()),
+            provider: None,
+            prompt: Some("test".into()),
+            mode: None,
+            unrestricted: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            worktree: None,
+            conversation_id: None,
+        };
+        let _ = create(State(state.clone()), Json(req())).await.unwrap();
+        let result = create(State(state), Json(req())).await;
+        assert!(result.is_err());
+        let (status, Json(body)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body.error.contains("already active"));
     }
 
     #[tokio::test]
