@@ -84,6 +84,13 @@ fn build_pipe_pane_command(session_name: &str, log_path: &str) -> Command {
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
+fn build_set_window_size_manual_command(session_name: &str) -> Command {
+    let mut cmd = Command::new("tmux");
+    cmd.args(["set-option", "-t", session_name, "window-size", "manual"]);
+    cmd
+}
+
+#[cfg_attr(coverage, allow(dead_code))]
 fn build_resize_command(session_name: &str, cols: u16, rows: u16) -> Command {
     let mut cmd = Command::new("tmux");
     cmd.args([
@@ -184,6 +191,12 @@ impl Backend for TmuxBackend {
         run_tmux(
             build_set_mouse_command(backend_id),
             "enable tmux mouse mode",
+        )?;
+        // Use manual window sizing so web terminal resize commands stick
+        // (default "smallest" constrains to the script PTY's fixed size)
+        run_tmux(
+            build_set_window_size_manual_command(backend_id),
+            "set tmux window-size manual",
         )?;
         Ok(())
     }
@@ -363,6 +376,17 @@ mod tests {
                 "-o",
                 "cat >> /tmp/logs/session.log"
             ]
+        );
+    }
+
+    #[test]
+    fn test_build_set_window_size_manual_command() {
+        let cmd = build_set_window_size_manual_command("pulpo-test");
+        assert_eq!(cmd.get_program(), "tmux");
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            vec!["set-option", "-t", "pulpo-test", "window-size", "manual"]
         );
     }
 
