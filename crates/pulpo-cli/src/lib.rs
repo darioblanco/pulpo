@@ -14,7 +14,7 @@ use pulpo_common::session::Session;
 #[command(
     name = "pulpo",
     about = "Manage agent sessions across your machines",
-    version
+    version = env!("PULPO_VERSION")
 )]
 pub struct Cli {
     /// Target node (default: localhost)

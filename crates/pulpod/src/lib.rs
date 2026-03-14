@@ -101,7 +101,7 @@ impl ShutdownHandle {
 #[command(
     name = "pulpod",
     about = "Pulpo daemon — agent session orchestrator",
-    version
+    version = env!("PULPO_VERSION")
 )]
 pub struct Cli {
     /// Config file path
