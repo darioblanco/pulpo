@@ -806,7 +806,8 @@ pub(crate) fn build_command(
     let escaped = inner
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
-        .replace('$', "\\$");
+        .replace('$', "\\$")
+        .replace('`', "\\`");
     format!("bash -c \"{escaped}; echo '[pulpo] Agent exited'; exec bash\"")
 }
 
@@ -2248,6 +2249,21 @@ mod tests {
             result.starts_with('/'),
             "Expected absolute path, got: {result}"
         );
+    }
+
+    #[test]
+    fn test_build_command_escapes_backticks() {
+        let guards = GuardConfig::default();
+        let params = crate::guard::SpawnParams {
+            prompt: String::new(),
+            guards,
+            system_prompt: Some("Use ```markdown\ncode\n``` blocks".into()),
+            ..crate::guard::SpawnParams::default()
+        };
+        let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
+        // Backticks must be escaped inside the bash -c "..." wrapper
+        assert!(cmd.contains("\\`"));
+        assert!(!cmd.contains("```"));
     }
 
     #[test]
