@@ -165,6 +165,8 @@ pub async fn resume(
                 (StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg }))
             } else if msg.contains("cannot be resumed") {
                 (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg }))
+            } else if msg.contains("already active") {
+                (StatusCode::CONFLICT, Json(ErrorResponse { error: msg }))
             } else {
                 internal_error(&msg)
             }
@@ -1438,6 +1440,99 @@ mod tests {
         assert!(result.is_ok());
         let Json(resumed) = result.unwrap();
         assert_eq!(resumed.status, pulpo_common::session::SessionStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn test_resume_name_collision_returns_conflict() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let pool = store.pool().clone();
+        let backend = Arc::new(StaleBackend);
+        let manager = SessionManager::new(
+            backend,
+            store,
+            pulpo_common::guard::GuardConfig::default(),
+            HashMap::new(),
+        )
+        .with_no_stale_grace();
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let state = AppState::new(
+            Config {
+                node: NodeConfig {
+                    name: "test-node".into(),
+                    port: 7433,
+                    data_dir: tmpdir.path().to_str().unwrap().into(),
+                    ..NodeConfig::default()
+                },
+                auth: crate::config::AuthConfig::default(),
+                peers: HashMap::new(),
+                guards: crate::config::GuardDefaultConfig::default(),
+                session_defaults: crate::config::SessionDefaultsConfig::default(),
+                watchdog: crate::config::WatchdogConfig::default(),
+                inks: HashMap::new(),
+                notifications: crate::config::NotificationsConfig::default(),
+                culture: crate::config::CultureConfig::default(),
+            },
+            manager,
+            peer_registry,
+        );
+
+        // Create first session, mark it lost
+        let req = CreateSessionRequest {
+            name: "dup".into(),
+            workdir: Some("/tmp".into()),
+            provider: None,
+            prompt: Some("test".into()),
+            mode: None,
+            unrestricted: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            worktree: None,
+            conversation_id: None,
+        };
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let old_id = resp.session.id.to_string();
+        sqlx::query("UPDATE sessions SET status = 'lost' WHERE id = ?")
+            .bind(&old_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Create second active "dup"
+        let req2 = CreateSessionRequest {
+            name: "dup".into(),
+            workdir: Some("/tmp".into()),
+            provider: None,
+            prompt: Some("test2".into()),
+            mode: None,
+            unrestricted: None,
+            model: None,
+            allowed_tools: None,
+            system_prompt: None,
+            metadata: None,
+            ink: None,
+            max_turns: None,
+            max_budget_usd: None,
+            output_format: None,
+            worktree: None,
+            conversation_id: None,
+        };
+        let _ = create(State(state.clone()), Json(req2)).await.unwrap();
+
+        // Resume the lost one — should get 409
+        let result = resume(State(state), Path(old_id)).await;
+        assert!(result.is_err());
+        let (status, Json(body)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body.error.contains("already active"));
     }
 
     /// Backend that makes sessions stale and then fails on create (for resume internal error).

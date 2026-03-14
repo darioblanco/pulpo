@@ -521,6 +521,14 @@ impl SessionManager {
             bail!("session cannot be resumed (status: {previous_status})");
         }
 
+        // Check for name collision with another live session
+        if self.store.has_active_session_by_name(&session.name).await? {
+            bail!(
+                "another session named '{}' is already active — kill it first before resuming",
+                session.name
+            );
+        }
+
         // If the backend session is still alive, just re-mark it as running.
         // Only recreate the session if the backend process is gone.
         let backend_id = self.resolve_backend_id(&session);
@@ -1901,6 +1909,24 @@ mod tests {
         let result = mgr.resume_session("nonexistent").await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_resume_name_collision_rejected() {
+        let (mgr, _, pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        // Create "dup", then mark it lost so it's resumable
+        let (old, _) = mgr.create_session(make_req("dup")).await.unwrap();
+        let old_id = old.id.to_string();
+        sqlx::query("UPDATE sessions SET status = 'lost' WHERE id = ?")
+            .bind(&old_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Create a new active "dup"
+        mgr.create_session(make_req("dup")).await.unwrap();
+        // Resuming the old lost one should fail — name collision
+        let err = mgr.resume_session(&old_id).await.unwrap_err();
+        assert!(err.to_string().contains("already active"), "{err}");
     }
 
     #[tokio::test]
