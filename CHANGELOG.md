@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.0.23](https://github.com/darioblanco/pulpo/compare/v0.0.22...v0.0.23) (2026-03-14)
+
+
+### Features
+
+* always use Ghostty terminal, auto-resume for lost/finished sessions ([5bbd2ae](https://github.com/darioblanco/pulpo/commit/5bbd2ae72f6eaa5897442bf1cf91734ca693e142))
+* show git hash in version output to distinguish source vs release ([79e242f](https://github.com/darioblanco/pulpo/commit/79e242f9b9cfae87d84b364cb2b176cf7d5adcdd))
+* **web:** make Ocean the home page and use TerminalView in attach modal ([5c11516](https://github.com/darioblanco/pulpo/commit/5c115168525c73fe00cf196f6defdaea743adbfa))
+
+
+### Bug Fixes
+
+* prevent resume from creating name collision with active session ([5efc1f4](https://github.com/darioblanco/pulpo/commit/5efc1f4fae6fee3a29b5b8ec7af3e47d609f7454))
+* reject duplicate session names among active sessions ([1a8b6c8](https://github.com/darioblanco/pulpo/commit/1a8b6c874e51b30106ba4d9d73ba7807bda0c957))
+* resize tmux window when browser terminal resizes ([51e0b9d](https://github.com/darioblanco/pulpo/commit/51e0b9dbcc4fd9fdbd2e15bcbc10e325b0ed3622))
+* set tmux window-size manual so web terminal resize fills viewport ([fb7a61e](https://github.com/darioblanco/pulpo/commit/fb7a61ef5abacd706ded01388d4686962a02b6da))
+* use pty-process into_split instead of tokio::io::split ([5f63fed](https://github.com/darioblanco/pulpo/commit/5f63fed69dc8d0e42b8e4ee458926c60724a58d8))
+* **web:** terminal fills modal dialog instead of using dashboard card size ([e638fed](https://github.com/darioblanco/pulpo/commit/e638fed0af43c8311bb59b146737e35ad379320f))
+
 ## [0.0.22](https://github.com/darioblanco/pulpo/compare/v0.0.21...v0.0.22) (2026-03-14)
 
 
