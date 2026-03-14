@@ -39,7 +39,7 @@ pub async fn stream(
             )
         })?;
 
-    if session.status != SessionStatus::Active {
+    if session.status != SessionStatus::Active && session.status != SessionStatus::Idle {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
@@ -61,47 +61,76 @@ pub async fn stream(
 async fn handle_stream(
     socket: axum::extract::ws::WebSocket,
     session_id: &str,
-    backend: &Arc<dyn crate::backend::Backend>,
+    _backend: &Arc<dyn crate::backend::Backend>,
 ) {
     #[cfg(not(coverage))]
     {
         use crate::session::pty_bridge;
+        use pty_process::Pty;
+        use std::os::fd::{AsFd, OwnedFd};
         use tracing::{debug, warn};
-        match backend.spawn_attach(session_id) {
-            Ok(mut child) => {
-                let Some(stdout) = child.stdout.take() else {
-                    warn!("No stdout pipe for {session_id}");
-                    return;
-                };
-                let Some(stdin) = child.stdin.take() else {
-                    warn!("No stdin pipe for {session_id}");
-                    return;
-                };
-                info!("PTY bridge started for {session_id}");
-                let (ws_sender, ws_receiver) = socket.split();
-                let resize_backend = backend.clone();
-                let resize_id = session_id.to_owned();
-                let result = pty_bridge::run_bridge(
-                    stdout,
-                    stdin,
-                    ws_sender,
-                    ws_receiver,
-                    move |cols, rows| {
-                        debug!("Resize {resize_id}: {cols}x{rows}");
-                        resize_backend.resize(&resize_id, cols, rows)
-                    },
-                )
-                .await;
-                if let Err(e) = &result {
-                    warn!("PTY bridge error for {session_id}: {e}");
-                }
-                info!("PTY bridge ended for {session_id}");
-                let _ = child.kill().await;
-            }
+
+        // Create a PTY pair — gives us full resize control (no `script` wrapper).
+        let pty = match Pty::new() {
+            Ok(p) => p,
             Err(e) => {
-                warn!("Failed to spawn PTY for {session_id}: {e:#}");
+                warn!("PTY creation failed for {session_id}: {e}");
+                return;
             }
+        };
+
+        // Clone the fd for resize calls — the bridge will own the Pty for I/O.
+        let resize_fd: OwnedFd = match pty.as_fd().try_clone_to_owned() {
+            Ok(fd) => fd,
+            Err(e) => {
+                warn!("PTY fd clone failed for {session_id}: {e}");
+                return;
+            }
+        };
+
+        let pts = match pty.pts() {
+            Ok(p) => p,
+            Err(e) => {
+                warn!("PTS failed for {session_id}: {e}");
+                return;
+            }
+        };
+
+        let mut child = match pty_process::Command::new("tmux")
+            .args(["attach-session", "-t", session_id])
+            .env_remove("TMUX")
+            .env("TERM", "xterm-256color")
+            .spawn(&pts)
+        {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Failed to spawn tmux attach for {session_id}: {e}");
+                return;
+            }
+        };
+
+        info!("PTY bridge started for {session_id}");
+        let (reader, writer) = tokio::io::split(pty);
+        let (ws_sender, ws_receiver) = socket.split();
+        let name_owned = session_id.to_owned();
+        let result =
+            pty_bridge::run_bridge(reader, writer, ws_sender, ws_receiver, move |cols, rows| {
+                debug!("Resize {name_owned}: {cols}x{rows}");
+                let ws = rustix::termios::Winsize {
+                    ws_col: cols,
+                    ws_row: rows,
+                    ws_xpixel: 0,
+                    ws_ypixel: 0,
+                };
+                rustix::termios::tcsetwinsize(&resize_fd, ws)?;
+                Ok(())
+            })
+            .await;
+        if let Err(e) = &result {
+            warn!("PTY bridge error for {session_id}: {e}");
         }
+        info!("PTY bridge ended for {session_id}");
+        let _ = child.kill().await;
     }
 
     #[cfg(coverage)]
@@ -120,7 +149,7 @@ async fn handle_stream(
             let _ = ws_sender.send(response).await;
         }
         let _ = session_id;
-        let _ = backend;
+        let _ = _backend;
     }
 }
 

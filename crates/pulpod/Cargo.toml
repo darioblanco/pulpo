@@ -54,6 +54,8 @@ cron.workspace = true
 hmac.workspace = true
 sha2.workspace = true
 hex.workspace = true
+pty-process.workspace = true
+rustix.workspace = true
 
 [dev-dependencies]
 axum-test = "17"

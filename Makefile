@@ -1,4 +1,4 @@
-.PHONY: all check fmt lint test coverage coverage-rust coverage-web build clean setup hooks install release release-tarball service-install service-uninstall service-install-linux service-uninstall-linux deploy-server dev dev-web test-web-watch
+.PHONY: all check fmt lint test coverage coverage-rust coverage-web build clean setup hooks install release release-tarball service-install service-uninstall service-install-linux service-uninstall-linux deploy-server dev dev-stop dev-web test-web-watch
 
 # Run all checks (what pre-commit runs)
 all: fmt lint test
@@ -18,15 +18,31 @@ hooks:
 	@echo "Git hooks installed."
 
 # ─── Dev ──────────────────────────────────────────────────────────────────────
+# make dev       → run pulpod from source (stops homebrew, uses .pulpo/config.toml)
+# make dev-web   → run web UI dev server (hot reload, proxies to pulpod)
+# make dev-stop  → stop local pulpod and restart homebrew service
 
-# Run the daemon from source (port 7433) using repo-local config
+# Run pulpod from source. Stops the homebrew service first to free port 7433.
+# Uses .pulpo/config.toml (gitignored — copy from ~/.pulpo/config.toml if missing).
 dev:
+	@brew services stop pulpo 2>/dev/null || true
 	@if [ ! -f .pulpo/config.toml ]; then \
-		cp .pulpo/config.toml.example .pulpo/config.toml; \
-		echo "Created .pulpo/config.toml from example"; \
+		if [ -f ~/.pulpo/config.toml ]; then \
+			cp ~/.pulpo/config.toml .pulpo/config.toml; \
+			echo "Copied ~/.pulpo/config.toml → .pulpo/config.toml"; \
+		else \
+			cp .pulpo/config.toml.example .pulpo/config.toml; \
+			echo "Created .pulpo/config.toml from example"; \
+		fi; \
 	fi
 	@mkdir -p .pulpo/data
+	@echo "Running local pulpod (Ctrl+C to stop, then 'make dev-stop' to restore homebrew)"
 	cargo run -p pulpod -- --config $(PWD)/.pulpo/config.toml
+
+# Stop local dev and restore the homebrew service
+dev-stop:
+	@brew services start pulpo
+	@echo "Homebrew pulpo restored."
 
 # Run the web UI dev server (port 5173, proxies /api to pulpod)
 dev-web:

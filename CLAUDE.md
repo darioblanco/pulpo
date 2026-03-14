@@ -19,11 +19,14 @@ See `SPEC.md` for the full architecture spec, session lifecycle, API design, and
 # First-time setup (installs tools, git hooks, web dependencies)
 make setup
 
-# Run the daemon locally (port 7433)
-cargo run -p pulpod
+# Run pulpod from source (stops homebrew, uses .pulpo/config.toml)
+make dev
 
 # Run the web UI dev server (port 5173, proxies /api to pulpod)
-cd web && npm run dev
+make dev-web
+
+# When done: Ctrl+C pulpod, then restore homebrew
+make dev-stop
 
 # Run all checks (what pre-commit runs)
 make all
@@ -193,7 +196,8 @@ describe('api', () => {
 | Target | Description |
 |--------|-------------|
 | `make setup` | First-time setup: install tools, git hooks, web deps |
-| `make dev` | Run the daemon from source (port 7433) with repo-local config |
+| `make dev` | Run pulpod from source (stops homebrew, uses .pulpo/config.toml) |
+| `make dev-stop` | Stop local dev and restore the homebrew service |
 | `make dev-web` | Run the web UI dev server (port 5173, proxies to pulpod) |
 | `make all` | Format + lint + test (what pre-commit runs) |
 | `make fmt` | Format all code (Rust + web) |

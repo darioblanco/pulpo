@@ -566,6 +566,69 @@ describe('ProfileCard', () => {
     expect(screen.queryByTestId('delete-button')).not.toBeInTheDocument();
   });
 
+  it('shows Resume button for lost sessions instead of Open Session', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'lost' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onAttach={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('resume-button')).toBeInTheDocument();
+    expect(screen.queryByTestId('attach-button')).not.toBeInTheDocument();
+  });
+
+  it('shows Resume button for finished sessions', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'finished' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onAttach={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('resume-button')).toBeInTheDocument();
+    expect(screen.queryByTestId('attach-button')).not.toBeInTheDocument();
+  });
+
+  it('shows no attach or resume button for killed sessions', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'killed' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onAttach={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('attach-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('resume-button')).not.toBeInTheDocument();
+  });
+
+  it('shows Open Session for idle sessions', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ status: 'idle' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+          onAttach={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('attach-button')).toBeInTheDocument();
+  });
+
   it('calls onDelete with session name when Delete clicked', () => {
     const onDelete = vi.fn();
     render(

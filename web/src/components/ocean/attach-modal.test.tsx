@@ -1,10 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { AttachModal } from './attach-modal';
 
 vi.mock('@/api/client', () => ({
-  getSessionOutput: vi.fn().mockResolvedValue({ output: 'Hello from session' }),
-  sendInput: vi.fn(),
+  resumeSession: vi.fn().mockResolvedValue({ id: 'sess-1', status: 'active' }),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   resolveWsUrl: vi.fn().mockReturnValue('ws://localhost/test'),
   authHeaders: vi.fn().mockReturnValue({}),
@@ -44,19 +43,6 @@ describe('AttachModal', () => {
     expect(screen.getByTestId('attach-modal')).toBeInTheDocument();
   });
 
-  it('renders the modal body', () => {
-    render(
-      <AttachModal
-        sessionName="worker-alpha"
-        sessionId="sess-1"
-        sessionStatus="active"
-        open={true}
-        onOpenChange={vi.fn()}
-      />,
-    );
-    expect(screen.getByTestId('attach-modal-body')).toBeInTheDocument();
-  });
-
   it('renders TerminalView for active sessions', () => {
     render(
       <AttachModal
@@ -68,24 +54,22 @@ describe('AttachModal', () => {
       />,
     );
     expect(screen.getByTestId('terminal-view')).toBeInTheDocument();
-    expect(screen.queryByTestId('output-view')).not.toBeInTheDocument();
   });
 
-  it('renders OutputView for killed sessions', () => {
+  it('renders TerminalView for idle sessions', () => {
     render(
       <AttachModal
         sessionName="worker-alpha"
         sessionId="sess-1"
-        sessionStatus="killed"
+        sessionStatus="idle"
         open={true}
         onOpenChange={vi.fn()}
       />,
     );
-    expect(screen.getByTestId('output-view')).toBeInTheDocument();
-    expect(screen.queryByTestId('terminal-view')).not.toBeInTheDocument();
+    expect(screen.getByTestId('terminal-view')).toBeInTheDocument();
   });
 
-  it('renders OutputView for lost sessions', () => {
+  it('resumes lost session then shows terminal', async () => {
     render(
       <AttachModal
         sessionName="worker-alpha"
@@ -95,10 +79,15 @@ describe('AttachModal', () => {
         onOpenChange={vi.fn()}
       />,
     );
-    expect(screen.getByTestId('output-view')).toBeInTheDocument();
+    // Shows resuming state first
+    expect(screen.getByText('Resuming session…')).toBeInTheDocument();
+    // After resume completes, shows terminal
+    await waitFor(() => {
+      expect(screen.getByTestId('terminal-view')).toBeInTheDocument();
+    });
   });
 
-  it('renders OutputView for finished sessions', () => {
+  it('resumes finished session then shows terminal', async () => {
     render(
       <AttachModal
         sessionName="worker-alpha"
@@ -108,7 +97,27 @@ describe('AttachModal', () => {
         onOpenChange={vi.fn()}
       />,
     );
-    expect(screen.getByTestId('output-view')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('terminal-view')).toBeInTheDocument();
+    });
+  });
+
+  it('shows error when resume fails', async () => {
+    const { resumeSession } = await import('@/api/client');
+    vi.mocked(resumeSession).mockRejectedValueOnce(new Error('network error'));
+
+    render(
+      <AttachModal
+        sessionName="worker-alpha"
+        sessionId="sess-1"
+        sessionStatus="lost"
+        open={true}
+        onOpenChange={vi.fn()}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/Failed to resume/)).toBeInTheDocument();
+    });
   });
 
   it('does not render when closed', () => {
@@ -134,6 +143,6 @@ describe('AttachModal', () => {
         onOpenChange={vi.fn()}
       />,
     );
-    expect(screen.getByText('Session terminal output for worker-alpha')).toBeInTheDocument();
+    expect(screen.getByText('Session terminal for worker-alpha')).toBeInTheDocument();
   });
 });

@@ -22,6 +22,8 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 const ENDED_STATUSES = ['finished', 'killed'];
+const LIVE_STATUSES = ['active', 'idle', 'creating'];
+const RESUMABLE_STATUSES = ['lost', 'finished'];
 const KILLABLE_STATUSES = ['active', 'creating'];
 const DELETABLE_STATUSES = ['finished', 'killed', 'lost', 'idle'];
 
@@ -166,7 +168,7 @@ export function ProfileCard({
 
           {/* Actions */}
           <div className="mt-4 flex gap-2">
-            {onAttach && (
+            {onAttach && LIVE_STATUSES.includes(octopus.status) && (
               <button
                 onClick={() => onAttach(octopus.name)}
                 className="rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
@@ -174,6 +176,16 @@ export function ProfileCard({
                 data-testid="attach-button"
               >
                 Open Session
+              </button>
+            )}
+            {onAttach && RESUMABLE_STATUSES.includes(octopus.status) && (
+              <button
+                onClick={() => onAttach(octopus.name)}
+                className="rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+                style={{ backgroundColor: '#16a34a' }}
+                data-testid="resume-button"
+              >
+                Resume
               </button>
             )}
             {onKill && KILLABLE_STATUSES.includes(octopus.status) && (

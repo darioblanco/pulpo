@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -5,8 +6,8 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { OutputView } from '@/components/session/output-view';
 import { TerminalView } from '@/components/session/terminal-view';
+import { resumeSession } from '@/api/client';
 
 interface AttachModalProps {
   sessionName: string;
@@ -16,6 +17,9 @@ interface AttachModalProps {
   onOpenChange: (open: boolean) => void;
 }
 
+const LIVE_STATUSES = ['active', 'idle', 'creating'];
+const RESUMABLE_STATUSES = ['lost', 'finished'];
+
 export function AttachModal({
   sessionName,
   sessionId,
@@ -23,7 +27,26 @@ export function AttachModal({
   open,
   onOpenChange,
 }: AttachModalProps) {
-  const isActive = sessionStatus === 'active';
+  const [ready, setReady] = useState(LIVE_STATUSES.includes(sessionStatus));
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open || ready) return;
+    if (!RESUMABLE_STATUSES.includes(sessionStatus)) return;
+
+    let cancelled = false;
+    resumeSession(sessionName)
+      .then(() => {
+        if (!cancelled) setReady(true);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, ready, sessionName, sessionStatus]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -33,17 +56,23 @@ export function AttachModal({
         <DialogHeader className="border-b px-4 py-3">
           <DialogTitle className="font-mono text-sm">{sessionName}</DialogTitle>
           <DialogDescription className="sr-only">
-            Session terminal output for {sessionName}
+            Session terminal for {sessionName}
           </DialogDescription>
         </DialogHeader>
         <div className="min-h-0 flex-1 overflow-hidden" data-testid="attach-modal-body">
-          {isActive ? (
+          {error ? (
+            <div className="flex h-full items-center justify-center text-sm text-destructive">
+              Failed to resume: {error}
+            </div>
+          ) : ready ? (
             <TerminalView
               sessionId={sessionId}
               className="h-full w-full min-w-0 overflow-hidden bg-[#0a1628]"
             />
           ) : (
-            <OutputView sessionId={sessionId} sessionStatus={sessionStatus} />
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              Resuming session…
+            </div>
           )}
         </div>
       </DialogContent>

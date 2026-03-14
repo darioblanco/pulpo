@@ -71,6 +71,7 @@ mime_guess = "2"
 
 # PTY and streaming
 pty-process = { version = "0.4", features = ["async"] }
+rustix = { version = "0.38", features = ["termios"] }
 futures = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
 
