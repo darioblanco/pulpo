@@ -3,11 +3,16 @@ import { resolveWsUrl } from '@/api/client';
 
 interface TerminalViewProps {
   sessionId: string;
+  /** Override the default container classes (height, resize, etc.) */
+  className?: string;
 }
 
 const TERMINAL_FONT_FAMILY = "'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Fira Code', monospace";
 
-export function TerminalView({ sessionId }: TerminalViewProps) {
+const DEFAULT_CLASS =
+  'h-[clamp(160px,30vh,380px)] min-h-[100px] max-h-[80vh] w-full min-w-0 resize-y overflow-hidden bg-[#0a1628]';
+
+export function TerminalView({ sessionId, className }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -112,11 +117,7 @@ export function TerminalView({ sessionId }: TerminalViewProps) {
   }, [sessionId]);
 
   return (
-    <div
-      data-testid="terminal-view"
-      ref={containerRef}
-      className="h-[clamp(160px,30vh,380px)] min-h-[100px] max-h-[80vh] w-full min-w-0 resize-y overflow-hidden bg-[#0a1628]"
-    >
+    <div data-testid="terminal-view" ref={containerRef} className={className ?? DEFAULT_CLASS}>
       <div ref={hostRef} className="h-full w-full min-w-0 overflow-hidden" />
     </div>
   );

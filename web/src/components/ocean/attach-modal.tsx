@@ -27,7 +27,7 @@ export function AttachModal({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="flex max-h-[90vh] w-[95vw] max-w-[95vw] flex-col gap-0 p-0 sm:max-w-[90vw]"
+        className="flex h-[85vh] max-h-[90vh] w-[95vw] max-w-[95vw] flex-col gap-0 p-0 sm:max-w-[90vw]"
         data-testid="attach-modal"
       >
         <DialogHeader className="border-b px-4 py-3">
@@ -38,7 +38,10 @@ export function AttachModal({
         </DialogHeader>
         <div className="min-h-0 flex-1 overflow-hidden" data-testid="attach-modal-body">
           {isActive ? (
-            <TerminalView sessionId={sessionId} />
+            <TerminalView
+              sessionId={sessionId}
+              className="h-full w-full min-w-0 overflow-hidden bg-[#0a1628]"
+            />
           ) : (
             <OutputView sessionId={sessionId} sessionStatus={sessionStatus} />
           )}
