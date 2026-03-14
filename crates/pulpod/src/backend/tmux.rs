@@ -83,6 +83,21 @@ fn build_pipe_pane_command(session_name: &str, log_path: &str) -> Command {
     cmd
 }
 
+#[cfg_attr(coverage, allow(dead_code))]
+fn build_resize_command(session_name: &str, cols: u16, rows: u16) -> Command {
+    let mut cmd = Command::new("tmux");
+    cmd.args([
+        "resize-window",
+        "-t",
+        session_name,
+        "-x",
+        &cols.to_string(),
+        "-y",
+        &rows.to_string(),
+    ]);
+    cmd
+}
+
 /// Parse tmux version from `tmux -V` output (e.g., "tmux 3.4" -> `Some((3, 4))`).
 ///
 /// Handles formats like "tmux 3.4", "tmux 3.2a", "tmux next-3.4".
@@ -206,6 +221,14 @@ impl Backend for TmuxBackend {
         run_tmux(
             build_pipe_pane_command(backend_id, log_path),
             "setup pipe-pane logging",
+        )?;
+        Ok(())
+    }
+
+    fn resize(&self, backend_id: &str, cols: u16, rows: u16) -> Result<()> {
+        run_tmux(
+            build_resize_command(backend_id, cols, rows),
+            "resize tmux window",
         )?;
         Ok(())
     }
@@ -340,6 +363,17 @@ mod tests {
                 "-o",
                 "cat >> /tmp/logs/session.log"
             ]
+        );
+    }
+
+    #[test]
+    fn test_build_resize_command() {
+        let cmd = build_resize_command("pulpo-test", 120, 40);
+        assert_eq!(cmd.get_program(), "tmux");
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            vec!["resize-window", "-t", "pulpo-test", "-x", "120", "-y", "40"]
         );
     }
 

@@ -79,15 +79,16 @@ async fn handle_stream(
                 };
                 info!("PTY bridge started for {session_id}");
                 let (ws_sender, ws_receiver) = socket.split();
-                let name_owned = session_id.to_owned();
+                let resize_backend = backend.clone();
+                let resize_id = session_id.to_owned();
                 let result = pty_bridge::run_bridge(
                     stdout,
                     stdin,
                     ws_sender,
                     ws_receiver,
                     move |cols, rows| {
-                        debug!("Resize {name_owned}: {cols}x{rows}");
-                        Ok(())
+                        debug!("Resize {resize_id}: {cols}x{rows}");
+                        resize_backend.resize(&resize_id, cols, rows)
                     },
                 )
                 .await;

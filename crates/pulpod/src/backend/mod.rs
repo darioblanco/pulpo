@@ -42,6 +42,12 @@ pub trait Backend: Send + Sync {
     /// Set up output logging via pipe-pane to the given log file path.
     fn setup_logging(&self, backend_id: &str, log_path: &str) -> Result<()>;
 
+    /// Resize the session's terminal to the given dimensions.
+    /// Default implementation is a no-op.
+    fn resize(&self, _backend_id: &str, _cols: u16, _rows: u16) -> Result<()> {
+        Ok(())
+    }
+
     /// Spawn a child process that attaches to the session's terminal for PTY bridging.
     /// Returns a tokio child process with piped stdin/stdout.
     /// Default implementation returns an error — only real backends (tmux) override this.
@@ -87,6 +93,12 @@ mod tests {
     fn test_default_check_version() {
         let b = MinimalBackend;
         assert_eq!(b.check_version().unwrap(), "unknown");
+    }
+
+    #[test]
+    fn test_default_resize() {
+        let b = MinimalBackend;
+        assert!(b.resize("s", 120, 40).is_ok());
     }
 
     #[test]
