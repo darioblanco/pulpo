@@ -6,8 +6,15 @@ vi.mock('@/api/client', () => ({
   getSessionOutput: vi.fn().mockResolvedValue({ output: 'Hello from session' }),
   sendInput: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
+  resolveWsUrl: vi.fn().mockReturnValue('ws://localhost/test'),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
+}));
+
+vi.mock('@/components/session/terminal-view', () => ({
+  TerminalView: ({ sessionId }: { sessionId: string }) => (
+    <div data-testid="terminal-view">Terminal: {sessionId}</div>
+  ),
 }));
 
 describe('AttachModal', () => {
@@ -37,7 +44,7 @@ describe('AttachModal', () => {
     expect(screen.getByTestId('attach-modal')).toBeInTheDocument();
   });
 
-  it('renders the output view body', () => {
+  it('renders the modal body', () => {
     render(
       <AttachModal
         sessionName="worker-alpha"
@@ -50,12 +57,53 @@ describe('AttachModal', () => {
     expect(screen.getByTestId('attach-modal-body')).toBeInTheDocument();
   });
 
-  it('embeds OutputView component', () => {
+  it('renders TerminalView for active sessions', () => {
     render(
       <AttachModal
         sessionName="worker-alpha"
         sessionId="sess-1"
         sessionStatus="active"
+        open={true}
+        onOpenChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('terminal-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('output-view')).not.toBeInTheDocument();
+  });
+
+  it('renders OutputView for killed sessions', () => {
+    render(
+      <AttachModal
+        sessionName="worker-alpha"
+        sessionId="sess-1"
+        sessionStatus="killed"
+        open={true}
+        onOpenChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('output-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('terminal-view')).not.toBeInTheDocument();
+  });
+
+  it('renders OutputView for lost sessions', () => {
+    render(
+      <AttachModal
+        sessionName="worker-alpha"
+        sessionId="sess-1"
+        sessionStatus="lost"
+        open={true}
+        onOpenChange={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId('output-view')).toBeInTheDocument();
+  });
+
+  it('renders OutputView for finished sessions', () => {
+    render(
+      <AttachModal
+        sessionName="worker-alpha"
+        sessionId="sess-1"
+        sessionStatus="finished"
         open={true}
         onOpenChange={vi.fn()}
       />,

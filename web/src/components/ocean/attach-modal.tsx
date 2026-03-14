@@ -6,6 +6,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { OutputView } from '@/components/session/output-view';
+import { TerminalView } from '@/components/session/terminal-view';
 
 interface AttachModalProps {
   sessionName: string;
@@ -22,6 +23,7 @@ export function AttachModal({
   open,
   onOpenChange,
 }: AttachModalProps) {
+  const isActive = sessionStatus === 'active';
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -34,8 +36,12 @@ export function AttachModal({
             Session terminal output for {sessionName}
           </DialogDescription>
         </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-auto" data-testid="attach-modal-body">
-          <OutputView sessionId={sessionId} sessionStatus={sessionStatus} />
+        <div className="min-h-0 flex-1 overflow-hidden" data-testid="attach-modal-body">
+          {isActive ? (
+            <TerminalView sessionId={sessionId} />
+          ) : (
+            <OutputView sessionId={sessionId} sessionStatus={sessionStatus} />
+          )}
         </div>
       </DialogContent>
     </Dialog>

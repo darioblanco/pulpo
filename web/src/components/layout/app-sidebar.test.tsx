@@ -60,10 +60,10 @@ describe('AppSidebar', () => {
   it('renders the sidebar with nav items', () => {
     renderSidebar();
     expect(screen.getByTestId('app-sidebar')).toBeInTheDocument();
-    expect(screen.getByText('Dashboard')).toBeInTheDocument();
+    expect(screen.getByText('Ocean')).toBeInTheDocument();
+    expect(screen.getByText('Sessions')).toBeInTheDocument();
     expect(screen.getByText('History')).toBeInTheDocument();
     expect(screen.getByText('Culture')).toBeInTheDocument();
-    expect(screen.getByText('Ocean')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 

@@ -92,7 +92,7 @@ export function DashboardPage() {
 
   return (
     <div data-testid="dashboard-page">
-      <AppHeader title="Dashboard" />
+      <AppHeader title="Sessions" />
       <div className="space-y-4 p-4 sm:p-6">
         {error ? (
           <p className="text-center text-destructive">{error}</p>

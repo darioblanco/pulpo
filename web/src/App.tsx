@@ -19,10 +19,10 @@ export function App() {
           <BrowserRouter>
             <Routes>
               <Route element={<AppLayout />}>
-                <Route index element={<DashboardPage />} />
+                <Route index element={<OceanPage />} />
+                <Route path="sessions" element={<DashboardPage />} />
                 <Route path="history" element={<HistoryPage />} />
                 <Route path="culture" element={<CulturePage />} />
-                <Route path="ocean" element={<OceanPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>
               <Route path="connect" element={<ConnectPage />} />
