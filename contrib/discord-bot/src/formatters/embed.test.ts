@@ -7,10 +7,9 @@ function mockSession(overrides: Partial<Session> = {}): Session {
     id: 'abc-123',
     name: 'my-session',
     workdir: '/code/repo',
-    provider: 'claude',
-    prompt: 'Fix the tests',
+    command: 'claude "Fix the tests"',
+    description: 'Fix the tests',
     status: 'active',
-    mode: 'autonomous',
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     ...overrides,
@@ -37,15 +36,8 @@ describe('sessionEmbed', () => {
     expect(json.color).toBe(0x2ecc71);
     expect(json.fields).toBeDefined();
     expect(json.fields!.some((f) => f.name === 'Status' && f.value === 'active')).toBe(true);
-    expect(json.fields!.some((f) => f.name === 'Provider' && f.value === 'claude')).toBe(true);
     expect(json.fields!.some((f) => f.name === 'ID')).toBe(true);
-    expect(json.fields!.some((f) => f.name === 'Prompt')).toBe(true);
-  });
-
-  it('includes model when present', () => {
-    const embed = sessionEmbed(mockSession({ model: 'opus' }));
-    const json = embed.toJSON();
-    expect(json.fields!.some((f) => f.name === 'Model' && f.value === 'opus')).toBe(true);
+    expect(json.fields!.some((f) => f.name === 'Command')).toBe(true);
   });
 
   it('includes ink when present', () => {
@@ -54,13 +46,21 @@ describe('sessionEmbed', () => {
     expect(json.fields!.some((f) => f.name === 'Ink' && f.value === 'coder')).toBe(true);
   });
 
-  it('truncates long prompts', () => {
-    const longPrompt = 'a'.repeat(300);
-    const embed = sessionEmbed(mockSession({ prompt: longPrompt }));
+  it('includes description when present', () => {
+    const embed = sessionEmbed(mockSession({ description: 'Fix the tests' }));
     const json = embed.toJSON();
-    const promptField = json.fields!.find((f) => f.name === 'Prompt');
-    expect(promptField!.value.length).toBeLessThan(210);
-    expect(promptField!.value.endsWith('...')).toBe(true);
+    expect(json.fields!.some((f) => f.name === 'Description' && f.value === 'Fix the tests')).toBe(
+      true,
+    );
+  });
+
+  it('truncates long commands', () => {
+    const longCommand = 'a'.repeat(300);
+    const embed = sessionEmbed(mockSession({ command: longCommand }));
+    const json = embed.toJSON();
+    const commandField = json.fields!.find((f) => f.name === 'Command');
+    expect(commandField!.value.length).toBeLessThan(215);
+    expect(commandField!.value).toContain('...');
   });
 
   it('uses correct colors for different statuses', () => {
@@ -126,15 +126,14 @@ describe('inkListEmbed', () => {
 
   it('lists inks with key fields', () => {
     const embed = inkListEmbed({
-      coder: { description: null, provider: 'claude', model: 'opus', mode: 'autonomous', guard_preset: 'strict' },
-      reviewer: { description: null, provider: 'codex', model: 'codex-mini' },
+      coder: { description: 'Autonomous coder', command: 'claude --dangerously-skip-permissions' },
+      reviewer: { description: null, command: 'codex' },
     });
     const json = embed.toJSON();
     expect(json.description).toContain('coder');
     expect(json.description).toContain('claude');
-    expect(json.description).toContain('opus');
     expect(json.description).toContain('reviewer');
-    expect(json.description).toContain('codex-mini');
+    expect(json.description).toContain('codex');
   });
 
   it('uses purple color', () => {
@@ -153,8 +152,8 @@ describe('sessionListEmbed', () => {
 
   it('lists sessions with status emojis', () => {
     const sessions = [
-      mockSession({ name: 'session-1', status: 'active', provider: 'claude' }),
-      mockSession({ name: 'session-2', status: 'finished', provider: 'codex' }),
+      mockSession({ name: 'session-1', status: 'active' }),
+      mockSession({ name: 'session-2', status: 'finished' }),
     ];
     const embed = sessionListEmbed(sessions);
     const json = embed.toJSON();

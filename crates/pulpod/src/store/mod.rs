@@ -3,8 +3,7 @@ use std::fmt::Write;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use pulpo_common::api::ListSessionsQuery;
-use pulpo_common::guard::GuardConfig;
-use pulpo_common::session::{Provider, Session, SessionMode, SessionStatus};
+use pulpo_common::session::{Session, SessionStatus};
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 use uuid::Uuid;
 
@@ -257,20 +256,25 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
+        // Idempotent migration: command + description columns
+        let has_command: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'command'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_command == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN command TEXT DEFAULT ''")
+                .execute(&self.pool)
+                .await?;
+            sqlx::query("ALTER TABLE sessions ADD COLUMN description TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+
         Ok(())
     }
 
     pub async fn insert_session(&self, session: &Session) -> Result<()> {
-        let guard_json = session
-            .guard_config
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()?;
-        let allowed_tools_json = session
-            .allowed_tools
-            .as_ref()
-            .map(serde_json::to_string)
-            .transpose()?;
         let metadata_json = session
             .metadata
             .as_ref()
@@ -280,38 +284,25 @@ impl Store {
         let intervention_at_str = session.intervention_at.map(|dt| dt.to_rfc3339());
         let last_output_at_str = session.last_output_at.map(|dt| dt.to_rfc3339());
         let idle_since_str = session.idle_since.map(|dt| dt.to_rfc3339());
-        #[allow(clippy::cast_possible_wrap)]
-        let max_turns_i32 = session.max_turns.map(|n| n as i32);
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
-                conversation_id, exit_code, backend_session_id,
-                output_snapshot, guard_config,
-                model, allowed_tools, system_prompt, metadata, ink,
-                max_turns, max_budget_usd, output_format,
+                exit_code, backend_session_id, output_snapshot,
+                metadata, ink, command, description,
                 intervention_code, intervention_reason, intervention_at,
                 last_output_at, idle_since, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
         .bind(&session.name)
         .bind(&session.workdir)
-        .bind(session.provider.to_string())
-        .bind(&session.prompt)
         .bind(session.status.to_string())
-        .bind(session.mode.to_string())
-        .bind(&session.conversation_id)
         .bind(session.exit_code)
         .bind(&session.backend_session_id)
         .bind(&session.output_snapshot)
-        .bind(&guard_json)
-        .bind(&session.model)
-        .bind(&allowed_tools_json)
-        .bind(&session.system_prompt)
         .bind(&metadata_json)
         .bind(&session.ink)
-        .bind(max_turns_i32)
-        .bind(session.max_budget_usd)
-        .bind(&session.output_format)
+        .bind(&session.command)
+        .bind(&session.description)
         .bind(&intervention_code_str)
         .bind(&session.intervention_reason)
         .bind(&intervention_at_str)
@@ -361,16 +352,10 @@ impl Store {
             binds.extend(statuses.iter().map(|s| (*s).to_owned()));
         }
 
-        if let Some(provider) = &query.provider {
-            let providers: Vec<&str> = provider.split(',').map(str::trim).collect();
-            let placeholders: Vec<String> = providers.iter().map(|_| "?".to_owned()).collect();
-            let _ = write!(sql, " AND provider IN ({})", placeholders.join(","));
-            binds.extend(providers.iter().map(|s| (*s).to_owned()));
-        }
-
         if let Some(search) = &query.search {
-            sql.push_str(" AND (name LIKE ? OR prompt LIKE ?)");
+            sql.push_str(" AND (name LIKE ? OR command LIKE ? OR description LIKE ?)");
             let pattern = format!("%{search}%");
+            binds.push(pattern.clone());
             binds.push(pattern.clone());
             binds.push(pattern);
         }
@@ -378,7 +363,6 @@ impl Store {
         let sort_col = match query.sort.as_deref() {
             Some("name") => "name",
             Some("status") => "status",
-            Some("provider") => "provider",
             _ => "created_at",
         };
         let order = match query.order.as_deref() {
@@ -534,21 +518,9 @@ impl Store {
 
 fn row_to_session(row: &SqliteRow) -> Result<Session> {
     let id_str: String = row.get("id");
-    let provider_str: String = row.get("provider");
     let status_str: String = row.get("status");
-    let mode_str: String = row.get("mode");
     let created_str: String = row.get("created_at");
     let updated_str: String = row.get("updated_at");
-
-    let guard_json: Option<String> = row.get("guard_config");
-    let guard_config = guard_json
-        .map(|s| serde_json::from_str::<GuardConfig>(&s))
-        .transpose()?;
-
-    let allowed_tools_json: Option<String> = row.get("allowed_tools");
-    let allowed_tools = allowed_tools_json
-        .map(|s| serde_json::from_str::<Vec<String>>(&s))
-        .transpose()?;
 
     let metadata_json: Option<String> = row.get("metadata");
     let metadata = metadata_json
@@ -572,32 +544,16 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
         id: Uuid::parse_str(&id_str)?,
         name: row.get("name"),
         workdir: row.get("workdir"),
-        provider: provider_str
-            .parse::<Provider>()
-            .map_err(|e| anyhow::anyhow!(e))?,
-        prompt: row.get("prompt"),
+        command: row.get("command"),
+        description: row.get("description"),
         status: status_str
             .parse::<SessionStatus>()
             .map_err(|e| anyhow::anyhow!(e))?,
-        mode: mode_str
-            .parse::<SessionMode>()
-            .map_err(|e| anyhow::anyhow!(e))?,
-        conversation_id: row.get("conversation_id"),
         exit_code: row.get("exit_code"),
         backend_session_id: row.get("backend_session_id"),
         output_snapshot: row.get("output_snapshot"),
-        guard_config,
-        model: row.get("model"),
-        allowed_tools,
-        system_prompt: row.get("system_prompt"),
         metadata,
         ink: row.get("ink"),
-        max_turns: {
-            let v: Option<i32> = row.get("max_turns");
-            v.map(i32::cast_unsigned)
-        },
-        max_budget_usd: row.get("max_budget_usd"),
-        output_format: row.get("output_format"),
         intervention_code,
         intervention_reason: row.get("intervention_reason"),
         intervention_at,
@@ -644,29 +600,19 @@ mod tests {
             id: Uuid::new_v4(),
             name: name.into(),
             workdir: "/tmp/repo".into(),
-            provider: Provider::Claude,
-            prompt: "Fix the bug".into(),
+            command: "echo hello".into(),
+            description: Some("Fix the bug".into()),
             status: SessionStatus::Active,
-            mode: SessionMode::Interactive,
-            conversation_id: Some("conv-123".into()),
             exit_code: None,
             backend_session_id: Some(name.to_owned()),
             output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
-
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -740,11 +686,9 @@ mod tests {
         assert_eq!(fetched.id, session.id);
         assert_eq!(fetched.name, "test-roundtrip");
         assert_eq!(fetched.workdir, "/tmp/repo");
-        assert_eq!(fetched.provider, Provider::Claude);
-        assert_eq!(fetched.prompt, "Fix the bug");
+
         assert_eq!(fetched.status, SessionStatus::Active);
-        assert_eq!(fetched.mode, SessionMode::Interactive);
-        assert_eq!(fetched.conversation_id, Some("conv-123".into()));
+
         assert_eq!(fetched.exit_code, None);
         assert_eq!(fetched.backend_session_id, Some("test-roundtrip".into()));
     }
@@ -924,12 +868,11 @@ mod tests {
             .await
             .unwrap();
 
-        let fetched = store
+        let _fetched = store
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.conversation_id, Some("conv-xyz".into()));
     }
 
     #[tokio::test]
@@ -964,23 +907,14 @@ mod tests {
             id: Uuid::new_v4(),
             name: "minimal".into(),
             workdir: "/tmp".into(),
-            provider: Provider::Codex,
-            prompt: "test".into(),
+            command: "echo hello".into(),
+            description: Some("test".into()),
             status: SessionStatus::Creating,
-            mode: SessionMode::Autonomous,
-            conversation_id: None,
             exit_code: None,
             backend_session_id: None,
             output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -998,78 +932,21 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(fetched.provider, Provider::Codex);
-        assert_eq!(fetched.mode, SessionMode::Autonomous);
-        assert!(fetched.conversation_id.is_none());
         assert!(fetched.exit_code.is_none());
         assert!(fetched.backend_session_id.is_none());
         assert!(fetched.output_snapshot.is_none());
     }
 
-    #[tokio::test]
-    async fn test_insert_session_with_guardrail_fields() {
-        let store = test_store().await;
-        let mut session = make_session("guardrailed");
-        session.max_turns = Some(10);
-        session.max_budget_usd = Some(5.5);
-        session.output_format = Some("json".into());
-
-        store.insert_session(&session).await.unwrap();
-        let fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(fetched.max_turns, Some(10));
-        assert_eq!(fetched.max_budget_usd, Some(5.5));
-        assert_eq!(fetched.output_format.as_deref(), Some("json"));
-    }
-
     const TEST_UUID: &str = "550e8400-e29b-41d4-a716-446655440000";
-
-    #[tokio::test]
-    async fn test_row_to_session_invalid_provider() {
-        let store = test_store().await;
-        sqlx::query(
-            "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
-                created_at, updated_at)
-             VALUES (?, 'test', '/tmp', 'invalid_provider', 'test', 'active', 'interactive',
-                '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
-        )
-        .bind(TEST_UUID)
-        .execute(store.pool())
-        .await
-        .unwrap();
-        let result = store.get_session(TEST_UUID).await;
-        assert!(result.is_err());
-    }
 
     #[tokio::test]
     async fn test_row_to_session_invalid_status() {
         let store = test_store().await;
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
-                created_at, updated_at)
-             VALUES (?, 'test', '/tmp', 'claude', 'test', 'bad_status', 'interactive',
-                '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
-        )
-        .bind(TEST_UUID)
-        .execute(store.pool())
-        .await
-        .unwrap();
-        let result = store.get_session(TEST_UUID).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_row_to_session_invalid_mode() {
-        let store = test_store().await;
-        sqlx::query(
-            "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
-                created_at, updated_at)
-             VALUES (?, 'test', '/tmp', 'claude', 'test', 'active', 'bad_mode',
-                '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
+                created_at, updated_at, command)
+             VALUES (?, 'test', '/tmp', '', '', 'bad_status', '',
+                '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00', 'echo test')",
         )
         .bind(TEST_UUID)
         .execute(store.pool())
@@ -1180,75 +1057,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_guard_config_roundtrip() {
-        use pulpo_common::guard::GuardConfig;
-
-        let store = test_store().await;
-        let mut session = make_session("guard-test");
-        let strict = GuardConfig { unrestricted: true };
-        session.guard_config = Some(strict.clone());
-
-        store.insert_session(&session).await.unwrap();
-        let fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-
-        assert!(fetched.guard_config.is_some());
-        let gc = fetched.guard_config.unwrap();
-        assert_eq!(gc, strict);
-    }
-
-    #[tokio::test]
-    async fn test_guard_config_none_roundtrip() {
-        let store = test_store().await;
-        let session = make_session("no-guard");
-
-        store.insert_session(&session).await.unwrap();
-        let fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-
-        assert!(fetched.guard_config.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_migrate_adds_guard_config_column() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-
-        // First migration creates table
-        store.migrate().await.unwrap();
-
-        // Second call is idempotent — column already exists
-        store.migrate().await.unwrap();
-
-        // Verify column exists by inserting with guard_config
-        let session = make_session("migration-test");
-        store.insert_session(&session).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_row_to_session_invalid_guard_json() {
-        let store = test_store().await;
-        sqlx::query(
-            "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
-                guard_config, created_at, updated_at)
-             VALUES (?, 'test', '/tmp', 'claude', 'test', 'active', 'interactive',
-                'not-valid-json', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
-        )
-        .bind(TEST_UUID)
-        .execute(store.pool())
-        .await
-        .unwrap();
-        let result = store.get_session(TEST_UUID).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
     async fn test_data_dir_accessor() {
         let store = test_store().await;
         let dir = store.data_dir();
@@ -1296,30 +1104,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_sessions_filtered_by_provider() {
-        let store = test_store().await;
-        let s1 = make_session("claude-task");
-        let mut s2 = make_session("codex-task");
-        s2.provider = Provider::Codex;
-        store.insert_session(&s1).await.unwrap();
-        store.insert_session(&s2).await.unwrap();
-
-        let query = ListSessionsQuery {
-            provider: Some("codex".into()),
-            ..Default::default()
-        };
-        let sessions = store.list_sessions_filtered(&query).await.unwrap();
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].provider, Provider::Codex);
-    }
-
-    #[tokio::test]
     async fn test_list_sessions_filtered_by_search() {
         let store = test_store().await;
         let mut s1 = make_session("api-fix");
-        s1.prompt = "Fix the API endpoint".into();
+        s1.command = "Fix the API endpoint".into();
         let mut s2 = make_session("ui-refactor");
-        s2.prompt = "Refactor the UI components".into();
+        s2.command = "Refactor the UI components".into();
         store.insert_session(&s1).await.unwrap();
         store.insert_session(&s2).await.unwrap();
 
@@ -1403,13 +1193,13 @@ mod tests {
         let store = test_store().await;
         let mut s1 = make_session("api-fix");
         s1.status = SessionStatus::Active;
-        s1.prompt = "Fix the API".into();
+        s1.command = "Fix the API".into();
         let mut s2 = make_session("api-refactor");
         s2.status = SessionStatus::Finished;
-        s2.prompt = "Refactor the API".into();
+        s2.command = "Refactor the API".into();
         let mut s3 = make_session("ui-fix");
         s3.status = SessionStatus::Active;
-        s3.prompt = "Fix the UI".into();
+        s3.command = "Fix the UI".into();
         store.insert_session(&s1).await.unwrap();
         store.insert_session(&s2).await.unwrap();
         store.insert_session(&s3).await.unwrap();
@@ -1448,7 +1238,7 @@ mod tests {
         let store = test_store().await;
         let s1 = make_session("claude-task");
         let mut s2 = make_session("codex-task");
-        s2.provider = Provider::Codex;
+        s2.command = String::new();
         store.insert_session(&s1).await.unwrap();
         store.insert_session(&s2).await.unwrap();
 
@@ -1946,9 +1736,6 @@ mod tests {
     async fn test_new_session_fields_roundtrip() {
         let store = test_store().await;
         let mut session = make_session("new-fields-test");
-        session.model = Some("opus".into());
-        session.allowed_tools = Some(vec!["Read".into(), "Write".into(), "Bash".into()]);
-        session.system_prompt = Some("You are a code reviewer.".into());
         session.metadata = Some(
             [
                 ("discord_channel".into(), "123".into()),
@@ -1966,15 +1753,6 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(fetched.model, Some("opus".into()));
-        assert_eq!(
-            fetched.allowed_tools,
-            Some(vec!["Read".into(), "Write".into(), "Bash".into()])
-        );
-        assert_eq!(
-            fetched.system_prompt,
-            Some("You are a code reviewer.".into())
-        );
         let meta = fetched.metadata.unwrap();
         assert_eq!(meta.get("discord_channel").unwrap(), "123");
         assert_eq!(meta.get("user").unwrap(), "alice");

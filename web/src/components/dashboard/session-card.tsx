@@ -22,6 +22,11 @@ interface SessionCardProps {
   onRefresh: () => void;
 }
 
+function truncateCommand(command: string, maxLen = 40): string {
+  if (command.length <= maxLen) return command;
+  return command.slice(0, maxLen) + '...';
+}
+
 export function SessionCard({ session, onRefresh }: SessionCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [interventionEvents, setInterventionEvents] = useState<InterventionEvent[]>([]);
@@ -124,23 +129,8 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
         >
           <strong className="shrink-0 font-mono text-xs text-[#c0d0e0]">{session.name}</strong>
           <span className="hidden text-[0.6rem] uppercase text-[#5a7a9a] sm:inline">
-            {session.provider}
+            {truncateCommand(session.command)}
           </span>
-          <Badge
-            variant="outline"
-            className="hidden border-[#1e2d3d] text-[0.55rem] uppercase text-[#5a7a9a] sm:inline-flex"
-          >
-            {session.mode}
-          </Badge>
-          {session.guard_config && (
-            <Badge
-              data-testid="guard-badge"
-              variant="outline"
-              className="hidden border-[#1e2d3d] text-[0.55rem] uppercase text-[#5a7a9a] sm:inline-flex"
-            >
-              {session.guard_config.unrestricted ? 'unrestricted' : 'restricted'}
-            </Badge>
-          )}
           {session.status === 'killed' && session.intervention_reason && (
             <Badge
               data-testid="intervention-badge"
@@ -158,11 +148,6 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
                 {session.ink}
               </span>
             )}
-            {session.model && (
-              <span data-testid="session-model" className="hidden lg:inline">
-                {session.model}
-              </span>
-            )}
             <span data-testid="session-workdir" className="hidden md:inline">
               {session.workdir.split('/').pop() || session.workdir}
             </span>
@@ -171,7 +156,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
         </div>
       </div>
 
-      {/* Subtitle: prompt — always visible */}
+      {/* Subtitle: description or command — always visible */}
       <div
         role="button"
         tabIndex={0}
@@ -181,7 +166,9 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
         }}
         className="cursor-pointer border-t border-[#1e2d3d] bg-[#0d1f33]/60 px-3 py-1"
       >
-        <p className="truncate font-mono text-xs text-[#5a7a9a]">{session.prompt}</p>
+        <p className="truncate font-mono text-xs text-[#5a7a9a]">
+          {session.description || session.command}
+        </p>
       </div>
 
       {/* Expanded body */}

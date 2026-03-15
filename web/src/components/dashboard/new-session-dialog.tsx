@@ -10,7 +10,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -21,7 +20,6 @@ import {
 import { Plus } from 'lucide-react';
 import { createSession, createRemoteSession, getInks } from '@/api/client';
 import type { InkConfig, PeerInfo, Session } from '@/api/types';
-import { getProviderCapabilities } from '@/api/types';
 
 interface NewSessionDialogProps {
   peers?: PeerInfo[];
@@ -32,10 +30,8 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [repoPath, setRepoPath] = useState('');
-  const [prompt, setPrompt] = useState('');
-  const [provider, setProvider] = useState('claude');
-  const [mode, setMode] = useState('interactive');
-  const [unrestricted, setUnrestricted] = useState(false);
+  const [command, setCommand] = useState('');
+  const [description, setDescription] = useState('');
   const [targetNode, setTargetNode] = useState('local');
   const [selectedInk, setSelectedInk] = useState('');
   const [inks, setInks] = useState<Record<string, InkConfig>>({});
@@ -62,24 +58,20 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
     }
     const ink = inks[inkName];
     if (!ink) return;
-    if (ink.provider) setProvider(ink.provider);
-    if (ink.mode) setMode(ink.mode);
-    if (ink.unrestricted != null) setUnrestricted(ink.unrestricted);
+    if (ink.command) setCommand(ink.command);
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || !repoPath || !prompt) return;
+    if (!name.trim() || !repoPath) return;
     setSubmitting(true);
     setError(null);
     try {
       const data = {
         name: name.trim(),
         workdir: repoPath,
-        prompt,
-        provider,
-        mode,
-        ...(unrestricted ? { unrestricted: true } : {}),
+        ...(command ? { command } : {}),
+        ...(description ? { description } : {}),
         ...(selectedInk ? { ink: selectedInk } : {}),
       };
 
@@ -94,7 +86,8 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
 
       setName('');
       setRepoPath('');
-      setPrompt('');
+      setCommand('');
+      setDescription('');
       setSelectedInk('');
       setOpen(false);
       onCreated(resp.session);
@@ -106,7 +99,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
   }
 
   const inkNames = Object.keys(inks).sort();
-  const caps = getProviderCapabilities(provider);
   const activeInk = selectedInk ? inks[selectedInk] : null;
 
   return (
@@ -128,9 +120,10 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
             <Label htmlFor="session-name">Name</Label>
             <Input
               id="session-name"
-              placeholder="my-session (optional)"
+              placeholder="my-session"
               value={name}
               onChange={(e) => setName(e.target.value)}
+              required
             />
           </div>
 
@@ -146,14 +139,23 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="prompt">Prompt</Label>
+            <Label htmlFor="command">Command</Label>
+            <Input
+              id="command"
+              placeholder="claude code (optional, uses ink or default)"
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="description">Description</Label>
             <Textarea
-              id="prompt"
-              placeholder="Describe the task..."
+              id="description"
+              placeholder="Describe the task (optional)..."
               rows={3}
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              required
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
             />
           </div>
 
@@ -176,67 +178,13 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
               </Select>
               {activeInk && (
                 <p className="text-xs text-muted-foreground" data-testid="ink-summary">
-                  {[
-                    activeInk.provider,
-                    activeInk.model,
-                    activeInk.mode,
-                    activeInk.unrestricted ? 'unrestricted' : null,
-                    activeInk.instructions
-                      ? activeInk.instructions.length > 60
-                        ? `${activeInk.instructions.slice(0, 60)}...`
-                        : activeInk.instructions
-                      : null,
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
+                  {[activeInk.command, activeInk.description].filter(Boolean).join(' · ')}
                 </p>
               )}
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="provider">Provider</Label>
-              <Select value={provider} onValueChange={setProvider}>
-                <SelectTrigger id="provider" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="claude">Claude</SelectItem>
-                  <SelectItem value="codex">Codex</SelectItem>
-                  <SelectItem value="gemini">Gemini</SelectItem>
-                  <SelectItem value="open_code">OpenCode</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="mode">Mode</Label>
-              <Select value={mode} onValueChange={setMode}>
-                <SelectTrigger id="mode" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="interactive">Interactive</SelectItem>
-                  <SelectItem value="autonomous">Autonomous</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            {caps.unrestricted && (
-              <div className="flex items-center gap-2 self-end pb-1.5">
-                <Switch
-                  id="unrestricted-toggle"
-                  checked={unrestricted}
-                  onCheckedChange={setUnrestricted}
-                  data-testid="unrestricted-toggle"
-                />
-                <Label htmlFor="unrestricted-toggle" className="text-sm">
-                  Unrestricted
-                </Label>
-              </div>
-            )}
-
+          <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="target-node">Node</Label>
               <Select value={targetNode} onValueChange={setTargetNode}>
@@ -255,11 +203,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
             </div>
           </div>
 
-          <Button
-            type="submit"
-            className="w-full mt-1"
-            disabled={submitting || !repoPath || !prompt}
-          >
+          <Button type="submit" className="mt-1 w-full" disabled={submitting || !repoPath}>
             {submitting ? 'Creating...' : 'Create Session'}
           </Button>
         </form>

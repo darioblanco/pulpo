@@ -8,8 +8,6 @@ use uuid::Uuid;
 
 use std::collections::HashMap;
 
-use crate::guard::GuardConfig;
-
 /// Machine-readable intervention reason codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -41,44 +39,6 @@ impl FromStr for InterventionCode {
             "idle_timeout" => Ok(Self::IdleTimeout),
             "user_kill" => Ok(Self::UserKill),
             other => Err(format!("unknown intervention code: {other}")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Provider {
-    Claude,
-    Codex,
-    Gemini,
-    OpenCode,
-    /// Bare shell session — no coding agent, just a tmux shell.
-    Shell,
-}
-
-impl fmt::Display for Provider {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Claude => write!(f, "claude"),
-            Self::Codex => write!(f, "codex"),
-            Self::Gemini => write!(f, "gemini"),
-            Self::OpenCode => write!(f, "opencode"),
-            Self::Shell => write!(f, "shell"),
-        }
-    }
-}
-
-impl FromStr for Provider {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "claude" => Ok(Self::Claude),
-            "codex" => Ok(Self::Codex),
-            "gemini" => Ok(Self::Gemini),
-            "opencode" | "open_code" => Ok(Self::OpenCode),
-            "shell" | "bare" => Ok(Self::Shell),
-            other => Err(format!("unknown provider: {other}")),
         }
     }
 }
@@ -123,57 +83,19 @@ impl FromStr for SessionStatus {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SessionMode {
-    #[default]
-    Interactive,
-    Autonomous,
-}
-
-impl fmt::Display for SessionMode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Interactive => write!(f, "interactive"),
-            Self::Autonomous => write!(f, "autonomous"),
-        }
-    }
-}
-
-impl FromStr for SessionMode {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "interactive" => Ok(Self::Interactive),
-            "autonomous" => Ok(Self::Autonomous),
-            other => Err(format!("unknown session mode: {other}")),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Session {
     pub id: Uuid,
     pub name: String,
     pub workdir: String,
-    pub provider: Provider,
-    pub prompt: String,
+    pub command: String,
+    pub description: Option<String>,
     pub status: SessionStatus,
-    pub mode: SessionMode,
-    pub conversation_id: Option<String>,
     pub exit_code: Option<i32>,
     pub backend_session_id: Option<String>,
     pub output_snapshot: Option<String>,
-    pub guard_config: Option<GuardConfig>,
-    pub model: Option<String>,
-    pub allowed_tools: Option<Vec<String>>,
-    pub system_prompt: Option<String>,
     pub metadata: Option<HashMap<String, String>>,
     pub ink: Option<String>,
-    pub max_turns: Option<u32>,
-    pub max_budget_usd: Option<f64>,
-    pub output_format: Option<String>,
     pub intervention_code: Option<InterventionCode>,
     pub intervention_reason: Option<String>,
     pub intervention_at: Option<DateTime<Utc>>,
@@ -193,24 +115,14 @@ mod tests {
             id: Uuid::new_v4(),
             name: "test-session".into(),
             workdir: "/tmp/repo".into(),
-            provider: Provider::Claude,
-            prompt: "Fix the bug".into(),
+            command: "claude -p 'Fix the bug'".into(),
+            description: Some("Fix the bug".into()),
             status: SessionStatus::Active,
-            mode: SessionMode::Interactive,
-            conversation_id: Some("conv-123".into()),
             exit_code: None,
             backend_session_id: Some("test-session".into()),
-
             output_snapshot: Some("some output".into()),
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -219,85 +131,6 @@ mod tests {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
-    }
-
-    #[test]
-    fn test_provider_serialize() {
-        assert_eq!(
-            serde_json::to_string(&Provider::Claude).unwrap(),
-            "\"claude\""
-        );
-        assert_eq!(
-            serde_json::to_string(&Provider::Codex).unwrap(),
-            "\"codex\""
-        );
-        assert_eq!(
-            serde_json::to_string(&Provider::Gemini).unwrap(),
-            "\"gemini\""
-        );
-        assert_eq!(
-            serde_json::to_string(&Provider::OpenCode).unwrap(),
-            "\"open_code\""
-        );
-        assert_eq!(
-            serde_json::to_string(&Provider::Shell).unwrap(),
-            "\"shell\""
-        );
-    }
-
-    #[test]
-    fn test_provider_deserialize() {
-        assert_eq!(
-            serde_json::from_str::<Provider>("\"claude\"").unwrap(),
-            Provider::Claude
-        );
-        assert_eq!(
-            serde_json::from_str::<Provider>("\"codex\"").unwrap(),
-            Provider::Codex
-        );
-        assert_eq!(
-            serde_json::from_str::<Provider>("\"gemini\"").unwrap(),
-            Provider::Gemini
-        );
-        assert_eq!(
-            serde_json::from_str::<Provider>("\"open_code\"").unwrap(),
-            Provider::OpenCode
-        );
-        assert_eq!(
-            serde_json::from_str::<Provider>("\"shell\"").unwrap(),
-            Provider::Shell
-        );
-    }
-
-    #[test]
-    fn test_provider_invalid_deserialize() {
-        assert!(serde_json::from_str::<Provider>("\"invalid\"").is_err());
-    }
-
-    #[test]
-    fn test_provider_display() {
-        assert_eq!(Provider::Claude.to_string(), "claude");
-        assert_eq!(Provider::Codex.to_string(), "codex");
-        assert_eq!(Provider::Gemini.to_string(), "gemini");
-        assert_eq!(Provider::OpenCode.to_string(), "opencode");
-        assert_eq!(Provider::Shell.to_string(), "shell");
-    }
-
-    #[test]
-    fn test_provider_from_str() {
-        assert_eq!("claude".parse::<Provider>().unwrap(), Provider::Claude);
-        assert_eq!("codex".parse::<Provider>().unwrap(), Provider::Codex);
-        assert_eq!("gemini".parse::<Provider>().unwrap(), Provider::Gemini);
-        assert_eq!("opencode".parse::<Provider>().unwrap(), Provider::OpenCode);
-        assert_eq!("open_code".parse::<Provider>().unwrap(), Provider::OpenCode);
-        assert_eq!("shell".parse::<Provider>().unwrap(), Provider::Shell);
-        assert_eq!("bare".parse::<Provider>().unwrap(), Provider::Shell);
-    }
-
-    #[test]
-    fn test_provider_from_str_invalid() {
-        let err = "invalid".parse::<Provider>().unwrap_err();
-        assert!(err.contains("unknown provider"));
     }
 
     #[test]
@@ -406,90 +239,15 @@ mod tests {
     }
 
     #[test]
-    fn test_session_mode_serialize() {
-        assert_eq!(
-            serde_json::to_string(&SessionMode::Interactive).unwrap(),
-            "\"interactive\""
-        );
-        assert_eq!(
-            serde_json::to_string(&SessionMode::Autonomous).unwrap(),
-            "\"autonomous\""
-        );
-    }
-
-    #[test]
-    fn test_session_mode_deserialize() {
-        assert_eq!(
-            serde_json::from_str::<SessionMode>("\"interactive\"").unwrap(),
-            SessionMode::Interactive
-        );
-        assert_eq!(
-            serde_json::from_str::<SessionMode>("\"autonomous\"").unwrap(),
-            SessionMode::Autonomous
-        );
-    }
-
-    #[test]
-    fn test_session_mode_invalid_deserialize() {
-        assert!(serde_json::from_str::<SessionMode>("\"invalid\"").is_err());
-    }
-
-    #[test]
-    fn test_session_mode_display() {
-        assert_eq!(SessionMode::Interactive.to_string(), "interactive");
-        assert_eq!(SessionMode::Autonomous.to_string(), "autonomous");
-    }
-
-    #[test]
-    fn test_session_mode_from_str() {
-        assert_eq!(
-            "interactive".parse::<SessionMode>().unwrap(),
-            SessionMode::Interactive
-        );
-        assert_eq!(
-            "autonomous".parse::<SessionMode>().unwrap(),
-            SessionMode::Autonomous
-        );
-    }
-
-    #[test]
-    fn test_session_mode_from_str_invalid() {
-        let err = "invalid".parse::<SessionMode>().unwrap_err();
-        assert!(err.contains("unknown session mode"));
-    }
-
-    #[test]
-    fn test_session_mode_default() {
-        assert_eq!(SessionMode::default(), SessionMode::Interactive);
-    }
-
-    #[test]
-    fn test_session_mode_clone_and_copy() {
-        let m = SessionMode::Autonomous;
-        let m2 = m;
-        #[allow(clippy::clone_on_copy)]
-        let m3 = m.clone();
-        assert_eq!(m, m2);
-        assert_eq!(m, m3);
-    }
-
-    #[test]
-    fn test_session_mode_debug() {
-        assert_eq!(format!("{:?}", SessionMode::Interactive), "Interactive");
-        assert_eq!(format!("{:?}", SessionMode::Autonomous), "Autonomous");
-    }
-
-    #[test]
     fn test_session_serialize_roundtrip() {
         let session = make_session();
         let json = serde_json::to_string(&session).unwrap();
         let deserialized: Session = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.id, session.id);
         assert_eq!(deserialized.name, session.name);
-        assert_eq!(deserialized.provider, session.provider);
+        assert_eq!(deserialized.command, session.command);
         assert_eq!(deserialized.status, session.status);
-        assert_eq!(deserialized.mode, session.mode);
-        assert_eq!(deserialized.conversation_id, session.conversation_id);
+        assert_eq!(deserialized.description, session.description);
     }
 
     #[test]
@@ -498,24 +256,14 @@ mod tests {
             id: Uuid::new_v4(),
             name: "minimal".into(),
             workdir: "/tmp".into(),
-            provider: Provider::Codex,
-            prompt: "test".into(),
+            command: "echo hello".into(),
+            description: None,
             status: SessionStatus::Creating,
-            mode: SessionMode::Autonomous,
-            conversation_id: None,
             exit_code: None,
             backend_session_id: None,
-
             output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -526,18 +274,8 @@ mod tests {
         };
 
         let json = serde_json::to_string(&session).unwrap();
-        assert!(json.contains("\"conversation_id\":null"));
-        assert!(json.contains("\"autonomous\""));
-    }
-
-    #[test]
-    fn test_provider_clone_and_copy() {
-        let p = Provider::Claude;
-        let p2 = p;
-        #[allow(clippy::clone_on_copy)]
-        let p3 = p.clone();
-        assert_eq!(p, p2);
-        assert_eq!(p, p3);
+        assert!(json.contains("\"description\":null"));
+        assert!(json.contains("\"echo hello\""));
     }
 
     #[test]
@@ -551,11 +289,6 @@ mod tests {
     }
 
     #[test]
-    fn test_provider_debug() {
-        assert_eq!(format!("{:?}", Provider::Claude), "Claude");
-    }
-
-    #[test]
     fn test_session_status_debug() {
         assert_eq!(format!("{:?}", SessionStatus::Active), "Active");
     }
@@ -566,24 +299,14 @@ mod tests {
             id: Uuid::nil(),
             name: "test".into(),
             workdir: "/tmp".into(),
-            provider: Provider::Claude,
-            prompt: "test".into(),
+            command: "echo test".into(),
+            description: None,
             status: SessionStatus::Active,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
             exit_code: None,
             backend_session_id: None,
-
             output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -602,24 +325,14 @@ mod tests {
             id: Uuid::new_v4(),
             name: "clone-test".into(),
             workdir: "/tmp".into(),
-            provider: Provider::Codex,
-            prompt: "test".into(),
+            command: "echo test".into(),
+            description: None,
             status: SessionStatus::Finished,
-            mode: SessionMode::Autonomous,
-            conversation_id: None,
             exit_code: Some(0),
             backend_session_id: None,
-
             output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -631,34 +344,24 @@ mod tests {
         let cloned = session.clone();
         assert_eq!(cloned.id, session.id);
         assert_eq!(cloned.exit_code, Some(0));
-        assert_eq!(cloned.mode, SessionMode::Autonomous);
     }
 
     #[test]
-    fn test_session_with_new_fields() {
+    fn test_session_with_metadata() {
         let mut meta = HashMap::new();
         meta.insert("discord_channel".into(), "123".into());
         let session = Session {
             id: Uuid::new_v4(),
             name: "full".into(),
             workdir: "/tmp".into(),
-            provider: Provider::Claude,
-            prompt: "test".into(),
+            command: "claude -p 'test'".into(),
+            description: Some("Testing".into()),
             status: SessionStatus::Active,
-            mode: SessionMode::Autonomous,
-            conversation_id: None,
             exit_code: None,
             backend_session_id: None,
             output_snapshot: None,
-            guard_config: None,
-            model: Some("opus".into()),
-            allowed_tools: Some(vec!["Read".into(), "Grep".into()]),
-            system_prompt: Some("Be concise".into()),
             metadata: Some(meta),
             ink: Some("coder".into()),
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -669,12 +372,6 @@ mod tests {
         };
         let json = serde_json::to_string(&session).unwrap();
         let deserialized: Session = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.model, Some("opus".into()));
-        assert_eq!(
-            deserialized.allowed_tools,
-            Some(vec!["Read".into(), "Grep".into()])
-        );
-        assert_eq!(deserialized.system_prompt, Some("Be concise".into()));
         assert_eq!(
             deserialized
                 .metadata

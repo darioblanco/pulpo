@@ -15,22 +15,12 @@ const mockUpdateRemoteConfig = vi.mocked(api.updateRemoteConfig);
 
 const emptyInk: InkConfig = {
   description: null,
-  provider: null,
-  model: null,
-  mode: null,
-  unrestricted: null,
-  instructions: null,
-  instructions_file: null,
+  command: null,
 };
 
 const reviewerInk: InkConfig = {
   description: 'Code review specialist',
-  provider: 'claude',
-  model: null,
-  mode: 'interactive',
-  unrestricted: false,
-  instructions: 'You are a code reviewer.',
-  instructions_file: null,
+  command: 'claude code --model opus-4',
 };
 
 const onlinePeer: PeerInfo = {
@@ -101,7 +91,7 @@ describe('InkSettings', () => {
     render(<InkSettings inks={{ reviewer: reviewerInk }} onInksChange={vi.fn()} />);
     fireEvent.click(screen.getByTestId('ink-toggle-reviewer'));
     expect(screen.getByLabelText('Description')).toHaveValue('Code review specialist');
-    expect(screen.getByLabelText('Instructions')).toHaveValue('You are a code reviewer.');
+    expect(screen.getByLabelText('Command')).toHaveValue('claude code --model opus-4');
   });
 
   it('calls onInksChange when description is updated', () => {
@@ -120,11 +110,11 @@ describe('InkSettings', () => {
     const onInksChange = vi.fn();
     render(<InkSettings inks={{ reviewer: reviewerInk }} onInksChange={onInksChange} />);
     fireEvent.click(screen.getByTestId('ink-toggle-reviewer'));
-    fireEvent.change(screen.getByLabelText('Instructions'), {
-      target: { value: 'New prompt' },
+    fireEvent.change(screen.getByLabelText('Command'), {
+      target: { value: 'codex --model gpt-4o' },
     });
     expect(onInksChange).toHaveBeenCalledWith({
-      reviewer: { ...reviewerInk, instructions: 'New prompt' },
+      reviewer: { ...reviewerInk, command: 'codex --model gpt-4o' },
     });
   });
 

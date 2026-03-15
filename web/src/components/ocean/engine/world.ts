@@ -29,16 +29,13 @@ export interface OctopusEntity {
   sessionId: string;
   name: string;
   status: string;
-  provider: string;
+  command: string;
+  description: string | null;
   ink: string | null;
-  model: string | null;
-  mode: string;
   workdir: string;
-  unrestricted: boolean;
   createdAt: string;
   lastOutputAt: string | null;
   interventionReason: string | null;
-  prompt: string;
   nodeName: string;
   x: number;
   y: number;
@@ -357,14 +354,12 @@ export function syncSingleNode(
       const statusChanged = existing.status !== session.status;
       existing.status = session.status;
       existing.ink = session.ink;
-      existing.model = session.model;
-      existing.mode = session.mode;
+      existing.command = session.command;
+      existing.description = session.description;
       existing.workdir = session.workdir;
-      existing.unrestricted = session.guard_config?.unrestricted ?? false;
       existing.createdAt = session.created_at;
       existing.lastOutputAt = session.last_output_at;
       existing.interventionReason = session.intervention_reason;
-      existing.prompt = session.prompt;
       existing.nodeName = nodeName;
       if (statusChanged) {
         const [hx, hy] = assignHomeForStatus(0, session.status, idx);
@@ -378,16 +373,13 @@ export function syncSingleNode(
         sessionId: session.id,
         name: session.name,
         status: session.status,
-        provider: session.provider,
+        command: session.command,
+        description: session.description,
         ink: session.ink,
-        model: session.model,
-        mode: session.mode,
         workdir: session.workdir,
-        unrestricted: session.guard_config?.unrestricted ?? false,
         createdAt: session.created_at,
         lastOutputAt: session.last_output_at,
         interventionReason: session.intervention_reason,
-        prompt: session.prompt,
         nodeName: nodeName,
         x: hx + randomBetween(-10, 10),
         y: hy + randomBetween(-10, 10),
@@ -481,14 +473,12 @@ export function syncData(
         const statusChanged = existing.status !== session.status;
         existing.status = session.status;
         existing.ink = session.ink;
-        existing.model = session.model;
-        existing.mode = session.mode;
+        existing.command = session.command;
+        existing.description = session.description;
         existing.workdir = session.workdir;
-        existing.unrestricted = session.guard_config?.unrestricted ?? false;
         existing.createdAt = session.created_at;
         existing.lastOutputAt = session.last_output_at;
         existing.interventionReason = session.intervention_reason;
-        existing.prompt = session.prompt;
         existing.nodeName = node.name;
         if (statusChanged) {
           const [hx, hy] = assignHomeForStatus(node.x, session.status, idx);
@@ -503,16 +493,13 @@ export function syncData(
           sessionId: session.id,
           name: session.name,
           status: session.status,
-          provider: session.provider,
+          command: session.command,
+          description: session.description,
           ink: session.ink,
-          model: session.model,
-          mode: session.mode,
           workdir: session.workdir,
-          unrestricted: session.guard_config?.unrestricted ?? false,
           createdAt: session.created_at,
           lastOutputAt: session.last_output_at,
           interventionReason: session.intervention_reason,
-          prompt: session.prompt,
           nodeName: node.name,
           x: hx + randomBetween(-10, 10),
           y: hy + randomBetween(-10, 10),

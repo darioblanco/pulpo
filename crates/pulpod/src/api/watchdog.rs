@@ -119,7 +119,7 @@ mod tests {
     use super::*;
     use crate::api::AppState;
     use crate::backend::Backend;
-    use crate::config::{Config, GuardDefaultConfig, NodeConfig};
+    use crate::config::{Config, NodeConfig};
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
@@ -156,13 +156,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -174,8 +168,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -191,13 +183,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let config_path = tmpdir.path().join("config.toml");
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
@@ -211,8 +197,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -389,13 +373,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let initial = crate::watchdog::WatchdogRuntimeConfig {
             threshold: 90,
@@ -416,8 +394,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),

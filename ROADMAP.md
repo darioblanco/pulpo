@@ -46,7 +46,7 @@ Pulpo is lower-value if you:
 Pulpo's defensible wedge is: **agent runtime control plane for trusted self-hosted environments**.
 
 Not unique: prompting UX, code-gen quality, chat interfaces.
-Unique: cross-node session lifecycle, watchdog interventions, idle/finished/lost detection and resume semantics, provider-agnostic operational API, multi-node orchestration with peer discovery, inks-based role abstraction.
+Unique: cross-node session lifecycle, watchdog interventions, idle/finished/lost detection and resume semantics, command-agnostic operational API, multi-node orchestration with peer discovery, inks-based role abstraction.
 
 ## Product Thesis
 
@@ -56,7 +56,7 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
 - explicit failure states,
 - policy and budget guardrails,
 - audit-friendly event streams,
-- provider adapter portability.
+- command-agnostic session portability.
 
 ## Shipped
 
@@ -67,17 +67,14 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
 - Resume flow from `lost` and `finished` states
 - Watchdog interventions (memory + idle) with live config reload via watch channel
 - Machine-readable intervention reason codes (`InterventionCode` enum)
-- Binary guard toggle (`unrestricted` on/off)
-- Claude Code + Codex + Gemini + OpenCode + Shell (bare tmux) provider support
-- Provider availability detection and compatibility matrix (`GET /api/v1/providers`)
-- Graceful 400 error when provider binary is missing at spawn
+- **Command-agnostic sessions**: sessions take an arbitrary shell `command` instead of a provider enum. Provider, mode, model, guard, and unrestricted fields removed. Inks simplified to `description` + `command`. Any CLI tool (Claude Code, Codex, Gemini, OpenCode, or custom scripts) can be launched via command.
 - Multi-node support (manual peers + mDNS in `public` mode)
 - Full config surface via API/UI (watchdog, notifications, per-session overrides, bind mode)
 - SSE events (`/api/v1/events`)
 - MCP server mode (`pulpod mcp`)
 - Scheduling via crontab wrapper
 - Discord integration in `contrib/`
-- Inks: 6-field universal roles (description, provider, model, mode, unrestricted, instructions)
+- Inks: 2-field universal roles (description, command)
 - **Integration polish**:
   - Node info completeness: real memory + GPU detection in peers endpoint
 - **Session lifecycle hardening** (S1–S5 complete): user-centric state machine with full detection
@@ -137,7 +134,7 @@ Pulpo is succeeding if we can show:
 - Resume success rate after restart/reboot is consistently high
 - Low false-positive watchdog kills and clear intervention explanations
 - Time-to-recover from agent/node failure is materially reduced
-- Users run mixed providers through one operational surface
+- Users run mixed agent commands through one operational surface
 - Multi-node usage increases vs single-node-only usage
 
 If these metrics do not improve, the roadmap should be reconsidered.
@@ -145,7 +142,7 @@ If these metrics do not improve, the roadmap should be reconsidered.
 ## Architectural Principles
 
 - Infrastructure/runtime layer, not agent intelligence layer
-- Provider-agnostic adapters over provider lock-in
+- Command-agnostic sessions over provider lock-in
 - Reliability before feature breadth
 - Explicit, auditable failure semantics
 - Zero-config local start, progressive operational depth

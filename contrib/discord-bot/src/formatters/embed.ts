@@ -32,20 +32,25 @@ export function sessionEmbed(session: Session): EmbedBuilder {
     .setColor(statusColor(session.status))
     .addFields(
       { name: 'Status', value: session.status, inline: true },
-      { name: 'Provider', value: session.provider, inline: true },
       { name: 'ID', value: `\`${session.id}\``, inline: true },
     );
 
-  if (session.model) {
-    embed.addFields({ name: 'Model', value: session.model, inline: true });
-  }
   if (session.ink) {
     embed.addFields({ name: 'Ink', value: session.ink, inline: true });
   }
 
-  const prompt =
-    session.prompt.length > 200 ? session.prompt.slice(0, 200) + '...' : session.prompt;
-  embed.addFields({ name: 'Prompt', value: prompt, inline: false });
+  const command =
+    session.command.length > 200 ? session.command.slice(0, 200) + '...' : session.command;
+  embed.addFields({ name: 'Command', value: `\`${command}\``, inline: false });
+
+  if (session.description) {
+    const desc =
+      session.description.length > 200
+        ? session.description.slice(0, 200) + '...'
+        : session.description;
+    embed.addFields({ name: 'Description', value: desc, inline: false });
+  }
+
   embed.setTimestamp(new Date(session.created_at));
 
   return embed;
@@ -87,8 +92,8 @@ export function inkListEmbed(inks: Record<string, InkConfig>): EmbedBuilder {
   }
 
   const lines = entries.map(([name, p]) => {
-    const parts = [p.provider, p.mode, p.unrestricted ? 'unrestricted' : undefined].filter(Boolean);
-    return `**${name}** — ${parts.join(', ') || 'default'}`;
+    const parts = [p.command, p.description].filter(Boolean);
+    return `**${name}** — ${parts.join(': ') || 'default'}`;
   });
 
   embed.setDescription(lines.join('\n'));
@@ -104,7 +109,7 @@ export function sessionListEmbed(sessions: Session[]): EmbedBuilder {
   }
 
   const lines = sessions.slice(0, 25).map((s) => {
-    return `${statusEmoji(s.status)} **${s.name}** — ${s.status} (${s.provider})`;
+    return `${statusEmoji(s.status)} **${s.name}** — ${s.status}`;
   });
 
   embed.setDescription(lines.join('\n'));

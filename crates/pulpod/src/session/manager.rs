@@ -5,24 +5,18 @@ use anyhow::{Result, anyhow, bail};
 use chrono::Utc;
 use pulpo_common::api::CreateSessionRequest;
 use pulpo_common::event::{PulpoEvent, SessionEvent};
-use pulpo_common::session::{Provider, Session, SessionMode, SessionStatus};
+use pulpo_common::session::{Session, SessionStatus};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
-use pulpo_common::guard::GuardConfig;
-
 use crate::backend::Backend;
-use crate::config::{InkConfig, SessionDefaultsConfig};
-use crate::guard::check_capability_warnings;
+use crate::config::InkConfig;
 use crate::store::Store;
 
 #[derive(Clone)]
 pub struct SessionManager {
     backend: Arc<dyn Backend>,
     store: Store,
-    default_guard: GuardConfig,
-    default_provider: Option<String>,
-    session_defaults: SessionDefaultsConfig,
     inks: HashMap<String, InkConfig>,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
     node_name: String,
@@ -32,18 +26,10 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
-    pub fn new(
-        backend: Arc<dyn Backend>,
-        store: Store,
-        default_guard: GuardConfig,
-        inks: HashMap<String, InkConfig>,
-    ) -> Self {
+    pub fn new(backend: Arc<dyn Backend>, store: Store, inks: HashMap<String, InkConfig>) -> Self {
         Self {
             backend,
             store,
-            default_guard,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
             inks,
             event_tx: None,
             node_name: String::new(),
@@ -55,18 +41,6 @@ impl SessionManager {
     #[must_use]
     pub const fn with_no_stale_grace(mut self) -> Self {
         self.stale_grace_secs = 0;
-        self
-    }
-
-    #[must_use]
-    pub fn with_default_provider(mut self, provider: Option<String>) -> Self {
-        self.default_provider = provider;
-        self
-    }
-
-    #[must_use]
-    pub fn with_session_defaults(mut self, defaults: SessionDefaultsConfig) -> Self {
-        self.session_defaults = defaults;
         self
     }
 
@@ -111,14 +85,20 @@ impl SessionManager {
             .unwrap_or_else(|| self.backend.session_id(&session.name))
     }
 
-    pub async fn create_session(
-        &self,
-        req: CreateSessionRequest,
-    ) -> Result<(Session, Vec<String>)> {
-        let mut req = self.apply_defaults(req);
-        req = self.resolve_ink(req)?;
-        let workdir = req.workdir.clone().unwrap_or_default();
+    pub async fn create_session(&self, req: CreateSessionRequest) -> Result<Session> {
+        // Resolve ink → get command
+        let (command, description) = self.resolve_ink(&req)?;
+
+        // Default workdir to home dir
+        let workdir = req.workdir.unwrap_or_else(|| {
+            dirs::home_dir().map_or_else(|| "/tmp".to_owned(), |h| h.to_string_lossy().into_owned())
+        });
         validate_workdir(&workdir)?;
+
+        // Validate: command must be non-empty
+        if command.is_empty() {
+            bail!("command is required — provide a command directly or via an ink");
+        }
 
         // Reject duplicate names among live sessions
         if self.store.has_active_session_by_name(&req.name).await? {
@@ -129,56 +109,25 @@ impl SessionManager {
         }
 
         let id = Uuid::new_v4();
-        let provider = req.provider.unwrap_or(Provider::Claude);
-
-        // Check provider binary is available before creating the session
-        if !is_provider_available(provider) {
-            bail!("provider '{provider}' is not available on this node (binary not found in PATH)");
-        }
-        let mode = req.mode.unwrap_or_default();
-        let guards = resolve_guard_config(&req, &self.default_guard);
         let name = req.name.clone();
-        let prompt = req.prompt.clone().unwrap_or_default();
         let backend_id = self.backend.session_id(&name);
-        let mut spawn_params = build_spawn_params(
-            &prompt,
-            &guards,
-            req.allowed_tools.as_deref(),
-            req.model.as_deref(),
-            req.system_prompt.as_deref(),
-            req.max_turns,
-            req.max_budget_usd,
-            req.output_format.as_deref(),
-            req.conversation_id.as_deref(),
-        );
-        if req.worktree.unwrap_or(false) {
-            spawn_params.worktree = Some(name.clone());
-        }
-        let warnings = check_capability_warnings(provider, &spawn_params);
-        let command = build_command(provider, mode, &spawn_params);
+
+        // Wrap command: bash -c "<escaped>; echo '[pulpo] Agent exited'; exec bash"
+        let wrapped = wrap_command(&command);
 
         let now = Utc::now();
         let session = Session {
             id,
             name: name.clone(),
             workdir,
-            provider,
-            prompt,
+            command,
+            description,
             status: SessionStatus::Creating,
-            mode,
-            conversation_id: None,
             exit_code: None,
             backend_session_id: Some(backend_id.clone()),
             output_snapshot: None,
-            guard_config: Some(guards),
-            model: req.model,
-            allowed_tools: req.allowed_tools,
-            system_prompt: req.system_prompt,
             metadata: req.metadata,
             ink: req.ink,
-            max_turns: req.max_turns,
-            max_budget_usd: req.max_budget_usd,
-            output_format: req.output_format,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -192,7 +141,7 @@ impl SessionManager {
 
         if let Err(e) = self
             .backend
-            .create_session(&backend_id, &session.workdir, &command)
+            .create_session(&backend_id, &session.workdir, &wrapped)
         {
             self.store
                 .update_session_status(&id.to_string(), SessionStatus::Killed)
@@ -215,114 +164,30 @@ impl SessionManager {
         session.status = SessionStatus::Active;
         session.updated_at = Utc::now();
         self.emit_event(&session, Some(SessionStatus::Creating));
-        Ok((session, warnings))
+        Ok(session)
     }
 
-    /// Apply defaults for optional fields: workdir defaults to home directory,
-    /// prompt defaults to empty string, provider defaults to config `default_provider`.
-    fn apply_defaults(&self, mut req: CreateSessionRequest) -> CreateSessionRequest {
-        if req.workdir.is_none() {
-            req.workdir = Some(
-                dirs::home_dir()
-                    .map_or_else(|| "/tmp".to_owned(), |h| h.to_string_lossy().into_owned()),
-            );
-        }
-        if req.prompt.is_none() {
-            req.prompt = Some(String::new());
-        }
-        // Provider: session_defaults.provider > node.default_provider > Claude
-        if req.provider.is_none() {
-            let default = self
-                .session_defaults
-                .provider
-                .as_ref()
-                .or(self.default_provider.as_ref())
-                .and_then(|p| p.parse().ok())
-                .unwrap_or(Provider::Claude);
-            req.provider = Some(default);
-        }
-        // Session defaults for remaining fields
-        if req.model.is_none() {
-            req.model.clone_from(&self.session_defaults.model);
-        }
-        if req.mode.is_none() {
-            req.mode = self
-                .session_defaults
-                .mode
-                .as_ref()
-                .and_then(|m| m.parse().ok());
-        }
-        if req.max_turns.is_none() {
-            req.max_turns = self.session_defaults.max_turns;
-        }
-        if req.max_budget_usd.is_none() {
-            req.max_budget_usd = self.session_defaults.max_budget_usd;
-        }
-        if req.output_format.is_none() {
-            req.output_format
-                .clone_from(&self.session_defaults.output_format);
-        }
-        req
-    }
-
-    fn resolve_ink(&self, mut req: CreateSessionRequest) -> Result<CreateSessionRequest> {
-        let ink_name = match &req.ink {
-            Some(name) => name.clone(),
-            None => return Ok(req),
-        };
-        let ink = self
-            .inks
-            .get(&ink_name)
-            .ok_or_else(|| anyhow!("unknown ink: {ink_name}"))?;
-
-        // Ink defaults — explicit request fields always win
-        if req.provider.is_none() {
-            req.provider = ink.provider.as_ref().and_then(|p| p.parse().ok());
-        }
-        if req.model.is_none() {
-            req.model.clone_from(&ink.model);
-        }
-        if req.mode.is_none() {
-            req.mode = ink.mode.as_ref().and_then(|m| m.parse().ok());
-        }
-        if req.unrestricted.is_none() {
-            req.unrestricted = ink.unrestricted;
+    /// Resolve ink: if ink has command, use it. Request command takes precedence.
+    fn resolve_ink(&self, req: &CreateSessionRequest) -> Result<(String, Option<String>)> {
+        // If a command is explicitly provided, use it
+        if let Some(ref cmd) = req.command {
+            return Ok((cmd.clone(), req.description.clone()));
         }
 
-        // Resolve instructions: instructions_file takes precedence over inline instructions
-        let effective_instructions = if let Some(ref file_path) = ink.instructions_file {
-            let path = if std::path::Path::new(file_path).is_absolute() {
-                std::path::PathBuf::from(file_path)
-            } else {
-                let workdir = req.workdir.as_deref().unwrap_or(".");
-                std::path::Path::new(workdir).join(file_path)
-            };
-            Some(std::fs::read_to_string(&path).map_err(|e| {
-                anyhow!("failed to read instructions_file '{}': {e}", path.display())
-            })?)
-        } else {
-            ink.instructions.clone()
-        };
-
-        // Instructions: provider-aware routing
-        if let Some(instructions) = &effective_instructions {
-            let provider = req
-                .provider
-                .or_else(|| ink.provider.as_ref().and_then(|p| p.parse().ok()))
-                .unwrap_or(Provider::Claude);
-            if crate::guard::provider_capabilities(provider).system_prompt {
-                // Native system prompt support (e.g. Claude)
-                if req.system_prompt.is_none() {
-                    req.system_prompt = Some(instructions.clone());
-                }
-            } else {
-                // Universal fallback: prepend to prompt
-                let prompt = req.prompt.unwrap_or_default();
-                req.prompt = Some(format!("{instructions}\n\n{prompt}"));
-            }
+        // If an ink is specified, resolve it
+        if let Some(ref ink_name) = req.ink {
+            let ink = self
+                .inks
+                .get(ink_name)
+                .ok_or_else(|| anyhow!("unknown ink: {ink_name}"))?;
+            let command = ink.command.clone().unwrap_or_default();
+            // Ink description as fallback for session description
+            let description = req.description.clone().or_else(|| ink.description.clone());
+            return Ok((command, description));
         }
 
-        Ok(req)
+        // No command and no ink — return empty (will be caught by validation)
+        Ok((String::new(), req.description.clone()))
     }
 
     pub async fn get_session(&self, id: &str) -> Result<Option<Session>> {
@@ -475,29 +340,9 @@ impl SessionManager {
         let backend_id = self.resolve_backend_id(&session);
         let alive = self.backend.is_alive(&backend_id)?;
         if !alive {
-            let guards = session
-                .guard_config
-                .clone()
-                .unwrap_or_else(|| self.default_guard.clone());
-            let mut spawn_params = build_spawn_params(
-                &session.prompt,
-                &guards,
-                session.allowed_tools.as_deref(),
-                session.model.as_deref(),
-                session.system_prompt.as_deref(),
-                session.max_turns,
-                session.max_budget_usd,
-                session.output_format.as_deref(),
-                session.conversation_id.as_deref(),
-            );
-            // Worktree is inherited by --resume, no need to re-set it
-            spawn_params
-                .conversation_id
-                .clone_from(&session.conversation_id);
-            let command = build_command(session.provider, session.mode, &spawn_params);
-
+            let wrapped = wrap_command(&session.command);
             self.backend
-                .create_session(&backend_id, &session.workdir, &command)?;
+                .create_session(&backend_id, &session.workdir, &wrapped)?;
         }
 
         let session_id = session.id.to_string();
@@ -528,130 +373,10 @@ fn validate_workdir(workdir: &str) -> Result<()> {
     Ok(())
 }
 
-fn resolve_guard_config(req: &CreateSessionRequest, default: &GuardConfig) -> GuardConfig {
-    req.unrestricted
-        .map_or_else(|| default.clone(), |u| GuardConfig { unrestricted: u })
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_spawn_params(
-    prompt: &str,
-    guards: &GuardConfig,
-    allowed_tools: Option<&[String]>,
-    model: Option<&str>,
-    system_prompt: Option<&str>,
-    max_turns: Option<u32>,
-    max_budget_usd: Option<f64>,
-    output_format: Option<&str>,
-    conversation_id: Option<&str>,
-) -> crate::guard::SpawnParams {
-    crate::guard::SpawnParams {
-        prompt: prompt.into(),
-        guards: guards.clone(),
-        explicit_tools: allowed_tools.map(<[String]>::to_vec),
-        model: model.map(Into::into),
-        system_prompt: system_prompt.map(Into::into),
-        max_turns,
-        max_budget_usd,
-        output_format: output_format.map(Into::into),
-        worktree: None,
-        conversation_id: conversation_id.map(Into::into),
-    }
-}
-
-/// Resolve a provider binary name to its absolute path.
-///
-/// When pulpod runs as a service (launchd/systemd), the PATH is restricted and
-/// may not include directories like `~/.local/bin` where agent CLIs live.
-/// This function searches common user binary locations beyond the process PATH.
-fn resolve_binary(name: &str) -> String {
-    // First try the process PATH via `which`
-    if let Some(path) = which_binary(name) {
-        return path;
-    }
-    // Then try common user binary directories
-    if let Some(home) = dirs::home_dir() {
-        let candidates = [
-            home.join(".local/bin").join(name),
-            home.join(".cargo/bin").join(name),
-            home.join("bin").join(name),
-            home.join(".npm-global/bin").join(name),
-        ];
-        for candidate in &candidates {
-            if candidate.exists() {
-                return candidate.to_string_lossy().into_owned();
-            }
-        }
-    }
-    // Also check common system locations not always in service PATH
-    let system_dirs = ["/usr/local/bin", "/opt/homebrew/bin"];
-    for dir in &system_dirs {
-        let candidate = std::path::Path::new(dir).join(name);
-        if candidate.exists() {
-            return candidate.to_string_lossy().into_owned();
-        }
-    }
-    name.to_owned()
-}
-
-fn which_binary(name: &str) -> Option<String> {
-    std::process::Command::new("which")
-        .arg(name)
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
-        .filter(|s| !s.is_empty())
-}
-
-/// Check if a provider's binary is available on this system.
-/// Shell is always available. For agent providers, checks PATH and common locations.
-pub fn is_provider_available(provider: Provider) -> bool {
-    // In test builds, skip real binary detection so unit tests don't depend on
-    // external provider binaries being installed on the machine.
-    if cfg!(test) {
-        return true;
-    }
-    if provider == Provider::Shell {
-        return true;
-    }
-    let name = provider.to_string();
-    let resolved = resolve_binary(&name);
-    // resolve_binary returns the bare name if not found — check if the resolved
-    // path actually differs (was found) or if the bare name exists in PATH
-    resolved != name || which_binary(&name).is_some()
-}
-
-/// Return the binary name/path for a provider.
-/// Shell returns "bash". Agent providers use `resolve_binary`.
-pub fn provider_binary(provider: Provider) -> String {
-    if provider == Provider::Shell {
-        return "bash".to_owned();
-    }
-    resolve_binary(&provider.to_string())
-}
-
-pub(crate) fn build_command(
-    provider: Provider,
-    mode: SessionMode,
-    params: &crate::guard::SpawnParams,
-) -> String {
-    if provider == Provider::Shell {
-        // Bare shell session — just start bash, no agent command
-        return "bash".to_owned();
-    }
-    let binary = resolve_binary(&provider.to_string());
-    let flags = crate::guard::build_flags(provider, mode, params);
-    let inner = format!("{binary} {}", flags.join(" "));
-    // Wrap in bash so the tmux session survives if the agent exits.
-    // Use double quotes for `bash -c` to avoid conflicts with single-quoted
-    // shell_escape() values inside the flags (prompts, system_prompt, etc.).
-    let escaped = inner
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('$', "\\$")
-        .replace('`', "\\`");
-    format!("bash -c \"{escaped}; echo '[pulpo] Agent exited'; exec bash\"")
+/// Wrap a command for tmux: escape single quotes, wrap in bash -c with agent exit marker.
+fn wrap_command(command: &str) -> String {
+    let escaped = command.replace('\'', "'\\''");
+    format!("bash -c '{escaped}; echo '\\''[pulpo] Agent exited'\\''; exec bash'")
 }
 
 #[cfg(test)]
@@ -779,13 +504,8 @@ mod tests {
         store.migrate().await.unwrap();
         let pool = store.pool().clone();
         let backend = Arc::new(backend);
-        let manager = SessionManager::new(
-            backend.clone(),
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend.clone(), store, HashMap::new()).with_no_stale_grace();
         (manager, backend, pool)
     }
 
@@ -793,279 +513,146 @@ mod tests {
         CreateSessionRequest {
             name: name.to_owned(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some(name.into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
+            command: Some("echo hello".into()),
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
+            description: None,
+            metadata: None,
         }
     }
 
     #[tokio::test]
     async fn test_create_session_defaults() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("fix-the-bug")).await.unwrap();
+        let session = mgr.create_session(make_req("fix-the-bug")).await.unwrap();
 
         assert_eq!(session.name, "fix-the-bug");
-        assert_eq!(session.provider, Provider::Claude);
-        assert_eq!(session.mode, SessionMode::Interactive);
+        assert_eq!(session.command, "echo hello");
         assert_eq!(session.status, SessionStatus::Active);
         assert_eq!(session.workdir, "/tmp");
-        assert_eq!(session.prompt, "fix-the-bug");
         // MockBackend.session_id() returns just the name
         assert_eq!(session.backend_session_id, Some(session.name.clone()));
 
         let calls = backend.calls.lock().unwrap();
         // All commands wrapped in bash -c for session survival
         assert!(calls[0].contains("create:fix-the-bug:/tmp:bash -c"));
-        assert!(calls[0].contains("claude"));
-        assert!(calls[0].contains("fix-the-bug"));
+        assert!(calls[0].contains("echo hello"));
         assert!(calls[1].starts_with("setup_logging:fix-the-bug:"));
         assert_eq!(calls.len(), 2);
         drop(calls);
     }
 
     #[tokio::test]
-    async fn test_create_session_with_worktree() {
-        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        let mut req = make_req("worktree-test");
-        req.worktree = Some(true);
-        let (session, _) = mgr.create_session(req).await.unwrap();
-
-        assert_eq!(session.name, "worktree-test");
-        // Worktree flag should add --worktree to the claude command
-        assert!(backend.calls.lock().unwrap()[0].contains("worktree-test"));
-    }
-
-    #[tokio::test]
-    async fn test_apply_defaults_fills_workdir_and_prompt() {
+    async fn test_create_session_no_command_fails() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
-            name: "defaults-test".into(),
-            workdir: None,
-            provider: None,
-            prompt: None,
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
-        };
-        let result = mgr.apply_defaults(req);
-        assert!(result.workdir.is_some(), "workdir should be filled");
-        assert_eq!(result.prompt.as_deref(), Some(""));
-        assert_eq!(result.provider, Some(Provider::Claude));
-    }
-
-    #[tokio::test]
-    async fn test_apply_defaults_preserves_explicit_values() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let req = CreateSessionRequest {
-            name: "explicit-test".into(),
-            workdir: Some("/my/dir".into()),
-            provider: Some(Provider::Codex),
-            prompt: Some("do stuff".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
-        };
-        let result = mgr.apply_defaults(req);
-        assert_eq!(result.workdir.as_deref(), Some("/my/dir"));
-        assert_eq!(result.prompt.as_deref(), Some("do stuff"));
-        assert_eq!(result.provider, Some(Provider::Codex));
-    }
-
-    #[tokio::test]
-    async fn test_apply_defaults_uses_config_default_provider() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let mgr = mgr.with_default_provider(Some("codex".into()));
-        let req = CreateSessionRequest {
-            name: "defaults-test".into(),
-            workdir: None,
-            provider: None,
-            prompt: None,
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
-        };
-        let result = mgr.apply_defaults(req);
-        assert_eq!(result.provider, Some(Provider::Codex));
-    }
-
-    #[tokio::test]
-    async fn test_apply_defaults_session_defaults_all_fields() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let mgr = mgr.with_session_defaults(SessionDefaultsConfig {
-            provider: Some("gemini".into()),
-            model: Some("gemini-2.5-pro".into()),
-            mode: Some("autonomous".into()),
-            max_turns: Some(50),
-            max_budget_usd: Some(10.0),
-            output_format: Some("json".into()),
-        });
-        let req = make_req("");
-        let result = mgr.apply_defaults(req);
-        assert_eq!(result.provider, Some(Provider::Gemini));
-        assert_eq!(result.model.as_deref(), Some("gemini-2.5-pro"));
-        assert_eq!(result.mode, Some(SessionMode::Autonomous));
-        assert_eq!(result.max_turns, Some(50));
-        assert!((result.max_budget_usd.unwrap() - 10.0).abs() < f64::EPSILON);
-        assert_eq!(result.output_format.as_deref(), Some("json"));
-    }
-
-    #[tokio::test]
-    async fn test_apply_defaults_explicit_overrides_session_defaults() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let mgr = mgr.with_session_defaults(SessionDefaultsConfig {
-            provider: Some("gemini".into()),
-            model: Some("default-model".into()),
-            mode: Some("autonomous".into()),
-            max_turns: Some(50),
-            max_budget_usd: Some(10.0),
-            output_format: Some("json".into()),
-        });
-        let req = CreateSessionRequest {
-            name: "session-defaults-test".into(),
+            name: "test".into(),
             workdir: Some("/tmp".into()),
-            provider: Some(Provider::Claude),
-            prompt: Some("test".into()),
-            mode: Some(SessionMode::Interactive),
-            unrestricted: None,
-            model: Some("opus".into()),
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
+            command: None,
             ink: None,
-            max_turns: Some(5),
-            max_budget_usd: Some(1.0),
-            output_format: Some("stream-json".into()),
-            worktree: None,
-            conversation_id: None,
+            description: None,
+            metadata: None,
         };
-        let result = mgr.apply_defaults(req);
-        // Explicit values win over session defaults
-        assert_eq!(result.provider, Some(Provider::Claude));
-        assert_eq!(result.model.as_deref(), Some("opus"));
-        assert_eq!(result.mode, Some(SessionMode::Interactive));
-        assert_eq!(result.max_turns, Some(5));
-        assert!((result.max_budget_usd.unwrap() - 1.0).abs() < f64::EPSILON);
-        assert_eq!(result.output_format.as_deref(), Some("stream-json"));
+        let result = mgr.create_session(req).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("command is required"), "got: {err}");
     }
 
     #[tokio::test]
-    async fn test_apply_defaults_session_defaults_provider_overrides_node_default() {
+    async fn test_create_session_with_ink() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "coder".into(),
+            InkConfig {
+                description: Some("Coder ink".into()),
+                command: Some("claude -p 'implement'".into()),
+            },
+        );
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let backend = Arc::new(MockBackend::new());
+        let mgr = SessionManager::new(backend, store, inks).with_no_stale_grace();
+
+        let req = CreateSessionRequest {
+            name: "ink-test".into(),
+            workdir: Some("/tmp".into()),
+            command: None,
+            ink: Some("coder".into()),
+            description: None,
+            metadata: None,
+        };
+        let session = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.command, "claude -p 'implement'");
+        assert_eq!(session.description, Some("Coder ink".into()));
+    }
+
+    #[tokio::test]
+    async fn test_create_session_command_overrides_ink() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "coder".into(),
+            InkConfig {
+                description: Some("Coder ink".into()),
+                command: Some("claude -p 'default'".into()),
+            },
+        );
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let backend = Arc::new(MockBackend::new());
+        let mgr = SessionManager::new(backend, store, inks).with_no_stale_grace();
+
+        let req = CreateSessionRequest {
+            name: "override-test".into(),
+            workdir: Some("/tmp".into()),
+            command: Some("my-custom-command".into()),
+            ink: Some("coder".into()),
+            description: Some("My desc".into()),
+            metadata: None,
+        };
+        let session = mgr.create_session(req).await.unwrap();
+        // Explicit command wins over ink command
+        assert_eq!(session.command, "my-custom-command");
+        assert_eq!(session.description, Some("My desc".into()));
+    }
+
+    #[tokio::test]
+    async fn test_create_session_unknown_ink() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let mgr = mgr
-            .with_default_provider(Some("codex".into()))
-            .with_session_defaults(SessionDefaultsConfig {
-                provider: Some("gemini".into()),
-                ..SessionDefaultsConfig::default()
-            });
-        let req = make_req("test");
-        let result = mgr.apply_defaults(req);
-        // session_defaults.provider takes precedence over node.default_provider
-        assert_eq!(result.provider, Some(Provider::Gemini));
+        let req = CreateSessionRequest {
+            name: "test".into(),
+            workdir: Some("/tmp".into()),
+            command: None,
+            ink: Some("nonexistent".into()),
+            description: None,
+            metadata: None,
+        };
+        let result = mgr.create_session(req).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unknown ink"), "got: {err}");
     }
 
     #[tokio::test]
-    async fn test_apply_defaults_empty_session_defaults_falls_through() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let mgr = mgr.with_session_defaults(SessionDefaultsConfig::default());
-        let req = make_req("test");
-        let result = mgr.apply_defaults(req);
-        // Empty session defaults: falls through to Claude, no model/mode/etc
-        assert_eq!(result.provider, Some(Provider::Claude));
-        assert!(result.model.is_none());
-        assert!(result.mode.is_none());
-        assert!(result.max_turns.is_none());
-        assert!(result.max_budget_usd.is_none());
-        assert!(result.output_format.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_apply_defaults_partial_session_defaults() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let mgr = mgr.with_session_defaults(SessionDefaultsConfig {
-            model: Some("opus".into()),
-            max_turns: Some(25),
-            ..SessionDefaultsConfig::default()
-        });
-        let req = make_req("test");
-        let result = mgr.apply_defaults(req);
-        // Partial: only model and max_turns are set
-        assert_eq!(result.provider, Some(Provider::Claude));
-        assert_eq!(result.model.as_deref(), Some("opus"));
-        assert!(result.mode.is_none());
-        assert_eq!(result.max_turns, Some(25));
-        assert!(result.max_budget_usd.is_none());
-        assert!(result.output_format.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_create_session_with_no_args() {
+    async fn test_create_session_default_workdir() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
             name: "defaults-test".into(),
             workdir: None,
-            provider: None,
-            prompt: None,
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
+            command: Some("echo test".into()),
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
+            description: None,
+            metadata: None,
         };
-        let (session, _) = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.provider, Provider::Claude);
-        assert!(session.prompt.is_empty());
+        let session = mgr.create_session(req).await.unwrap();
         assert!(!session.workdir.is_empty());
     }
 
     #[tokio::test]
     async fn test_create_session_calls_setup_logging() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        let (_session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let _session = mgr.create_session(make_req("test")).await.unwrap();
 
         let calls = backend.calls.lock().unwrap();
         assert!(
@@ -1082,93 +669,8 @@ mod tests {
             name: "custom-name".into(),
             ..make_req("test")
         };
-        let (session, _) = mgr.create_session(req).await.unwrap();
+        let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.name, "custom-name");
-    }
-
-    #[tokio::test]
-    async fn test_create_session_autonomous() {
-        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        let req = CreateSessionRequest {
-            provider: Some(Provider::Claude),
-            prompt: Some("Do something".into()),
-            mode: Some(SessionMode::Autonomous),
-            ..make_req("Do something")
-        };
-        let (session, _) = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.mode, SessionMode::Autonomous);
-        // Default guard is restricted — uses --allowedTools, not --dangerously-skip-permissions
-        assert!(session.guard_config.is_some());
-
-        let calls = backend.calls.lock().unwrap();
-        // Autonomous command is wrapped in bash -c '...'
-        assert!(calls[0].contains("bash -c"));
-        assert!(calls[0].contains("--allowedTools"));
-        assert!(!calls[0].contains("--dangerously-skip-permissions"));
-        assert!(calls[1].starts_with("setup_logging:"));
-        // Autonomous mode should NOT send_input
-        assert_eq!(calls.len(), 2);
-        drop(calls);
-    }
-
-    #[tokio::test]
-    async fn test_create_session_autonomous_unrestricted() {
-        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        let req = CreateSessionRequest {
-            provider: Some(Provider::Claude),
-            mode: Some(SessionMode::Autonomous),
-            unrestricted: Some(true),
-            ..make_req("Do something")
-        };
-        let (session, _) = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.mode, SessionMode::Autonomous);
-
-        let calls = backend.calls.lock().unwrap();
-        // Autonomous command is wrapped in bash -c '...'
-        assert!(calls[0].contains("bash -c"));
-        assert!(calls[0].contains("--dangerously-skip-permissions"));
-        assert!(!calls[0].contains("--allowedTools"));
-        drop(calls);
-    }
-
-    #[tokio::test]
-    async fn test_create_session_stores_guard_config() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-
-        let fetched = mgr
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(fetched.guard_config.is_some());
-        let gc = fetched.guard_config.unwrap();
-        // Default is restricted
-        assert!(!gc.unrestricted);
-    }
-
-    #[tokio::test]
-    async fn test_create_session_with_unrestricted() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let req = CreateSessionRequest {
-            unrestricted: Some(true),
-            ..make_req("test")
-        };
-        let (session, _) = mgr.create_session(req).await.unwrap();
-        let gc = session.guard_config.unwrap();
-        assert!(gc.unrestricted);
-    }
-
-    #[tokio::test]
-    async fn test_create_session_with_unrestricted_false() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let req = CreateSessionRequest {
-            unrestricted: Some(false),
-            ..make_req("test")
-        };
-        let (session, _) = mgr.create_session(req).await.unwrap();
-        let gc = session.guard_config.unwrap();
-        assert!(!gc.unrestricted);
     }
 
     #[tokio::test]
@@ -1232,7 +734,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_session_alive() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
         let fetched = mgr
             .get_session(&session.id.to_string())
@@ -1245,7 +747,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_session_dead_lazy_update() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
         let fetched = mgr
             .get_session(&session.id.to_string())
@@ -1258,7 +760,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_session_idle_with_dead_backend_transitions_to_lost() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
         // Manually set session to Idle (simulates watchdog marking it idle before reboot)
         mgr.store()
@@ -1278,7 +780,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_session_idle_with_alive_backend_stays_idle() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(true)).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
         mgr.store()
             .update_session_status(&session.id.to_string(), SessionStatus::Idle)
@@ -1296,7 +798,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_sessions_idle_with_dead_backend_transitions_to_lost() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
         // Manually set session to Idle
         mgr.store()
@@ -1318,7 +820,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_sessions_with_mixed_status() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let (s1, _) = mgr.create_session(make_req("first")).await.unwrap();
+        let s1 = mgr.create_session(make_req("first")).await.unwrap();
 
         let sessions = mgr.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
@@ -1330,7 +832,7 @@ mod tests {
     #[tokio::test]
     async fn test_kill_session() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
         mgr.kill_session(&session.id.to_string()).await.unwrap();
 
@@ -1358,7 +860,7 @@ mod tests {
     #[tokio::test]
     async fn test_kill_session_backend_error() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_kill_error()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
         let result = mgr.kill_session(&session.id.to_string()).await;
         assert!(result.is_err());
@@ -1400,12 +902,7 @@ mod tests {
         assert!(fc.send_input("n", "t").is_ok());
         assert!(fc.setup_logging("n", "p").is_ok());
 
-        let mgr = SessionManager::new(
-            Arc::new(FailCapture),
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        );
+        let mgr = SessionManager::new(Arc::new(FailCapture), store, HashMap::new());
         let output = mgr.capture_output("test-id", "whatever", 3);
         assert_eq!(output, "line 3\nline 4\nline 5");
     }
@@ -1419,7 +916,6 @@ mod tests {
         let mgr = SessionManager::new(
             Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store,
-            pulpo_common::guard::GuardConfig::default(),
             HashMap::new(),
         );
         // read_log_tail for nonexistent file returns empty string
@@ -1510,7 +1006,7 @@ mod tests {
     #[tokio::test]
     async fn test_resume_stale_session() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
         // get_session marks it Stale since is_alive returns false
         let fetched = mgr
@@ -1537,7 +1033,7 @@ mod tests {
     #[tokio::test]
     async fn test_resume_stale_session_recreates_when_backend_dead() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
         // get_session marks it Stale since is_alive returns false
         let _ = mgr
@@ -1562,7 +1058,7 @@ mod tests {
     #[tokio::test]
     async fn test_resume_non_stale_session_fails() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
         // Session is Active, not Lost/Finished
         let result = mgr.resume_session(&session.id.to_string()).await;
@@ -1587,7 +1083,7 @@ mod tests {
     async fn test_resume_name_collision_rejected() {
         let (mgr, _, pool) = test_manager(MockBackend::new().with_alive(false)).await;
         // Create "dup", then mark it lost so it's resumable
-        let (old, _) = mgr.create_session(make_req("dup")).await.unwrap();
+        let old = mgr.create_session(make_req("dup")).await.unwrap();
         let old_id = old.id.to_string();
         sqlx::query("UPDATE sessions SET status = 'lost' WHERE id = ?")
             .bind(&old_id)
@@ -1602,77 +1098,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resume_with_conversation_id() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-
-        let id = session.id.to_string();
-
-        // Set conversation_id
-        mgr.store()
-            .update_session_conversation_id(&id, "conv-abc")
-            .await
-            .unwrap();
-
-        // Mark stale via get_session
-        let _ = mgr.get_session(&id).await.unwrap();
-
-        // Resume
-        let resumed = mgr.resume_session(&id).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
-    }
-
-    #[tokio::test]
-    async fn test_resume_session_without_guard_config_uses_default() {
-        // Simulate a pre-migration session with guard_config: None
-        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let id = Uuid::new_v4();
-        let now = Utc::now();
-        let session = Session {
-            id,
-            name: "legacy".into(),
-            workdir: "/tmp".into(),
-            provider: Provider::Claude,
-            prompt: "test".into(),
-            status: SessionStatus::Active,
-            mode: SessionMode::Autonomous,
-            conversation_id: None,
-            exit_code: None,
-            backend_session_id: Some("legacy".into()),
-            output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            created_at: now,
-            updated_at: now,
-        };
-        mgr.store().insert_session(&session).await.unwrap();
-        // Mark stale
-        mgr.store()
-            .update_session_status(&id.to_string(), SessionStatus::Lost)
-            .await
-            .unwrap();
-
-        let resumed = mgr.resume_session(&id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
-    }
-
-    #[tokio::test]
     async fn test_resume_backend_failure() {
         let backend = MockBackend::new().with_alive(false);
         let (mgr, backend_ref, _pool) = test_manager(backend).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
         let id = session.id.to_string();
 
@@ -1686,1203 +1115,73 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_guard_config_default() {
-        let req = make_req("test");
-        let default = GuardConfig::default();
-        let result = resolve_guard_config(&req, &default);
-        assert!(!result.unrestricted);
-    }
-
-    #[test]
-    fn test_resolve_guard_config_unrestricted() {
-        let req = CreateSessionRequest {
-            unrestricted: Some(true),
-            ..make_req("test")
-        };
-        let result = resolve_guard_config(&req, &GuardConfig::default());
-        assert!(result.unrestricted);
-    }
-
-    #[test]
-    fn test_resolve_guard_config_restricted() {
-        let req = CreateSessionRequest {
-            unrestricted: Some(false),
-            ..make_req("test")
-        };
-        let default = GuardConfig { unrestricted: true };
-        let result = resolve_guard_config(&req, &default);
-        // Explicit unrestricted=false wins over unrestricted default
-        assert!(!result.unrestricted);
-    }
-
-    #[test]
-    fn test_build_spawn_params_with_conversation_id() {
-        let guards = GuardConfig::default();
-        let params = build_spawn_params(
-            "test",
-            &guards,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some("conv-abc-123"),
-        );
-        assert_eq!(params.conversation_id.as_deref(), Some("conv-abc-123"));
-    }
-
-    #[test]
-    fn test_build_spawn_params_without_conversation_id() {
-        let guards = GuardConfig::default();
-        let params = build_spawn_params("test", &guards, None, None, None, None, None, None, None);
-        assert!(params.conversation_id.is_none());
-    }
-
-    #[test]
-    fn test_build_command_interactive_claude_resume() {
-        let guards = GuardConfig::default();
-        let params = crate::guard::SpawnParams {
-            prompt: "test".into(),
-            guards,
-            conversation_id: Some("conv-123".into()),
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
+    fn test_wrap_command_basic() {
+        let cmd = wrap_command("echo hello");
         assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("claude --resume conv-123"));
-        assert!(cmd.contains("--allowedTools"));
+        assert!(cmd.contains("echo hello"));
+        assert!(cmd.contains("[pulpo] Agent exited"));
+        assert!(cmd.contains("exec bash"));
     }
 
     #[test]
-    fn test_build_command_autonomous_claude_resume_unrestricted() {
-        let guards = GuardConfig { unrestricted: true };
-        let params = crate::guard::SpawnParams {
-            prompt: "Fix bug".into(),
-            guards,
-            conversation_id: Some("conv-456".into()),
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_command(Provider::Claude, SessionMode::Autonomous, &params);
+    fn test_wrap_command_single_quotes() {
+        let cmd = wrap_command("claude -p 'Fix the bug'");
         assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("--resume conv-456"));
-        assert!(cmd.contains("--dangerously-skip-permissions"));
-    }
-
-    #[test]
-    fn test_build_command_interactive_claude_resume_with_model() {
-        let guards = GuardConfig::default();
-        let params = crate::guard::SpawnParams {
-            prompt: "test".into(),
-            guards,
-            model: Some("sonnet".into()),
-            conversation_id: Some("conv-123".into()),
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
-        assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("claude --resume conv-123"));
-        assert!(cmd.contains("--model sonnet"));
-    }
-
-    #[test]
-    fn test_build_command_autonomous_claude_resume_all_flags() {
-        let guards = GuardConfig::default();
-        let params = crate::guard::SpawnParams {
-            prompt: "Fix it".into(),
-            guards,
-            explicit_tools: Some(vec!["Read".into()]),
-            model: Some("opus".into()),
-            system_prompt: Some("Review only".into()),
-            conversation_id: Some("conv-789".into()),
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_command(Provider::Claude, SessionMode::Autonomous, &params);
-        assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("--resume conv-789"));
-        assert!(cmd.contains("--model"));
-        assert!(cmd.contains("opus"));
-        assert!(cmd.contains("--allowedTools"));
-        assert!(cmd.contains("Read"));
-        assert!(cmd.contains("--append-system-prompt"));
-    }
-
-    #[test]
-    fn test_build_command_codex_resume() {
-        let guards = GuardConfig::default();
-        let params_interactive = crate::guard::SpawnParams {
-            prompt: "test".into(),
-            guards,
-            conversation_id: Some("conv-codex".into()),
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd_interactive = build_command(
-            Provider::Codex,
-            SessionMode::Interactive,
-            &params_interactive,
-        );
-        assert!(cmd_interactive.contains("bash -c"));
-        assert!(cmd_interactive.contains("codex"));
-        assert!(cmd_interactive.contains("resume conv-codex"));
-
-        let params_autonomous = crate::guard::SpawnParams {
-            prompt: "test".into(),
-            guards: GuardConfig::default(),
-            conversation_id: Some("conv-codex-auto".into()),
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd_autonomous =
-            build_command(Provider::Codex, SessionMode::Autonomous, &params_autonomous);
-        assert!(cmd_autonomous.contains("bash -c"));
-        assert!(cmd_autonomous.contains("exec resume conv-codex-auto"));
-    }
-
-    #[test]
-    fn test_build_command_interactive_claude() {
-        let guards = GuardConfig::default();
-        let params = crate::guard::SpawnParams {
-            prompt: "test".into(),
-            guards,
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
-        // All commands now wrapped in bash -c for session survival
-        assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("claude"));
-        assert!(cmd.contains("'test'"));
-    }
-
-    #[test]
-    fn test_build_command_interactive_claude_empty_prompt() {
-        let guards = GuardConfig::default();
-        let params = crate::guard::SpawnParams {
-            prompt: String::new(),
-            guards,
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
-        // Empty prompt should not produce a bare '' arg that makes Claude exit
-        assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("claude"));
-        assert!(!cmd.contains("''"));
-    }
-
-    #[test]
-    fn test_build_command_autonomous_claude_standard() {
-        let guards = GuardConfig::default();
-        let params = crate::guard::SpawnParams {
-            prompt: "Fix bug".into(),
-            guards,
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_command(Provider::Claude, SessionMode::Autonomous, &params);
-        assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("--allowedTools"));
-        assert!(!cmd.contains("--dangerously-skip-permissions"));
-    }
-
-    #[test]
-    fn test_build_command_autonomous_claude_unrestricted() {
-        let guards = GuardConfig { unrestricted: true };
-        let params = crate::guard::SpawnParams {
-            prompt: "Fix bug".into(),
-            guards,
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_command(Provider::Claude, SessionMode::Autonomous, &params);
-        assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("--dangerously-skip-permissions"));
-        assert!(!cmd.contains("--allowedTools"));
-    }
-
-    #[test]
-    fn test_build_command_codex() {
-        let guards = GuardConfig::default();
-        let params_interactive = crate::guard::SpawnParams {
-            prompt: "test".into(),
-            guards,
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd_interactive = build_command(
-            Provider::Codex,
-            SessionMode::Interactive,
-            &params_interactive,
-        );
-        // All commands wrapped in bash -c for session survival
-        assert!(cmd_interactive.contains("bash -c"));
-        assert!(cmd_interactive.contains("codex"));
-        assert!(cmd_interactive.contains("'test'"));
-
-        let params_autonomous = crate::guard::SpawnParams {
-            prompt: "test".into(),
-            guards: GuardConfig::default(),
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd_autonomous =
-            build_command(Provider::Codex, SessionMode::Autonomous, &params_autonomous);
-        assert!(cmd_autonomous.contains("bash -c"));
-        assert!(cmd_autonomous.contains("codex "));
-    }
-
-    #[test]
-    fn test_build_command_with_model() {
-        let guards = GuardConfig::default();
-        let params = crate::guard::SpawnParams {
-            prompt: "test".into(),
-            guards,
-            model: Some("opus".into()),
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
-        assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("--model"));
-        assert!(cmd.contains("opus"));
-        assert!(cmd.contains("'test'"));
-    }
-
-    #[test]
-    fn test_build_command_autonomous_with_all_new_flags() {
-        let guards = GuardConfig::default();
-        let params = crate::guard::SpawnParams {
-            prompt: "Fix bug".into(),
-            guards,
-            explicit_tools: Some(vec!["Read".into(), "Grep".into()]),
-            model: Some("opus".into()),
-            system_prompt: Some("Be concise".into()),
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_command(Provider::Claude, SessionMode::Autonomous, &params);
-        assert!(cmd.contains("bash -c"));
-        assert!(cmd.contains("--model"));
-        assert!(cmd.contains("opus"));
-        assert!(cmd.contains("--allowedTools"));
-        assert!(cmd.contains("Read,Grep"));
-        assert!(cmd.contains("--append-system-prompt"));
-        assert!(cmd.contains("Be concise"));
-    }
-
-    #[test]
-    fn test_resolve_binary_falls_back_to_name() {
-        // For a non-existent binary, resolve_binary should return the bare name
-        let result = resolve_binary("definitely-not-a-real-binary-xyz");
-        assert_eq!(result, "definitely-not-a-real-binary-xyz");
-    }
-
-    #[test]
-    fn test_resolve_binary_finds_system_binary() {
-        // `ls` should be found in standard system paths
-        let result = resolve_binary("ls");
-        assert!(
-            result.starts_with('/'),
-            "Expected absolute path, got: {result}"
-        );
-    }
-
-    #[test]
-    fn test_build_command_escapes_backticks() {
-        let guards = GuardConfig::default();
-        let params = crate::guard::SpawnParams {
-            prompt: String::new(),
-            guards,
-            system_prompt: Some("Use ```markdown\ncode\n``` blocks".into()),
-            ..crate::guard::SpawnParams::default()
-        };
-        let cmd = build_command(Provider::Claude, SessionMode::Interactive, &params);
-        // Backticks must be escaped inside the bash -c "..." wrapper
-        assert!(cmd.contains("\\`"));
-        assert!(!cmd.contains("```"));
-    }
-
-    #[test]
-    fn test_build_command_shell_bare() {
-        let params = crate::guard::SpawnParams::default();
-        let cmd = build_command(Provider::Shell, SessionMode::Interactive, &params);
-        assert_eq!(cmd, "bash");
-    }
-
-    #[test]
-    fn test_build_command_shell_autonomous() {
-        let params = crate::guard::SpawnParams::default();
-        let cmd = build_command(Provider::Shell, SessionMode::Autonomous, &params);
-        assert_eq!(cmd, "bash");
-    }
-
-    #[test]
-    fn test_is_provider_available_shell() {
-        assert!(is_provider_available(Provider::Shell));
-    }
-
-    #[test]
-    fn test_is_provider_available_nonexistent() {
-        // Provider binaries that don't exist should return false
-        // We can't test for specific providers since they might be installed,
-        // but we can verify the function doesn't panic
-        let _available = is_provider_available(Provider::OpenCode);
-    }
-
-    #[test]
-    fn test_provider_binary_shell() {
-        assert_eq!(provider_binary(Provider::Shell), "bash");
-    }
-
-    #[test]
-    fn test_provider_binary_claude() {
-        let binary = provider_binary(Provider::Claude);
-        // Should return either "claude" or an absolute path to claude
-        assert!(
-            binary == "claude" || binary.contains("claude"),
-            "Expected claude binary, got: {binary}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_create_session_shell_provider() {
-        let (mgr, _, _) = test_manager(MockBackend::new()).await;
-        let mut req = make_req("shell-test");
-        req.provider = Some(Provider::Shell);
-        let (session, warnings) = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.provider, Provider::Shell);
-        assert!(warnings.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_list_sessions_filtered() {
-        let (mgr, _, _) = test_manager(MockBackend::new()).await;
-        let _ = mgr.create_session(make_req("filter-test")).await.unwrap().0;
-
-        let query = pulpo_common::api::ListSessionsQuery {
-            status: Some("active".into()),
-            ..Default::default()
-        };
-        let sessions = mgr.list_sessions_filtered(&query).await.unwrap();
-        assert_eq!(sessions.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_list_sessions_filtered_no_match() {
-        let (mgr, _, _) = test_manager(MockBackend::new()).await;
-        let _ = mgr.create_session(make_req("filter-test")).await.unwrap().0;
-
-        let query = pulpo_common::api::ListSessionsQuery {
-            status: Some("finished".into()),
-            ..Default::default()
-        };
-        let sessions = mgr.list_sessions_filtered(&query).await.unwrap();
-        assert!(sessions.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_list_sessions_filtered_detects_stale() {
-        let (mgr, _, _) = test_manager(MockBackend::new().with_alive(false)).await;
-        let _ = mgr
-            .create_session(make_req("stale-filter"))
-            .await
-            .unwrap()
-            .0;
-
-        let query = pulpo_common::api::ListSessionsQuery::default();
-        let sessions = mgr.list_sessions_filtered(&query).await.unwrap();
-        assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].status, SessionStatus::Lost);
-    }
-
-    #[tokio::test]
-    async fn test_list_sessions_filtered_store_failure() {
-        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
-        sqlx::query("DROP TABLE sessions")
-            .execute(&pool)
-            .await
-            .unwrap();
-        let query = pulpo_common::api::ListSessionsQuery::default();
-        let result = mgr.list_sessions_filtered(&query).await;
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_resolve_ink_no_ink() {
-        let inks = HashMap::new();
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = make_req("test");
-        let resolved = mgr.resolve_ink(req).unwrap();
-        assert!(resolved.model.is_none());
-        assert!(resolved.system_prompt.is_none());
-    }
-
-    #[test]
-    fn test_resolve_ink_unknown() {
-        let inks = HashMap::new();
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            ink: Some("nonexistent".into()),
-            ..make_req("test")
-        };
-        let result = mgr.resolve_ink(req);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unknown ink"));
-    }
-
-    #[test]
-    fn test_resolve_ink_applies_defaults() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "reviewer".into(),
-            crate::config::InkConfig {
-                description: None,
-                provider: Some("claude".into()),
-                model: None,
-                mode: Some("autonomous".into()),
-                unrestricted: Some(false),
-                instructions: Some("Review code".into()),
-                instructions_file: None,
-            },
-        );
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            ink: Some("reviewer".into()),
-            ..make_req("test")
-        };
-        let resolved = mgr.resolve_ink(req).unwrap();
-        assert_eq!(resolved.provider, Some(Provider::Claude));
-        assert_eq!(resolved.mode, Some(SessionMode::Autonomous));
-        assert_eq!(resolved.unrestricted, Some(false));
-        // Claude supports system_prompt, so instructions → system_prompt
-        assert_eq!(resolved.system_prompt, Some("Review code".into()));
-    }
-
-    #[test]
-    fn test_resolve_ink_applies_model() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "coder".into(),
-            crate::config::InkConfig {
-                description: None,
-                provider: Some("claude".into()),
-                model: Some("claude-sonnet-4-20250514".into()),
-                mode: None,
-                unrestricted: None,
-                instructions: None,
-                instructions_file: None,
-            },
-        );
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            ink: Some("coder".into()),
-            ..make_req("test")
-        };
-        let resolved = mgr.resolve_ink(req).unwrap();
-        assert_eq!(resolved.model, Some("claude-sonnet-4-20250514".into()));
-
-        // Explicit model in request wins over ink model
-        let req2 = CreateSessionRequest {
-            ink: Some("coder".into()),
-            model: Some("claude-opus-4-20250514".into()),
-            ..make_req("test2")
-        };
-        let resolved2 = mgr.resolve_ink(req2).unwrap();
-        assert_eq!(resolved2.model, Some("claude-opus-4-20250514".into()));
-    }
-
-    #[test]
-    fn test_resolve_ink_instructions_prepend_for_non_claude() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "coder".into(),
-            crate::config::InkConfig {
-                description: None,
-                provider: Some("codex".into()),
-                model: None,
-                mode: None,
-                unrestricted: None,
-                instructions: Some("You are an expert coder.".into()),
-                instructions_file: None,
-            },
-        );
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            ink: Some("coder".into()),
-            ..make_req("Fix the bug")
-        };
-        let resolved = mgr.resolve_ink(req).unwrap();
-        // Codex doesn't support system_prompt, so instructions are prepended to prompt
-        assert!(resolved.system_prompt.is_none());
-        assert_eq!(
-            resolved.prompt.as_deref(),
-            Some("You are an expert coder.\n\nFix the bug")
-        );
-        assert_eq!(resolved.provider, Some(Provider::Codex));
-    }
-
-    #[test]
-    fn test_resolve_ink_request_overrides() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "reviewer".into(),
-            crate::config::InkConfig {
-                description: None,
-                provider: Some("claude".into()),
-                model: None,
-                mode: Some("autonomous".into()),
-                unrestricted: Some(false),
-                instructions: Some("Review code".into()),
-                instructions_file: None,
-            },
-        );
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            provider: Some(Provider::Codex),
-            mode: Some(SessionMode::Interactive),
-            unrestricted: Some(true),
-            model: Some("opus".into()),
-            allowed_tools: Some(vec!["Bash".into()]),
-            system_prompt: Some("Explicit prompt".into()),
-            ink: Some("reviewer".into()),
-            ..make_req("test")
-        };
-        let resolved = mgr.resolve_ink(req).unwrap();
-        // Explicit request values win
-        assert_eq!(resolved.provider, Some(Provider::Codex));
-        assert_eq!(resolved.model, Some("opus".into()));
-        assert_eq!(resolved.mode, Some(SessionMode::Interactive));
-        assert_eq!(resolved.unrestricted, Some(true));
-        assert_eq!(resolved.allowed_tools, Some(vec!["Bash".into()]));
-        // Explicit system_prompt wins over ink instructions
-        assert_eq!(resolved.system_prompt, Some("Explicit prompt".into()));
-    }
-
-    #[test]
-    fn test_resolve_ink_explicit_unrestricted_blocks_ink() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "coder".into(),
-            crate::config::InkConfig {
-                description: None,
-                provider: None,
-                model: None,
-                mode: None,
-                unrestricted: Some(false),
-                instructions: None,
-                instructions_file: None,
-            },
-        );
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            unrestricted: Some(true),
-            ink: Some("coder".into()),
-            ..make_req("test")
-        };
-        let resolved = mgr.resolve_ink(req).unwrap();
-        // Explicit unrestricted=true wins over ink's unrestricted=false
-        assert_eq!(resolved.unrestricted, Some(true));
-    }
-
-    #[test]
-    fn test_resolve_ink_applies_unrestricted_from_ink() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "safe-agent".into(),
-            crate::config::InkConfig {
-                description: Some("A safe agent".into()),
-                provider: Some("claude".into()),
-                model: None,
-                mode: None,
-                unrestricted: Some(false),
-                instructions: Some("Be careful".into()),
-                instructions_file: None,
-            },
-        );
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            ink: Some("safe-agent".into()),
-            ..make_req("test")
-        };
-        let resolved = mgr.resolve_ink(req).unwrap();
-        assert_eq!(resolved.provider, Some(Provider::Claude));
-        assert_eq!(resolved.unrestricted, Some(false));
-        // Claude supports system_prompt, so instructions → system_prompt
-        assert_eq!(resolved.system_prompt, Some("Be careful".into()));
-    }
-
-    #[test]
-    fn test_resolve_ink_explicit_guardrails_win() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "safe-agent".into(),
-            crate::config::InkConfig {
-                description: None,
-                provider: Some("claude".into()),
-                model: None,
-                mode: None,
-                unrestricted: None,
-                instructions: Some("Ink instructions".into()),
-                instructions_file: None,
-            },
-        );
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            ink: Some("safe-agent".into()),
-            max_turns: Some(3),
-            max_budget_usd: Some(1.0),
-            output_format: Some("stream-json".into()),
-            ..make_req("test")
-        };
-        let resolved = mgr.resolve_ink(req).unwrap();
-        // Explicit request guardrail values pass through (ink doesn't set them)
-        assert_eq!(resolved.max_turns, Some(3));
-        assert_eq!(resolved.max_budget_usd, Some(1.0));
-        assert_eq!(resolved.output_format, Some("stream-json".into()));
-        // Ink defaults applied for fields not set in request
-        assert_eq!(resolved.provider, Some(Provider::Claude));
-        // model is not set by inks (model is per-session only)
-        assert_eq!(resolved.model, None);
-        // Instructions → system_prompt (Claude provider)
-        assert_eq!(resolved.system_prompt, Some("Ink instructions".into()));
-    }
-
-    // -- instructions_file tests --
-
-    #[test]
-    fn test_resolve_ink_instructions_file_absolute() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "Instructions from file.").unwrap();
-        let mut inks = HashMap::new();
-        inks.insert(
-            "file-ink".into(),
-            crate::config::InkConfig {
-                description: None,
-                provider: Some("claude".into()),
-                model: None,
-                mode: None,
-                unrestricted: None,
-                instructions: None,
-                instructions_file: Some(tmp.path().to_str().unwrap().to_owned()),
-            },
-        );
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            ink: Some("file-ink".into()),
-            ..make_req("test")
-        };
-        let resolved = mgr.resolve_ink(req).unwrap();
-        assert_eq!(
-            resolved.system_prompt.as_deref(),
-            Some("Instructions from file.")
-        );
-    }
-
-    #[test]
-    fn test_resolve_ink_instructions_file_relative() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let instructions_path = tmpdir.path().join("program.md");
-        std::fs::write(&instructions_path, "Relative file instructions.").unwrap();
-        let mut inks = HashMap::new();
-        inks.insert(
-            "rel-ink".into(),
-            crate::config::InkConfig {
-                description: None,
-                provider: Some("claude".into()),
-                model: None,
-                mode: None,
-                unrestricted: None,
-                instructions: None,
-                instructions_file: Some("program.md".into()),
-            },
-        );
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            ink: Some("rel-ink".into()),
-            workdir: Some(tmpdir.path().to_str().unwrap().into()),
-            ..make_req("test")
-        };
-        let resolved = mgr.resolve_ink(req).unwrap();
-        assert_eq!(
-            resolved.system_prompt.as_deref(),
-            Some("Relative file instructions.")
-        );
-    }
-
-    #[test]
-    fn test_resolve_ink_instructions_file_precedence() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "File wins.").unwrap();
-        let mut inks = HashMap::new();
-        inks.insert(
-            "both-ink".into(),
-            crate::config::InkConfig {
-                description: None,
-                provider: Some("claude".into()),
-                model: None,
-                mode: None,
-                unrestricted: None,
-                instructions: Some("Inline instructions.".into()),
-                instructions_file: Some(tmp.path().to_str().unwrap().to_owned()),
-            },
-        );
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            ink: Some("both-ink".into()),
-            ..make_req("test")
-        };
-        let resolved = mgr.resolve_ink(req).unwrap();
-        // instructions_file takes precedence over inline instructions
-        assert_eq!(resolved.system_prompt.as_deref(), Some("File wins."));
-    }
-
-    #[test]
-    fn test_resolve_ink_instructions_file_missing() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "bad-ink".into(),
-            crate::config::InkConfig {
-                description: None,
-                provider: Some("claude".into()),
-                model: None,
-                mode: None,
-                unrestricted: None,
-                instructions: None,
-                instructions_file: Some("/nonexistent/path/program.md".into()),
-            },
-        );
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            ink: Some("bad-ink".into()),
-            ..make_req("test")
-        };
-        let err = mgr.resolve_ink(req).unwrap_err();
-        assert!(err.to_string().contains("instructions_file"), "got: {err}");
-    }
-
-    #[test]
-    fn test_resolve_ink_instructions_file_non_claude() {
-        let tmp = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(tmp.path(), "File instructions for codex.").unwrap();
-        let mut inks = HashMap::new();
-        inks.insert(
-            "codex-ink".into(),
-            crate::config::InkConfig {
-                description: None,
-                provider: Some("codex".into()),
-                model: None,
-                mode: None,
-                unrestricted: None,
-                instructions: None,
-                instructions_file: Some(tmp.path().to_str().unwrap().to_owned()),
-            },
-        );
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks,
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = CreateSessionRequest {
-            ink: Some("codex-ink".into()),
-            ..make_req("test")
-        };
-        let resolved = mgr.resolve_ink(req).unwrap();
-        // Codex: instructions prepended to prompt, not system_prompt
-        assert!(resolved.system_prompt.is_none());
-        let prompt = resolved.prompt.unwrap();
-        assert!(prompt.starts_with("File instructions for codex."));
-    }
-
-    /// Helper to create a `SessionManager` without a valid store (for sync-only tests).
-    fn unsafe_empty_store() -> Store {
-        // We can't create a real Store synchronously, so we use a trick:
-        // create a tokio runtime briefly just for the Store creation.
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap();
-        rt.block_on(async {
-            let tmpdir = tempfile::tempdir().unwrap();
-            let tmpdir = Box::leak(Box::new(tmpdir));
-            Store::new(tmpdir.path().to_str().unwrap()).await.unwrap()
-        })
-    }
-
-    #[tokio::test]
-    async fn test_with_event_tx_builder() {
-        let (mgr, _, _) = test_manager(MockBackend::new()).await;
-        assert!(mgr.event_tx.is_none());
-        assert!(mgr.node_name.is_empty());
-
-        let (tx, _) = broadcast::channel(16);
-        let mgr = mgr.with_event_tx(tx, "test-node".into());
-        assert!(mgr.event_tx.is_some());
-        assert_eq!(mgr.node_name, "test-node");
-    }
-
-    #[tokio::test]
-    async fn test_emit_event_with_tx() {
-        let (mgr, _, _) = test_manager(MockBackend::new()).await;
-        let (tx, mut rx) = broadcast::channel(16);
-        let mgr = mgr.with_event_tx(tx, "node-1".into());
-
-        let session = Session {
-            id: Uuid::new_v4(),
-            name: "test-session".into(),
-            workdir: "/tmp".into(),
-            provider: Provider::Claude,
-            prompt: "fix bug".into(),
-            status: SessionStatus::Active,
-            mode: SessionMode::Autonomous,
-            conversation_id: None,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: Some("output".into()),
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-
-        mgr.emit_event(&session, Some(SessionStatus::Creating));
-        let event = unwrap_session_event(rx.recv().await.unwrap());
-        assert_eq!(event.session_name, "test-session");
-        assert_eq!(event.status, "active");
-        assert_eq!(event.previous_status, Some("creating".into()));
-        assert_eq!(event.node_name, "node-1");
-        assert_eq!(event.output_snippet, Some("output".into()));
-    }
-
-    #[tokio::test]
-    async fn test_emit_event_without_tx_is_noop() {
-        let (mgr, _, _) = test_manager(MockBackend::new()).await;
-        // No event_tx set — emit_event should not panic
-        let session = Session {
-            id: Uuid::new_v4(),
-            name: "s".into(),
-            workdir: "/tmp".into(),
-            provider: Provider::Claude,
-            prompt: "p".into(),
-            status: SessionStatus::Active,
-            mode: SessionMode::Autonomous,
-            conversation_id: None,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        mgr.emit_event(&session, None);
+        // Single quotes should be properly escaped
+        assert!(cmd.contains("claude -p"));
+        assert!(cmd.contains("Fix the bug"));
     }
 
     #[tokio::test]
     async fn test_create_session_emits_event() {
-        let (mgr, _, _) = test_manager(MockBackend::new()).await;
-        let (tx, mut rx) = broadcast::channel(16);
-        let mgr = mgr.with_event_tx(tx, "n".into());
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let (event_tx, mut event_rx) = broadcast::channel(16);
+        let mgr = mgr.with_event_tx(event_tx, "test-node".into());
+        let _session = mgr.create_session(make_req("event-test")).await.unwrap();
 
-        let _ = mgr.create_session(make_req("do it")).await.unwrap();
-        let event = unwrap_session_event(rx.recv().await.unwrap());
-        assert_eq!(event.status, "active");
-        assert_eq!(event.previous_status, Some("creating".into()));
+        let event = event_rx.recv().await.unwrap();
+        let se = unwrap_session_event(event);
+        assert_eq!(se.session_name, "event-test");
+        assert_eq!(se.status, "active");
+        assert_eq!(se.previous_status.as_deref(), Some("creating"));
+        assert_eq!(se.node_name, "test-node");
     }
 
     #[tokio::test]
     async fn test_kill_session_emits_event() {
-        let (mgr, _, _) = test_manager(MockBackend::new()).await;
-        let (tx, mut rx) = broadcast::channel(16);
-        let mgr = mgr.with_event_tx(tx, "n".into());
-
-        let (session, _) = mgr.create_session(make_req("work")).await.unwrap();
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let (event_tx, mut event_rx) = broadcast::channel(16);
+        let mgr = mgr.with_event_tx(event_tx, "test-node".into());
+        let session = mgr.create_session(make_req("kill-event")).await.unwrap();
         // Drain the create event
-        let _ = rx.recv().await.unwrap();
+        let _ = event_rx.recv().await;
 
         mgr.kill_session(&session.id.to_string()).await.unwrap();
-        let event = unwrap_session_event(rx.recv().await.unwrap());
-        assert_eq!(event.status, "killed");
-        assert_eq!(event.previous_status, Some("active".into()));
+        let event = event_rx.recv().await.unwrap();
+        let se = unwrap_session_event(event);
+        assert_eq!(se.status, "killed");
     }
 
     #[tokio::test]
-    async fn test_get_session_stale_emits_event() {
-        let backend = MockBackend::new().with_alive(false);
-        let (mgr, _, _) = test_manager(backend).await;
-        let (tx, mut rx) = broadcast::channel(16);
-        let mgr = mgr.with_event_tx(tx, "n".into());
-
-        // Insert a session that appears "active" in DB
-        let req = CreateSessionRequest {
-            mode: Some(SessionMode::Interactive),
-            ..make_req("test")
-        };
-        // create_session will fail because is_alive returns false, but we need it in DB.
-        // Actually create_session calls backend.create_session (not is_alive), so it succeeds.
-        let (session, _) = mgr.create_session(req).await.unwrap();
-        // Drain create event
-        let _ = rx.recv().await.unwrap();
-
-        // Now get_session checks is_alive → false → marks stale → emits event
-        let fetched = mgr
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Lost);
-
-        let event = unwrap_session_event(rx.recv().await.unwrap());
-        assert_eq!(event.status, "lost");
-        assert_eq!(event.previous_status, Some("active".into()));
-    }
-
-    #[tokio::test]
-    async fn test_resume_session_emits_event() {
-        let (mgr, _, _) = test_manager(MockBackend::new().with_alive(false)).await;
-        let (tx, mut rx) = broadcast::channel(16);
-        let mgr = mgr.with_event_tx(tx, "n".into());
-
-        let (session, _) = mgr.create_session(make_req("work")).await.unwrap();
-
-        let _ = rx.recv().await.unwrap(); // drain create event
-
-        // Mark stale via get_session
-        let _ = mgr.get_session(&session.id.to_string()).await.unwrap();
-        let _ = rx.recv().await.unwrap(); // drain stale event
-
-        // Now resume — but we need the backend to succeed on create_session
-        // The MockBackend already has create_result = Ok, and is_alive doesn't matter for resume
-        let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
-
-        let event = unwrap_session_event(rx.recv().await.unwrap());
-        assert_eq!(event.status, "active");
-        assert_eq!(event.previous_status, Some("lost".into()));
-    }
-
-    #[tokio::test]
-    async fn test_emit_event_no_subscribers() {
-        let (mgr, _, _) = test_manager(MockBackend::new()).await;
-        let (tx, rx) = broadcast::channel::<PulpoEvent>(16);
-        let mgr = mgr.with_event_tx(tx, "n".into());
-        // Drop the only receiver
-        drop(rx);
-
-        // emit_event should not panic even with no subscribers
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-        // Just verify the session was created successfully (emit silently failed)
-        assert_eq!(session.status, SessionStatus::Active);
-    }
-
-    #[tokio::test]
-    async fn test_delete_dead_session() {
+    async fn test_delete_session_active_fails() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-        let id = session.id.to_string();
+        let session = mgr.create_session(make_req("test")).await.unwrap();
 
-        // Kill first, then delete
+        let result = mgr.delete_session(&session.id.to_string()).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("kill it first"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_session_killed_succeeds() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
         mgr.kill_session(&id).await.unwrap();
         mgr.delete_session(&id).await.unwrap();
 
-        // Session should be gone from the database
         let fetched = mgr.get_session(&id).await.unwrap();
         assert!(fetched.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_delete_completed_session() {
-        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-        let id = session.id.to_string();
-
-        // Manually set status to Finished
-        sqlx::query("UPDATE sessions SET status = 'finished' WHERE id = ?")
-            .bind(&id)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        mgr.delete_session(&id).await.unwrap();
-        assert!(mgr.get_session(&id).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_delete_stale_session() {
-        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-        let id = session.id.to_string();
-
-        // Manually set status to Lost
-        sqlx::query("UPDATE sessions SET status = 'lost' WHERE id = ?")
-            .bind(&id)
-            .execute(&pool)
-            .await
-            .unwrap();
-
-        mgr.delete_session(&id).await.unwrap();
-        assert!(mgr.get_session(&id).await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_delete_running_session_rejected() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-        let id = session.id.to_string();
-
-        let result = mgr.delete_session(&id).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("cannot delete"));
     }
 
     #[tokio::test]
@@ -2890,289 +1189,90 @@ mod tests {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let result = mgr.delete_session("nonexistent").await;
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("session not found")
-        );
+        assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[tokio::test]
-    async fn test_delete_session_store_failure() {
-        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
-        sqlx::query("DROP TABLE sessions")
-            .execute(&pool)
-            .await
-            .unwrap();
-        let result = mgr.delete_session("test").await;
-        assert!(result.is_err());
-    }
-
-    // ───────────────────────────────────────────────────────────
-    // Stale / dead edge-case tests
-    // ───────────────────────────────────────────────────────────
-
-    #[tokio::test]
-    async fn test_kill_backend_error_leaves_session_running() {
-        // When backend.kill_session fails, the session must NOT be marked Dead.
-        let (mgr, _, _pool) = test_manager(MockBackend::new().with_kill_error()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-        let id = session.id.to_string();
-
-        let result = mgr.kill_session(&id).await;
-        assert!(result.is_err());
-
-        // Session should still be Running (not Dead)
-        let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Active);
-    }
-
-    #[tokio::test]
-    async fn test_kill_already_dead_session() {
-        // Killing a session that is already Dead should still succeed
-        // (backend kill is called, DB update is idempotent).
-        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-        let id = session.id.to_string();
-
-        // First kill — succeeds
-        mgr.kill_session(&id).await.unwrap();
-        let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
-
-        // Second kill — backend kill called again, DB stays Dead
-        backend.calls.lock().unwrap().clear();
-        mgr.kill_session(&id).await.unwrap();
-        let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
-
-        let has_kill = backend
-            .calls
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|c| c.starts_with("kill:"));
-        assert!(has_kill);
-    }
-
-    #[tokio::test]
-    async fn test_kill_stale_session() {
-        // Killing a stale session should succeed even if backend session is already gone.
-        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-
-        let id = session.id.to_string();
-
-        // Mark stale via get_session
-        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Lost);
-
-        // Kill the stale session — backend kill is still called (best-effort cleanup)
-        backend.calls.lock().unwrap().clear();
-        mgr.kill_session(&id).await.unwrap();
-        let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
-    }
-
-    #[tokio::test]
-    async fn test_kill_stale_session_backend_error_propagates() {
-        // When killing a stale session and backend.kill fails, error propagates
-        // and session status should NOT change.
-        let backend = MockBackend::new().with_alive(false);
-        let (mgr, backend_ref, _pool) = test_manager(backend).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-
-        let id = session.id.to_string();
-
-        // Mark stale
-        let _ = mgr.get_session(&id).await.unwrap().unwrap();
-
-        // Now make kill fail
-        *backend_ref.kill_result.lock().unwrap() = Err(anyhow!("kill failed"));
-        let result = mgr.kill_session(&id).await;
-        assert!(result.is_err());
-
-        // Session remains Stale (not Dead, not Running)
-        let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Lost);
-    }
-
-    #[tokio::test]
-    async fn test_resume_backend_failure_leaves_session_stale() {
-        // When resume's backend.create_session fails, the session must stay Stale
-        // (not be marked Running).
-        let backend = MockBackend::new().with_alive(false);
-        let (mgr, backend_ref, _pool) = test_manager(backend).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-
-        let id = session.id.to_string();
-
-        // Mark stale
-        let _ = mgr.get_session(&id).await.unwrap();
-
-        // Make create fail for resume
-        *backend_ref.create_result.lock().unwrap() = Err(anyhow!("backend not found"));
-        let result = mgr.resume_session(&id).await;
-        assert!(result.is_err());
-
-        // Session must still be Stale
-        let fetched = mgr.store.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Lost);
-    }
-
-    #[tokio::test]
-    async fn test_get_session_reconciles_running_to_stale() {
-        // Simulates daemon restart: session is Running in DB but the backend
-        // process (tmux) is gone. get_session should detect this and mark Stale.
-        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-
-        let id = session.id.to_string();
-
-        // Session was just created as Running. Backend says it's dead.
-        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(
-            fetched.status,
-            SessionStatus::Lost,
-            "Running session with dead backend should be reconciled to Stale"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_list_sessions_reconciles_running_to_stale() {
-        // Same as above but via list_sessions — all Running sessions with dead
-        // backend should be reconciled to Stale.
-        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let (s1, _) = mgr.create_session(make_req("test1")).await.unwrap();
-
-        let (s2, _) = mgr.create_session(make_req("test2")).await.unwrap();
-
-        let sessions = mgr.list_sessions().await.unwrap();
-        for s in &sessions {
-            assert_eq!(
-                s.status,
-                SessionStatus::Lost,
-                "Session {} should be Stale after reconciliation",
-                s.name
-            );
-        }
-
-        // Verify DB is also updated (not just in-memory)
-        let db_s1 = mgr
-            .store
-            .get_session(&s1.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        let db_s2 = mgr
-            .store
-            .get_session(&s2.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(db_s1.status, SessionStatus::Lost);
-        assert_eq!(db_s2.status, SessionStatus::Lost);
-    }
-
-    #[tokio::test]
-    async fn test_delete_session_tolerates_backend_kill_failure() {
-        // delete_session does best-effort backend cleanup. Even if kill fails,
-        // the session should still be deleted from the DB.
-        let backend = MockBackend::new().with_alive(false);
-        let (mgr, backend_ref, _pool) = test_manager(backend).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-
-        let id = session.id.to_string();
-
-        // Mark stale first (delete requires non-running status)
-        let _ = mgr.get_session(&id).await.unwrap();
-
-        // Make kill fail
-        *backend_ref.kill_result.lock().unwrap() = Err(anyhow!("kill failed"));
-
-        // Delete should still succeed (kill failure is best-effort)
-        mgr.delete_session(&id).await.unwrap();
-        let fetched = mgr.store.get_session(&id).await.unwrap();
-        assert!(fetched.is_none(), "Session should be deleted from DB");
-    }
-
-    #[tokio::test]
-    async fn test_resume_finished_session_succeeds() {
-        // A finished session should be resumable (restarts agent).
+    async fn test_resolve_backend_id_with_stored() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-        let id = session.id.to_string();
-
-        // Mark finished
-        mgr.store
-            .update_session_status(&id, SessionStatus::Finished)
-            .await
-            .unwrap();
-
-        let resumed = mgr.resume_session(&id).await.unwrap();
-        assert_eq!(resumed.status, SessionStatus::Active);
+        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let backend_id = mgr.resolve_backend_id(&session);
+        // MockBackend returns name as session_id
+        assert_eq!(backend_id, "test");
     }
 
     #[tokio::test]
-    async fn test_resume_dead_session_fails() {
-        // A dead session should not be resumable.
+    async fn test_resolve_ink_no_command_no_ink() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
-        let id = session.id.to_string();
-
-        mgr.kill_session(&id).await.unwrap();
-
-        let result = mgr.resume_session(&id).await;
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("cannot be resumed")
-        );
+        let req = CreateSessionRequest {
+            name: "test".into(),
+            workdir: Some("/tmp".into()),
+            command: None,
+            ink: None,
+            description: Some("desc".into()),
+            metadata: None,
+        };
+        let (cmd, desc) = mgr.resolve_ink(&req).unwrap();
+        assert!(cmd.is_empty());
+        assert_eq!(desc, Some("desc".into()));
     }
 
     #[tokio::test]
-    async fn test_stale_grace_period_protects_new_sessions() {
-        // A freshly created session should NOT be marked stale even if the backend
-        // reports it as dead — the tmux session may not be fully ready yet.
+    async fn test_ink_description_fallback() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "test-ink".into(),
+            InkConfig {
+                description: Some("Ink desc".into()),
+                command: Some("echo test".into()),
+            },
+        );
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
-        let backend = Arc::new(MockBackend::new().with_alive(false));
-        // Use default grace period (5 seconds) — do NOT call with_no_stale_grace.
-        let mgr = SessionManager::new(
-            backend as Arc<dyn Backend>,
-            store,
-            GuardConfig::default(),
-            HashMap::new(),
-        );
-        let (session, _) = mgr.create_session(make_req("fresh")).await.unwrap();
-        let id = session.id.to_string();
+        let backend = Arc::new(MockBackend::new());
+        let mgr = SessionManager::new(backend, store, inks).with_no_stale_grace();
 
-        // Despite dead backend, session should remain Active due to grace period.
-        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Active);
+        let req = CreateSessionRequest {
+            name: "fallback-test".into(),
+            workdir: Some("/tmp".into()),
+            command: None,
+            ink: Some("test-ink".into()),
+            description: None, // Should fall back to ink description
+            metadata: None,
+        };
+        let session = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.description, Some("Ink desc".into()));
     }
 
     #[tokio::test]
-    async fn test_stale_detection_skips_non_running_statuses() {
-        // check_and_mark_stale should only affect Running sessions.
-        // Dead, Completed, Stale, Creating sessions should not be touched.
-        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
-        let (session, _) = mgr.create_session(make_req("test")).await.unwrap();
+    async fn test_ink_with_no_command() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "empty-ink".into(),
+            InkConfig {
+                description: Some("Empty".into()),
+                command: None,
+            },
+        );
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let backend = Arc::new(MockBackend::new());
+        let mgr = SessionManager::new(backend, store, inks).with_no_stale_grace();
 
-        let id = session.id.to_string();
-
-        // Kill the session
-        // (need alive=true for kill to proceed since we call backend.kill)
-        // Actually the mock kill doesn't check is_alive, so this works.
-        mgr.kill_session(&id).await.unwrap();
-
-        // get_session on a Dead session should not transition it further
-        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
+        let req = CreateSessionRequest {
+            name: "empty-test".into(),
+            workdir: Some("/tmp".into()),
+            command: None,
+            ink: Some("empty-ink".into()),
+            description: None,
+            metadata: None,
+        };
+        let result = mgr.create_session(req).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("command is required"), "got: {err}");
     }
 }

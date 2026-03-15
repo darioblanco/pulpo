@@ -233,13 +233,7 @@ mod tests {
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -251,8 +245,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: crate::config::GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -282,22 +274,12 @@ mod tests {
         let req = CreateSessionRequest {
             name: "dead-test".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
-        let (session, _) = state.session_manager.create_session(req).await.unwrap();
+        let session = state.session_manager.create_session(req).await.unwrap();
         // DeadBackend's is_alive returns false, so get_session marks it Stale
         let fetched = state
             .session_manager
@@ -338,24 +320,15 @@ mod tests {
             id: uuid::Uuid::new_v4(),
             name: "my-session".into(),
             workdir: "/tmp".into(),
-            provider: Provider::Claude,
-            prompt: String::new(),
+            command: "echo hello".into(),
+            description: None,
             status: SessionStatus::Active,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
             exit_code: None,
             backend_session_id: Some("custom-backend-id".into()),
 
             output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -378,24 +351,15 @@ mod tests {
             id: uuid::Uuid::new_v4(),
             name: "my-session".into(),
             workdir: "/tmp".into(),
-            provider: Provider::Claude,
-            prompt: String::new(),
+            command: "echo hello".into(),
+            description: None,
             status: SessionStatus::Active,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
             exit_code: None,
             backend_session_id: None,
 
             output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,

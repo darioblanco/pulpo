@@ -438,14 +438,13 @@ function drawOctopus(
   ctx.imageSmoothingEnabled = false;
   ctx.restore();
 
-  // Name + provider badges — name uses status color for at-a-glance state
+  // Name badge — uses status color for at-a-glance state
   const statusColor = STATUS_LABEL_COLORS[oct.status] ?? '#d4e4ef';
   const fontSize = Math.max(10, 14 * (camera.zoom / 2));
   const padX = 4;
   const padY = 2;
-  const gap = 2;
   ctx.textAlign = 'left';
-  let badgeY = drawY + drawH * 0.28 + 4;
+  const badgeY = drawY + drawH * 0.28 + 4;
 
   ctx.font = `${fontSize}px monospace`;
   const nameTextW = ctx.measureText(oct.name).width;
@@ -457,18 +456,4 @@ function drawOctopus(
   ctx.fillRect(nameX, nameY, nameW, nameH);
   ctx.fillStyle = statusColor;
   ctx.fillText(oct.name, nameX + padX, nameY + padY + fontSize - 1);
-  badgeY += nameH + gap;
-
-  if (oct.provider) {
-    ctx.font = `${fontSize - 1}px monospace`;
-    const provTextW = ctx.measureText(oct.provider).width;
-    const provW = provTextW + padX * 2;
-    const provH = fontSize - 1 + padY * 2;
-    const provX = Math.round(sx - provW / 2);
-    const provY = Math.round(badgeY);
-    ctx.fillStyle = 'rgba(8, 18, 30, 0.5)';
-    ctx.fillRect(provX, provY, provW, provH);
-    ctx.fillStyle = '#94b8d0';
-    ctx.fillText(oct.provider, provX + padX, provY + padY + fontSize - 2);
-  }
 }

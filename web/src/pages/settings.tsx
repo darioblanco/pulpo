@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppHeader } from '@/components/layout/app-header';
 import { NodeSettings } from '@/components/settings/node-settings';
-import { GuardSettings } from '@/components/settings/guard-settings';
 import { WatchdogSettings } from '@/components/settings/watchdog-settings';
 import { InkSettings } from '@/components/settings/ink-settings';
 import { NotificationsSettings } from '@/components/settings/notifications-settings';
@@ -27,9 +26,6 @@ export function SettingsPage() {
   const [tag, setTag] = useState('');
   const [seed, setSeed] = useState('');
   const [discoveryInterval, setDiscoveryInterval] = useState(60);
-
-  // Guards
-  const [unrestricted, setUnrestricted] = useState(false);
 
   // Watchdog
   const [watchdogEnabled, setWatchdogEnabled] = useState(true);
@@ -61,8 +57,6 @@ export function SettingsPage() {
       setTag(config.node.tag ?? '');
       setSeed(config.node.seed ?? '');
       setDiscoveryInterval(config.node.discovery_interval_secs);
-
-      setUnrestricted(config.guards.unrestricted);
 
       setWatchdogEnabled(config.watchdog.enabled);
       setWatchdogMemoryThreshold(config.watchdog.memory_threshold);
@@ -102,7 +96,6 @@ export function SettingsPage() {
         tag,
         seed,
         discovery_interval_secs: discoveryInterval,
-        unrestricted,
         watchdog_enabled: watchdogEnabled,
         watchdog_memory_threshold: watchdogMemoryThreshold,
         watchdog_check_interval_secs: watchdogCheckInterval,
@@ -216,10 +209,6 @@ export function SettingsPage() {
                 </p>
                 <div className="space-y-6">
                   <PeerSettings peers={peers} onUpdate={setPeers} bind={bind} />
-                  <GuardSettings
-                    unrestricted={unrestricted}
-                    onUnrestrictedChange={setUnrestricted}
-                  />
                   <InkSettings inks={inks} onInksChange={setInks} peers={peers} />
                   <WatchdogSettings
                     enabled={watchdogEnabled}

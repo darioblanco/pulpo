@@ -166,7 +166,7 @@ pub async fn read_resource(mcp: &PulpoMcp, uri: &str) -> Result<ReadResourceResu
 mod tests {
     use super::*;
     use crate::backend::Backend;
-    use crate::config::{AuthConfig, Config, GuardDefaultConfig, NodeConfig};
+    use crate::config::{AuthConfig, Config, NodeConfig};
     use crate::mcp::SpawnSessionParams;
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
@@ -221,8 +221,6 @@ mod tests {
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
@@ -235,13 +233,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(MockBackend::new());
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -253,13 +245,7 @@ mod tests {
         store.migrate().await.unwrap();
         let pool = store.pool().clone();
         let backend = Arc::new(MockBackend::new());
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         (PulpoMcp::new(manager, peer_registry, test_config()), pool)
     }
@@ -290,15 +276,10 @@ mod tests {
         // Create a session
         let params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         mcp.spawn_session(Parameters(params)).await;
@@ -324,15 +305,10 @@ mod tests {
         // Create a session first
         let params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(params)).await;
@@ -418,15 +394,10 @@ mod tests {
         // Create a session
         let params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         mcp.spawn_session(Parameters(params)).await;
@@ -443,15 +414,10 @@ mod tests {
         // Create a session
         let params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(params)).await;
@@ -501,13 +467,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(MockBackend::new());
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let mut peers = HashMap::new();
         peers.insert(
             "remote".into(),

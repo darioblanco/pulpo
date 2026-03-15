@@ -91,8 +91,9 @@ describe('PulpodClient', () => {
 
     const client = new PulpodClient(config);
     const result = await client.createSession({
+      name: 'test-session',
       workdir: '/code/repo',
-      prompt: 'fix the bug',
+      command: 'claude "fix the bug"',
       ink: 'coder',
     });
 
@@ -101,8 +102,9 @@ describe('PulpodClient', () => {
       method: 'POST',
       headers: expect.objectContaining({ Authorization: 'Bearer test-api-token' }),
       body: JSON.stringify({
+        name: 'test-session',
         workdir: '/code/repo',
-        prompt: 'fix the bug',
+        command: 'claude "fix the bug"',
         ink: 'coder',
       }),
     });
@@ -116,7 +118,7 @@ describe('PulpodClient', () => {
     });
 
     const client = new PulpodClient(config);
-    await expect(client.createSession({ workdir: '/repo', prompt: 'test' })).rejects.toThrow(
+    await expect(client.createSession({ name: 'test' })).rejects.toThrow(
       'Failed to create session (400)',
     );
   });
@@ -200,7 +202,7 @@ describe('PulpodClient', () => {
   });
 
   it('listInks calls correct endpoint', async () => {
-    const data = { inks: { coder: { model: 'opus' } } };
+    const data = { inks: { coder: { description: 'Autonomous coder', command: 'claude' } } };
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve(data),
@@ -208,7 +210,7 @@ describe('PulpodClient', () => {
 
     const client = new PulpodClient(config);
     const result = await client.listInks();
-    expect(result.inks.coder.model).toBe('opus');
+    expect(result.inks.coder.command).toBe('claude');
   });
 
   it('listInks throws on non-ok response', async () => {

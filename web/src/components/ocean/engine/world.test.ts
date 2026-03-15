@@ -29,20 +29,12 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
     name: 'api-fix',
-    provider: 'claude',
     status: 'active',
-    prompt: 'Fix the auth bug',
-    mode: 'autonomous',
+    command: 'Fix the auth bug',
+    description: null,
     workdir: '/tmp/repo',
-    guard_config: null,
-    model: null,
-    allowed_tools: null,
-    system_prompt: null,
     metadata: null,
     ink: null,
-    max_turns: null,
-    max_budget_usd: null,
-    output_format: null,
     intervention_reason: null,
     intervention_at: null,
     last_output_at: null,
@@ -108,25 +100,21 @@ describe('world', () => {
         makeSession({
           id: 's1',
           name: 'worker-1',
-          model: 'claude-sonnet-4-20250514',
-          mode: 'chat',
+          command: 'claude code --chat',
           workdir: '/home/user/repo',
-          guard_config: { unrestricted: true },
+          description: 'Fix bug',
           last_output_at: '2026-01-01T00:05:00Z',
           intervention_reason: 'OOM',
-          prompt: 'Fix bug',
         }),
       ];
       syncData(world, makeNode(), sessions, [], {});
       const oct = world.octopuses[0];
-      expect(oct.model).toBe('claude-sonnet-4-20250514');
-      expect(oct.mode).toBe('chat');
+      expect(oct.command).toBe('claude code --chat');
       expect(oct.workdir).toBe('/home/user/repo');
-      expect(oct.unrestricted).toBe(true);
+      expect(oct.description).toBe('Fix bug');
       expect(oct.createdAt).toBe('2026-01-01T00:00:00Z');
       expect(oct.lastOutputAt).toBe('2026-01-01T00:05:00Z');
       expect(oct.interventionReason).toBe('OOM');
-      expect(oct.prompt).toBe('Fix bug');
     });
 
     it('creates octopuses for peer sessions', () => {
@@ -141,12 +129,12 @@ describe('world', () => {
         },
       ];
       const peerSessions = {
-        'linux-box': [makeSession({ id: 'p1', name: 'peer-task', provider: 'codex' })],
+        'linux-box': [makeSession({ id: 'p1', name: 'peer-task', command: 'codex' })],
       };
       syncData(world, makeNode(), [], peers, peerSessions);
       expect(world.octopuses).toHaveLength(1);
       expect(world.octopuses[0].name).toBe('peer-task');
-      expect(world.octopuses[0].provider).toBe('codex');
+      expect(world.octopuses[0].command).toBe('codex');
       expect(world.octopuses[0].nodeName).toBe('linux-box');
     });
 
@@ -177,25 +165,21 @@ describe('world', () => {
         makeSession({
           id: 's1',
           name: 'worker-1',
-          model: 'gpt-4o',
-          mode: 'code',
+          command: 'codex --code',
           workdir: '/new/path',
-          guard_config: { unrestricted: true },
+          description: 'New description',
           last_output_at: '2026-01-01T01:00:00Z',
           intervention_reason: 'timeout',
-          prompt: 'New prompt',
         }),
       ];
       syncData(world, makeNode(), updated, [], {});
 
       const oct = world.octopuses[0];
-      expect(oct.model).toBe('gpt-4o');
-      expect(oct.mode).toBe('code');
+      expect(oct.command).toBe('codex --code');
       expect(oct.workdir).toBe('/new/path');
-      expect(oct.unrestricted).toBe(true);
+      expect(oct.description).toBe('New description');
       expect(oct.lastOutputAt).toBe('2026-01-01T01:00:00Z');
       expect(oct.interventionReason).toBe('timeout');
-      expect(oct.prompt).toBe('New prompt');
     });
 
     it('removes octopuses for ended sessions', () => {
@@ -278,24 +262,20 @@ describe('world', () => {
       const sessions = [
         makeSession({
           id: 's1',
-          model: 'opus-4',
-          mode: 'code',
+          command: 'claude code --code',
           workdir: '/work',
-          guard_config: { unrestricted: true },
+          description: 'Do stuff',
           last_output_at: '2026-01-01T00:01:00Z',
           intervention_reason: 'stuck',
-          prompt: 'Do stuff',
         }),
       ];
       syncSingleNode(world, 'mac-studio', true, 'online', sessions, '#f472b6');
       const oct = world.octopuses[0];
-      expect(oct.model).toBe('opus-4');
-      expect(oct.mode).toBe('code');
+      expect(oct.command).toBe('claude code --code');
       expect(oct.workdir).toBe('/work');
-      expect(oct.unrestricted).toBe(true);
+      expect(oct.description).toBe('Do stuff');
       expect(oct.lastOutputAt).toBe('2026-01-01T00:01:00Z');
       expect(oct.interventionReason).toBe('stuck');
-      expect(oct.prompt).toBe('Do stuff');
     });
 
     it('updates new session fields on existing octopus', () => {
@@ -305,13 +285,13 @@ describe('world', () => {
       const updated = [
         makeSession({
           id: 's1',
-          model: 'gpt-4o',
+          command: 'codex',
           intervention_reason: 'oom',
         }),
       ];
       syncSingleNode(world, 'mac-studio', true, 'online', updated, '#f472b6');
 
-      expect(world.octopuses[0].model).toBe('gpt-4o');
+      expect(world.octopuses[0].command).toBe('codex');
       expect(world.octopuses[0].interventionReason).toBe('oom');
     });
 

@@ -9,16 +9,13 @@ function makeOctopus(overrides: Partial<OctopusEntity> = {}): OctopusEntity {
     sessionId: 'sess-1',
     name: 'worker-alpha',
     status: 'active',
-    provider: 'claude',
+    command: 'claude code',
+    description: 'Fix the auth bug',
     ink: null,
-    model: null,
-    mode: 'autonomous',
     workdir: '/home/user/projects/pulpo/web',
-    unrestricted: false,
     createdAt: '2026-01-01T00:00:00Z',
     lastOutputAt: null,
     interventionReason: null,
-    prompt: 'Fix the auth bug',
 
     nodeName: 'mac-studio',
     x: 100,
@@ -70,13 +67,41 @@ describe('ProfileCard', () => {
     expect(screen.getByText('finished')).toBeInTheDocument();
   });
 
-  it('renders provider', () => {
+  it('renders command', () => {
     render(
       <MemoryRouter>
         <ProfileCard octopus={makeOctopus()} screenX={400} screenY={300} onClose={vi.fn()} />
       </MemoryRouter>,
     );
-    expect(screen.getAllByText('claude').length).toBeGreaterThan(0);
+    expect(screen.getByTestId('profile-command')).toHaveTextContent('claude code');
+  });
+
+  it('renders description when present', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ description: 'Fix the auth bug' })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('profile-description')).toHaveTextContent('Fix the auth bug');
+  });
+
+  it('does not render description when null', () => {
+    render(
+      <MemoryRouter>
+        <ProfileCard
+          octopus={makeOctopus({ description: null })}
+          screenX={400}
+          screenY={300}
+          onClose={vi.fn()}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByTestId('profile-description')).not.toBeInTheDocument();
   });
 
   it('renders ink when present', () => {
@@ -168,47 +193,7 @@ describe('ProfileCard', () => {
 
   // --- New field tests ---
 
-  it('renders shortened model when present', () => {
-    render(
-      <MemoryRouter>
-        <ProfileCard
-          octopus={makeOctopus({ model: 'claude-sonnet-4-20250514' })}
-          screenX={400}
-          screenY={300}
-          onClose={vi.fn()}
-        />
-      </MemoryRouter>,
-    );
-    expect(screen.getByTestId('profile-model')).toHaveTextContent('sonnet-4');
-  });
-
-  it('does not render model when null', () => {
-    render(
-      <MemoryRouter>
-        <ProfileCard
-          octopus={makeOctopus({ model: null })}
-          screenX={400}
-          screenY={300}
-          onClose={vi.fn()}
-        />
-      </MemoryRouter>,
-    );
-    expect(screen.queryByTestId('profile-model')).not.toBeInTheDocument();
-  });
-
-  it('renders mode', () => {
-    render(
-      <MemoryRouter>
-        <ProfileCard
-          octopus={makeOctopus({ mode: 'chat' })}
-          screenX={400}
-          screenY={300}
-          onClose={vi.fn()}
-        />
-      </MemoryRouter>,
-    );
-    expect(screen.getByText('chat')).toBeInTheDocument();
-  });
+  // model, mode removed — sessions now have command/description instead
 
   it('renders truncated workdir', () => {
     render(
@@ -284,28 +269,7 @@ describe('ProfileCard', () => {
     expect(screen.queryByTestId('profile-last-active')).not.toBeInTheDocument();
   });
 
-  it('shows unrestricted badge when true', () => {
-    render(
-      <MemoryRouter>
-        <ProfileCard
-          octopus={makeOctopus({ unrestricted: true })}
-          screenX={400}
-          screenY={300}
-          onClose={vi.fn()}
-        />
-      </MemoryRouter>,
-    );
-    expect(screen.getByTestId('unrestricted-badge')).toBeInTheDocument();
-  });
-
-  it('hides unrestricted badge when false', () => {
-    render(
-      <MemoryRouter>
-        <ProfileCard octopus={makeOctopus()} screenX={400} screenY={300} onClose={vi.fn()} />
-      </MemoryRouter>,
-    );
-    expect(screen.queryByTestId('unrestricted-badge')).not.toBeInTheDocument();
-  });
+  // unrestricted badge removed — guards are gone from the API
 
   it('shows intervention reason when present', () => {
     render(
@@ -400,19 +364,7 @@ describe('ProfileCard', () => {
     expect(screen.getByTestId('profile-last-active')).toHaveTextContent('2h ago');
   });
 
-  it('renders non-claude model without shortening', () => {
-    render(
-      <MemoryRouter>
-        <ProfileCard
-          octopus={makeOctopus({ model: 'gpt-4o-mini' })}
-          screenX={400}
-          screenY={300}
-          onClose={vi.fn()}
-        />
-      </MemoryRouter>,
-    );
-    expect(screen.getByTestId('profile-model')).toHaveTextContent('gpt-4o-mini');
-  });
+  // non-claude model test removed — model field no longer on Session
 
   // --- Kill / Delete action tests ---
 

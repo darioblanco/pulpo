@@ -109,9 +109,9 @@ describe('getSessions', () => {
     const sessions = [{ id: '1', name: 'test' }];
     mockFetch.mockResolvedValue(jsonResponse(sessions));
 
-    const result = await getSessions({ status: 'active', provider: 'claude' });
+    const result = await getSessions({ status: 'active', search: 'claude' });
 
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=active&provider=claude', {
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=active&search=claude', {
       headers: {},
     });
     expect(result).toEqual(sessions);
@@ -121,7 +121,7 @@ describe('getSessions', () => {
     const sessions: unknown[] = [];
     mockFetch.mockResolvedValue(jsonResponse(sessions));
 
-    await getSessions({ status: 'finished', provider: undefined });
+    await getSessions({ status: 'finished', search: undefined });
 
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=finished', { headers: {} });
   });
@@ -184,10 +184,8 @@ describe('createSession', () => {
     const data = {
       name: 'my-session',
       workdir: '/home/user/repo',
-      prompt: 'Fix the bug',
-      provider: 'claude',
-      mode: 'interactive',
-      unrestricted: false,
+      command: 'claude code',
+      description: 'Fix the bug',
     };
     const result = await createSession(data);
 
@@ -204,7 +202,7 @@ describe('createSession', () => {
     const created = { id: 'new-1', name: 'my-api' };
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(created) });
 
-    const data = { name: 'auth-test', workdir: '/repo', prompt: 'Do it' };
+    const data = { name: 'auth-test', workdir: '/repo', command: 'claude code' };
     await createSession(data);
 
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions', {
@@ -221,7 +219,7 @@ describe('createSession', () => {
     });
 
     await expect(
-      createSession({ name: 'err-test', workdir: '/bad/path', prompt: 'test' }),
+      createSession({ name: 'err-test', workdir: '/bad/path', command: 'test' }),
     ).rejects.toThrow('working directory does not exist');
   });
 
@@ -232,7 +230,7 @@ describe('createSession', () => {
     });
 
     await expect(
-      createSession({ name: 'gen-err', workdir: '/repo', prompt: 'test' }),
+      createSession({ name: 'gen-err', workdir: '/repo', command: 'test' }),
     ).rejects.toThrow('Failed to create session');
   });
 });
@@ -242,7 +240,7 @@ describe('createRemoteSession', () => {
     const created = { id: 'remote-1', name: 'remote-api' };
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(created) });
 
-    const data = { name: 'remote-test', workdir: '/repo', prompt: 'Do stuff' };
+    const data = { name: 'remote-test', workdir: '/repo', command: 'claude code' };
     const result = await createRemoteSession('macbook:7433', data);
 
     expect(mockFetch).toHaveBeenCalledWith('http://macbook:7433/api/v1/sessions', {
@@ -260,7 +258,11 @@ describe('createRemoteSession', () => {
     });
 
     await expect(
-      createRemoteSession('macbook:7433', { name: 'remote-err', workdir: '/repo', prompt: 'test' }),
+      createRemoteSession('macbook:7433', {
+        name: 'remote-err',
+        workdir: '/repo',
+        command: 'test',
+      }),
     ).rejects.toThrow('provider not installed');
   });
 });
@@ -486,12 +488,7 @@ describe('updateRemoteConfig', () => {
       inks: {
         reviewer: {
           description: 'Test',
-          provider: 'claude',
-          model: null,
-          mode: null,
-          unrestricted: null,
-          instructions: null,
-          instructions_file: null,
+          command: 'claude code',
         },
       },
     };
@@ -596,7 +593,7 @@ describe('getPairingUrl', () => {
 
 describe('getInks', () => {
   it('fetches /api/v1/inks', async () => {
-    const resp = { inks: { coder: { provider: 'claude' } } };
+    const resp = { inks: { coder: { description: null, command: 'claude code' } } };
     mockFetch.mockResolvedValue(jsonResponse(resp));
 
     const result = await getInks();

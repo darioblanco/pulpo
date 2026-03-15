@@ -37,12 +37,8 @@ const testConfig: ConfigResponse = {
     tag: null,
     seed: null,
     discovery_interval_secs: 60,
-    default_provider: null,
   },
   peers: {},
-  guards: {
-    unrestricted: false,
-  },
   watchdog: {
     enabled: true,
     memory_threshold: 85,
@@ -114,7 +110,6 @@ describe('SettingsPage', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('node-settings')).toBeInTheDocument();
-      expect(screen.getByTestId('guard-settings')).toBeInTheDocument();
       expect(screen.getByTestId('watchdog-settings')).toBeInTheDocument();
       expect(screen.getByTestId('ink-settings')).toBeInTheDocument();
       expect(screen.getByTestId('notifications-settings')).toBeInTheDocument();
@@ -179,23 +174,6 @@ describe('SettingsPage', () => {
     });
   });
 
-  it('loads guard defaults when present', async () => {
-    const configWithGuards: ConfigResponse = {
-      ...testConfig,
-      guards: {
-        unrestricted: true,
-      },
-    };
-    mockGetConfig.mockResolvedValue(configWithGuards);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
-    renderSettings();
-
-    await waitFor(() => {
-      const toggle = screen.getByTestId('guard-unrestricted-toggle');
-      expect(toggle).toHaveAttribute('data-state', 'checked');
-    });
-  });
-
   it('shows error on config load failure', async () => {
     mockGetConfig.mockRejectedValue(new Error('Network error'));
     renderSettings();
@@ -226,7 +204,6 @@ describe('SettingsPage', () => {
           port: 7433,
           data_dir: '~/.pulpo/data',
           bind: 'local',
-          unrestricted: false,
           watchdog_enabled: true,
           watchdog_memory_threshold: 85,
         }),
@@ -312,12 +289,7 @@ describe('SettingsPage', () => {
       inks: {
         reviewer: {
           description: 'Code reviewer',
-          provider: 'claude',
-          model: null,
-          mode: 'interactive',
-          unrestricted: false,
-          instructions: null,
-          instructions_file: null,
+          command: 'claude code',
         },
       },
     };
@@ -337,12 +309,7 @@ describe('SettingsPage', () => {
       inks: {
         coder: {
           description: 'Coder ink',
-          provider: 'claude',
-          model: null,
-          mode: 'autonomous',
-          unrestricted: false,
-          instructions: null,
-          instructions_file: null,
+          command: 'claude code --autonomous',
         },
       },
     };
@@ -366,7 +333,7 @@ describe('SettingsPage', () => {
           inks: {
             coder: expect.objectContaining({
               description: 'Coder ink',
-              provider: 'claude',
+              command: 'claude code --autonomous',
             }),
           },
         }),

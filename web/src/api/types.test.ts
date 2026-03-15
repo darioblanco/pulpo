@@ -1,40 +1,72 @@
 import { describe, it, expect } from 'vitest';
-import { getProviderCapabilities } from './types';
+import type { Session, InkConfig, CreateSessionRequest, ConfigResponse } from './types';
 
-describe('getProviderCapabilities', () => {
-  it('returns full capabilities for claude', () => {
-    const caps = getProviderCapabilities('claude');
-    expect(caps.model).toBe(true);
-    expect(caps.system_prompt).toBe(true);
-    expect(caps.unrestricted).toBe(true);
+describe('types', () => {
+  it('Session type has command and description fields', () => {
+    const session: Session = {
+      id: 'sess-1',
+      name: 'test',
+      status: 'active',
+      command: 'claude code',
+      description: 'Fix the bug',
+      workdir: '/repo',
+      metadata: null,
+      ink: null,
+      intervention_reason: null,
+      intervention_at: null,
+      last_output_at: null,
+      created_at: '2026-01-01T00:00:00Z',
+    };
+    expect(session.command).toBe('claude code');
+    expect(session.description).toBe('Fix the bug');
   });
 
-  it('returns limited capabilities for codex', () => {
-    const caps = getProviderCapabilities('codex');
-    expect(caps.model).toBe(true);
-    expect(caps.system_prompt).toBe(false);
-    expect(caps.unrestricted).toBe(false);
+  it('InkConfig has description and command fields', () => {
+    const ink: InkConfig = {
+      description: 'Code reviewer',
+      command: 'claude code --model opus-4',
+    };
+    expect(ink.description).toBe('Code reviewer');
+    expect(ink.command).toBe('claude code --model opus-4');
   });
 
-  it('returns model support for gemini', () => {
-    const caps = getProviderCapabilities('gemini');
-    expect(caps.model).toBe(true);
-    expect(caps.unrestricted).toBe(true);
+  it('CreateSessionRequest has command and description fields', () => {
+    const req: CreateSessionRequest = {
+      name: 'my-session',
+      workdir: '/repo',
+      command: 'claude code',
+      description: 'Fix stuff',
+    };
+    expect(req.command).toBe('claude code');
+    expect(req.description).toBe('Fix stuff');
   });
 
-  it('returns no model support for open_code', () => {
-    const caps = getProviderCapabilities('open_code');
-    expect(caps.model).toBe(false);
-  });
-
-  it('returns no model support for opencode alias', () => {
-    const caps = getProviderCapabilities('opencode');
-    expect(caps.model).toBe(false);
-  });
-
-  it('returns full capabilities for unknown provider', () => {
-    const caps = getProviderCapabilities('unknown');
-    expect(caps.model).toBe(true);
-    expect(caps.system_prompt).toBe(true);
+  it('ConfigResponse has no guards field', () => {
+    const config: ConfigResponse = {
+      node: {
+        name: 'test',
+        port: 7433,
+        data_dir: '~/.pulpo/data',
+        bind: 'local',
+        tag: null,
+        seed: null,
+        discovery_interval_secs: 60,
+      },
+      peers: {},
+      watchdog: {
+        enabled: true,
+        memory_threshold: 85,
+        check_interval_secs: 30,
+        breach_count: 3,
+        idle_timeout_secs: 300,
+        idle_action: 'pause',
+        finished_ttl_secs: 0,
+      },
+      notifications: { discord: null, webhooks: [] },
+      inks: {},
+    };
+    expect(config.node.name).toBe('test');
+    // Verify guards is not a property
+    expect('guards' in config).toBe(false);
   });
 });

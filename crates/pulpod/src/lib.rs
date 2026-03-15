@@ -2,7 +2,7 @@ pub mod api;
 pub mod backend;
 pub mod config;
 pub mod discovery;
-pub mod guard;
+
 pub mod mcp;
 pub mod notifications;
 pub mod peers;
@@ -165,13 +165,10 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     #[cfg(not(coverage))]
     let watchdog_store = store.clone();
 
-    let default_guard = config.guards.to_guard_config();
     let node_name = config.node.name.clone();
     let (event_tx, _) = broadcast::channel::<PulpoEvent>(256);
 
-    let manager = SessionManager::new(backend, store, default_guard, config.inks.clone())
-        .with_default_provider(config.node.default_provider.clone())
-        .with_session_defaults(config.session_defaults.clone())
+    let manager = SessionManager::new(backend, store, config.inks.clone())
         .with_event_tx(event_tx.clone(), node_name.clone());
 
     let peer_registry = peers::PeerRegistry::new(&config.peers);
@@ -498,11 +495,7 @@ pub async fn build_mcp_server(cli: &Cli) -> Result<mcp::PulpoMcp> {
     #[cfg(coverage)]
     let backend: Arc<dyn backend::Backend> = Arc::new(CoverageBackend);
 
-    let default_guard = config.guards.to_guard_config();
-    let manager =
-        session::manager::SessionManager::new(backend, store, default_guard, config.inks.clone())
-            .with_default_provider(config.node.default_provider.clone())
-            .with_session_defaults(config.session_defaults.clone());
+    let manager = session::manager::SessionManager::new(backend, store, config.inks.clone());
     let peer_registry = peers::PeerRegistry::new(&config.peers);
 
     Ok(mcp::PulpoMcp::new(manager, peer_registry, config))

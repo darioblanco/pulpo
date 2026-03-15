@@ -15,7 +15,7 @@ use super::inks;
 use super::node;
 use super::notifications;
 use super::peers;
-use super::providers;
+
 use super::sessions;
 use super::static_files;
 use super::watchdog;
@@ -70,7 +70,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/sessions/{id}/stream", get(ws::stream))
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
-        .route("/api/v1/providers", get(providers::list))
         .route("/api/v1/inks", get(inks::list))
         .route("/api/v1/events", get(events::stream))
         .layer(middleware::from_fn_with_state(
@@ -133,20 +132,12 @@ mod tests {
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
-            guards: crate::config::GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
         let app = build(state);
@@ -183,12 +174,7 @@ mod tests {
             "reviewer".into(),
             crate::config::InkConfig {
                 description: None,
-                provider: Some("claude".into()),
-                model: None,
-                mode: Some("autonomous".into()),
-                unrestricted: Some(true),
-                instructions: Some("Review code".into()),
-                instructions_file: None,
+                command: Some("Review code".into()),
             },
         );
         let config = Config {
@@ -200,20 +186,12 @@ mod tests {
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
-            guards: crate::config::GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: inks.clone(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            inks,
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, inks).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
         let app = build(state);
@@ -222,19 +200,6 @@ mod tests {
         resp.assert_status_ok();
         let body = resp.text();
         assert!(body.contains("reviewer"));
-    }
-
-    #[tokio::test]
-    async fn test_providers() {
-        let server = test_server().await;
-        let resp = server.get("/api/v1/providers").await;
-        resp.assert_status_ok();
-        let body = resp.text();
-        assert!(body.contains("\"providers\""));
-        assert!(body.contains("\"shell\""));
-        assert!(body.contains("\"claude\""));
-        assert!(body.contains("\"available\""));
-        assert!(body.contains("\"capabilities\""));
     }
 
     #[tokio::test]
@@ -280,7 +245,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "create-test",
                 "workdir": "/tmp",
-                "prompt": "Do something"
+                "command": "Do something"
             }))
             .await;
         resp.assert_status(StatusCode::CREATED);
@@ -297,7 +262,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "list-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
 
@@ -315,7 +280,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "get-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
@@ -335,7 +300,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "kill-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
@@ -360,7 +325,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "del-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
@@ -385,7 +350,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "delrun-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
@@ -410,7 +375,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "by-name-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
 
@@ -428,7 +393,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "kill-name-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
 
@@ -444,7 +409,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "del-name-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
 
@@ -463,7 +428,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "out-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
@@ -492,7 +457,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "inp-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
@@ -523,7 +488,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "interv-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
@@ -551,7 +516,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "resume-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
@@ -721,7 +686,7 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "dl-test",
                 "workdir": "/tmp",
-                "prompt": "test"
+                "command": "test"
             }))
             .await;
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
@@ -778,20 +743,12 @@ mod tests {
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
-            guards: crate::config::GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = crate::api::AppState::new(config, manager, peer_registry);
         let app = build(state.clone());
@@ -822,22 +779,12 @@ mod tests {
         let req = pulpo_common::api::CreateSessionRequest {
             name: "ws-dead".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
-        let (session, _) = state.session_manager.create_session(req).await.unwrap();
+        let session = state.session_manager.create_session(req).await.unwrap();
         state
             .session_manager
             .kill_session(&session.id.to_string())
@@ -914,20 +861,12 @@ mod tests {
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
-            guards: crate::config::GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(FailIsAliveBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = crate::api::AppState::new(config, manager, peer_registry);
 
@@ -935,22 +874,12 @@ mod tests {
         let req = pulpo_common::api::CreateSessionRequest {
             name: "ws-err".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
-        let (session, _) = state.session_manager.create_session(req).await.unwrap();
+        let session = state.session_manager.create_session(req).await.unwrap();
 
         let app = build(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -974,22 +903,12 @@ mod tests {
         let req = pulpo_common::api::CreateSessionRequest {
             name: "ws-upgrade".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
-        let (session, _) = state.session_manager.create_session(req).await.unwrap();
+        let session = state.session_manager.create_session(req).await.unwrap();
 
         // WebSocket upgrade should succeed for a running session
         let result = tokio_tungstenite::connect_async(format!(
@@ -1012,22 +931,12 @@ mod tests {
         let req = pulpo_common::api::CreateSessionRequest {
             name: "ws-echo-bin".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
-        let (session, _) = state.session_manager.create_session(req).await.unwrap();
+        let session = state.session_manager.create_session(req).await.unwrap();
 
         let (mut ws, _) = tokio_tungstenite::connect_async(format!(
             "ws://{addr}/api/v1/sessions/{}/stream",
@@ -1060,22 +969,12 @@ mod tests {
         let req = pulpo_common::api::CreateSessionRequest {
             name: "ws-echo-txt".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
-        let (session, _) = state.session_manager.create_session(req).await.unwrap();
+        let session = state.session_manager.create_session(req).await.unwrap();
 
         let (mut ws, _) = tokio_tungstenite::connect_async(format!(
             "ws://{addr}/api/v1/sessions/{}/stream",
@@ -1106,22 +1005,12 @@ mod tests {
         let req = pulpo_common::api::CreateSessionRequest {
             name: "ws-close".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
-        let (session, _) = state.session_manager.create_session(req).await.unwrap();
+        let session = state.session_manager.create_session(req).await.unwrap();
 
         let (mut ws, _) = tokio_tungstenite::connect_async(format!(
             "ws://{addr}/api/v1/sessions/{}/stream",
@@ -1163,20 +1052,12 @@ mod tests {
                 token: TEST_TOKEN.into(),
             },
             peers: HashMap::new(),
-            guards: crate::config::GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
         let app = build(state);
@@ -1332,20 +1213,12 @@ mod tests {
                 token: TEST_TOKEN.into(),
             },
             peers: HashMap::new(),
-            guards: crate::config::GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = crate::api::AppState::new(config, manager, peer_registry);
         let app = build(state.clone());
@@ -1438,20 +1311,12 @@ mod tests {
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
-            guards: crate::config::GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry);
 

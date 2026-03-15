@@ -68,7 +68,9 @@ export function SessionList({ sessions, onRefresh }: SessionListProps) {
             <div className="min-w-0 flex-1">
               <strong>{session.name}</strong>
               <p className="truncate text-sm text-muted-foreground">
-                {session.prompt.length > 80 ? session.prompt.slice(0, 80) + '...' : session.prompt}
+                {(session.description || session.command).length > 80
+                  ? (session.description || session.command).slice(0, 80) + '...'
+                  : session.description || session.command}
               </p>
             </div>
             <Badge variant="outline" className="text-[0.625rem] uppercase">
@@ -83,15 +85,18 @@ export function SessionList({ sessions, onRefresh }: SessionListProps) {
             >
               <div className="space-y-1 py-2 text-sm">
                 <p>
-                  <span className="text-muted-foreground">Provider:</span> {session.provider}
+                  <span className="text-muted-foreground">Command:</span> {session.command}
                 </p>
                 <p>
                   <span className="text-muted-foreground">Created:</span>{' '}
                   {new Date(session.created_at).toLocaleString()}
                 </p>
-                <p>
-                  <span className="text-muted-foreground">Prompt:</span> {session.prompt}
-                </p>
+                {session.description && (
+                  <p>
+                    <span className="text-muted-foreground">Description:</span>{' '}
+                    {session.description}
+                  </p>
+                )}
               </div>
               <div className="flex gap-2">
                 <Button

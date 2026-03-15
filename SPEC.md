@@ -2,11 +2,10 @@
 
 > _Eight arms, one brain — orchestrating agents across your network._
 >
-> Last verified against code: 2026-03-12
+> Last verified against code: 2026-03-15
 
-Pulpo is a lightweight daemon that manages coding agent sessions (Claude Code,
-Codex, Gemini, OpenCode, Shell) across multiple machines on a trusted network
-(LAN, VPN, or Tailscale).
+Pulpo is a lightweight daemon that manages coding agent sessions across multiple
+machines on a trusted network (LAN, VPN, or Tailscale).
 It abstracts tmux management behind a clean API, and provides a mobile-friendly
 web UI for orchestrating agents from your phone or laptop.
 
@@ -91,16 +90,16 @@ want to manage sessions from a terminal instead of the web UI.
 
 ```bash
 # Local usage (talks to local pulpod)
-pulpo spawn my-api --workdir ~/repos/my-api --provider claude "Fix the auth bug"
+pulpo spawn my-api --workdir ~/repos/my-api -- claude "Fix the auth bug"
 pulpo list
 pulpo logs my-api
 pulpo kill my-api
-pulpo resume my-api         # after reboot, resume Claude conversation (auto-attaches)
+pulpo resume my-api         # after reboot, resume conversation (auto-attaches)
 pulpo nodes                 # list all pulpod peers on the Tailnet
 pulpo list --node server    # list sessions on a remote node
 
 # Remote usage (talks to remote pulpod)
-pulpo --node server spawn ml-train --workdir ~/repos/ml-model --provider claude "Train it"
+pulpo --node server spawn ml-train --workdir ~/repos/ml-model -- claude "Train it"
 ```
 
 #### 3. Web UI
@@ -113,7 +112,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 - **Session detail**: live terminal output (xterm.js), input field, metadata
 - **History**: session history with search/filter
 - **Ocean**: gamified canvas view with animated session octopuses and node landmarks
-- **Settings**: node config, guard configuration, peer management
+- **Settings**: node config, peer management
 
 ---
 
@@ -175,10 +174,9 @@ Stored in `~/.pulpo/state.db` (SQLite):
 | `id`              | UUID                                                    |
 | `name`            | Human-readable session name (default: workdir basename) |
 | `workdir`         | Absolute path to the working directory                  |
-| `provider`        | `claude`, `codex`                                       |
-| `prompt`          | The original prompt/task description                    |
-| `conversation_id` | Claude Code conversation ID (from ~/.claude/)           |
-| `status`          | `creating`, `running`, `completed`, `dead`, `stale`     |
+| `command`         | Shell command executed in the session                   |
+| `description`     | Optional human-readable description                     |
+| `status`          | `creating`, `active`, `idle`, `finished`, `killed`, `lost` |
 | `exit_code`       | Process exit code (null if still running)               |
 | `backend_session_id`    | Backend-specific session identifier                     |
 | `output_snapshot` | Last N lines of terminal output                         |
@@ -271,12 +269,12 @@ Direct tmux management on macOS and Linux:
 
 ```
 pulpod
-  └─▶ tmux new-session -d -s pulpo-<session-name> -c <workdir>
-       └─▶ claude --dangerously-skip-permissions  (or codex --full-auto)
+  └─▶ tmux new-session -d -s <session-name> -c <workdir>
+       └─▶ <command>  (e.g. claude, codex, gemini, or any shell command)
 ```
 
 - Output streaming: `tmux pipe-pane` to a log file + periodic `capture-pane`
-- Input: `tmux send-keys -t pulpo-<session-name> "text" Enter`
+- Input: `tmux send-keys -t <session-name> "text" Enter`
 - Attach (web): WebSocket ↔ PTY bridge that connects to the tmux session
 
 ---
@@ -347,26 +345,17 @@ WS     /sessions/:id/stream   Stream terminal output (WebSocket)
 {
   "name": "my-api",
   "workdir": "/home/user/repos/my-api",
-  "provider": "claude",
-  "prompt": "Fix the auth bug in login.py",
-  "mode": "interactive",
-  "unrestricted": false,
-  "model": "sonnet",
-  "system_prompt": "Focus on security",
-  "allowed_tools": ["Read", "Glob", "Grep"],
+  "command": "claude 'Fix the auth bug in login.py'",
+  "description": "Fix auth bug",
   "metadata": { "discord_channel_id": "123456" },
-  "ink": "reviewer",
-  "max_turns": 50,
-  "max_budget_usd": 10.0,
-  "output_format": "json"
+  "ink": "reviewer"
 }
 ```
 
-`name` is required. All other fields are optional. `workdir` defaults to the user's home directory,
-`prompt` defaults to empty, and `provider` defaults to the configured
-`default_provider` (or `"claude"` if unset). `mode` is `"interactive"`
-(default) or `"autonomous"`. If `ink` is set, its config is used as
-defaults; explicit fields override ink values.
+`name` is required. All other fields are optional. `workdir` defaults to the
+user's home directory, `command` defaults to the ink's command or an
+interactive shell. If `ink` is set, its config is used as defaults; explicit
+fields override ink values.
 
 #### GET /sessions
 
@@ -376,13 +365,10 @@ defaults; explicit fields override ink values.
     "id": "a1b2c3d4-...",
     "name": "my-api",
     "workdir": "/home/user/repos/my-api",
-    "provider": "claude",
-    "prompt": "Fix the auth bug in login.py",
-    "status": "running",
-    "mode": "interactive",
-    "model": "sonnet",
+    "command": "claude 'Fix the auth bug in login.py'",
+    "description": "Fix auth bug",
+    "status": "active",
     "ink": "reviewer",
-    "guard_config": { "unrestricted": false },
     "output_snapshot": "Analyzing login.py...\nFound issue in validate_token()...",
     "created_at": "2026-02-16T10:30:00Z",
     "updated_at": "2026-02-16T10:35:00Z"
@@ -390,10 +376,9 @@ defaults; explicit fields override ink values.
 ]
 ```
 
-The full `Session` object includes additional nullable fields: `conversation_id`,
-`exit_code`, `backend_session_id`, `allowed_tools`, `system_prompt`, `metadata`,
-`intervention_reason`, `intervention_at`, `last_output_at`, `idle_since`,
-`max_turns`, `max_budget_usd`, `output_format`.
+The full `Session` object includes additional nullable fields: `exit_code`,
+`backend_session_id`, `metadata`, `intervention_code`, `intervention_reason`,
+`intervention_at`, `last_output_at`, `idle_since`.
 
 ### Node
 
@@ -417,7 +402,7 @@ GET    /events                SSE event stream
 ```
 
 `/events` emits tagged SSE events:
-- `event: session` — session lifecycle updates (`creating`, `running`, `completed`, `dead`, `stale`)
+- `event: session` — session lifecycle updates (`creating`, `active`, `idle`, `finished`, `killed`, `lost`)
 
 ### Quick Reference
 
@@ -463,16 +448,16 @@ Single binary to distribute — no separate web server needed.
 │                             │
 │  ● mac-mini (2 running)    │
 │  ┌─────────────────────┐   │
-│  │ ● my-api    claude  │──▶│
+│  │ ● my-api            │──▶│
 │  │   Fix auth   2h ago │   │
 │  ├─────────────────────┤   │
-│  │ ○ docs      codex   │──▶│
+│  │ ○ docs              │──▶│
 │  │   Update API  done  │   │
 │  └─────────────────────┘   │
 │                             │
 │  ● server (1 running)      │
 │  ┌─────────────────────┐   │
-│  │ ● ml-model  claude  │──▶│
+│  │ ● ml-model          │──▶│
 │  │   Train      3h ago │   │
 │  └─────────────────────┘   │
 │                             │
@@ -489,7 +474,7 @@ Single binary to distribute — no separate web server needed.
 ┌─────────────────────────────┐
 │  ← my-api         ● running│
 ├─────────────────────────────┤
-│  claude · mac-mini · 2h    │
+│  mac-mini · 2h              │
 │  "Fix the auth bug"        │
 ├─────────────────────────────┤
 │                             │
@@ -526,7 +511,7 @@ See [CLAUDE.md](CLAUDE.md) for the full, maintained project layout. Key director
 pulpo/
 ├── crates/
 │   ├── pulpod/src/             # Daemon: Axum API, tmux backend, SQLite, watchdog,
-│   │   ├── api/                #   MCP server, mDNS, guard enforcement, SSE, inks
+│   │   ├── api/                #   MCP server, mDNS, SSE, inks
 │   │   ├── backend/            #   tmux.rs — terminal backend
 │   │   ├── session/            #   manager, state machine, output capture, PTY bridge
 │   │   ├── store/              #   SQLite persistence + migrations
@@ -535,8 +520,8 @@ pulpo/
 │   │   ├── discovery/          #   mDNS service discovery
 │   │   └── mcp/                #   MCP server (session tools as MCP resources)
 │   ├── pulpo-cli/src/          # CLI: thin client, clap commands
-│   └── pulpo-common/src/       # Shared types: Session, Provider, NodeInfo, PeerInfo,
-│                               #   GuardConfig (binary toggle), SessionEvent, API request/response
+│   └── pulpo-common/src/       # Shared types: Session, NodeInfo, PeerInfo,
+│                               #   SessionEvent, API request/response
 ├── web/                        # React 19 + Vite + Tailwind v4 + shadcn/ui
 └── contrib/discord-bot/        # Discord bot: slash commands + SSE listener
 ```
@@ -574,14 +559,12 @@ Ship the smallest useful thing first.
 - [x] `pulpo` CLI: spawn, list, kill, logs
 - [x] Web UI: dashboard + session list + output viewer (polling, no live terminal)
 - [x] Single-node only (no peer discovery)
-- [x] Claude Code provider only
+- [x] Command-agnostic sessions (any shell command)
 
 ### Out of Scope (Phase 2+)
 
 - [x] WebSocket streaming + live terminal (xterm.js attach)
 - [x] Multi-node peer discovery
-- [x] Codex provider support
-- [x] Environment sanitization + sandbox profiles
 - [x] Session resume after reboot
 - [x] In-app + desktop notifications (Notification API)
 - [x] iOS native app (Tauri 2 + TestFlight)
@@ -610,10 +593,10 @@ Ship the smallest useful thing first.
 - Aggregated dashboard across all nodes
 - Remote session spawning from any node's UI
 
-### Phase 4: Sandboxing ✅
+### Phase 4: Command-Agnostic Sessions ✅
 
-- ✅ Codex provider support
-- ✅ Binary guard toggle (unrestricted on/off) with per-provider flags
+- ✅ Command-agnostic session model (any shell command instead of provider enum)
+- ✅ Inks simplified to description + command
 
 ### Phase 5: Web UI ✅
 
@@ -626,8 +609,8 @@ Ship the smallest useful thing first.
 **Deliverables:**
 
 - ✅ Config API (`GET/PUT /api/v1/config`) with hot-reload and restart detection
-- ✅ Settings view with tabbar navigation (Node, Guards, Peers)
-- ✅ Session list filtering (`status`, `provider`, `search`, `sort`, `order` query params)
+- ✅ Settings view with tabbar navigation (Node, Peers)
+- ✅ Session list filtering (`status`, `search`, `sort`, `order` query params)
 - ✅ Session output download endpoint (`GET /api/v1/sessions/{id}/output/download`)
 - ✅ Session history view with search/filter bar
 - ✅ Chat view (Messages/Messagebar) with Terminal toggle
@@ -659,8 +642,8 @@ Tauri 2 builds native iOS `.ipa` and Android `.apk` from the same React + Rust c
 
 ### Phase 8: Control Plane + Notifications ✅
 
-- ✅ Flexible session model (model, allowed_tools, system_prompt, metadata, ink)
-- ✅ Ink config (`[inks.name]` in config.toml, `GET /api/v1/inks`)
+- ✅ Flexible session model (command, description, metadata, ink)
+- ✅ Ink config (`[inks.name]` in config.toml with command + description, `GET /api/v1/inks`)
 - ✅ SSE event stream (`GET /api/v1/events`, broadcast channel, SessionEvent)
 - ✅ Discord webhook notifications (`[notifications.discord]` config)
 - ✅ Discord bot (`contrib/discord-bot/`) — slash commands + SSE listener
@@ -677,13 +660,9 @@ Tauri 2 builds native iOS `.ipa` and Android `.apk` from the same React + Rust c
 name = "mac-mini"       # Display name (default: hostname)
 port = 7433             # API port (default: 7433)
 bind = "local"          # "local", "tailscale", "public", or "container"
-default_provider = "codex"  # Default provider for new sessions (default: "claude")
 
 [auth]
 # token is auto-generated on first run (only used with bind = "public")
-
-[guards]
-unrestricted = false    # true = disable all provider safety flags
 
 [watchdog]
 enabled = true
@@ -698,15 +677,12 @@ macbook = "macbook:7433"
 server = "hetzner:7433"
 
 [inks.reviewer]
-provider = "claude"
-unrestricted = false
-instructions = "You are a code reviewer. Focus on correctness and security."
+command = "claude"
+description = "Code reviewer focused on correctness and security"
 
 [inks.coder]
-provider = "claude"
-mode = "autonomous"
-unrestricted = false
-instructions = "Implement the task with tests and clear commit messages."
+command = "claude --dangerously-skip-permissions"
+description = "Autonomous coder with tests and clear commit messages"
 
 [notifications.discord]
 webhook_url = "https://discord.com/api/webhooks/..."
@@ -730,7 +706,7 @@ events = ["running", "completed", "dead"]   # optional filter; omit for all even
   in every request. Retrieve it locally via `GET /api/v1/auth/token`. In `container`
   mode, auth is disabled — the container runtime provides isolation.
 - **Agents**: agents run as your user (same as running Claude Code directly).
-  The `unrestricted` guard toggle controls environment variable sanitization and agent permissions.
+  The `command` field gives full control over what runs in the session.
 - **No secrets in the API**: the API never exposes API keys. Keys are in the
   environment or config files on each node. The daemon passes them through to
   the agent process.

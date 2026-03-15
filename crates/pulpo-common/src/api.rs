@@ -5,34 +5,21 @@ use serde::{Deserialize, Serialize};
 use crate::auth::BindMode;
 use crate::node::NodeInfo;
 use crate::peer::{PeerEntry, PeerInfo};
-use crate::session::{Provider, Session, SessionMode};
+use crate::session::Session;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSessionRequest {
     pub name: String,
     pub workdir: Option<String>,
-    pub provider: Option<Provider>,
-    pub prompt: Option<String>,
-    pub mode: Option<SessionMode>,
-    pub unrestricted: Option<bool>,
-    pub model: Option<String>,
-    pub allowed_tools: Option<Vec<String>>,
-    pub system_prompt: Option<String>,
-    pub metadata: Option<HashMap<String, String>>,
+    pub command: Option<String>,
     pub ink: Option<String>,
-    pub max_turns: Option<u32>,
-    pub max_budget_usd: Option<f64>,
-    pub output_format: Option<String>,
-    pub worktree: Option<bool>,
-    pub conversation_id: Option<String>,
+    pub description: Option<String>,
+    pub metadata: Option<HashMap<String, String>>,
 }
 
-/// Response from session creation, includes the session and any capability warnings.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateSessionResponse {
     pub session: Session,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,38 +35,6 @@ pub struct OutputQuery {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
-}
-
-/// Capability matrix for a single provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(clippy::struct_excessive_bools)]
-pub struct ProviderCapabilitiesResponse {
-    pub model: bool,
-    pub system_prompt: bool,
-    pub allowed_tools: bool,
-    pub max_turns: bool,
-    pub max_budget_usd: bool,
-    pub output_format: bool,
-    pub worktree: bool,
-    pub unrestricted: bool,
-    pub resume: bool,
-}
-
-/// Information about a single provider: identity, availability, and capabilities.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderInfoResponse {
-    pub provider: Provider,
-    /// The binary name or path that would be invoked.
-    pub binary: String,
-    /// Whether the binary was found on this node.
-    pub available: bool,
-    pub capabilities: ProviderCapabilitiesResponse,
-}
-
-/// Response from `GET /api/v1/providers`.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ProvidersResponse {
-    pub providers: Vec<ProviderInfoResponse>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -107,29 +62,9 @@ pub struct ConfigResponse {
     pub node: NodeConfigResponse,
     pub auth: AuthConfigResponse,
     pub peers: HashMap<String, PeerEntry>,
-    pub guards: GuardDefaultConfigResponse,
-    #[serde(default)]
-    pub session_defaults: SessionDefaultsConfigResponse,
     pub watchdog: WatchdogConfigResponse,
     pub notifications: NotificationsConfigResponse,
     pub inks: HashMap<String, InkConfigResponse>,
-}
-
-/// Session default values applied when the spawn request omits them.
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
-pub struct SessionDefaultsConfigResponse {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_turns: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_budget_usd: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_format: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -155,12 +90,6 @@ pub struct NodeConfigResponse {
     pub tag: Option<String>,
     pub seed: Option<String>,
     pub discovery_interval_secs: u64,
-    pub default_provider: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct GuardDefaultConfigResponse {
-    pub unrestricted: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -198,12 +127,7 @@ pub struct NotificationsConfigResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InkConfigResponse {
     pub description: Option<String>,
-    pub provider: Option<String>,
-    pub model: Option<String>,
-    pub mode: Option<String>,
-    pub unrestricted: Option<bool>,
-    pub instructions: Option<String>,
-    pub instructions_file: Option<String>,
+    pub command: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -225,10 +149,6 @@ pub struct UpdateConfigRequest {
     pub tag: Option<String>,
     pub seed: Option<String>,
     pub discovery_interval_secs: Option<u64>,
-    // Guard defaults
-    pub unrestricted: Option<bool>,
-    // Session defaults
-    pub session_defaults: Option<SessionDefaultsConfigResponse>,
     // Watchdog
     pub watchdog_enabled: Option<bool>,
     pub watchdog_memory_threshold: Option<u8>,
@@ -301,7 +221,6 @@ pub struct InterventionEventResponse {
 #[derive(Debug, Default, Deserialize)]
 pub struct ListSessionsQuery {
     pub status: Option<String>,
-    pub provider: Option<String>,
     pub search: Option<String>,
     pub sort: Option<String>,
     pub order: Option<String>,
@@ -321,14 +240,9 @@ mod tests {
                 tag: None,
                 seed: None,
                 discovery_interval_secs: 30,
-                default_provider: None,
             },
             auth: AuthConfigResponse {},
             peers: HashMap::new(),
-            guards: GuardDefaultConfigResponse {
-                unrestricted: false,
-            },
-            session_defaults: SessionDefaultsConfigResponse::default(),
             watchdog: WatchdogConfigResponse {
                 enabled: true,
                 memory_threshold: 90,
@@ -348,38 +262,7 @@ mod tests {
 
     #[test]
     fn test_config_response_serialize() {
-        let resp = ConfigResponse {
-            node: NodeConfigResponse {
-                name: "test".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                bind: BindMode::Local,
-                tag: None,
-                seed: None,
-                discovery_interval_secs: 30,
-                default_provider: None,
-            },
-            auth: AuthConfigResponse {},
-            peers: HashMap::new(),
-            guards: GuardDefaultConfigResponse {
-                unrestricted: false,
-            },
-            session_defaults: SessionDefaultsConfigResponse::default(),
-            watchdog: WatchdogConfigResponse {
-                enabled: true,
-                memory_threshold: 90,
-                check_interval_secs: 10,
-                breach_count: 3,
-                idle_timeout_secs: 600,
-                idle_action: "alert".into(),
-                finished_ttl_secs: 0,
-            },
-            notifications: NotificationsConfigResponse {
-                discord: None,
-                webhooks: vec![],
-            },
-            inks: HashMap::new(),
-        };
+        let resp = test_config_response();
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"test\""));
         assert!(json.contains("7433"));
@@ -387,12 +270,11 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"guards":{"unrestricted":true},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert"},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert"},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
         assert_eq!(resp.node.bind, BindMode::Local);
-        assert!(resp.guards.unrestricted);
         assert!(resp.watchdog.enabled);
         assert!(resp.notifications.discord.is_none());
         assert!(resp.inks.is_empty());
@@ -400,40 +282,9 @@ mod tests {
 
     #[test]
     fn test_config_response_debug() {
-        let resp = ConfigResponse {
-            node: NodeConfigResponse {
-                name: "debug".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                bind: BindMode::Local,
-                tag: None,
-                seed: None,
-                discovery_interval_secs: 30,
-                default_provider: None,
-            },
-            auth: AuthConfigResponse {},
-            peers: HashMap::new(),
-            guards: GuardDefaultConfigResponse {
-                unrestricted: false,
-            },
-            session_defaults: SessionDefaultsConfigResponse::default(),
-            watchdog: WatchdogConfigResponse {
-                enabled: true,
-                memory_threshold: 90,
-                check_interval_secs: 10,
-                breach_count: 3,
-                idle_timeout_secs: 600,
-                idle_action: "alert".into(),
-                finished_ttl_secs: 0,
-            },
-            notifications: NotificationsConfigResponse {
-                discord: None,
-                webhooks: vec![],
-            },
-            inks: HashMap::new(),
-        };
+        let resp = test_config_response();
         let debug = format!("{resp:?}");
-        assert!(debug.contains("debug"));
+        assert!(debug.contains("test"));
     }
 
     #[test]
@@ -446,17 +297,9 @@ mod tests {
             tag: None,
             seed: None,
             discovery_interval_secs: 30,
-            default_provider: None,
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("test"));
-    }
-
-    #[test]
-    fn test_guard_default_config_response_debug() {
-        let resp = GuardDefaultConfigResponse { unrestricted: true };
-        let debug = format!("{resp:?}");
-        assert!(debug.contains("true"));
     }
 
     #[test]
@@ -467,7 +310,6 @@ mod tests {
         assert_eq!(req.port, Some(9999));
         assert!(req.data_dir.is_none());
         assert!(req.bind.is_none());
-        assert!(req.unrestricted.is_none());
         assert!(req.peers.is_none());
     }
 
@@ -513,80 +355,42 @@ mod tests {
     fn test_config_response_with_peers() {
         let mut peers: HashMap<String, PeerEntry> = HashMap::new();
         peers.insert("remote".into(), PeerEntry::Simple("10.0.0.1:7433".into()));
-        let resp = ConfigResponse {
-            node: NodeConfigResponse {
-                name: "n".into(),
-                port: 7433,
-                data_dir: "/d".into(),
-                bind: BindMode::Local,
-                tag: None,
-                seed: None,
-                discovery_interval_secs: 30,
-                default_provider: None,
-            },
-            auth: AuthConfigResponse {},
-            peers,
-            guards: GuardDefaultConfigResponse {
-                unrestricted: false,
-            },
-            session_defaults: SessionDefaultsConfigResponse::default(),
-            watchdog: WatchdogConfigResponse {
-                enabled: true,
-                memory_threshold: 90,
-                check_interval_secs: 10,
-                breach_count: 3,
-                idle_timeout_secs: 600,
-                idle_action: "alert".into(),
-                finished_ttl_secs: 0,
-            },
-            notifications: NotificationsConfigResponse {
-                discord: None,
-                webhooks: vec![],
-            },
-            inks: HashMap::new(),
-        };
+        let mut resp = test_config_response();
+        resp.peers = peers;
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("remote"));
     }
 
     #[test]
     fn test_update_config_request_with_all_fields() {
-        let json = r#"{"node_name":"new","port":9999,"data_dir":"/d","bind":"public","unrestricted":true,"peers":{"remote":"10.0.0.1:7433"}}"#;
+        let json = r#"{"node_name":"new","port":9999,"data_dir":"/d","bind":"public","peers":{"remote":"10.0.0.1:7433"}}"#;
         let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.node_name, Some("new".into()));
         assert_eq!(req.port, Some(9999));
         assert_eq!(req.data_dir, Some("/d".into()));
         assert_eq!(req.bind, Some(BindMode::Public));
-        assert_eq!(req.unrestricted, Some(true));
         assert!(req.peers.is_some());
     }
 
     #[test]
     fn test_create_session_request_deserialize() {
-        let json = r#"{"name":"my-task","workdir":"/tmp/repo","prompt":"Fix bug"}"#;
+        let json = r#"{"name":"my-task","workdir":"/tmp/repo","description":"Fix bug"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.name, "my-task");
         assert_eq!(req.workdir.as_deref(), Some("/tmp/repo"));
-        assert_eq!(req.prompt.as_deref(), Some("Fix bug"));
-        assert!(req.provider.is_none());
-        assert!(req.mode.is_none());
-        assert!(req.model.is_none());
-        assert!(req.allowed_tools.is_none());
-        assert!(req.system_prompt.is_none());
+        assert_eq!(req.description.as_deref(), Some("Fix bug"));
+        assert!(req.command.is_none());
         assert!(req.metadata.is_none());
         assert!(req.ink.is_none());
     }
 
     #[test]
-    fn test_create_session_request_with_all_fields() {
-        let json = r#"{"name":"my-session","workdir":"/repo","provider":"claude","prompt":"Do it","mode":"autonomous","model":"opus","allowed_tools":["Read","Grep"],"system_prompt":"Be concise","metadata":{"discord_channel":"123"},"ink":"coder"}"#;
+    fn test_create_session_request_with_command() {
+        let json = r#"{"name":"my-session","workdir":"/repo","command":"claude -p 'Do it'","description":"test","metadata":{"discord_channel":"123"},"ink":"coder"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.name, "my-session");
-        assert_eq!(req.provider, Some(crate::session::Provider::Claude));
-        assert_eq!(req.mode, Some(SessionMode::Autonomous));
-        assert_eq!(req.model, Some("opus".into()));
-        assert_eq!(req.allowed_tools, Some(vec!["Read".into(), "Grep".into()]));
-        assert_eq!(req.system_prompt, Some("Be concise".into()));
+        assert_eq!(req.command, Some("claude -p 'Do it'".into()));
+        assert_eq!(req.description, Some("test".into()));
         assert_eq!(
             req.metadata.as_ref().unwrap().get("discord_channel"),
             Some(&"123".into())
@@ -599,7 +403,7 @@ mod tests {
         let json = r#"{"name":"my-task","workdir":"/tmp"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.workdir.as_deref(), Some("/tmp"));
-        assert!(req.prompt.is_none());
+        assert!(req.command.is_none());
     }
 
     #[test]
@@ -669,59 +473,13 @@ mod tests {
         let req = CreateSessionRequest {
             name: "test".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
+            command: Some("echo hello".into()),
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
+            description: None,
+            metadata: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("/tmp"));
-    }
-
-    #[test]
-    fn test_create_session_request_with_conversation_id() {
-        let json =
-            r#"{"name":"test","workdir":"/repo","prompt":"test","conversation_id":"conv-abc"}"#;
-        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.conversation_id.as_deref(), Some("conv-abc"));
-    }
-
-    #[test]
-    fn test_create_session_request_without_conversation_id() {
-        let json = r#"{"name":"test","workdir":"/repo","prompt":"test"}"#;
-        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert!(req.conversation_id.is_none());
-    }
-
-    #[test]
-    fn test_create_session_request_with_interactive_mode() {
-        let json = r#"{"name":"test","workdir":"/repo","prompt":"test","mode":"interactive"}"#;
-        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.mode, Some(SessionMode::Interactive));
-    }
-
-    #[test]
-    fn test_create_session_request_with_unrestricted() {
-        let json = r#"{"name":"test","workdir":"/repo","prompt":"test","unrestricted":true}"#;
-        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.unrestricted, Some(true));
-    }
-
-    #[test]
-    fn test_create_session_request_without_unrestricted() {
-        let json = r#"{"name":"test","workdir":"/repo","prompt":"test"}"#;
-        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert!(req.unrestricted.is_none());
     }
 
     #[test]
@@ -1016,7 +774,6 @@ mod tests {
     fn test_list_sessions_query_default() {
         let q = ListSessionsQuery::default();
         assert!(q.status.is_none());
-        assert!(q.provider.is_none());
         assert!(q.search.is_none());
         assert!(q.sort.is_none());
         assert!(q.order.is_none());
@@ -1024,10 +781,10 @@ mod tests {
 
     #[test]
     fn test_list_sessions_query_deserialize() {
-        let json = r#"{"status":"running,completed","provider":"claude","search":"bug","sort":"created_at","order":"asc"}"#;
+        let json =
+            r#"{"status":"running,completed","search":"bug","sort":"created_at","order":"asc"}"#;
         let q: ListSessionsQuery = serde_json::from_str(json).unwrap();
         assert_eq!(q.status, Some("running,completed".into()));
-        assert_eq!(q.provider, Some("claude".into()));
         assert_eq!(q.search, Some("bug".into()));
         assert_eq!(q.sort, Some("created_at".into()));
         assert_eq!(q.order, Some("asc".into()));
@@ -1044,7 +801,6 @@ mod tests {
     fn test_list_sessions_query_debug() {
         let q = ListSessionsQuery {
             status: Some("active".into()),
-            provider: None,
             search: None,
             sort: None,
             order: None,
@@ -1083,7 +839,6 @@ mod tests {
             tag: None,
             seed: None,
             discovery_interval_secs: 30,
-            default_provider: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"bind\":\"tailscale\""));
@@ -1100,19 +855,9 @@ mod tests {
 
     #[test]
     fn test_auth_token_response_deserialize() {
-        let json = r#"{"token":"secret-token"}"#;
+        let json = r#"{"token":"abc123"}"#;
         let resp: AuthTokenResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.token, "secret-token");
-    }
-
-    #[test]
-    fn test_auth_token_response_roundtrip() {
-        let original = AuthTokenResponse {
-            token: "roundtrip-token".into(),
-        };
-        let json = serde_json::to_string(&original).unwrap();
-        let deserialized: AuthTokenResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.token, "roundtrip-token");
+        assert_eq!(resp.token, "abc123");
     }
 
     #[test]
@@ -1127,592 +872,133 @@ mod tests {
     #[test]
     fn test_pairing_url_response_serialize() {
         let resp = PairingUrlResponse {
-            url: "http://10.0.0.1:7433/pair".into(),
-            token: "pair-token".into(),
+            url: "http://example.com/pair?token=abc".into(),
+            token: "abc".into(),
         };
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"url\":\"http://10.0.0.1:7433/pair\""));
-        assert!(json.contains("\"token\":\"pair-token\""));
+        assert!(json.contains("http://example.com/pair?token=abc"));
     }
 
     #[test]
     fn test_pairing_url_response_deserialize() {
-        let json = r#"{"url":"http://host:7433/pair","token":"t123"}"#;
+        let json = r#"{"url":"http://pair.test","token":"tok"}"#;
         let resp: PairingUrlResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.url, "http://host:7433/pair");
-        assert_eq!(resp.token, "t123");
-    }
-
-    #[test]
-    fn test_pairing_url_response_roundtrip() {
-        let original = PairingUrlResponse {
-            url: "http://example.com/pair".into(),
-            token: "rt-token".into(),
-        };
-        let json = serde_json::to_string(&original).unwrap();
-        let deserialized: PairingUrlResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.url, "http://example.com/pair");
-        assert_eq!(deserialized.token, "rt-token");
+        assert_eq!(resp.url, "http://pair.test");
+        assert_eq!(resp.token, "tok");
     }
 
     #[test]
     fn test_pairing_url_response_debug() {
         let resp = PairingUrlResponse {
-            url: "http://debug.local/pair".into(),
-            token: "dbg".into(),
+            url: "u".into(),
+            token: "t".into(),
         };
         let debug = format!("{resp:?}");
-        assert!(debug.contains("debug.local"));
-        assert!(debug.contains("dbg"));
+        assert!(debug.contains("PairingUrlResponse"));
     }
 
     #[test]
-    fn test_webhook_endpoint_config_response_serialize() {
-        let resp = WebhookEndpointConfigResponse {
-            name: "ci-hook".into(),
-            url: "https://example.com/hook".into(),
-            events: vec!["finished".into()],
-            has_secret: true,
+    fn test_create_session_response_serialize() {
+        use crate::session::{Session, SessionStatus};
+        use chrono::Utc;
+        use uuid::Uuid;
+        let session = Session {
+            id: Uuid::nil(),
+            name: "test".into(),
+            workdir: "/tmp".into(),
+            command: "echo hi".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let resp = CreateSessionResponse { session };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"name\":\"test\""));
+    }
+
+    #[test]
+    fn test_ink_config_response_serialize() {
+        let resp = InkConfigResponse {
+            description: Some("Code review".into()),
+            command: Some("claude -p 'review'".into()),
         };
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"ci-hook\""));
-        assert!(json.contains("\"has_secret\":true"));
+        assert!(json.contains("Code review"));
+        assert!(json.contains("claude -p 'review'"));
     }
 
     #[test]
-    fn test_webhook_endpoint_config_response_roundtrip() {
-        let original = WebhookEndpointConfigResponse {
-            name: "hook".into(),
-            url: "https://example.com".into(),
-            events: vec!["killed".into(), "active".into()],
-            has_secret: false,
-        };
-        let json = serde_json::to_string(&original).unwrap();
-        let deserialized: WebhookEndpointConfigResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.name, "hook");
-        assert_eq!(deserialized.events.len(), 2);
-        assert!(!deserialized.has_secret);
-    }
-
-    #[test]
-    fn test_webhook_endpoint_config_response_debug_clone() {
-        let resp = WebhookEndpointConfigResponse {
-            name: "test".into(),
-            url: "https://test.com".into(),
-            events: vec![],
-            has_secret: false,
+    fn test_ink_config_response_clone() {
+        let resp = InkConfigResponse {
+            description: None,
+            command: None,
         };
         #[allow(clippy::redundant_clone)]
         let cloned = resp.clone();
-        let debug = format!("{cloned:?}");
-        assert!(debug.contains("test"));
+        assert!(cloned.description.is_none());
     }
 
     #[test]
-    fn test_webhook_endpoint_update_request_deserialize() {
-        let json =
-            r#"{"name":"hook","url":"https://example.com","events":["killed"],"secret":"key"}"#;
-        let req: WebhookEndpointUpdateRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.name, "hook");
-        assert_eq!(req.url, "https://example.com");
-        assert_eq!(req.events, vec!["killed"]);
-        assert_eq!(req.secret, Some("key".into()));
-    }
-
-    #[test]
-    fn test_webhook_endpoint_update_request_no_secret() {
-        let json = r#"{"name":"hook","url":"https://example.com"}"#;
-        let req: WebhookEndpointUpdateRequest = serde_json::from_str(json).unwrap();
-        assert!(req.secret.is_none());
-        assert!(req.events.is_empty());
-    }
-
-    #[test]
-    fn test_webhook_endpoint_update_request_debug_clone() {
-        let req = WebhookEndpointUpdateRequest {
-            name: "test".into(),
-            url: "https://test.com".into(),
-            events: vec![],
-            secret: None,
-        };
-        #[allow(clippy::redundant_clone)]
-        let cloned = req.clone();
-        let debug = format!("{cloned:?}");
-        assert!(debug.contains("test"));
-    }
-
-    #[test]
-    fn test_update_config_request_with_webhooks() {
-        let json =
-            r#"{"webhooks":[{"name":"hook","url":"https://a.com","events":[],"secret":null}]}"#;
-        let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
-        assert!(req.webhooks.is_some());
-        assert_eq!(req.webhooks.as_ref().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn test_create_session_response_serialize_no_warnings() {
-        use crate::session::{Session, SessionStatus};
-        use chrono::Utc;
-        use uuid::Uuid;
-        let session = Session {
-            id: Uuid::nil(),
-            name: "test".into(),
-            workdir: "/tmp".into(),
-            provider: crate::session::Provider::Claude,
-            prompt: "test".into(),
-            status: SessionStatus::Active,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        let resp = CreateSessionResponse {
-            session,
-            warnings: vec![],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"session\""));
-        assert!(!json.contains("\"warnings\""));
-    }
-
-    #[test]
-    fn test_create_session_response_serialize_with_warnings() {
-        use crate::session::{Session, SessionStatus};
-        use chrono::Utc;
-        use uuid::Uuid;
-        let session = Session {
-            id: Uuid::nil(),
-            name: "test".into(),
-            workdir: "/tmp".into(),
-            provider: crate::session::Provider::OpenCode,
-            prompt: "test".into(),
-            status: SessionStatus::Active,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        let resp = CreateSessionResponse {
-            session,
-            warnings: vec!["opencode does not support --model; value ignored".into()],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"warnings\""));
-        assert!(json.contains("--model"));
-    }
-
-    #[test]
-    fn test_create_session_response_debug() {
-        use crate::session::{Session, SessionStatus};
-        use chrono::Utc;
-        use uuid::Uuid;
-        let session = Session {
-            id: Uuid::nil(),
-            name: "test".into(),
-            workdir: "/tmp".into(),
-            provider: crate::session::Provider::Claude,
-            prompt: "test".into(),
-            status: SessionStatus::Active,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: None,
-            ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        let resp = CreateSessionResponse {
-            session,
-            warnings: vec![],
-        };
-        let debug = format!("{resp:?}");
-        assert!(debug.contains("CreateSessionResponse"));
-    }
-
-    #[test]
-    fn test_notifications_config_response_with_webhooks() {
-        let resp = NotificationsConfigResponse {
-            discord: None,
-            webhooks: vec![WebhookEndpointConfigResponse {
-                name: "hook".into(),
-                url: "https://example.com".into(),
-                events: vec![],
-                has_secret: false,
-            }],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"webhooks\""));
-        assert!(json.contains("\"hook\""));
-    }
-
-    #[test]
-    fn test_session_defaults_config_response_default() {
-        let sd = SessionDefaultsConfigResponse::default();
-        assert!(sd.provider.is_none());
-        assert!(sd.model.is_none());
-        assert!(sd.mode.is_none());
-        assert!(sd.max_turns.is_none());
-        assert!(sd.max_budget_usd.is_none());
-        assert!(sd.output_format.is_none());
-    }
-
-    #[test]
-    fn test_session_defaults_config_response_roundtrip() {
-        let sd = SessionDefaultsConfigResponse {
-            provider: Some("codex".into()),
-            model: Some("o3".into()),
-            mode: Some("autonomous".into()),
-            max_turns: Some(100),
-            max_budget_usd: Some(25.0),
-            output_format: Some("json".into()),
-        };
-        let json = serde_json::to_string(&sd).unwrap();
-        let back: SessionDefaultsConfigResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.provider.as_deref(), Some("codex"));
-        assert_eq!(back.model.as_deref(), Some("o3"));
-        assert_eq!(back.mode.as_deref(), Some("autonomous"));
-        assert_eq!(back.max_turns, Some(100));
-        assert!((back.max_budget_usd.unwrap() - 25.0).abs() < f64::EPSILON);
-        assert_eq!(back.output_format.as_deref(), Some("json"));
-    }
-
-    #[test]
-    fn test_session_defaults_config_response_debug_clone() {
-        let sd = SessionDefaultsConfigResponse {
-            provider: Some("claude".into()),
-            ..Default::default()
-        };
-        #[allow(clippy::redundant_clone)]
-        let cloned = sd.clone();
-        let debug = format!("{cloned:?}");
-        assert!(debug.contains("claude"));
-    }
-
-    #[test]
-    fn test_session_defaults_config_response_skip_serializing_none() {
-        let sd = SessionDefaultsConfigResponse::default();
-        let json = serde_json::to_string(&sd).unwrap();
-        // All fields are None, so nothing should be serialized
-        assert_eq!(json, "{}");
-    }
-
-    #[test]
-    fn test_config_response_with_session_defaults() {
-        let resp = ConfigResponse {
-            node: NodeConfigResponse {
-                name: "test".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                bind: BindMode::Local,
-                tag: None,
-                seed: None,
-                discovery_interval_secs: 30,
-                default_provider: None,
-            },
-            auth: AuthConfigResponse {},
-            peers: HashMap::new(),
-            guards: GuardDefaultConfigResponse {
-                unrestricted: false,
-            },
-            session_defaults: SessionDefaultsConfigResponse {
-                provider: Some("codex".into()),
-                model: Some("o3".into()),
-                ..Default::default()
-            },
-            watchdog: WatchdogConfigResponse {
-                enabled: true,
-                memory_threshold: 90,
-                check_interval_secs: 10,
-                breach_count: 3,
-                idle_timeout_secs: 600,
-                idle_action: "alert".into(),
-                finished_ttl_secs: 0,
-            },
-            notifications: NotificationsConfigResponse {
-                discord: None,
-                webhooks: vec![],
-            },
-            inks: HashMap::new(),
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"session_defaults\""));
-        assert!(json.contains("\"codex\""));
-        assert!(json.contains("\"o3\""));
-    }
-
-    #[test]
-    fn test_update_config_request_with_session_defaults() {
-        let json = r#"{"session_defaults":{"provider":"claude","model":"opus","max_turns":50}}"#;
-        let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
-        let sd = req.session_defaults.unwrap();
-        assert_eq!(sd.provider.as_deref(), Some("claude"));
-        assert_eq!(sd.model.as_deref(), Some("opus"));
-        assert_eq!(sd.max_turns, Some(50));
-        assert!(sd.mode.is_none());
-    }
-
-    #[test]
-    fn test_config_response_deserialize_missing_session_defaults() {
-        // Backward compat: old JSON without session_defaults should still deserialize
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"guards":{"unrestricted":false},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert"},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#;
-        let resp: ConfigResponse = serde_json::from_str(json).unwrap();
-        assert!(resp.session_defaults.provider.is_none());
-        assert!(resp.session_defaults.model.is_none());
-    }
-
-    #[test]
-    fn test_update_watchdog_request_deserialize() {
-        let json = r#"{"enabled":false,"memory_threshold":80,"idle_action":"kill"}"#;
-        let req: UpdateWatchdogRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.enabled, Some(false));
-        assert_eq!(req.memory_threshold, Some(80));
-        assert_eq!(req.idle_action.as_deref(), Some("kill"));
-        assert!(req.check_interval_secs.is_none());
-    }
-
-    #[test]
-    fn test_update_watchdog_request_empty() {
-        let json = "{}";
-        let req: UpdateWatchdogRequest = serde_json::from_str(json).unwrap();
+    fn test_update_watchdog_request_default() {
+        let req = UpdateWatchdogRequest::default();
         assert!(req.enabled.is_none());
         assert!(req.memory_threshold.is_none());
     }
 
     #[test]
-    fn test_update_watchdog_request_debug() {
-        let req = UpdateWatchdogRequest {
-            enabled: Some(true),
-            ..Default::default()
-        };
-        let debug = format!("{req:?}");
-        assert!(debug.contains("true"));
+    fn test_update_watchdog_request_deserialize() {
+        let json = r#"{"enabled":false,"memory_threshold":80}"#;
+        let req: UpdateWatchdogRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.enabled, Some(false));
+        assert_eq!(req.memory_threshold, Some(80));
     }
 
     #[test]
-    fn test_update_notifications_request_deserialize() {
-        let json = r#"{"discord":{"webhook_url":"https://test.com","events":["killed"]}}"#;
-        let req: UpdateNotificationsRequest = serde_json::from_str(json).unwrap();
-        let discord = req.discord.unwrap();
-        assert_eq!(discord.webhook_url, "https://test.com");
-        assert_eq!(discord.events, vec!["killed"]);
-        assert!(req.webhooks.is_none());
-    }
-
-    #[test]
-    fn test_update_notifications_request_empty() {
-        let json = "{}";
-        let req: UpdateNotificationsRequest = serde_json::from_str(json).unwrap();
+    fn test_update_notifications_request_default() {
+        let req = UpdateNotificationsRequest::default();
         assert!(req.discord.is_none());
         assert!(req.webhooks.is_none());
     }
 
     #[test]
-    fn test_update_notifications_request_debug() {
-        let req = UpdateNotificationsRequest::default();
-        let debug = format!("{req:?}");
-        assert!(debug.contains("UpdateNotificationsRequest"));
+    fn test_update_notifications_request_deserialize() {
+        let json = r#"{"discord":{"webhook_url":"http://hook","events":["killed"]}}"#;
+        let req: UpdateNotificationsRequest = serde_json::from_str(json).unwrap();
+        assert!(req.discord.is_some());
+        let d = req.discord.unwrap();
+        assert_eq!(d.webhook_url, "http://hook");
+        assert_eq!(d.events, vec!["killed"]);
     }
 
     #[test]
-    fn test_discord_webhook_update_request_deserialize() {
-        let json = r#"{"webhook_url":"https://test.com","events":["active","killed"]}"#;
-        let req: DiscordWebhookUpdateRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.webhook_url, "https://test.com");
-        assert_eq!(req.events, vec!["active", "killed"]);
+    fn test_webhook_endpoint_update_request() {
+        let json = r#"{"name":"test","url":"http://hook","events":["killed"],"secret":"s"}"#;
+        let req: WebhookEndpointUpdateRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "test");
+        assert_eq!(req.secret, Some("s".into()));
     }
 
     #[test]
-    fn test_discord_webhook_update_request_empty_events() {
-        let json = r#"{"webhook_url":"https://test.com"}"#;
-        let req: DiscordWebhookUpdateRequest = serde_json::from_str(json).unwrap();
-        assert!(req.events.is_empty());
-    }
-
-    #[test]
-    fn test_discord_webhook_update_request_debug_clone() {
-        let req = DiscordWebhookUpdateRequest {
-            webhook_url: "https://test.com".into(),
-            events: vec![],
+    fn test_webhook_endpoint_config_response_clone() {
+        let resp = WebhookEndpointConfigResponse {
+            name: "test".into(),
+            url: "http://hook".into(),
+            events: vec!["killed".into()],
+            has_secret: false,
         };
         #[allow(clippy::redundant_clone)]
-        let cloned = req.clone();
-        let debug = format!("{cloned:?}");
-        assert!(debug.contains("test.com"));
-    }
-
-    #[test]
-    fn test_provider_capabilities_response_serialize() {
-        let caps = ProviderCapabilitiesResponse {
-            model: true,
-            system_prompt: true,
-            allowed_tools: true,
-            max_turns: true,
-            max_budget_usd: true,
-            output_format: true,
-            worktree: true,
-            unrestricted: true,
-            resume: true,
-        };
-        let json = serde_json::to_string(&caps).unwrap();
-        assert!(json.contains("\"model\":true"));
-        assert!(json.contains("\"resume\":true"));
-    }
-
-    #[test]
-    fn test_provider_capabilities_response_deserialize() {
-        let json = r#"{"model":false,"system_prompt":false,"allowed_tools":false,"max_turns":false,"max_budget_usd":false,"output_format":false,"worktree":false,"unrestricted":false,"resume":false}"#;
-        let caps: ProviderCapabilitiesResponse = serde_json::from_str(json).unwrap();
-        assert!(!caps.model);
-        assert!(!caps.resume);
-    }
-
-    #[test]
-    fn test_provider_capabilities_response_debug_clone() {
-        let caps = ProviderCapabilitiesResponse {
-            model: true,
-            system_prompt: false,
-            allowed_tools: false,
-            max_turns: false,
-            max_budget_usd: false,
-            output_format: false,
-            worktree: false,
-            unrestricted: false,
-            resume: false,
-        };
-        #[allow(clippy::redundant_clone)]
-        let cloned = caps.clone();
-        let debug = format!("{cloned:?}");
-        assert!(debug.contains("model: true"));
-    }
-
-    #[test]
-    fn test_provider_info_response_serialize() {
-        let info = ProviderInfoResponse {
-            provider: Provider::Claude,
-            binary: "claude".into(),
-            available: true,
-            capabilities: ProviderCapabilitiesResponse {
-                model: true,
-                system_prompt: true,
-                allowed_tools: true,
-                max_turns: true,
-                max_budget_usd: true,
-                output_format: true,
-                worktree: true,
-                unrestricted: true,
-                resume: true,
-            },
-        };
-        let json = serde_json::to_string(&info).unwrap();
-        assert!(json.contains("\"claude\""));
-        assert!(json.contains("\"available\":true"));
-    }
-
-    #[test]
-    fn test_provider_info_response_deserialize() {
-        let json = r#"{"provider":"shell","binary":"bash","available":true,"capabilities":{"model":false,"system_prompt":false,"allowed_tools":false,"max_turns":false,"max_budget_usd":false,"output_format":false,"worktree":false,"unrestricted":false,"resume":false}}"#;
-        let info: ProviderInfoResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(info.provider, Provider::Shell);
-        assert!(info.available);
-        assert_eq!(info.binary, "bash");
-    }
-
-    #[test]
-    fn test_provider_info_response_debug_clone() {
-        let info = ProviderInfoResponse {
-            provider: Provider::Shell,
-            binary: "bash".into(),
-            available: true,
-            capabilities: ProviderCapabilitiesResponse {
-                model: false,
-                system_prompt: false,
-                allowed_tools: false,
-                max_turns: false,
-                max_budget_usd: false,
-                output_format: false,
-                worktree: false,
-                unrestricted: false,
-                resume: false,
-            },
-        };
-        #[allow(clippy::redundant_clone)]
-        let cloned = info.clone();
-        let debug = format!("{cloned:?}");
-        assert!(debug.contains("Shell"));
-    }
-
-    #[test]
-    fn test_providers_response_serialize() {
-        let resp = ProvidersResponse {
-            providers: vec![ProviderInfoResponse {
-                provider: Provider::Shell,
-                binary: "bash".into(),
-                available: true,
-                capabilities: ProviderCapabilitiesResponse {
-                    model: false,
-                    system_prompt: false,
-                    allowed_tools: false,
-                    max_turns: false,
-                    max_budget_usd: false,
-                    output_format: false,
-                    worktree: false,
-                    unrestricted: false,
-                    resume: false,
-                },
-            }],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let parsed: ProvidersResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.providers.len(), 1);
-        assert_eq!(parsed.providers[0].provider, Provider::Shell);
+        let cloned = resp.clone();
+        assert_eq!(cloned.name, "test");
     }
 }

@@ -4,7 +4,6 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use base64::Engine;
 use pulpo_common::auth::BindMode;
-use pulpo_common::guard::GuardConfig;
 use pulpo_common::peer::PeerEntry;
 use serde::{Deserialize, Serialize};
 
@@ -16,13 +15,9 @@ pub struct Config {
     #[serde(default)]
     pub peers: HashMap<String, PeerEntry>,
     #[serde(default)]
-    pub guards: GuardDefaultConfig,
-    #[serde(default)]
     pub watchdog: WatchdogConfig,
     #[serde(default)]
     pub inks: HashMap<String, InkConfig>,
-    #[serde(default)]
-    pub session_defaults: SessionDefaultsConfig,
     #[serde(default)]
     pub notifications: NotificationsConfig,
 }
@@ -32,22 +27,7 @@ pub struct InkConfig {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
-    pub provider: Option<String>,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub mode: Option<String>,
-    #[serde(default)]
-    pub unrestricted: Option<bool>,
-    /// Role instructions — passed as system prompt for providers that support it,
-    /// or prepended to the prompt as a universal fallback.
-    #[serde(default, alias = "system_prompt")]
-    pub instructions: Option<String>,
-    /// Path to a file containing instructions. Read at spawn time.
-    /// Takes precedence over inline `instructions` when both are set.
-    /// Relative paths are resolved against the session's workdir.
-    #[serde(default)]
-    pub instructions_file: Option<String>,
+    pub command: Option<String>,
 }
 
 /// Notification configuration (webhooks for status updates).
@@ -111,44 +91,6 @@ pub fn ensure_auth_token(config: &mut Config) -> bool {
         true
     } else {
         false
-    }
-}
-
-#[derive(Debug, Default, Clone, Deserialize, Serialize)]
-pub struct GuardDefaultConfig {
-    #[serde(default)]
-    pub unrestricted: bool,
-}
-
-/// Default values applied to every new session when the request omits them.
-/// Ink overrides and explicit request fields always take precedence.
-#[derive(Debug, Default, Clone, Deserialize, Serialize)]
-pub struct SessionDefaultsConfig {
-    /// Default provider (e.g. "claude", "codex"). Overrides `node.default_provider`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provider: Option<String>,
-    /// Default model (e.g. "opus", "o3").
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model: Option<String>,
-    /// Default session mode ("autonomous" or "interactive").
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
-    /// Default max turns per session.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_turns: Option<u32>,
-    /// Default max budget in USD per session.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_budget_usd: Option<f64>,
-    /// Default output format (e.g. "json", "stream-json").
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_format: Option<String>,
-}
-
-impl GuardDefaultConfig {
-    pub const fn to_guard_config(&self) -> GuardConfig {
-        GuardConfig {
-            unrestricted: self.unrestricted,
-        }
     }
 }
 
@@ -253,9 +195,6 @@ pub struct NodeConfig {
     /// Scan interval in seconds for peer discovery (tailscale/seed). Defaults to 30.
     #[serde(default = "default_discovery_interval_secs")]
     pub discovery_interval_secs: u64,
-    /// Default agent provider when none is specified (e.g. "claude", "codex").
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub default_provider: Option<String>,
 }
 
 impl Default for NodeConfig {
@@ -268,7 +207,6 @@ impl Default for NodeConfig {
             tag: None,
             seed: None,
             discovery_interval_secs: default_discovery_interval_secs(),
-            default_provider: None,
         }
     }
 }
@@ -313,107 +251,61 @@ pub fn save(config: &Config, path: &Path) -> Result<()> {
 
 /// Built-in example inks for common engineering workflows.
 /// User-defined inks with the same name override these defaults.
-#[allow(clippy::too_many_lines)]
 pub fn built_in_inks() -> HashMap<String, InkConfig> {
     let mut inks = HashMap::new();
     inks.insert(
         "reviewer".to_owned(),
         InkConfig {
-            description: Some(
-                "Code review — read-only analysis, strict guards, detailed feedback".to_owned(),
+            description: Some("Code review — read-only analysis, detailed feedback".to_owned()),
+            command: Some(
+                "claude -p 'Review this code for bugs, security issues, and style'".to_owned(),
             ),
-            provider: Some("claude".to_owned()),
-            model: None,
-            mode: Some("interactive".to_owned()),
-            unrestricted: Some(false),
-            instructions: Some(
-                "You are a senior code reviewer. Analyze the code for bugs, security issues, \
-                 performance problems, and style violations. Provide actionable feedback with \
-                 specific line references. Do not make changes — only review and suggest."
-                    .to_owned(),
-            ),
-            instructions_file: None,
         },
     );
     inks.insert(
         "coder".to_owned(),
         InkConfig {
             description: Some(
-                "Implementation — full tool access, standard guards, write production code"
+                "Implementation — full tool access, write production code".to_owned(),
+            ),
+            command: Some(
+                "claude --dangerously-skip-permissions -p 'Implement the requested changes'"
                     .to_owned(),
             ),
-            provider: Some("claude".to_owned()),
-            model: None,
-            mode: Some("autonomous".to_owned()),
-            unrestricted: Some(false),
-            instructions: Some(
-                "You are an expert software engineer. Implement the requested changes following \
-                 the project's conventions, patterns, and style. Write clean, tested, production-\
-                 ready code. Run tests to verify your changes work correctly."
-                    .to_owned(),
-            ),
-            instructions_file: None,
         },
     );
     inks.insert(
         "quick-fix".to_owned(),
         InkConfig {
             description: Some(
-                "Fast bug fixes — autonomous, focused, tight budget for small targeted changes"
+                "Fast bug fixes — focused, small targeted changes".to_owned(),
+            ),
+            command: Some(
+                "claude --dangerously-skip-permissions -p 'Fix the reported bug with minimal changes'"
                     .to_owned(),
             ),
-            provider: None,
-            model: None,
-            mode: Some("autonomous".to_owned()),
-            unrestricted: Some(false),
-            instructions: Some(
-                "Fix the reported bug with minimal changes. Focus on the root cause, not \
-                 symptoms. Keep the diff small and targeted. Run existing tests to verify the fix \
-                 doesn't break anything."
-                    .to_owned(),
-            ),
-            instructions_file: None,
         },
     );
     inks.insert(
         "tester".to_owned(),
         InkConfig {
             description: Some(
-                "Test writing — generate comprehensive tests for existing code, strict guards"
-                    .to_owned(),
+                "Test writing — generate comprehensive tests for existing code".to_owned(),
             ),
-            provider: None,
-            model: None,
-            mode: Some("autonomous".to_owned()),
-            unrestricted: Some(false),
-            instructions: Some(
-                "You are a test engineer. Write comprehensive tests for the specified code. \
-                 Cover happy paths, edge cases, error conditions, and boundary values. Follow \
-                 the project's existing test patterns and conventions. Do not modify production \
-                 code — only add tests."
-                    .to_owned(),
+            command: Some(
+                "claude -p 'Write comprehensive tests for the specified code'".to_owned(),
             ),
-            instructions_file: None,
         },
     );
     inks.insert(
         "refactor".to_owned(),
         InkConfig {
             description: Some(
-                "Refactoring — restructure code without changing behavior, run tests after"
-                    .to_owned(),
+                "Refactoring — restructure code without changing behavior".to_owned(),
             ),
-            provider: None,
-            model: None,
-            mode: Some("autonomous".to_owned()),
-            unrestricted: Some(false),
-            instructions: Some(
-                "Refactor the specified code to improve readability, maintainability, and \
-                 structure. Do not change external behavior. Run all tests after refactoring to \
-                 verify nothing is broken. Keep commits atomic and well-described."
-                    .to_owned(),
+            command: Some(
+                "claude --dangerously-skip-permissions -p 'Refactor the specified code'".to_owned(),
             ),
-            instructions_file: None,
         },
     );
     inks
@@ -448,12 +340,9 @@ pub fn load(path: &str) -> Result<Config> {
                 tag: None,
                 seed: None,
                 discovery_interval_secs: default_discovery_interval_secs(),
-                default_provider: None,
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: SessionDefaultsConfig::default(),
             watchdog: WatchdogConfig::default(),
             inks: built_in_inks(),
             notifications: NotificationsConfig::default(),
@@ -539,8 +428,7 @@ data_dir = "/tmp/pulpo-test"
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -564,8 +452,7 @@ data_dir = "/tmp/pulpo-test"
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -697,77 +584,13 @@ name = "test"
             },
             auth: AuthConfig::default(),
             peers,
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
         };
         let debug = format!("{config:?}");
         assert!(debug.contains("node-a"));
-    }
-
-    #[test]
-    fn test_load_config_without_guards_backward_compat() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "no-guards"
-port = 7433
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(!config.guards.unrestricted);
-    }
-
-    #[test]
-    fn test_load_config_with_guards_unrestricted() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "guarded"
-port = 7433
-
-[guards]
-unrestricted = true
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(config.guards.unrestricted);
-    }
-
-    #[test]
-    fn test_guard_default_config_to_guard_config() {
-        let gdc = GuardDefaultConfig { unrestricted: true };
-        let gc = gdc.to_guard_config();
-        assert!(gc.unrestricted);
-    }
-
-    #[test]
-    fn test_guard_default_config_default() {
-        let gdc = GuardDefaultConfig::default();
-        assert!(!gdc.unrestricted);
-    }
-
-    #[test]
-    fn test_guard_default_config_debug() {
-        let gdc = GuardDefaultConfig::default();
-        let debug = format!("{gdc:?}");
-        assert!(debug.contains("false"));
-    }
-
-    #[test]
-    fn test_missing_config_has_default_guards() {
-        let config = load("/nonexistent/guards/config.toml").unwrap();
-        assert!(!config.guards.unrestricted);
     }
 
     #[test]
@@ -783,8 +606,7 @@ unrestricted = true
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -811,8 +633,7 @@ unrestricted = true
             },
             auth: AuthConfig::default(),
             peers,
-            guards: GuardDefaultConfig { unrestricted: true },
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -825,7 +646,6 @@ unrestricted = true
             loaded.peers["remote"],
             PeerEntry::Simple("10.0.0.1:7433".into())
         );
-        assert!(loaded.guards.unrestricted);
     }
 
     #[test]
@@ -841,8 +661,7 @@ unrestricted = true
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -864,8 +683,7 @@ unrestricted = true
                 },
                 auth: AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
+
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
@@ -889,8 +707,7 @@ unrestricted = true
                 },
                 auth: AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
+
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
@@ -918,8 +735,7 @@ unrestricted = true
                 },
                 auth: AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
+
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
@@ -942,8 +758,7 @@ unrestricted = true
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -967,14 +782,6 @@ unrestricted = true
     }
 
     #[test]
-    fn test_guard_default_config_clone() {
-        let gdc = GuardDefaultConfig::default();
-        #[allow(clippy::redundant_clone)]
-        let cloned = gdc.clone();
-        assert!(!cloned.unrestricted);
-    }
-
-    #[test]
     fn test_config_serialize() {
         let config = Config {
             node: NodeConfig {
@@ -985,8 +792,7 @@ unrestricted = true
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1056,8 +862,7 @@ unrestricted = true
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1082,8 +887,7 @@ unrestricted = true
                 token: "existing-token".into(),
             },
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1150,8 +954,7 @@ token = "my-secret-token"
                 token: "roundtrip-token".into(),
             },
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1219,8 +1022,7 @@ token = "peer-secret"
             },
             auth: AuthConfig::default(),
             peers,
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1320,8 +1122,7 @@ breach_count = 5
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig {
                 enabled: false,
                 memory_threshold: 75,
@@ -1533,8 +1334,7 @@ idle_action = "pause"
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig {
                 idle_timeout_secs: 120,
                 idle_action: "kill".into(),
@@ -1589,14 +1389,11 @@ port = 7433
 data_dir = "/tmp"
 
 [inks.reviewer]
-provider = "claude"
-mode = "autonomous"
-unrestricted = false
-instructions = "You are a code reviewer."
+command = "claude -p 'Custom review'"
 description = "Code review specialist"
 
 [inks.coder]
-provider = "codex"
+command = "codex -p 'Do it'"
 "#
         )
         .unwrap();
@@ -1605,18 +1402,11 @@ provider = "codex"
         assert_eq!(config.inks.len(), 5);
         // User config overrides the built-in reviewer
         let reviewer = &config.inks["reviewer"];
-        assert_eq!(reviewer.provider, Some("claude".into()));
-        assert_eq!(reviewer.mode, Some("autonomous".into()));
-        assert_eq!(reviewer.unrestricted, Some(false));
-        assert_eq!(
-            reviewer.instructions,
-            Some("You are a code reviewer.".into())
-        );
+        assert_eq!(reviewer.command, Some("claude -p 'Custom review'".into()));
         assert_eq!(reviewer.description, Some("Code review specialist".into()));
-        // User config overrides the built-in coder (partial — only provider set)
+        // User config overrides the built-in coder (partial — only command set)
         let coder = &config.inks["coder"];
-        assert_eq!(coder.provider, Some("codex".into()));
-        assert!(coder.instructions.is_none());
+        assert_eq!(coder.command, Some("codex -p 'Do it'".into()));
         assert!(coder.description.is_none());
     }
 
@@ -1629,12 +1419,7 @@ provider = "codex"
             "reviewer".into(),
             InkConfig {
                 description: Some("Code reviewer".into()),
-                provider: Some("claude".into()),
-                model: None,
-                mode: Some("autonomous".into()),
-                unrestricted: Some(false),
-                instructions: Some("Review only.".into()),
-                instructions_file: None,
+                command: Some("claude -p 'Review only'".into()),
             },
         );
         let config = Config {
@@ -1646,8 +1431,7 @@ provider = "codex"
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks,
             notifications: NotificationsConfig::default(),
@@ -1657,7 +1441,7 @@ provider = "codex"
         // 1 user ink + 4 other built-ins (reviewer is overridden)
         assert_eq!(loaded.inks.len(), 5);
         let reviewer = &loaded.inks["reviewer"];
-        assert_eq!(reviewer.instructions, Some("Review only.".into()));
+        assert_eq!(reviewer.command, Some("claude -p 'Review only'".into()));
         assert_eq!(reviewer.description, Some("Code reviewer".into()));
     }
 
@@ -1665,12 +1449,7 @@ provider = "codex"
     fn test_ink_config_debug_clone() {
         let p = InkConfig {
             description: None,
-            provider: Some("claude".into()),
-            model: None,
-            mode: None,
-            unrestricted: None,
-            instructions: None,
-            instructions_file: None,
+            command: Some("claude -p 'test'".into()),
         };
         let cloned = p.clone();
         assert_eq!(format!("{p:?}"), format!("{cloned:?}"));
@@ -1760,8 +1539,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig {
@@ -1864,8 +1642,7 @@ url = "https://example.com"
             node: NodeConfig::default(),
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig {
@@ -1974,8 +1751,7 @@ name = "test"
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1996,7 +1772,6 @@ name = "test"
             tag: None,
             seed: Some("10.0.0.1:7433".into()),
             discovery_interval_secs: 30,
-            default_provider: None,
         };
         let toml_str = toml::to_string(&config).unwrap();
         assert!(toml_str.contains("seed = \"10.0.0.1:7433\""));
@@ -2027,12 +1802,12 @@ name = "test"
     }
 
     #[test]
-    fn test_built_in_inks_have_instructions_or_file() {
+    fn test_built_in_inks_have_commands() {
         let inks = built_in_inks();
         for (name, ink) in &inks {
             assert!(
-                ink.instructions.is_some() || ink.instructions_file.is_some(),
-                "Built-in ink '{name}' missing both instructions and instructions_file"
+                ink.command.is_some(),
+                "Built-in ink '{name}' missing command"
             );
         }
     }
@@ -2044,12 +1819,7 @@ name = "test"
             "reviewer".to_owned(),
             InkConfig {
                 description: Some("My custom reviewer".to_owned()),
-                provider: Some("codex".to_owned()),
-                model: None,
-                mode: None,
-                unrestricted: None,
-                instructions: None,
-                instructions_file: None,
+                command: Some("codex -p 'review'".to_owned()),
             },
         );
         let merged = merge_built_in_inks(user_inks);
@@ -2058,7 +1828,10 @@ name = "test"
             merged["reviewer"].description.as_deref(),
             Some("My custom reviewer")
         );
-        assert_eq!(merged["reviewer"].provider.as_deref(), Some("codex"));
+        assert_eq!(
+            merged["reviewer"].command.as_deref(),
+            Some("codex -p 'review'")
+        );
         // Other built-ins still present
         assert!(merged.contains_key("coder"));
         assert!(merged.contains_key("quick-fix"));
@@ -2071,12 +1844,7 @@ name = "test"
             "my-custom".to_owned(),
             InkConfig {
                 description: Some("Custom ink".to_owned()),
-                provider: None,
-                model: None,
-                mode: None,
-                unrestricted: None,
-                instructions: None,
-                instructions_file: None,
+                command: None,
             },
         );
         let merged = merge_built_in_inks(user_inks);
@@ -2099,7 +1867,7 @@ data_dir = "/tmp/pulpo-test"
 
 [inks.reviewer]
 description = "Overridden reviewer"
-provider = "codex"
+command = "codex -p 'review'"
 "#
         )
         .unwrap();
@@ -2110,7 +1878,10 @@ provider = "codex"
             config.inks["reviewer"].description.as_deref(),
             Some("Overridden reviewer")
         );
-        assert_eq!(config.inks["reviewer"].provider.as_deref(), Some("codex"));
+        assert_eq!(
+            config.inks["reviewer"].command.as_deref(),
+            Some("codex -p 'review'")
+        );
         // Built-in inks still present
         assert!(config.inks.contains_key("coder"));
         assert!(config.inks.contains_key("quick-fix"));
@@ -2122,12 +1893,7 @@ provider = "codex"
     fn test_ink_config_description_serialization() {
         let ink = InkConfig {
             description: Some("Test description".to_owned()),
-            provider: Some("claude".to_owned()),
-            model: None,
-            mode: None,
-            unrestricted: None,
-            instructions: None,
-            instructions_file: None,
+            command: Some("claude -p 'test'".to_owned()),
         };
         let toml_str = toml::to_string(&ink).unwrap();
         assert!(toml_str.contains("description = \"Test description\""));
@@ -2139,128 +1905,8 @@ provider = "codex"
     }
 
     #[test]
-    fn test_ink_config_instructions_file_serialization() {
-        let ink = InkConfig {
-            description: None,
-            provider: None,
-            model: None,
-            mode: None,
-            unrestricted: None,
-            instructions: None,
-            instructions_file: Some("program.md".to_owned()),
-        };
-        let toml_str = toml::to_string(&ink).unwrap();
-        assert!(toml_str.contains("instructions_file = \"program.md\""));
-        let deserialized: InkConfig = toml::from_str(&toml_str).unwrap();
-        assert_eq!(
-            deserialized.instructions_file.as_deref(),
-            Some("program.md")
-        );
-    }
-
-    #[test]
-    fn test_ink_config_instructions_file_default_none() {
+    fn test_ink_config_command_default_none() {
         let ink: InkConfig = toml::from_str("").unwrap();
-        assert!(ink.instructions_file.is_none());
-    }
-
-    #[test]
-    fn test_session_defaults_default() {
-        let sd = SessionDefaultsConfig::default();
-        assert!(sd.provider.is_none());
-        assert!(sd.model.is_none());
-        assert!(sd.mode.is_none());
-        assert!(sd.max_turns.is_none());
-        assert!(sd.max_budget_usd.is_none());
-        assert!(sd.output_format.is_none());
-    }
-
-    #[test]
-    fn test_session_defaults_toml_roundtrip() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("config.toml");
-        let config = Config {
-            node: NodeConfig::default(),
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: SessionDefaultsConfig {
-                provider: Some("codex".into()),
-                model: Some("o3".into()),
-                mode: Some("autonomous".into()),
-                max_turns: Some(100),
-                max_budget_usd: Some(25.5),
-                output_format: Some("json".into()),
-            },
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            notifications: NotificationsConfig::default(),
-        };
-        save(&config, &path).unwrap();
-        let loaded = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(loaded.session_defaults.provider.as_deref(), Some("codex"));
-        assert_eq!(loaded.session_defaults.model.as_deref(), Some("o3"));
-        assert_eq!(loaded.session_defaults.mode.as_deref(), Some("autonomous"));
-        assert_eq!(loaded.session_defaults.max_turns, Some(100));
-        assert!((loaded.session_defaults.max_budget_usd.unwrap() - 25.5).abs() < f64::EPSILON);
-        assert_eq!(
-            loaded.session_defaults.output_format.as_deref(),
-            Some("json")
-        );
-    }
-
-    #[test]
-    fn test_session_defaults_toml_partial() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("config.toml");
-        let config = Config {
-            node: NodeConfig::default(),
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: SessionDefaultsConfig {
-                model: Some("opus".into()),
-                ..SessionDefaultsConfig::default()
-            },
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            notifications: NotificationsConfig::default(),
-        };
-        save(&config, &path).unwrap();
-        let loaded = load(path.to_str().unwrap()).unwrap();
-        assert!(loaded.session_defaults.provider.is_none());
-        assert_eq!(loaded.session_defaults.model.as_deref(), Some("opus"));
-        assert!(loaded.session_defaults.mode.is_none());
-    }
-
-    #[test]
-    fn test_session_defaults_absent_in_toml_gives_empty() {
-        let toml_str = r#"
-[node]
-name = "test"
-port = 7433
-data_dir = "/tmp"
-"#;
-        let config: Config = toml::from_str(toml_str).unwrap();
-        assert!(config.session_defaults.provider.is_none());
-        assert!(config.session_defaults.model.is_none());
-        assert!(config.session_defaults.mode.is_none());
-        assert!(config.session_defaults.max_turns.is_none());
-        assert!(config.session_defaults.max_budget_usd.is_none());
-        assert!(config.session_defaults.output_format.is_none());
-    }
-
-    #[test]
-    fn test_session_defaults_debug_clone() {
-        let sd = SessionDefaultsConfig {
-            provider: Some("claude".into()),
-            model: Some("opus".into()),
-            ..SessionDefaultsConfig::default()
-        };
-        #[allow(clippy::redundant_clone)]
-        let cloned = sd.clone();
-        let debug = format!("{cloned:?}");
-        assert!(debug.contains("claude"));
-        assert!(debug.contains("opus"));
+        assert!(ink.command.is_none());
     }
 }

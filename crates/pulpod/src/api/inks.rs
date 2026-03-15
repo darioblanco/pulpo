@@ -68,13 +68,8 @@ mod tests {
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
-        let manager = SessionManager::new(
-            Arc::new(StubBackend),
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager =
+            SessionManager::new(Arc::new(StubBackend), store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -86,8 +81,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: crate::config::GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -111,21 +104,11 @@ mod tests {
             "reviewer".into(),
             InkConfig {
                 description: None,
-                provider: Some("claude".into()),
-                model: None,
-                mode: Some("autonomous".into()),
-                unrestricted: Some(true),
-                instructions: Some("Review code".into()),
-                instructions_file: None,
+                command: Some("Review code".into()),
             },
         );
-        let manager = SessionManager::new(
-            Arc::new(StubBackend),
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            inks.clone(),
-        )
-        .with_no_stale_grace();
+        let manager =
+            SessionManager::new(Arc::new(StubBackend), store, inks.clone()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -137,8 +120,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: crate::config::GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: inks.clone(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -150,7 +131,7 @@ mod tests {
         let Json(response) = list(State(state)).await;
         assert_eq!(response.inks.len(), 1);
         let reviewer = &response.inks["reviewer"];
-        assert_eq!(reviewer.instructions, Some("Review code".into()));
+        assert_eq!(reviewer.command, Some("Review code".into()));
     }
 
     #[test]
@@ -160,12 +141,7 @@ mod tests {
             "coder".into(),
             InkConfig {
                 description: None,
-                provider: None,
-                model: None,
-                mode: None,
-                unrestricted: None,
-                instructions: None,
-                instructions_file: None,
+                command: None,
             },
         );
         let resp = InksResponse { inks };

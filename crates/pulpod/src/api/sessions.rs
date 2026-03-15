@@ -27,7 +27,6 @@ pub async fn list(
     Query(query): Query<ListSessionsQuery>,
 ) -> Result<Json<Vec<Session>>, ApiError> {
     let has_filters = query.status.is_some()
-        || query.provider.is_some()
         || query.search.is_some()
         || query.sort.is_some()
         || query.order.is_some();
@@ -68,7 +67,7 @@ pub async fn create(
     State(state): State<Arc<super::AppState>>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<CreateSessionResponse>), ApiError> {
-    let (session, warnings) = state
+    let session = state
         .session_manager
         .create_session(req)
         .await
@@ -80,10 +79,7 @@ pub async fn create(
                 internal_error(&msg)
             }
         })?;
-    Ok((
-        StatusCode::CREATED,
-        Json(CreateSessionResponse { session, warnings }),
-    ))
+    Ok((StatusCode::CREATED, Json(CreateSessionResponse { session })))
 }
 
 pub async fn kill(
@@ -319,13 +315,7 @@ mod tests {
         store.migrate().await.unwrap();
         let pool = store.pool().clone();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -337,8 +327,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: crate::config::GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -368,20 +356,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "filter-test".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let _ = create(State(state.clone()), Json(req)).await.unwrap();
 
@@ -416,20 +394,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "test".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("Do something".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_ok());
@@ -444,20 +412,10 @@ mod tests {
         let req = || CreateSessionRequest {
             name: "dupe".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let _ = create(State(state.clone()), Json(req())).await.unwrap();
         let result = create(State(state), Json(req())).await;
@@ -482,20 +440,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "kill-test".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -510,20 +458,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "output-test".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -551,20 +489,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "input-test".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -667,13 +595,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(FailingBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -685,8 +607,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: crate::config::GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -703,20 +623,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "err-test".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -734,20 +644,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "kill-err".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -767,13 +667,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(FailCreateBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -785,8 +679,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: crate::config::GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -798,20 +690,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "fail".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_err());
@@ -825,20 +707,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "out-err".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -857,20 +729,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "in-err".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -891,13 +753,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(CaptureFailBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -909,8 +765,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: crate::config::GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -926,20 +780,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "cap-err".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -958,20 +802,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "send-err".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1054,20 +888,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "dl-test".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1090,23 +914,14 @@ mod tests {
             id,
             name: "snap-test".into(),
             workdir: "/tmp".into(),
-            provider: pulpo_common::session::Provider::Claude,
-            prompt: "test".into(),
             status: SessionStatus::Killed,
-            mode: pulpo_common::session::SessionMode::Interactive,
-            conversation_id: None,
             exit_code: None,
             backend_session_id: None,
             output_snapshot: Some("saved output from snapshot".into()),
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: "echo test".into(),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -1135,20 +950,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "no-snap".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1177,20 +982,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "dl-err".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1208,20 +1003,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "int-empty".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1237,20 +1022,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "int-events".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1310,20 +1085,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "resume-test".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1377,13 +1142,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StaleBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -1395,8 +1154,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: crate::config::GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -1409,20 +1166,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "stale-test".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1445,13 +1192,7 @@ mod tests {
         store.migrate().await.unwrap();
         let pool = store.pool().clone();
         let backend = Arc::new(StaleBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -1463,8 +1204,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: crate::config::GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -1477,20 +1216,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "dup".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let old_id = resp.session.id.to_string();
@@ -1504,20 +1233,10 @@ mod tests {
         let req2 = CreateSessionRequest {
             name: "dup".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test2".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let _ = create(State(state.clone()), Json(req2)).await.unwrap();
 
@@ -1585,13 +1304,7 @@ mod tests {
         let backend = Arc::new(ResumeFailBackend {
             created: std::sync::Mutex::new(false),
         });
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -1603,8 +1316,6 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: crate::config::GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -1617,20 +1328,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "resume-fail".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1651,20 +1352,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "del-test".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1682,20 +1373,10 @@ mod tests {
         let req = CreateSessionRequest {
             name: "del-run".into(),
             workdir: Some("/tmp".into()),
-            provider: None,
-            prompt: Some("test".into()),
-            mode: None,
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;

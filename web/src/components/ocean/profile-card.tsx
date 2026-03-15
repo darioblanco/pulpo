@@ -27,13 +27,9 @@ const RESUMABLE_STATUSES = ['lost', 'finished'];
 const KILLABLE_STATUSES = ['active', 'creating'];
 const DELETABLE_STATUSES = ['finished', 'killed', 'lost', 'idle'];
 
-function shortenModel(model: string): string {
-  // e.g. "claude-sonnet-4-20250514" -> "sonnet-4"
-  // e.g. "gpt-4o-mini" -> "gpt-4o-mini"
-  const parts = model.split('-');
-  // Drop "claude-" prefix and date suffix (8+ digits)
-  const filtered = parts.filter((p) => p !== 'claude' && !/^\d{8,}$/.test(p));
-  return filtered.join('-') || model;
+function truncateCommand(command: string, maxLen = 40): string {
+  if (command.length <= maxLen) return command;
+  return command.slice(0, maxLen) + '...';
 }
 
 function truncateWorkdir(workdir: string): string {
@@ -98,22 +94,7 @@ export function ProfileCard({
         >
           {/* Header */}
           <div className="mb-3 flex items-center gap-2">
-            <img
-              src={`/sprites/ui/icon-${octopus.provider}.png`}
-              alt={octopus.provider}
-              className="h-5 w-5"
-              style={{ imageRendering: 'pixelated' }}
-            />
             <span className="truncate font-bold text-white">{octopus.name}</span>
-            {octopus.unrestricted && (
-              <span
-                className="ml-auto rounded px-1 py-0.5 text-[10px] font-bold leading-none text-amber-300"
-                style={{ backgroundColor: 'rgba(251, 191, 36, 0.15)' }}
-                data-testid="unrestricted-badge"
-              >
-                unrestricted
-              </span>
-            )}
           </div>
 
           {/* Status */}
@@ -129,17 +110,14 @@ export function ProfileCard({
 
           {/* Details */}
           <div className="space-y-1.5 text-xs text-slate-400">
-            <div>
-              Provider: <span className="text-slate-300">{octopus.provider}</span>
+            <div data-testid="profile-command">
+              Command: <span className="text-slate-300">{truncateCommand(octopus.command)}</span>
             </div>
-            {octopus.model && (
-              <div data-testid="profile-model">
-                Model: <span className="text-slate-300">{shortenModel(octopus.model)}</span>
+            {octopus.description && (
+              <div data-testid="profile-description">
+                Description: <span className="text-slate-300">{octopus.description}</span>
               </div>
             )}
-            <div>
-              Mode: <span className="text-slate-300">{octopus.mode}</span>
-            </div>
             {octopus.ink && (
               <div>
                 Ink: <span style={{ color }}>{octopus.ink}</span>

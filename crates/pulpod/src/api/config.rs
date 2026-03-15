@@ -3,9 +3,8 @@ use std::sync::Arc;
 use axum::{Json, extract::State, http::StatusCode};
 use pulpo_common::api::{
     AuthConfigResponse, ConfigResponse, DiscordWebhookConfigResponse, ErrorResponse,
-    GuardDefaultConfigResponse, InkConfigResponse, NodeConfigResponse, NotificationsConfigResponse,
-    SessionDefaultsConfigResponse, UpdateConfigRequest, UpdateConfigResponse,
-    WatchdogConfigResponse, WebhookEndpointConfigResponse,
+    InkConfigResponse, NodeConfigResponse, NotificationsConfigResponse, UpdateConfigRequest,
+    UpdateConfigResponse, WatchdogConfigResponse, WebhookEndpointConfigResponse,
 };
 
 type ApiError = (StatusCode, Json<ErrorResponse>);
@@ -29,21 +28,9 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
             tag: config.node.tag.clone(),
             seed: config.node.seed.clone(),
             discovery_interval_secs: config.node.discovery_interval_secs,
-            default_provider: config.node.default_provider.clone(),
         },
         auth: AuthConfigResponse {},
         peers: config.peers.clone(),
-        guards: GuardDefaultConfigResponse {
-            unrestricted: config.guards.unrestricted,
-        },
-        session_defaults: SessionDefaultsConfigResponse {
-            provider: config.session_defaults.provider.clone(),
-            model: config.session_defaults.model.clone(),
-            mode: config.session_defaults.mode.clone(),
-            max_turns: config.session_defaults.max_turns,
-            max_budget_usd: config.session_defaults.max_budget_usd,
-            output_format: config.session_defaults.output_format.clone(),
-        },
         watchdog: WatchdogConfigResponse {
             enabled: config.watchdog.enabled,
             memory_threshold: config.watchdog.memory_threshold,
@@ -82,12 +69,7 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
                     k.clone(),
                     InkConfigResponse {
                         description: v.description.clone(),
-                        provider: v.provider.clone(),
-                        model: v.model.clone(),
-                        mode: v.mode.clone(),
-                        unrestricted: v.unrestricted,
-                        instructions: v.instructions.clone(),
-                        instructions_file: v.instructions_file.clone(),
+                        command: v.command.clone(),
                     },
                 )
             })
@@ -133,23 +115,6 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
     }
     if let Some(interval) = req.discovery_interval_secs {
         config.node.discovery_interval_secs = interval;
-    }
-
-    // Guard defaults
-    if let Some(unrestricted) = req.unrestricted {
-        config.guards.unrestricted = unrestricted;
-    }
-
-    // Session defaults (full replace when provided)
-    if let Some(sd) = req.session_defaults {
-        config.session_defaults = crate::config::SessionDefaultsConfig {
-            provider: sd.provider,
-            model: sd.model,
-            mode: sd.mode,
-            max_turns: sd.max_turns,
-            max_budget_usd: sd.max_budget_usd,
-            output_format: sd.output_format,
-        };
     }
 
     // Watchdog
@@ -211,12 +176,7 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
                     k,
                     crate::config::InkConfig {
                         description: v.description,
-                        provider: v.provider,
-                        model: v.model,
-                        mode: v.mode,
-                        unrestricted: v.unrestricted,
-                        instructions: v.instructions,
-                        instructions_file: v.instructions_file,
+                        command: v.command,
                     },
                 )
             })
@@ -263,7 +223,7 @@ mod tests {
     use crate::backend::Backend;
     use std::collections::HashMap;
 
-    use crate::config::{Config, GuardDefaultConfig, NodeConfig};
+    use crate::config::{Config, NodeConfig};
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
@@ -300,13 +260,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -318,8 +272,7 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
+
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -335,13 +288,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let config_path = tmpdir.path().join("config.toml");
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
@@ -355,8 +302,7 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
+
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -386,7 +332,6 @@ mod tests {
         let Json(resp) = get_config(State(state)).await.unwrap();
         assert_eq!(resp.node.name, "test-node");
         assert_eq!(resp.node.port, 7433);
-        assert!(!resp.guards.unrestricted);
         assert!(resp.peers.is_empty());
     }
 
@@ -441,17 +386,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_config_unrestricted() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            unrestricted: Some(true),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert!(resp.config.guards.unrestricted);
-    }
-
-    #[tokio::test]
     async fn test_update_config_peers() {
         let state = test_state().await;
         let mut peers = HashMap::new();
@@ -488,13 +422,11 @@ mod tests {
         let req = UpdateConfigRequest {
             node_name: Some("multi".into()),
             port: Some(8888),
-            unrestricted: Some(true),
             ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.config.node.name, "multi");
         assert_eq!(resp.config.node.port, 8888);
-        assert!(resp.config.guards.unrestricted);
         assert!(resp.restart_required);
     }
 
@@ -526,7 +458,6 @@ mod tests {
             port: Some(9000),
             data_dir: None,
             bind: None,
-            unrestricted: Some(true),
             ..Default::default()
         };
         let _ = update_config(State(state.clone()), Json(req))
@@ -537,7 +468,6 @@ mod tests {
         let loaded = crate::config::load(state.config_path.to_str().unwrap()).unwrap();
         assert_eq!(loaded.node.name, "roundtrip");
         assert_eq!(loaded.node.port, 9000);
-        assert!(loaded.guards.unrestricted);
     }
 
     #[tokio::test]
@@ -568,8 +498,6 @@ mod tests {
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
@@ -805,13 +733,8 @@ mod tests {
         inks.insert(
             "reviewer".into(),
             InkConfigResponse {
-                description: None,
-                provider: Some("claude".into()),
-                model: None,
-                mode: Some("interactive".into()),
-                unrestricted: Some(true),
-                instructions: Some("You are a reviewer.".into()),
-                instructions_file: None,
+                description: Some("Review code".into()),
+                command: Some("claude -p 'review'".into()),
             },
         );
         let req = UpdateConfigRequest {
@@ -821,8 +744,8 @@ mod tests {
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.config.inks.len(), 1);
         let p = &resp.config.inks["reviewer"];
-        assert_eq!(p.provider, Some("claude".into()));
-        assert_eq!(p.instructions, Some("You are a reviewer.".into()));
+        assert_eq!(p.command, Some("claude -p 'review'".into()));
+        assert_eq!(p.description, Some("Review code".into()));
     }
 
     #[test]
@@ -839,8 +762,7 @@ mod tests {
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig { unrestricted: true },
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
+
             watchdog: crate::config::WatchdogConfig {
                 enabled: true,
                 memory_threshold: 85,
@@ -856,12 +778,7 @@ mod tests {
                     "coder".into(),
                     crate::config::InkConfig {
                         description: None,
-                        provider: Some("claude".into()),
-                        model: None,
-                        mode: None,
-                        unrestricted: None,
-                        instructions: None,
-                        instructions_file: None,
+                        command: Some("claude -p 'code'".into()),
                     },
                 );
                 m
@@ -879,8 +796,6 @@ mod tests {
         assert_eq!(resp.node.tag, Some("gpu".into()));
         assert_eq!(resp.node.seed, Some("10.0.0.1:7433".into()));
         assert_eq!(resp.node.discovery_interval_secs, 120);
-        // Guard fields
-        assert!(resp.guards.unrestricted);
         // Watchdog
         assert!(resp.watchdog.enabled);
         assert_eq!(resp.watchdog.memory_threshold, 85);
@@ -895,7 +810,7 @@ mod tests {
         // Inks
         assert_eq!(resp.inks.len(), 1);
         let p = &resp.inks["coder"];
-        assert_eq!(p.provider, Some("claude".into()));
+        assert_eq!(p.command, Some("claude -p 'code'".into()));
     }
 
     #[test]
@@ -909,8 +824,6 @@ mod tests {
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig {
@@ -1040,13 +953,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
 
         // Use /dev/null/impossible as config path (can't create dirs under /dev/null)
@@ -1061,8 +968,7 @@ mod tests {
                 },
                 auth: crate::config::AuthConfig::default(),
                 peers: HashMap::new(),
-                guards: GuardDefaultConfig::default(),
-                session_defaults: crate::config::SessionDefaultsConfig::default(),
+
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
@@ -1084,96 +990,5 @@ mod tests {
         assert!(result.is_err());
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    #[tokio::test]
-    async fn test_get_config_returns_session_defaults() {
-        let state = test_state().await;
-        let Json(resp) = get_config(State(state)).await.unwrap();
-        // Default: all None
-        assert!(resp.session_defaults.provider.is_none());
-        assert!(resp.session_defaults.model.is_none());
-        assert!(resp.session_defaults.mode.is_none());
-        assert!(resp.session_defaults.max_turns.is_none());
-        assert!(resp.session_defaults.max_budget_usd.is_none());
-        assert!(resp.session_defaults.output_format.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_update_config_session_defaults() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            session_defaults: Some(SessionDefaultsConfigResponse {
-                provider: Some("codex".into()),
-                model: Some("o3".into()),
-                mode: Some("autonomous".into()),
-                max_turns: Some(100),
-                max_budget_usd: Some(25.0),
-                output_format: Some("json".into()),
-            }),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(
-            resp.config.session_defaults.provider.as_deref(),
-            Some("codex")
-        );
-        assert_eq!(resp.config.session_defaults.model.as_deref(), Some("o3"));
-        assert_eq!(
-            resp.config.session_defaults.mode.as_deref(),
-            Some("autonomous")
-        );
-        assert_eq!(resp.config.session_defaults.max_turns, Some(100));
-        assert!((resp.config.session_defaults.max_budget_usd.unwrap() - 25.0).abs() < f64::EPSILON);
-        assert_eq!(
-            resp.config.session_defaults.output_format.as_deref(),
-            Some("json")
-        );
-        assert!(!resp.restart_required);
-    }
-
-    #[tokio::test]
-    async fn test_update_config_session_defaults_clears_with_empty() {
-        let state = test_state().await;
-        // Set session defaults
-        let req = UpdateConfigRequest {
-            session_defaults: Some(SessionDefaultsConfigResponse {
-                provider: Some("codex".into()),
-                model: Some("o3".into()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let _ = update_config(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        // Clear with all None
-        let req = UpdateConfigRequest {
-            session_defaults: Some(SessionDefaultsConfigResponse::default()),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert!(resp.config.session_defaults.provider.is_none());
-        assert!(resp.config.session_defaults.model.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_update_config_session_defaults_saves_to_disk() {
-        let state = test_state_with_config_path().await;
-        let req = UpdateConfigRequest {
-            session_defaults: Some(SessionDefaultsConfigResponse {
-                model: Some("opus".into()),
-                max_turns: Some(42),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let _ = update_config(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        // Load from disk and verify
-        let loaded = crate::config::load(state.config_path.to_str().unwrap()).unwrap();
-        assert_eq!(loaded.session_defaults.model.as_deref(), Some("opus"));
-        assert_eq!(loaded.session_defaults.max_turns, Some(42));
     }
 }

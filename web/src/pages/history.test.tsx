@@ -32,20 +32,12 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
     name: 'my-api',
-    provider: 'claude',
     status: 'finished',
-    prompt: 'Fix the bug',
-    mode: 'interactive',
+    command: 'Fix the bug',
+    description: null,
     workdir: '/repo',
-    guard_config: null,
-    model: null,
-    allowed_tools: null,
-    system_prompt: null,
     metadata: null,
     ink: null,
-    max_turns: null,
-    max_budget_usd: null,
-    output_format: null,
     intervention_reason: null,
     intervention_at: null,
     last_output_at: null,
@@ -122,7 +114,6 @@ describe('HistoryPage', () => {
       expect(mockGetSessions).toHaveBeenCalledWith({
         search: undefined,
         status: 'killed',
-        provider: undefined,
       });
     });
   });

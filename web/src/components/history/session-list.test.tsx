@@ -24,20 +24,12 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
     name: 'my-api',
-    provider: 'claude',
     status: 'finished',
-    prompt: 'Fix the bug',
-    mode: 'interactive',
+    command: 'Fix the bug',
+    description: null,
     workdir: '/repo',
-    guard_config: null,
-    model: null,
-    allowed_tools: null,
-    system_prompt: null,
     metadata: null,
     ink: null,
-    max_turns: null,
-    max_budget_usd: null,
-    output_format: null,
     intervention_reason: null,
     intervention_at: null,
     last_output_at: null,
@@ -61,14 +53,14 @@ describe('SessionList', () => {
     expect(screen.getByText('other-task')).toBeInTheDocument();
   });
 
-  it('truncates long prompts', () => {
-    const longPrompt = 'A'.repeat(100);
-    render(<SessionList sessions={[makeSession({ prompt: longPrompt })]} onRefresh={vi.fn()} />);
+  it('truncates long commands', () => {
+    const longCommand = 'A'.repeat(100);
+    render(<SessionList sessions={[makeSession({ command: longCommand })]} onRefresh={vi.fn()} />);
     expect(screen.getByText('A'.repeat(80) + '...')).toBeInTheDocument();
   });
 
-  it('does not truncate short prompts', () => {
-    render(<SessionList sessions={[makeSession({ prompt: 'Short' })]} onRefresh={vi.fn()} />);
+  it('does not truncate short commands', () => {
+    render(<SessionList sessions={[makeSession({ command: 'Short' })]} onRefresh={vi.fn()} />);
     expect(screen.getByText('Short')).toBeInTheDocument();
   });
 
@@ -77,7 +69,6 @@ describe('SessionList', () => {
     expect(screen.queryByTestId('history-detail-sess-1')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('history-item-sess-1'));
     expect(screen.getByTestId('history-detail-sess-1')).toBeInTheDocument();
-    expect(screen.getByText('claude')).toBeInTheDocument();
   });
 
   it('collapses on second click', () => {

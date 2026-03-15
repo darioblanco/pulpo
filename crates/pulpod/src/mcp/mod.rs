@@ -7,7 +7,7 @@ use anyhow::Result;
 use pulpo_common::api::CreateSessionRequest;
 use pulpo_common::node::NodeInfo;
 use pulpo_common::peer::PeerInfo;
-use pulpo_common::session::{Provider, Session, SessionMode, SessionStatus};
+use pulpo_common::session::{Session, SessionStatus};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
@@ -28,38 +28,25 @@ use crate::session::manager::SessionManager;
 struct RemoteSpawnReq {
     name: String,
     workdir: Option<String>,
-    provider: Option<Provider>,
-    prompt: Option<String>,
-    mode: Option<SessionMode>,
-    unrestricted: Option<bool>,
+    command: Option<String>,
     ink: Option<String>,
-    model: Option<String>,
+    description: Option<String>,
 }
 
 // -- Tool parameter types --
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SpawnSessionParams {
-    /// Path to the git repository on the target machine.
-    pub workdir: Option<String>,
-    /// The prompt/task to give to the coding agent.
-    pub prompt: Option<String>,
-    /// AI provider to use (claude or codex). Defaults to claude.
-    pub provider: Option<Provider>,
-    /// Session mode (interactive or autonomous). Defaults to interactive.
-    pub mode: Option<SessionMode>,
-    /// If true, disables all guard restrictions for this session.
-    pub unrestricted: Option<bool>,
     /// Session name (required).
     pub name: String,
+    /// Command to run in the session.
+    pub command: Option<String>,
+    /// Path to the working directory on the target machine.
+    pub workdir: Option<String>,
     /// Ink preset from config (e.g. "reviewer", "coder").
     pub ink: Option<String>,
-    /// Model override (e.g. "opus", "sonnet").
-    pub model: Option<String>,
-    /// Use git worktree isolation (Claude only).
-    pub worktree: Option<bool>,
-    /// Resume an existing conversation by ID (Claude, Codex, Gemini).
-    pub conversation_id: Option<String>,
+    /// Human-readable description of the session.
+    pub description: Option<String>,
     /// Target node name. If omitted, runs locally.
     pub node: Option<String>,
 }
@@ -68,8 +55,6 @@ pub struct SpawnSessionParams {
 pub struct ListSessionsParams {
     /// Filter by status (creating, active, finished, killed, lost).
     pub status: Option<String>,
-    /// Filter by provider (claude, codex).
-    pub provider: Option<String>,
     /// Target node name. If omitted, queries locally.
     pub node: Option<String>,
 }
@@ -138,22 +123,16 @@ pub struct WaitForSessionParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SpawnAndWaitParams {
-    /// Path to the git repository on the target machine.
-    pub workdir: Option<String>,
-    /// The prompt/task to give to the coding agent.
-    pub prompt: Option<String>,
-    /// AI provider to use (claude or codex). Defaults to claude.
-    pub provider: Option<Provider>,
-    /// Session mode (interactive or autonomous). Defaults to interactive.
-    pub mode: Option<SessionMode>,
-    /// If true, disables all guard restrictions for this session.
-    pub unrestricted: Option<bool>,
     /// Session name (required).
     pub name: String,
+    /// Command to run in the session.
+    pub command: Option<String>,
+    /// Path to the working directory on the target machine.
+    pub workdir: Option<String>,
     /// Ink from config.
     pub ink: Option<String>,
-    /// Model override (e.g. "opus", "sonnet").
-    pub model: Option<String>,
+    /// Human-readable description.
+    pub description: Option<String>,
     /// Target node name. If omitted, runs locally.
     pub node: Option<String>,
     /// Timeout in seconds. Defaults to 600 (10 min).
@@ -167,22 +146,16 @@ pub struct SpawnAndWaitParams {
 /// A single task in a fan-out operation.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct FanOutTask {
-    /// Path to the git repository on the target machine.
-    pub workdir: Option<String>,
-    /// The prompt/task to give to the coding agent.
-    pub prompt: Option<String>,
-    /// AI provider to use (claude or codex). Defaults to claude.
-    pub provider: Option<Provider>,
-    /// Session mode (interactive or autonomous). Defaults to interactive.
-    pub mode: Option<SessionMode>,
-    /// If true, disables all guard restrictions for this session.
-    pub unrestricted: Option<bool>,
     /// Session name (required).
     pub name: String,
+    /// Command to run in the session.
+    pub command: Option<String>,
+    /// Path to the working directory on the target machine.
+    pub workdir: Option<String>,
     /// Ink from config.
     pub ink: Option<String>,
-    /// Model override (e.g. "opus", "sonnet").
-    pub model: Option<String>,
+    /// Human-readable description.
+    pub description: Option<String>,
     /// Target node name. If omitted, runs locally.
     pub node: Option<String>,
 }
@@ -201,14 +174,11 @@ pub struct FanOutParams {
 
 /// Internal request struct for `spawn_and_wait_impl` to avoid too-many-arguments.
 struct SpawnAndWaitRequest {
-    workdir: Option<String>,
-    prompt: Option<String>,
-    provider: Option<Provider>,
-    mode: Option<SessionMode>,
-    unrestricted: Option<bool>,
     name: String,
+    command: Option<String>,
+    workdir: Option<String>,
     ink: Option<String>,
-    model: Option<String>,
+    description: Option<String>,
     node: Option<String>,
     metadata: Option<std::collections::HashMap<String, String>>,
     timeout_secs: u64,
@@ -426,14 +396,11 @@ impl PulpoMcp {
     /// Spawn a session and wait for it to finish. Used by both `spawn_and_wait` and `fan_out`.
     async fn spawn_and_wait_impl(&self, req: SpawnAndWaitRequest) -> FanOutTaskResult {
         let SpawnAndWaitRequest {
-            workdir,
-            prompt,
-            provider,
-            mode,
-            unrestricted,
             name,
+            command,
+            workdir,
             ink,
-            model,
+            description,
             node,
             metadata,
             timeout_secs,
@@ -445,36 +412,20 @@ impl PulpoMcp {
             let req = CreateSessionRequest {
                 name,
                 workdir,
-                provider,
-                prompt,
-                mode,
-                unrestricted,
-                model,
-                allowed_tools: None,
-                system_prompt: None,
-                metadata,
+                command,
                 ink,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
-                worktree: None,
-                conversation_id: None,
+                description,
+                metadata,
             };
-            self.session_manager
-                .create_session(req)
-                .await
-                .map(|(s, _warnings)| s)
+            self.session_manager.create_session(req).await
         } else {
             let n = node.as_deref().unwrap_or_default();
             let body = RemoteSpawnReq {
                 name,
                 workdir,
-                provider,
-                prompt,
-                mode,
-                unrestricted,
+                command,
                 ink,
-                model,
+                description,
             };
             self.remote_post::<Session, _>(n, "/api/v1/sessions", &body)
                 .await
@@ -524,43 +475,27 @@ impl PulpoMcp {
 impl PulpoMcp {
     #[tool(
         name = "spawn_session",
-        description = "Create a new coding agent session. Spawns a terminal running the specified AI provider (Claude, Codex) in the given repository. Returns the created session details including its ID for tracking."
+        description = "Create a new session. Spawns a terminal running the specified command in the given directory. Returns the created session details including its ID for tracking."
     )]
     async fn spawn_session(&self, Parameters(params): Parameters<SpawnSessionParams>) -> String {
         let result = if self.is_local(params.node.as_deref()) {
             let req = CreateSessionRequest {
                 name: params.name,
                 workdir: params.workdir,
-                provider: params.provider,
-                prompt: params.prompt,
-                mode: params.mode,
-                unrestricted: params.unrestricted,
-                model: params.model,
-                allowed_tools: None,
-                system_prompt: None,
-                metadata: None,
+                command: params.command,
                 ink: params.ink,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
-                worktree: params.worktree,
-                conversation_id: params.conversation_id,
+                description: params.description,
+                metadata: None,
             };
-            self.session_manager
-                .create_session(req)
-                .await
-                .map(|(s, _warnings)| s)
+            self.session_manager.create_session(req).await
         } else {
             let node = params.node.as_deref().unwrap_or_default();
             let body = RemoteSpawnReq {
                 name: params.name,
                 workdir: params.workdir,
-                provider: params.provider,
-                prompt: params.prompt,
-                mode: params.mode,
-                unrestricted: params.unrestricted,
+                command: params.command,
                 ink: params.ink,
-                model: params.model,
+                description: params.description,
             };
             self.remote_post::<Session, _>(node, "/api/v1/sessions", &body)
                 .await
@@ -573,26 +508,20 @@ impl PulpoMcp {
 
     #[tool(
         name = "list_sessions",
-        description = "List all agent sessions, optionally filtered by status (active, finished, killed, lost) or provider (claude, codex)."
+        description = "List all sessions, optionally filtered by status (active, finished, killed, lost)."
     )]
     async fn list_sessions(&self, Parameters(params): Parameters<ListSessionsParams>) -> String {
         let result = if self.is_local(params.node.as_deref()) {
             let query = pulpo_common::api::ListSessionsQuery {
                 status: params.status,
-                provider: params.provider,
                 ..Default::default()
             };
             self.session_manager.list_sessions_filtered(&query).await
         } else {
             let node = params.node.as_deref().unwrap_or_default();
             let mut path = "/api/v1/sessions".to_string();
-            let mut sep = '?';
             if let Some(status) = &params.status {
-                let _ = write!(path, "{sep}status={status}");
-                sep = '&';
-            }
-            if let Some(provider) = &params.provider {
-                let _ = write!(path, "{sep}provider={provider}");
+                let _ = write!(path, "?status={status}");
             }
             self.remote_get::<Vec<Session>>(node, &path).await
         };
@@ -776,14 +705,11 @@ impl PulpoMcp {
 
         let task_result = self
             .spawn_and_wait_impl(SpawnAndWaitRequest {
-                workdir: params.workdir,
-                prompt: params.prompt,
-                provider: params.provider,
-                mode: params.mode,
-                unrestricted: params.unrestricted,
                 name: params.name,
+                command: params.command,
+                workdir: params.workdir,
                 ink: params.ink,
-                model: params.model,
+                description: params.description,
                 node: params.node,
                 metadata: None,
                 timeout_secs,
@@ -835,14 +761,11 @@ impl PulpoMcp {
                 metadata.insert("fan_out".into(), "true".into());
                 async move {
                     mcp.spawn_and_wait_impl(SpawnAndWaitRequest {
-                        workdir: task.workdir,
-                        prompt: task.prompt,
-                        provider: task.provider,
-                        mode: task.mode,
-                        unrestricted: task.unrestricted,
                         name: task.name,
+                        command: task.command,
+                        workdir: task.workdir,
                         ink: task.ink,
-                        model: task.model,
+                        description: task.description,
                         node: task.node,
                         metadata: Some(metadata),
                         timeout_secs,
@@ -1027,8 +950,6 @@ mod tests {
             },
             auth: crate::config::AuthConfig::default(),
             peers: HashMap::new(),
-            guards: crate::config::GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
@@ -1041,13 +962,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(backend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -1061,13 +976,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(backend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&peers);
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -1079,13 +988,7 @@ mod tests {
         store.migrate().await.unwrap();
         let pool = store.pool().clone();
         let backend = Arc::new(backend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         (PulpoMcp::new(manager, peer_registry, test_config()), pool)
     }
@@ -1152,15 +1055,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("Fix the bug".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -1173,15 +1071,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("Do stuff".into()),
-            provider: Some(Provider::Claude),
-            mode: Some(SessionMode::Autonomous),
-            unrestricted: Some(true),
             name: "custom-name".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: Some("test-node".into()), // matches local
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -1194,15 +1087,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: Some("unknown-node".into()),
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -1217,7 +1105,6 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = ListSessionsParams {
             status: None,
-            provider: None,
             node: None,
         };
         let result = mcp.list_sessions(Parameters(params)).await;
@@ -1230,22 +1117,16 @@ mod tests {
         // Create a session first
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         mcp.spawn_session(Parameters(spawn_params)).await;
 
         let params = ListSessionsParams {
             status: None,
-            provider: None,
             node: None,
         };
         let result = mcp.list_sessions(Parameters(params)).await;
@@ -1257,7 +1138,6 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = ListSessionsParams {
             status: Some("active".into()),
-            provider: Some("claude".into()),
             node: None,
         };
         let result = mcp.list_sessions(Parameters(params)).await;
@@ -1269,7 +1149,6 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = ListSessionsParams {
             status: None,
-            provider: None,
             node: Some("missing".into()),
         };
         let result = mcp.list_sessions(Parameters(params)).await;
@@ -1295,15 +1174,10 @@ mod tests {
         // Create a session
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1336,15 +1210,10 @@ mod tests {
         // Create a session
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1388,15 +1257,10 @@ mod tests {
         // Create session, it becomes stale via get_session
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1427,15 +1291,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1468,15 +1327,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1496,15 +1350,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1550,15 +1399,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1627,15 +1471,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1666,15 +1505,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -1746,15 +1580,10 @@ mod tests {
     fn test_spawn_session_params_debug() {
         let params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let debug = format!("{params:?}");
@@ -1765,7 +1594,6 @@ mod tests {
     fn test_list_sessions_params_debug() {
         let params = ListSessionsParams {
             status: None,
-            provider: None,
             node: None,
         };
         let debug = format!("{params:?}");
@@ -1852,23 +1680,14 @@ mod tests {
                 id: uuid::Uuid::nil(),
                 name: "test".into(),
                 workdir: "/tmp".into(),
-                provider: Provider::Claude,
-                prompt: "test".into(),
+                command: "echo hello".into(),
+                description: Some("test".into()),
                 status: SessionStatus::Finished,
-                mode: SessionMode::Interactive,
-                conversation_id: None,
                 exit_code: Some(0),
                 backend_session_id: None,
                 output_snapshot: None,
-                guard_config: None,
-                model: None,
-                allowed_tools: None,
-                system_prompt: None,
                 metadata: None,
                 ink: None,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
                 intervention_code: None,
                 intervention_reason: None,
                 intervention_at: None,
@@ -1909,14 +1728,12 @@ mod tests {
         assert_eq!(params.name, "my-session");
         assert_eq!(params.workdir.as_deref(), Some("/tmp"));
         assert!(params.node.is_none());
-        assert!(params.conversation_id.is_none());
     }
 
     #[test]
     fn test_spawn_session_params_deserialize_with_conversation_id() {
-        let json = r#"{"name":"my-session","workdir":"/tmp","prompt":"test","conversation_id":"conv-abc"}"#;
-        let params: SpawnSessionParams = serde_json::from_str(json).unwrap();
-        assert_eq!(params.conversation_id.as_deref(), Some("conv-abc"));
+        let json = r#"{"name":"my-session","workdir":"/tmp","command":"echo test"}"#;
+        let _params: SpawnSessionParams = serde_json::from_str(json).unwrap();
     }
 
     #[test]
@@ -1984,23 +1801,14 @@ mod tests {
                 id: uuid::Uuid::nil(),
                 name: "test".into(),
                 workdir: "/tmp".into(),
-                provider: Provider::Claude,
-                prompt: "test".into(),
+                command: "echo hello".into(),
+                description: Some("test".into()),
                 status: SessionStatus::Finished,
-                mode: SessionMode::Interactive,
-                conversation_id: None,
                 exit_code: None,
                 backend_session_id: None,
                 output_snapshot: None,
-                guard_config: None,
-                model: None,
-                allowed_tools: None,
-                system_prompt: None,
                 metadata: None,
                 ink: None,
-                max_turns: None,
-                max_budget_usd: None,
-                output_format: None,
                 intervention_code: None,
                 intervention_reason: None,
                 intervention_at: None,
@@ -2065,13 +1873,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(SendInputErrorBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -2186,15 +1988,10 @@ mod tests {
         let mcp = test_mcp_with_send_input_error().await;
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -2217,23 +2014,14 @@ mod tests {
             id: uuid::Uuid::new_v4(),
             name: "remote-session".into(),
             workdir: "/tmp/remote".into(),
-            provider: Provider::Claude,
-            prompt: "remote test".into(),
+            command: "echo hello".into(),
+            description: Some("remote test".into()),
             status: SessionStatus::Active,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
             exit_code: None,
             backend_session_id: None,
             output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -2249,23 +2037,14 @@ mod tests {
             id: uuid::Uuid::new_v4(),
             name: "completed-session".into(),
             workdir: "/tmp/remote".into(),
-            provider: Provider::Claude,
-            prompt: "done".into(),
+            command: "echo hello".into(),
+            description: Some("done".into()),
             status: SessionStatus::Finished,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
             exit_code: Some(0),
             backend_session_id: None,
             output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -2398,15 +2177,10 @@ mod tests {
         let mcp = test_mcp_with_remote(&addr).await;
         let params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("remote test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: Some("remote".into()),
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -2421,7 +2195,6 @@ mod tests {
         let mcp = test_mcp_with_remote(&addr).await;
         let params = ListSessionsParams {
             status: None,
-            provider: None,
             node: Some("remote".into()),
         };
         let result = mcp.list_sessions(Parameters(params)).await;
@@ -2434,7 +2207,6 @@ mod tests {
         let mcp = test_mcp_with_remote(&addr).await;
         let params = ListSessionsParams {
             status: Some("active".into()),
-            provider: None,
             node: Some("remote".into()),
         };
         let result = mcp.list_sessions(Parameters(params)).await;
@@ -2448,7 +2220,6 @@ mod tests {
         let mcp = test_mcp_with_remote(&addr).await;
         let params = ListSessionsParams {
             status: Some("active".into()),
-            provider: Some("claude".into()),
             node: Some("remote".into()),
         };
         let result = mcp.list_sessions(Parameters(params)).await;
@@ -2461,7 +2232,6 @@ mod tests {
         let mcp = test_mcp_with_remote(&addr).await;
         let params = ListSessionsParams {
             status: None,
-            provider: Some("claude".into()),
             node: Some("remote".into()),
         };
         let result = mcp.list_sessions(Parameters(params)).await;
@@ -2585,15 +2355,10 @@ mod tests {
         let mcp = test_mcp_with_remote_and_token(&addr).await;
         let params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: Some("remote".into()),
         };
         let result = mcp.spawn_session(Parameters(params)).await;
@@ -2632,13 +2397,7 @@ mod tests {
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -2651,15 +2410,10 @@ mod tests {
         // Create a session
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -2785,13 +2539,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
         let params = SpawnAndWaitParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("fix the bug".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
             node: None,
             timeout_secs: Some(5),
             poll_interval_secs: Some(0),
@@ -2810,13 +2561,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnAndWaitParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
             node: None,
             timeout_secs: Some(0), // immediate timeout
             poll_interval_secs: Some(1),
@@ -2834,13 +2582,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new()).await;
         let params = SpawnAndWaitParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
             node: Some("nonexistent-node".into()),
             timeout_secs: Some(5),
             poll_interval_secs: Some(1),
@@ -2857,13 +2602,10 @@ mod tests {
         let mcp = test_mcp(MockBackend::new().with_alive(false)).await;
         let params = SpawnAndWaitParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: Some(Provider::Claude),
-            mode: Some(SessionMode::Autonomous),
-            unrestricted: Some(false),
             name: "custom-name".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: Some("opus".into()),
             node: None,
             timeout_secs: None,       // defaults to 600
             poll_interval_secs: None, // defaults to 5
@@ -2879,13 +2621,10 @@ mod tests {
     async fn test_spawn_and_wait_params_debug() {
         let params = SpawnAndWaitParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
             node: None,
             timeout_secs: None,
             poll_interval_secs: None,
@@ -2926,13 +2665,10 @@ mod tests {
         let params = FanOutParams {
             tasks: vec![FanOutTask {
                 workdir: Some("/tmp".into()),
-                prompt: Some("test task".into()),
-                provider: None,
-                mode: None,
-                unrestricted: None,
                 name: "test".into(),
+                command: Some("echo test".into()),
+                description: None,
                 ink: None,
-                model: None,
                 node: None,
             }],
             timeout_secs: Some(5),
@@ -2955,24 +2691,18 @@ mod tests {
             tasks: vec![
                 FanOutTask {
                     workdir: Some("/tmp".into()),
-                    prompt: Some("task A".into()),
-                    provider: None,
-                    mode: None,
-                    unrestricted: None,
                     name: "task-a".into(),
+                    command: Some("echo test".into()),
+                    description: None,
                     ink: None,
-                    model: None,
                     node: None,
                 },
                 FanOutTask {
                     workdir: Some("/tmp".into()),
-                    prompt: Some("task B".into()),
-                    provider: Some(Provider::Codex),
-                    mode: Some(SessionMode::Autonomous),
-                    unrestricted: Some(true),
                     name: "task-b".into(),
+                    command: Some("echo test".into()),
+                    description: None,
                     ink: None,
-                    model: None,
                     node: None,
                 },
             ],
@@ -2997,24 +2727,18 @@ mod tests {
             tasks: vec![
                 FanOutTask {
                     workdir: Some("/tmp".into()),
-                    prompt: Some("good task".into()),
-                    provider: None,
-                    mode: None,
-                    unrestricted: None,
                     name: "good-task".into(),
+                    command: Some("echo test".into()),
+                    description: None,
                     ink: None,
-                    model: None,
                     node: None,
                 },
                 FanOutTask {
                     workdir: Some("/tmp".into()),
-                    prompt: Some("bad task".into()),
-                    provider: None,
-                    mode: None,
-                    unrestricted: None,
                     name: "bad-task".into(),
+                    command: Some("echo test".into()),
+                    description: None,
                     ink: None,
-                    model: None,
                     node: Some("nonexistent-node".into()),
                 },
             ],
@@ -3050,13 +2774,10 @@ mod tests {
         let params = FanOutParams {
             tasks: vec![FanOutTask {
                 workdir: Some("/tmp".into()),
-                prompt: Some("long running".into()),
-                provider: None,
-                mode: None,
-                unrestricted: None,
                 name: "test".into(),
+                command: Some("echo test".into()),
+                description: None,
                 ink: None,
-                model: None,
                 node: None,
             }],
             timeout_secs: Some(0),
@@ -3076,13 +2797,10 @@ mod tests {
         let params = FanOutParams {
             tasks: vec![FanOutTask {
                 workdir: Some("/tmp".into()),
-                prompt: Some("test".into()),
-                provider: None,
-                mode: None,
-                unrestricted: None,
                 name: "test".into(),
+                command: Some("echo test".into()),
+                description: None,
                 ink: None,
-                model: None,
                 node: None,
             }],
             timeout_secs: Some(5),
@@ -3121,13 +2839,10 @@ mod tests {
     fn test_fan_out_task_debug() {
         let task = FanOutTask {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
             node: None,
         };
         let debug = format!("{task:?}");
@@ -3136,10 +2851,9 @@ mod tests {
 
     #[test]
     fn test_fan_out_task_deserialize() {
-        let json = r#"{"name":"test","workdir":"/tmp","prompt":"test","provider":"codex","mode":"autonomous"}"#;
+        let json = r#"{"name":"test","workdir":"/tmp","command":"echo test"}"#;
         let task: FanOutTask = serde_json::from_str(json).unwrap();
-        assert_eq!(task.provider, Some(Provider::Codex));
-        assert_eq!(task.mode, Some(SessionMode::Autonomous));
+        assert_eq!(task.command, Some("echo test".into()));
     }
 
     #[test]
@@ -3219,15 +2933,10 @@ mod tests {
         let spawn_result = mcp
             .spawn_session(Parameters(SpawnSessionParams {
                 workdir: Some("/tmp".into()),
-                prompt: Some("test".into()),
-                provider: None,
-                mode: None,
-                unrestricted: None,
                 name: "test".into(),
+                command: Some("echo test".into()),
+                description: None,
                 ink: None,
-                model: None,
-                worktree: None,
-                conversation_id: None,
                 node: None,
             }))
             .await;
@@ -3257,15 +2966,10 @@ mod tests {
         // Create a session first to ensure spawn works
         let spawn_params = SpawnSessionParams {
             workdir: Some("/tmp".into()),
-            prompt: Some("test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
-            worktree: None,
-            conversation_id: None,
             node: None,
         };
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
@@ -3326,13 +3030,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let pool = store.pool().clone();
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let mcp = PulpoMcp::new(manager, peer_registry, test_config());
 
@@ -3364,14 +3062,11 @@ mod tests {
 
         let result = mcp
             .spawn_and_wait_impl(SpawnAndWaitRequest {
-                workdir: Some("/tmp".into()),
-                prompt: Some("test".into()),
-                provider: None,
-                mode: None,
-                unrestricted: None,
                 name: "test".into(),
+                command: Some("echo test".into()),
+                description: None,
+                workdir: Some("/tmp".into()),
                 ink: None,
-                model: None,
                 node: None,
                 metadata: None,
                 timeout_secs: 3,
@@ -3419,13 +3114,10 @@ mod tests {
         let mcp = test_mcp_with_remote(&addr).await;
         let params = SpawnAndWaitParams {
             workdir: Some("/tmp/remote".into()),
-            prompt: Some("remote test".into()),
-            provider: None,
-            mode: None,
-            unrestricted: None,
             name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
             ink: None,
-            model: None,
             node: Some("remote".into()),
             timeout_secs: Some(5),
             poll_interval_secs: Some(0),

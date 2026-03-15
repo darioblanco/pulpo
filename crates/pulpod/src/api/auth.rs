@@ -236,7 +236,7 @@ mod tests {
 
     // -- Middleware integration tests --
 
-    use crate::config::{AuthConfig, Config, GuardDefaultConfig, NodeConfig};
+    use crate::config::{AuthConfig, Config, NodeConfig};
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
@@ -282,20 +282,12 @@ mod tests {
                 token: token.into(),
             },
             peers: HashMap::new(),
-            guards: GuardDefaultConfig::default(),
-            session_defaults: crate::config::SessionDefaultsConfig::default(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(
-            backend,
-            store,
-            pulpo_common::guard::GuardConfig::default(),
-            HashMap::new(),
-        )
-        .with_no_stale_grace();
+        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(config, manager, peer_registry)
     }

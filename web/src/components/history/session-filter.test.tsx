@@ -8,8 +8,6 @@ describe('SessionFilter', () => {
     expect(screen.getByTestId('search-input')).toBeInTheDocument();
     expect(screen.getByTestId('status-chip-finished')).toBeInTheDocument();
     expect(screen.getByTestId('status-chip-killed')).toBeInTheDocument();
-    expect(screen.getByTestId('provider-chip-claude')).toBeInTheDocument();
-    expect(screen.getByTestId('provider-chip-codex')).toBeInTheDocument();
   });
 
   it('emits filter on search input', () => {
@@ -19,7 +17,6 @@ describe('SessionFilter', () => {
     expect(onFilter).toHaveBeenCalledWith({
       search: 'my-api',
       status: undefined,
-      provider: undefined,
     });
   });
 
@@ -32,7 +29,6 @@ describe('SessionFilter', () => {
     expect(onFilter).toHaveBeenLastCalledWith({
       search: undefined,
       status: undefined,
-      provider: undefined,
     });
   });
 
@@ -46,7 +42,6 @@ describe('SessionFilter', () => {
     expect(onFilter).toHaveBeenCalledWith({
       search: undefined,
       status: 'finished',
-      provider: undefined,
     });
   });
 
@@ -60,44 +55,12 @@ describe('SessionFilter', () => {
     expect(onFilter).toHaveBeenLastCalledWith({
       search: undefined,
       status: undefined,
-      provider: undefined,
     });
   });
 
-  it('toggles provider chip on click', () => {
-    const onFilter = vi.fn();
-    render(<SessionFilter onFilter={onFilter} />);
-    const chip = screen.getByTestId('provider-chip-claude');
-    expect(chip).toHaveAttribute('aria-pressed', 'false');
-    fireEvent.click(chip);
-    expect(chip).toHaveAttribute('aria-pressed', 'true');
-    expect(onFilter).toHaveBeenCalledWith({
-      search: undefined,
-      status: undefined,
-      provider: 'claude',
-    });
-  });
-
-  it('deactivates provider chip on second click', () => {
-    const onFilter = vi.fn();
-    render(<SessionFilter onFilter={onFilter} />);
-    const chip = screen.getByTestId('provider-chip-claude');
-    fireEvent.click(chip);
-    fireEvent.click(chip);
-    expect(chip).toHaveAttribute('aria-pressed', 'false');
-    expect(onFilter).toHaveBeenLastCalledWith({
-      search: undefined,
-      status: undefined,
-      provider: undefined,
-    });
-  });
-
-  it('accepts custom status and provider options', () => {
-    render(
-      <SessionFilter onFilter={vi.fn()} statusOptions={['active']} providerOptions={['codex']} />,
-    );
+  it('accepts custom status options', () => {
+    render(<SessionFilter onFilter={vi.fn()} statusOptions={['active']} />);
     expect(screen.getByTestId('status-chip-active')).toBeInTheDocument();
-    expect(screen.getByTestId('provider-chip-codex')).toBeInTheDocument();
     expect(screen.queryByTestId('status-chip-finished')).not.toBeInTheDocument();
   });
 });

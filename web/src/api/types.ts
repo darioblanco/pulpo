@@ -22,27 +22,15 @@ export interface PeersResponse {
   peers: PeerInfo[];
 }
 
-export interface GuardConfig {
-  unrestricted: boolean;
-}
-
 export interface Session {
   id: string;
   name: string;
-  provider: string;
   status: string;
-  prompt: string;
-  mode: string;
+  command: string;
+  description: string | null;
   workdir: string;
-  guard_config: GuardConfig | null;
-  model: string | null;
-  allowed_tools: string[] | null;
-  system_prompt: string | null;
   metadata: Record<string, string> | null;
   ink: string | null;
-  max_turns: number | null;
-  max_budget_usd: number | null;
-  output_format: string | null;
   intervention_reason: string | null;
   intervention_at: string | null;
   last_output_at: string | null;
@@ -58,12 +46,7 @@ export interface InterventionEvent {
 
 export interface InkConfig {
   description: string | null;
-  provider: string | null;
-  model: string | null;
-  mode: string | null;
-  unrestricted: boolean | null;
-  instructions: string | null;
-  instructions_file: string | null;
+  command: string | null;
 }
 
 export interface InksResponse {
@@ -72,7 +55,6 @@ export interface InksResponse {
 
 export interface ListSessionsParams {
   status?: string;
-  provider?: string;
   search?: string;
   sort?: string;
   order?: string;
@@ -86,11 +68,6 @@ export interface NodeConfigResponse {
   tag: string | null;
   seed: string | null;
   discovery_interval_secs: number;
-  default_provider: string | null;
-}
-
-export interface GuardDefaultConfigResponse {
-  unrestricted: boolean;
 }
 
 export interface WatchdogConfigResponse {
@@ -132,7 +109,6 @@ export type PeerEntry = string | { address: string; token?: string };
 export interface ConfigResponse {
   node: NodeConfigResponse;
   peers: Record<string, PeerEntry>;
-  guards: GuardDefaultConfigResponse;
   watchdog: WatchdogConfigResponse;
   notifications: NotificationsConfigResponse;
   inks: Record<string, InkConfig>;
@@ -146,7 +122,6 @@ export interface UpdateConfigRequest {
   tag?: string;
   seed?: string;
   discovery_interval_secs?: number;
-  unrestricted?: boolean;
   watchdog_enabled?: boolean;
   watchdog_memory_threshold?: number;
   watchdog_check_interval_secs?: number;
@@ -172,104 +147,12 @@ export interface PairingUrlResponse {
 export interface CreateSessionRequest {
   name: string;
   workdir?: string;
-  provider?: string;
-  prompt?: string;
-  mode?: string;
-  unrestricted?: boolean;
-  model?: string;
-  allowed_tools?: string[];
-  system_prompt?: string;
-  metadata?: Record<string, string>;
+  command?: string;
   ink?: string;
-  max_turns?: number;
-  max_budget_usd?: number;
-  output_format?: string;
-  worktree?: boolean;
-  conversation_id?: string;
+  description?: string;
+  metadata?: Record<string, string>;
 }
 
 export interface CreateSessionResponse {
   session: Session;
-  warnings?: string[];
-}
-
-/** Capabilities that a provider supports */
-export interface ProviderCapabilities {
-  model: boolean;
-  system_prompt: boolean;
-  allowed_tools: boolean;
-  max_turns: boolean;
-  max_budget_usd: boolean;
-  output_format: boolean;
-  worktree: boolean;
-  unrestricted: boolean;
-  resume: boolean;
-}
-
-/** Return the capability set for a given provider */
-export function getProviderCapabilities(provider: string): ProviderCapabilities {
-  switch (provider) {
-    case 'claude':
-      return {
-        model: true,
-        system_prompt: true,
-        allowed_tools: true,
-        max_turns: true,
-        max_budget_usd: true,
-        output_format: true,
-        worktree: true,
-        unrestricted: true,
-        resume: true,
-      };
-    case 'codex':
-      return {
-        model: true,
-        system_prompt: false,
-        allowed_tools: false,
-        max_turns: false,
-        max_budget_usd: false,
-        output_format: false,
-        worktree: false,
-        unrestricted: false,
-        resume: true,
-      };
-    case 'gemini':
-      return {
-        model: true,
-        system_prompt: false,
-        allowed_tools: false,
-        max_turns: false,
-        max_budget_usd: false,
-        output_format: true,
-        worktree: false,
-        unrestricted: true,
-        resume: true,
-      };
-    case 'open_code':
-    case 'opencode':
-      return {
-        model: false,
-        system_prompt: false,
-        allowed_tools: false,
-        max_turns: false,
-        max_budget_usd: false,
-        output_format: true,
-        worktree: false,
-        unrestricted: false,
-        resume: false,
-      };
-    default:
-      // Unknown provider — assume full capabilities
-      return {
-        model: true,
-        system_prompt: true,
-        allowed_tools: true,
-        max_turns: true,
-        max_budget_usd: true,
-        output_format: true,
-        worktree: true,
-        unrestricted: true,
-        resume: true,
-      };
-  }
 }

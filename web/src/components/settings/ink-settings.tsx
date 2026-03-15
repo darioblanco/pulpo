@@ -2,16 +2,6 @@ import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
 import { FormField } from './form-field';
 import { updateRemoteConfig } from '@/api/client';
 import type { InkConfig, PeerInfo } from '@/api/types';
@@ -25,12 +15,7 @@ interface InkSettingsProps {
 
 const emptyInk: InkConfig = {
   description: null,
-  provider: null,
-  model: null,
-  mode: null,
-  unrestricted: null,
-  instructions: null,
-  instructions_file: null,
+  command: null,
 };
 
 export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps) {
@@ -57,14 +42,10 @@ export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps
     if (expandedInk === name) setExpandedInk(null);
   }
 
-  function updateInk(
-    name: string,
-    field: keyof InkConfig,
-    value: string | string[] | boolean | null,
-  ) {
+  function updateInk(name: string, field: keyof InkConfig, value: string | null) {
     const ink = inks[name];
     if (!ink) return;
-    const resolved = typeof value === 'boolean' ? value : value || null;
+    const resolved = value || null;
     onInksChange({ ...inks, [name]: { ...ink, [field]: resolved } });
   }
 
@@ -90,8 +71,8 @@ export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps
       <CardHeader>
         <CardTitle>Inks</CardTitle>
         <CardDescription>
-          Named roles that define what an agent does. Each ink sets a provider, mode, and
-          instructions that work across all providers. Select an ink when creating a session.
+          Named presets that define what command to run. Each ink sets a command and description.
+          Select an ink when creating a session.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -139,68 +120,12 @@ export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps
                       />
                     </FormField>
 
-                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                      <FormField label="Provider" htmlFor={`ink-provider-${name}`}>
-                        <Select
-                          value={ink.provider ?? ''}
-                          onValueChange={(v) => updateInk(name, 'provider', v)}
-                        >
-                          <SelectTrigger id={`ink-provider-${name}`} className="w-full">
-                            <SelectValue placeholder="Any" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="claude">Claude</SelectItem>
-                            <SelectItem value="codex">Codex</SelectItem>
-                            <SelectItem value="gemini">Gemini</SelectItem>
-                            <SelectItem value="open_code">OpenCode</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </FormField>
-
-                      <FormField label="Model" htmlFor={`ink-model-${name}`}>
-                        <Input
-                          id={`ink-model-${name}`}
-                          value={ink.model ?? ''}
-                          onChange={(e) => updateInk(name, 'model', e.target.value)}
-                          placeholder="Default"
-                        />
-                      </FormField>
-
-                      <FormField label="Mode" htmlFor={`ink-mode-${name}`}>
-                        <Select
-                          value={ink.mode ?? ''}
-                          onValueChange={(v) => updateInk(name, 'mode', v)}
-                        >
-                          <SelectTrigger id={`ink-mode-${name}`} className="w-full">
-                            <SelectValue placeholder="Any" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="interactive">Interactive</SelectItem>
-                            <SelectItem value="autonomous">Autonomous</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </FormField>
-
-                      <div className="flex items-center gap-2 self-end pb-1">
-                        <Switch
-                          id={`ink-unrestricted-${name}`}
-                          checked={ink.unrestricted === true}
-                          onCheckedChange={(checked) => updateInk(name, 'unrestricted', checked)}
-                          data-testid={`ink-unrestricted-${name}`}
-                        />
-                        <Label htmlFor={`ink-unrestricted-${name}`} className="text-sm">
-                          Unrestricted
-                        </Label>
-                      </div>
-                    </div>
-
-                    <FormField label="Instructions" htmlFor={`ink-prompt-${name}`}>
-                      <Textarea
-                        id={`ink-prompt-${name}`}
-                        rows={3}
-                        value={ink.instructions ?? ''}
-                        onChange={(e) => updateInk(name, 'instructions', e.target.value)}
-                        placeholder="Role instructions for the agent (universal across providers)"
+                    <FormField label="Command" htmlFor={`ink-command-${name}`}>
+                      <Input
+                        id={`ink-command-${name}`}
+                        value={ink.command ?? ''}
+                        onChange={(e) => updateInk(name, 'command', e.target.value)}
+                        placeholder="Command to run (e.g. claude code --model opus-4)"
                       />
                     </FormField>
 

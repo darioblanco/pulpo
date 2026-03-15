@@ -10,19 +10,22 @@ export const data: SlashCommandOptionsOnlyBuilder = new SlashCommandBuilder()
   .setName('spawn')
   .setDescription('Spawn a new agent session')
   .addStringOption((opt) =>
-    opt.setName('workdir').setDescription('Working directory on the pulpod host').setRequired(true),
+    opt.setName('name').setDescription('Session name').setRequired(true),
   )
   .addStringOption((opt) =>
-    opt.setName('prompt').setDescription('Task prompt for the agent').setRequired(true),
+    opt.setName('workdir').setDescription('Working directory on the pulpod host').setRequired(false),
+  )
+  .addStringOption((opt) =>
+    opt.setName('command').setDescription('Shell command to run in the session').setRequired(false),
   )
   .addStringOption((opt) =>
     opt.setName('ink').setDescription('Ink name (from pulpod config)').setRequired(false),
   )
   .addStringOption((opt) =>
-    opt.setName('model').setDescription('Model override (e.g. opus, sonnet)').setRequired(false),
-  )
-  .addStringOption((opt) =>
-    opt.setName('name').setDescription('Session name').setRequired(true),
+    opt
+      .setName('description')
+      .setDescription('Human-readable description of the session')
+      .setRequired(false),
   );
 
 export async function execute(
@@ -31,19 +34,19 @@ export async function execute(
 ): Promise<void> {
   await interaction.deferReply();
 
-  const workdir = interaction.options.getString('workdir', true);
-  const prompt = interaction.options.getString('prompt', true);
-  const ink = interaction.options.getString('ink') ?? undefined;
-  const model = interaction.options.getString('model') ?? undefined;
   const name = interaction.options.getString('name', true);
+  const workdir = interaction.options.getString('workdir') ?? undefined;
+  const command = interaction.options.getString('command') ?? undefined;
+  const ink = interaction.options.getString('ink') ?? undefined;
+  const description = interaction.options.getString('description') ?? undefined;
 
   try {
     const session = await client.createSession({
-      workdir,
-      prompt,
-      ink,
-      model,
       name,
+      workdir,
+      command,
+      ink,
+      description,
       metadata: {
         discord_channel_id: interaction.channelId,
         discord_user_id: interaction.user.id,

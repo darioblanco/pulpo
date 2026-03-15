@@ -4,11 +4,9 @@ export interface Session {
   id: string;
   name: string;
   workdir: string;
-  provider: string;
-  prompt: string;
+  command: string;
+  description?: string;
   status: string;
-  mode: string;
-  model?: string;
   ink?: string;
   metadata?: Record<string, string>;
   created_at: string;
@@ -17,25 +15,16 @@ export interface Session {
 
 export interface CreateSessionRequest {
   name: string;
-  workdir: string;
-  provider?: string;
-  prompt: string;
-  mode?: string;
+  workdir?: string;
+  command?: string;
   ink?: string;
-  model?: string;
-  system_prompt?: string;
+  description?: string;
   metadata?: Record<string, string>;
-  conversation_id?: string;
 }
 
 export interface InkConfig {
   description: string | null;
-  provider?: string;
-  model?: string;
-  mode?: string;
-  unrestricted?: boolean;
-  instructions?: string;
-  instructions_file?: string;
+  command?: string;
 }
 
 export interface SessionEvent {

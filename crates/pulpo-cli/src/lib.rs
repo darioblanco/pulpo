@@ -2,10 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use pulpo_common::api::{
     AuthTokenResponse, CreateSessionResponse, InterventionEventResponse, PeersResponse,
-    ProvidersResponse,
 };
-#[cfg(test)]
-use pulpo_common::api::{ProviderCapabilitiesResponse, ProviderInfoResponse};
 use pulpo_common::session::Session;
 
 #[derive(Parser, Debug)]
@@ -56,60 +53,21 @@ pub enum Commands {
         #[arg(long)]
         workdir: Option<String>,
 
-        /// Agent provider (claude, codex, gemini, opencode). Uses config `default_provider` or claude.
-        #[arg(long)]
-        provider: Option<String>,
-
-        /// Run in autonomous mode (fire-and-forget)
-        #[arg(long)]
-        auto: bool,
-
-        /// Disable all safety guardrails (Claude, Gemini)
-        #[arg(long)]
-        unrestricted: bool,
-
-        /// Model override, e.g. opus, sonnet (Claude, Codex, Gemini)
-        #[arg(long)]
-        model: Option<String>,
-
-        /// System prompt to append (Claude only)
-        #[arg(long)]
-        system_prompt: Option<String>,
-
-        /// Explicit allowed tools, comma-separated (Claude only)
-        #[arg(long, value_delimiter = ',')]
-        allowed_tools: Option<Vec<String>>,
-
         /// Ink name (from config)
         #[arg(long)]
         ink: Option<String>,
 
-        /// Maximum agent turns before stopping (Claude only)
+        /// Human-readable description of the task
         #[arg(long)]
-        max_turns: Option<u32>,
-
-        /// Maximum budget in USD before stopping (Claude only)
-        #[arg(long)]
-        max_budget: Option<f64>,
-
-        /// Output format, e.g. json, stream-json (Claude, Gemini, opencode)
-        #[arg(long)]
-        output_format: Option<String>,
-
-        /// Use git worktree isolation (Claude only)
-        #[arg(long)]
-        worktree: bool,
-
-        /// Resume an existing conversation by ID (Claude, Codex, Gemini)
-        #[arg(long)]
-        conversation_id: Option<String>,
+        description: Option<String>,
 
         /// Don't attach to the session after spawning
         #[arg(short, long)]
         detach: bool,
 
-        /// Task prompt
-        prompt: Vec<String>,
+        /// Command to run (everything after --)
+        #[arg(last = true)]
+        command: Vec<String>,
     },
 
     /// List all sessions
@@ -163,10 +121,6 @@ pub enum Commands {
         name: String,
     },
 
-    /// List available providers and their capabilities
-    #[command(visible_alias = "p")]
-    Providers,
-
     /// Open the web dashboard in your browser
     Ui,
 
@@ -189,11 +143,9 @@ pub enum ScheduleAction {
         /// Working directory
         #[arg(long)]
         workdir: String,
-        /// Agent provider
-        #[arg(long, default_value = "claude")]
-        provider: String,
-        /// Task prompt
-        prompt: Vec<String>,
+        /// Command to run (everything after --)
+        #[arg(last = true)]
+        command: Vec<String>,
     },
     /// List installed pulpo cron schedules
     #[command(alias = "ls")]
@@ -232,21 +184,14 @@ fn format_sessions(sessions: &[Session]) -> String {
     if sessions.is_empty() {
         return "No sessions.".into();
     }
-    let mut lines = vec![format!(
-        "{:<20} {:<12} {:<10} {:<14} {}",
-        "NAME", "STATUS", "PROVIDER", "MODE", "PROMPT"
-    )];
+    let mut lines = vec![format!("{:<20} {:<12} {}", "NAME", "STATUS", "COMMAND")];
     for s in sessions {
-        let prompt_display = if s.prompt.len() > 40 {
-            format!("{}...", &s.prompt[..37])
+        let cmd_display = if s.command.len() > 50 {
+            format!("{}...", &s.command[..47])
         } else {
-            s.prompt.clone()
+            s.command.clone()
         };
-        let status_display = s.status.to_string();
-        lines.push(format!(
-            "{:<20} {:<12} {:<10} {:<14} {}",
-            s.name, status_display, s.provider, s.mode, prompt_display
-        ));
+        lines.push(format!("{:<20} {:<12} {}", s.name, s.status, cmd_display));
     }
     lines.join("\n")
 }
@@ -281,56 +226,6 @@ fn format_interventions(events: &[InterventionEventResponse]) -> String {
     let mut lines = vec![format!("{:<8} {:<20} {}", "ID", "TIMESTAMP", "REASON")];
     for e in events {
         lines.push(format!("{:<8} {:<20} {}", e.id, e.created_at, e.reason));
-    }
-    lines.join("\n")
-}
-
-/// Format the providers response as a table.
-fn format_providers(resp: &ProvidersResponse) -> String {
-    let mut lines = vec![format!(
-        "{:<12} {:<10} {:<20} {}",
-        "PROVIDER", "AVAILABLE", "BINARY", "CAPABILITIES"
-    )];
-    for p in &resp.providers {
-        let avail = if p.available { "yes" } else { "no" };
-        let mut caps = Vec::new();
-        let c = &p.capabilities;
-        if c.model {
-            caps.push("model");
-        }
-        if c.system_prompt {
-            caps.push("system-prompt");
-        }
-        if c.allowed_tools {
-            caps.push("allowed-tools");
-        }
-        if c.max_turns {
-            caps.push("max-turns");
-        }
-        if c.max_budget_usd {
-            caps.push("max-budget");
-        }
-        if c.output_format {
-            caps.push("output-format");
-        }
-        if c.worktree {
-            caps.push("worktree");
-        }
-        if c.unrestricted {
-            caps.push("unrestricted");
-        }
-        if c.resume {
-            caps.push("resume");
-        }
-        let caps_str = if caps.is_empty() {
-            "-".to_owned()
-        } else {
-            caps.join(", ")
-        };
-        lines.push(format!(
-            "{:<12} {:<10} {:<20} {}",
-            p.provider, avail, p.binary, caps_str
-        ));
     }
     lines.join("\n")
 }
@@ -657,16 +552,9 @@ fn write_crontab(content: &str) -> Result<()> {
 
 /// Build the crontab line for a pulpo schedule.
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_crontab_line(
-    name: &str,
-    cron: &str,
-    workdir: &str,
-    provider: &str,
-    prompt: &str,
-    node: &str,
-) -> String {
+fn build_crontab_line(name: &str, cron: &str, workdir: &str, command: &str, node: &str) -> String {
     format!(
-        "{cron} pulpo --node {node} spawn --workdir {workdir} --provider {provider} --auto {prompt} {CRONTAB_TAG}{name}\n"
+        "{cron} pulpo --node {node} spawn {name} --workdir {workdir} -- {command} {CRONTAB_TAG}{name}\n"
     )
 }
 
@@ -782,12 +670,11 @@ fn execute_schedule(action: &ScheduleAction, node: &str) -> Result<String> {
             name,
             cron,
             workdir,
-            provider,
-            prompt,
+            command,
         } => {
             let crontab = read_crontab()?;
-            let joined_prompt = prompt.join(" ");
-            let line = build_crontab_line(name, cron, workdir, provider, &joined_prompt, node);
+            let joined_command = command.join(" ");
+            let line = build_crontab_line(name, cron, workdir, &joined_command, node);
             let updated = crontab_install(&crontab, name, &line)?;
             write_crontab(&updated)?;
             Ok(format!("Installed schedule \"{name}\""))
@@ -886,15 +773,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let sessions: Vec<Session> = serde_json::from_str(&text)?;
             Ok(format_sessions(&sessions))
         }
-        Commands::Providers => {
-            let resp = authed_get(&client, format!("{url}/api/v1/providers"), token.as_deref())
-                .send()
-                .await
-                .map_err(|e| friendly_error(&e, node))?;
-            let text = ok_or_api_error(resp).await?;
-            let resp: ProvidersResponse = serde_json::from_str(&text)?;
-            Ok(format_providers(&resp))
-        }
         Commands::Nodes => {
             let resp = authed_get(&client, format!("{url}/api/v1/peers"), token.as_deref())
                 .send()
@@ -907,23 +785,16 @@ pub async fn execute(cli: &Cli) -> Result<String> {
         Commands::Spawn {
             workdir,
             name,
-            provider,
-            auto,
-            unrestricted,
-            model,
-            system_prompt,
-            allowed_tools,
             ink,
-            max_turns,
-            max_budget,
-            output_format,
-            worktree,
-            conversation_id,
+            description,
             detach,
-            prompt,
+            command,
         } => {
-            let prompt_text = prompt.join(" ");
-            let mode = if *auto { "autonomous" } else { "interactive" };
+            let cmd = if command.is_empty() {
+                None
+            } else {
+                Some(command.join(" "))
+            };
             // Resolve workdir: --workdir flag > current directory
             let resolved_workdir = workdir.clone().unwrap_or_else(|| {
                 std::env::current_dir()
@@ -932,45 +803,15 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let mut body = serde_json::json!({
                 "name": name,
                 "workdir": resolved_workdir,
-                "mode": mode,
             });
-            // Only include prompt if non-empty
-            if !prompt_text.is_empty() {
-                body["prompt"] = serde_json::json!(prompt_text);
+            if let Some(c) = &cmd {
+                body["command"] = serde_json::json!(c);
             }
-            // Only include provider if explicitly specified
-            if let Some(p) = provider {
-                body["provider"] = serde_json::json!(p);
+            if let Some(i) = ink {
+                body["ink"] = serde_json::json!(i);
             }
-            if *unrestricted {
-                body["unrestricted"] = serde_json::json!(true);
-            }
-            if let Some(m) = model {
-                body["model"] = serde_json::json!(m);
-            }
-            if let Some(sp) = system_prompt {
-                body["system_prompt"] = serde_json::json!(sp);
-            }
-            if let Some(tools) = allowed_tools {
-                body["allowed_tools"] = serde_json::json!(tools);
-            }
-            if let Some(p) = ink {
-                body["ink"] = serde_json::json!(p);
-            }
-            if let Some(mt) = max_turns {
-                body["max_turns"] = serde_json::json!(mt);
-            }
-            if let Some(mb) = max_budget {
-                body["max_budget_usd"] = serde_json::json!(mb);
-            }
-            if let Some(of) = output_format {
-                body["output_format"] = serde_json::json!(of);
-            }
-            if *worktree {
-                body["worktree"] = serde_json::json!(true);
-            }
-            if let Some(cid) = conversation_id {
-                body["conversation_id"] = serde_json::json!(cid);
+            if let Some(d) = description {
+                body["description"] = serde_json::json!(d);
             }
             let resp = authed_post(&client, format!("{url}/api/v1/sessions"), token.as_deref())
                 .json(&body)
@@ -979,14 +820,10 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 .map_err(|e| friendly_error(&e, node))?;
             let text = ok_or_api_error(resp).await?;
             let resp: CreateSessionResponse = serde_json::from_str(&text)?;
-            let mut msg = format!(
+            let msg = format!(
                 "Created session \"{}\" ({})",
                 resp.session.name, resp.session.id
             );
-            for w in &resp.warnings {
-                use std::fmt::Write;
-                let _ = write!(msg, "\n  Warning: {w}");
-            }
             if !detach {
                 let backend_id = resp
                     .session
@@ -1094,7 +931,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pulpo_common::session::Provider;
 
     #[test]
     fn test_base_url() {
@@ -1113,95 +949,6 @@ mod tests {
     fn test_cli_parse_nodes() {
         let cli = Cli::try_parse_from(["pulpo", "nodes"]).unwrap();
         assert!(matches!(cli.command, Commands::Nodes));
-    }
-
-    #[test]
-    fn test_cli_parse_providers() {
-        let cli = Cli::try_parse_from(["pulpo", "providers"]).unwrap();
-        assert!(matches!(cli.command, Commands::Providers));
-    }
-
-    #[test]
-    fn test_cli_parse_providers_alias() {
-        let cli = Cli::try_parse_from(["pulpo", "p"]).unwrap();
-        assert!(matches!(cli.command, Commands::Providers));
-    }
-
-    #[test]
-    fn test_format_providers_all() {
-        let resp = ProvidersResponse {
-            providers: vec![
-                ProviderInfoResponse {
-                    provider: Provider::Claude,
-                    binary: "claude".into(),
-                    available: true,
-                    capabilities: ProviderCapabilitiesResponse {
-                        model: true,
-                        system_prompt: true,
-                        allowed_tools: true,
-                        max_turns: true,
-                        max_budget_usd: true,
-                        output_format: true,
-                        worktree: true,
-                        unrestricted: true,
-                        resume: true,
-                    },
-                },
-                ProviderInfoResponse {
-                    provider: Provider::Shell,
-                    binary: "bash".into(),
-                    available: true,
-                    capabilities: ProviderCapabilitiesResponse {
-                        model: false,
-                        system_prompt: false,
-                        allowed_tools: false,
-                        max_turns: false,
-                        max_budget_usd: false,
-                        output_format: false,
-                        worktree: false,
-                        unrestricted: false,
-                        resume: false,
-                    },
-                },
-            ],
-        };
-        let output = format_providers(&resp);
-        assert!(output.contains("PROVIDER"));
-        assert!(output.contains("claude"));
-        assert!(output.contains("yes"));
-        assert!(output.contains("shell"));
-        assert!(output.contains("bash"));
-        // Shell has no capabilities
-        assert!(output.contains('-'));
-        // Claude has all capabilities
-        assert!(output.contains("model"));
-        assert!(output.contains("system-prompt"));
-        assert!(output.contains("worktree"));
-    }
-
-    #[test]
-    fn test_format_providers_unavailable() {
-        let resp = ProvidersResponse {
-            providers: vec![ProviderInfoResponse {
-                provider: Provider::Codex,
-                binary: "codex".into(),
-                available: false,
-                capabilities: ProviderCapabilitiesResponse {
-                    model: true,
-                    system_prompt: false,
-                    allowed_tools: false,
-                    max_turns: false,
-                    max_budget_usd: false,
-                    output_format: false,
-                    worktree: false,
-                    unrestricted: false,
-                    resume: true,
-                },
-            }],
-        };
-        let output = format_providers(&resp);
-        assert!(output.contains("no"));
-        assert!(output.contains("codex"));
     }
 
     #[test]
@@ -1236,99 +983,62 @@ mod tests {
             "my-task",
             "--workdir",
             "/tmp/repo",
-            "Fix",
-            "the",
-            "bug",
+            "--",
+            "claude",
+            "-p",
+            "Fix the bug",
         ])
         .unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { name, workdir, provider, auto, unrestricted, prompt, .. }
+            Commands::Spawn { name, workdir, command, .. }
                 if name == "my-task" && workdir.as_deref() == Some("/tmp/repo")
-                && provider.is_none() && !auto && !unrestricted
-                && prompt == &["Fix", "the", "bug"]
+                && command == &["claude", "-p", "Fix the bug"]
         ));
     }
 
     #[test]
-    fn test_cli_parse_spawn_with_provider() {
+    fn test_cli_parse_spawn_with_ink() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--ink", "coder"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Commands::Spawn { ink, .. } if ink.as_deref() == Some("coder")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_with_description() {
         let cli =
-            Cli::try_parse_from(["pulpo", "spawn", "my-task", "--provider", "codex", "Do it"])
+            Cli::try_parse_from(["pulpo", "spawn", "my-task", "--description", "Fix the bug"])
                 .unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { provider, .. } if provider.as_deref() == Some("codex")
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_spawn_auto() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--auto", "Do it"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Commands::Spawn { auto, .. } if *auto
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_spawn_unrestricted() {
-        let cli =
-            Cli::try_parse_from(["pulpo", "spawn", "my-task", "--unrestricted", "Do it"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Commands::Spawn { unrestricted, .. } if *unrestricted
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_spawn_unrestricted_default() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "Do it"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Commands::Spawn { unrestricted, .. } if !unrestricted
+            Commands::Spawn { description, .. } if description.as_deref() == Some("Fix the bug")
         ));
     }
 
     #[test]
     fn test_cli_parse_spawn_name_positional() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "portal", "Fix", "it"]).unwrap();
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "portal", "--", "echo", "hello"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { name, prompt, .. }
-                if name == "portal" && prompt == &["Fix", "it"]
+            Commands::Spawn { name, command, .. }
+                if name == "portal" && command == &["echo", "hello"]
         ));
     }
 
     #[test]
-    fn test_cli_parse_spawn_with_conversation_id() {
-        let cli = Cli::try_parse_from([
-            "pulpo",
-            "spawn",
-            "my-task",
-            "--conversation-id",
-            "conv-abc-123",
-            "Fix it",
-        ])
-        .unwrap();
+    fn test_cli_parse_spawn_no_command() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { conversation_id, .. }
-                if conversation_id.as_deref() == Some("conv-abc-123")
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_spawn_without_conversation_id() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "Fix it"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Commands::Spawn { conversation_id, .. } if conversation_id.is_none()
+            Commands::Spawn { command, .. } if command.is_empty()
         ));
     }
 
     #[test]
     fn test_cli_parse_spawn_detach() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--detach", "Do it"]).unwrap();
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--detach"]).unwrap();
         assert!(matches!(
             &cli.command,
             Commands::Spawn { detach, .. } if *detach
@@ -1337,7 +1047,7 @@ mod tests {
 
     #[test]
     fn test_cli_parse_spawn_detach_short() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "-d", "Do it"]).unwrap();
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "-d"]).unwrap();
         assert!(matches!(
             &cli.command,
             Commands::Spawn { detach, .. } if *detach
@@ -1346,7 +1056,7 @@ mod tests {
 
     #[test]
     fn test_cli_parse_spawn_detach_default() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "Do it"]).unwrap();
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task"]).unwrap();
         assert!(matches!(
             &cli.command,
             Commands::Spawn { detach, .. } if !detach
@@ -1477,7 +1187,7 @@ mod tests {
     }
 
     /// A valid Session JSON for test responses.
-    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","provider":"claude","prompt":"Fix bug","status":"active","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","command":"claude -p 'Fix bug'","description":null,"status":"active","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
 
     /// A valid `CreateSessionResponse` JSON wrapping the session.
     fn test_create_response_json() -> String {
@@ -1574,20 +1284,10 @@ mod tests {
             command: Commands::Spawn {
                 name: "test".into(),
                 workdir: Some("/tmp/repo".into()),
-                provider: Some("claude".into()),
-                auto: false,
-                unrestricted: false,
-                model: None,
-                system_prompt: None,
-                allowed_tools: None,
                 ink: None,
-                max_turns: None,
-                max_budget: None,
-                output_format: None,
-                worktree: false,
-                conversation_id: None,
+                description: None,
                 detach: true,
-                prompt: vec!["Fix".into(), "bug".into()],
+                command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             },
         };
         let result = execute(&cli).await.unwrap();
@@ -1596,7 +1296,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_spawn_with_all_new_flags() {
+    async fn test_execute_spawn_with_all_flags() {
         let node = start_test_server().await;
         let cli = Cli {
             node,
@@ -1604,20 +1304,10 @@ mod tests {
             command: Commands::Spawn {
                 name: "test".into(),
                 workdir: Some("/tmp/repo".into()),
-                provider: Some("claude".into()),
-                auto: false,
-                unrestricted: false,
-                model: Some("opus".into()),
-                system_prompt: Some("Be helpful".into()),
-                allowed_tools: Some(vec!["Read".into(), "Write".into()]),
                 ink: Some("coder".into()),
-                max_turns: Some(5),
-                max_budget: Some(2.5),
-                output_format: Some("json".into()),
-                worktree: false,
-                conversation_id: None,
+                description: Some("Fix the bug".into()),
                 detach: true,
-                prompt: vec!["Fix".into(), "bug".into()],
+                command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             },
         };
         let result = execute(&cli).await.unwrap();
@@ -1625,7 +1315,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_spawn_auto_mode() {
+    async fn test_execute_spawn_no_command() {
         let node = start_test_server().await;
         let cli = Cli {
             node,
@@ -1633,20 +1323,10 @@ mod tests {
             command: Commands::Spawn {
                 name: "test".into(),
                 workdir: Some("/tmp/repo".into()),
-                provider: Some("claude".into()),
-                auto: true,
-                unrestricted: false,
-                model: None,
-                system_prompt: None,
-                allowed_tools: None,
                 ink: None,
-                max_turns: None,
-                max_budget: None,
-                output_format: None,
-                worktree: false,
-                conversation_id: None,
+                description: None,
                 detach: true,
-                prompt: vec!["Do it".into()],
+                command: vec![],
             },
         };
         let result = execute(&cli).await.unwrap();
@@ -1662,20 +1342,10 @@ mod tests {
             command: Commands::Spawn {
                 name: "my-task".into(),
                 workdir: Some("/tmp/repo".into()),
-                provider: Some("claude".into()),
-                auto: false,
-                unrestricted: false,
-                model: None,
-                system_prompt: None,
-                allowed_tools: None,
                 ink: None,
-                max_turns: None,
-                max_budget: None,
-                output_format: None,
-                worktree: false,
-                conversation_id: None,
+                description: None,
                 detach: true,
-                prompt: vec!["Fix".into(), "bug".into()],
+                command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             },
         };
         let result = execute(&cli).await.unwrap();
@@ -1691,20 +1361,10 @@ mod tests {
             command: Commands::Spawn {
                 name: "test".into(),
                 workdir: Some("/tmp/repo".into()),
-                provider: Some("claude".into()),
-                auto: false,
-                unrestricted: false,
-                model: None,
-                system_prompt: None,
-                allowed_tools: None,
                 ink: None,
-                max_turns: None,
-                max_budget: None,
-                output_format: None,
-                worktree: false,
-                conversation_id: None,
+                description: None,
                 detach: false,
-                prompt: vec!["Fix".into(), "bug".into()],
+                command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             },
         };
         let result = execute(&cli).await.unwrap();
@@ -1926,20 +1586,10 @@ mod tests {
             command: Commands::Spawn {
                 name: "test".into(),
                 workdir: Some("/tmp/repo".into()),
-                provider: Some("claude".into()),
-                auto: false,
-                unrestricted: false,
-                model: None,
-                system_prompt: None,
-                allowed_tools: None,
                 ink: None,
-                max_turns: None,
-                max_budget: None,
-                output_format: None,
-                worktree: false,
-                conversation_id: None,
+                description: None,
                 detach: true,
-                prompt: vec!["test".into()],
+                command: vec!["test".into()],
             },
         };
         let err = execute(&cli).await.unwrap_err();
@@ -2095,30 +1745,21 @@ mod tests {
     #[test]
     fn test_format_sessions_with_data() {
         use chrono::Utc;
-        use pulpo_common::session::{Provider, SessionMode, SessionStatus};
+        use pulpo_common::session::SessionStatus;
         use uuid::Uuid;
 
         let sessions = vec![Session {
             id: Uuid::nil(),
             name: "my-api".into(),
             workdir: "/tmp/repo".into(),
-            provider: Provider::Claude,
-            prompt: "Fix the bug".into(),
+            command: "claude -p 'Fix the bug'".into(),
+            description: Some("Fix the bug".into()),
             status: SessionStatus::Active,
-            mode: SessionMode::Interactive,
-            conversation_id: None,
             exit_code: None,
             backend_session_id: None,
             output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -2129,39 +1770,32 @@ mod tests {
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("NAME"));
+        assert!(output.contains("COMMAND"));
         assert!(output.contains("my-api"));
         assert!(output.contains("active"));
-        assert!(output.contains("claude"));
-        assert!(output.contains("Fix the bug"));
+        assert!(output.contains("claude -p 'Fix the bug'"));
     }
 
     #[test]
-    fn test_format_sessions_long_prompt_truncated() {
+    fn test_format_sessions_long_command_truncated() {
         use chrono::Utc;
-        use pulpo_common::session::{Provider, SessionMode, SessionStatus};
+        use pulpo_common::session::SessionStatus;
         use uuid::Uuid;
 
         let sessions = vec![Session {
             id: Uuid::nil(),
             name: "test".into(),
             workdir: "/tmp".into(),
-            provider: Provider::Codex,
-            prompt: "A very long prompt that exceeds forty characters in total length".into(),
+            command:
+                "claude -p 'A very long command that exceeds fifty characters in total length here'"
+                    .into(),
+            description: None,
             status: SessionStatus::Finished,
-            mode: SessionMode::Autonomous,
-            conversation_id: None,
             exit_code: None,
             backend_session_id: None,
             output_snapshot: None,
-            guard_config: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
             metadata: None,
             ink: None,
-            max_turns: None,
-            max_budget_usd: None,
-            output_format: None,
             intervention_code: None,
             intervention_reason: None,
             intervention_at: None,
@@ -2258,20 +1892,10 @@ mod tests {
             command: Commands::Spawn {
                 name: "test".into(),
                 workdir: Some("/tmp".into()),
-                provider: Some("claude".into()),
-                auto: false,
-                unrestricted: false,
-                model: None,
-                system_prompt: None,
-                allowed_tools: None,
                 ink: None,
-                max_turns: None,
-                max_budget: None,
-                output_format: None,
-                worktree: false,
-                conversation_id: None,
+                description: None,
                 detach: true,
-                prompt: vec!["test".into()],
+                command: vec!["test".into()],
             },
         };
         let result = execute(&cli).await;
@@ -2692,7 +2316,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_with_backend_session_id() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"my-session","workdir":"/tmp","provider":"claude","prompt":"test","status":"active","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"my-session","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"my-session","workdir":"/tmp","command":"echo test","description":null,"status":"active","exit_code":null,"backend_session_id":"my-session","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -2757,7 +2381,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_stale_session() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"stale-sess","workdir":"/tmp","provider":"claude","prompt":"test","status":"lost","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"stale-sess","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"stale-sess","workdir":"/tmp","command":"echo test","description":null,"status":"lost","exit_code":null,"backend_session_id":"stale-sess","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -2782,7 +2406,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_dead_session() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","provider":"claude","prompt":"test","status":"killed","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","command":"echo test","description":null,"status":"killed","exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -2808,7 +2432,7 @@ mod tests {
 
     #[test]
     fn test_cli_parse_alias_spawn() {
-        let cli = Cli::try_parse_from(["pulpo", "s", "my-task", "Do it"]).unwrap();
+        let cli = Cli::try_parse_from(["pulpo", "s", "my-task", "--", "echo", "hello"]).unwrap();
         assert!(matches!(&cli.command, Commands::Spawn { .. }));
     }
 
@@ -2971,7 +2595,7 @@ mod tests {
                         let n = count.fetch_add(1, Ordering::SeqCst);
                         let status = if n < 2 { "active" } else { "finished" };
                         format!(
-                            r#"{{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"{status}","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#
+                            r#"{{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"{status}","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#
                         )
                     }
                 }),
@@ -3057,7 +2681,7 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"killed","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"killed","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 
@@ -3093,7 +2717,7 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","provider":"claude","prompt":"test","status":"lost","mode":"interactive","conversation_id":null,"exit_code":null,"backend_session_id":null,"output_snapshot":null,"guard_config":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"lost","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 
@@ -3155,29 +2779,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_cli_parse_spawn_with_guardrails() {
-        let cli = Cli::try_parse_from([
-            "pulpo",
-            "spawn",
-            "my-task",
-            "--max-turns",
-            "10",
-            "--max-budget",
-            "5.5",
-            "--output-format",
-            "json",
-            "Do it",
-        ])
-        .unwrap();
-        assert!(matches!(
-            &cli.command,
-            Commands::Spawn { max_turns, max_budget, output_format, .. }
-                if *max_turns == Some(10) && *max_budget == Some(5.5)
-                && output_format.as_deref() == Some("json")
-        ));
-    }
-
     #[tokio::test]
     async fn test_fetch_session_status_connection_error() {
         let client = reqwest::Client::new();
@@ -3193,20 +2794,19 @@ mod tests {
             "nightly-review",
             "0 3 * * *",
             "/home/me/repo",
-            "claude",
-            "Review PRs",
+            "claude -p 'Review PRs'",
             "localhost:7433",
         );
         assert_eq!(
             line,
-            "0 3 * * * pulpo --node localhost:7433 spawn --workdir /home/me/repo --provider claude --auto Review PRs #pulpo:nightly-review\n"
+            "0 3 * * * pulpo --node localhost:7433 spawn nightly-review --workdir /home/me/repo -- claude -p 'Review PRs' #pulpo:nightly-review\n"
         );
     }
 
     #[test]
     fn test_crontab_install_success() {
         let crontab = "# existing cron\n0 * * * * echo hi\n";
-        let line = "0 3 * * * pulpo --node n spawn --workdir /tmp --provider claude --auto task #pulpo:my-job\n";
+        let line = "0 3 * * * pulpo --node n spawn my-job --workdir /tmp -- claude -p task #pulpo:my-job\n";
         let result = crontab_install(crontab, "my-job", line).unwrap();
         assert!(result.starts_with("# existing cron\n"));
         assert!(result.ends_with("#pulpo:my-job\n"));
@@ -3233,7 +2833,7 @@ mod tests {
 
     #[test]
     fn test_crontab_list_with_entries() {
-        let crontab = "0 3 * * * pulpo --node n spawn --workdir /tmp --provider claude --auto task #pulpo:nightly\n";
+        let crontab = "0 3 * * * pulpo --node n spawn nightly --workdir /tmp -- claude -p task #pulpo:nightly\n";
         let output = crontab_list(crontab);
         assert!(output.contains("NAME"));
         assert!(output.contains("CRON"));
@@ -3331,16 +2931,18 @@ mod tests {
             "0 3 * * *",
             "--workdir",
             "/tmp/repo",
-            "Review",
-            "PRs",
+            "--",
+            "claude",
+            "-p",
+            "Review PRs",
         ])
         .unwrap();
         assert!(matches!(
             &cli.command,
             Commands::Schedule {
-                action: ScheduleAction::Install { name, cron, workdir, provider, prompt }
+                action: ScheduleAction::Install { name, cron, workdir, command }
             } if name == "nightly" && cron == "0 3 * * *" && workdir == "/tmp/repo"
-              && provider == "claude" && prompt == &["Review", "PRs"]
+              && command == &["claude", "-p", "Review PRs"]
         ));
     }
 
@@ -3418,29 +3020,6 @@ mod tests {
             Commands::Schedule {
                 action: ScheduleAction::Remove { name }
             } if name == "nightly"
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_schedule_install_custom_provider() {
-        let cli = Cli::try_parse_from([
-            "pulpo",
-            "schedule",
-            "install",
-            "daily",
-            "0 9 * * *",
-            "--workdir",
-            "/tmp",
-            "--provider",
-            "codex",
-            "Run tests",
-        ])
-        .unwrap();
-        assert!(matches!(
-            &cli.command,
-            Commands::Schedule {
-                action: ScheduleAction::Install { provider, .. }
-            } if provider == "codex"
         ));
     }
 

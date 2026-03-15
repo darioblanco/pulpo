@@ -21,20 +21,12 @@ const mockGetInks = vi.mocked(api.getInks);
 const defaultSession = {
   id: '1',
   name: 'test',
-  provider: 'claude',
   status: 'creating',
-  prompt: 'Fix',
-  mode: 'interactive',
+  command: 'claude code',
+  description: null,
   workdir: '/repo',
-  guard_config: null,
-  model: null,
-  allowed_tools: null,
-  system_prompt: null,
   metadata: null,
   ink: null,
-  max_turns: null,
-  max_budget_usd: null,
-  output_format: null,
   intervention_reason: null,
   intervention_at: null,
   last_output_at: null,
@@ -75,7 +67,7 @@ describe('NewSessionDialog', () => {
   });
 
   it('calls createSession for local target on submit', async () => {
-    const sessionResult = { ...defaultSession, prompt: 'Fix the bug', workdir: '/home/user/repo' };
+    const sessionResult = { ...defaultSession, command: 'claude code', workdir: '/home/user/repo' };
     mockCreateSession.mockResolvedValue({ session: sessionResult });
     const onCreated = vi.fn();
     render(<NewSessionDialog onCreated={onCreated} />);
@@ -83,7 +75,7 @@ describe('NewSessionDialog', () => {
 
     await user.type(screen.getByLabelText('Name'), 'my-session');
     await user.type(screen.getByLabelText('Working directory'), '/home/user/repo');
-    await user.type(screen.getByLabelText('Prompt'), 'Fix the bug');
+    await user.type(screen.getByLabelText('Command'), 'claude code');
 
     const form = screen.getByLabelText('Working directory').closest('form')!;
     fireEvent.submit(form);
@@ -92,9 +84,7 @@ describe('NewSessionDialog', () => {
       expect(mockCreateSession).toHaveBeenCalledWith({
         name: 'my-session',
         workdir: '/home/user/repo',
-        prompt: 'Fix the bug',
-        provider: 'claude',
-        mode: 'interactive',
+        command: 'claude code',
       });
       expect(onCreated).toHaveBeenCalledWith(sessionResult);
     });
@@ -107,7 +97,6 @@ describe('NewSessionDialog', () => {
 
     await user.type(screen.getByLabelText('Name'), 'my-task');
     await user.type(screen.getByLabelText('Working directory'), '/repo');
-    await user.type(screen.getByLabelText('Prompt'), 'Fix it');
 
     const form = screen.getByLabelText('Working directory').closest('form')!;
     fireEvent.submit(form);
@@ -116,9 +105,6 @@ describe('NewSessionDialog', () => {
       expect(mockCreateSession).toHaveBeenCalledWith({
         name: 'my-task',
         workdir: '/repo',
-        prompt: 'Fix it',
-        provider: 'claude',
-        mode: 'interactive',
       });
     });
   });
@@ -130,7 +116,6 @@ describe('NewSessionDialog', () => {
 
     await user.type(screen.getByLabelText('Name'), 'err-test');
     await user.type(screen.getByLabelText('Working directory'), '/repo');
-    await user.type(screen.getByLabelText('Prompt'), 'Test');
 
     const form = screen.getByLabelText('Working directory').closest('form')!;
     fireEvent.submit(form);
@@ -147,7 +132,6 @@ describe('NewSessionDialog', () => {
 
     await user.type(screen.getByLabelText('Name'), 'str-err');
     await user.type(screen.getByLabelText('Working directory'), '/repo');
-    await user.type(screen.getByLabelText('Prompt'), 'Test');
 
     const form = screen.getByLabelText('Working directory').closest('form')!;
     fireEvent.submit(form);
@@ -176,7 +160,6 @@ describe('NewSessionDialog', () => {
 
     await user.type(screen.getByLabelText('Name'), 'remote-test');
     await user.type(screen.getByLabelText('Working directory'), '/repo');
-    await user.type(screen.getByLabelText('Prompt'), 'Fix it');
 
     // Select remote node
     const nodeSelect = screen.getByRole('combobox', { name: 'Node' });
@@ -196,9 +179,6 @@ describe('NewSessionDialog', () => {
       expect(mockCreateRemoteSession).toHaveBeenCalledWith('remote:7433', {
         name: 'remote-test',
         workdir: '/repo',
-        prompt: 'Fix it',
-        provider: 'claude',
-        mode: 'interactive',
       });
     });
   });
@@ -238,12 +218,7 @@ describe('NewSessionDialog', () => {
       inks: {
         reviewer: {
           description: 'Code review',
-          provider: 'claude',
-          model: null,
-          mode: 'interactive',
-          unrestricted: false,
-          instructions: null,
-          instructions_file: null,
+          command: 'claude code --model opus-4',
         },
       },
     });
@@ -260,12 +235,7 @@ describe('NewSessionDialog', () => {
       inks: {
         reviewer: {
           description: 'Code review',
-          provider: 'claude',
-          model: null,
-          mode: 'interactive',
-          unrestricted: false,
-          instructions: null,
-          instructions_file: null,
+          command: 'claude code',
         },
       },
     });
@@ -289,22 +259,17 @@ describe('NewSessionDialog', () => {
     expect(screen.queryByLabelText('Ink')).not.toBeInTheDocument();
   });
 
-  it('auto-fills fields when ink is selected', async () => {
+  it('auto-fills command when ink is selected', async () => {
     mockGetInks.mockResolvedValue({
       inks: {
         reviewer: {
           description: 'Code review',
-          provider: 'codex',
-          model: null,
-          mode: 'autonomous',
-          unrestricted: false,
-          instructions: null,
-          instructions_file: null,
+          command: 'codex --model gpt-4o',
         },
       },
     });
     mockCreateSession.mockResolvedValue({
-      session: { ...defaultSession, ink: 'reviewer', provider: 'codex' },
+      session: { ...defaultSession, ink: 'reviewer', command: 'codex --model gpt-4o' },
     });
     render(<NewSessionDialog onCreated={vi.fn()} />);
     const user = await openDialog();
@@ -327,7 +292,6 @@ describe('NewSessionDialog', () => {
     // Fill required fields and submit
     await user.type(screen.getByLabelText('Name'), 'ink-test');
     await user.type(screen.getByLabelText('Working directory'), '/repo');
-    await user.type(screen.getByLabelText('Prompt'), 'Review code');
 
     const form = screen.getByLabelText('Working directory').closest('form')!;
     fireEvent.submit(form);
@@ -336,13 +300,8 @@ describe('NewSessionDialog', () => {
       expect(mockCreateSession).toHaveBeenCalledWith(
         expect.objectContaining({
           ink: 'reviewer',
-          provider: 'codex',
-          mode: 'autonomous',
+          command: 'codex --model gpt-4o',
         }),
-      );
-      // unrestricted is false, so it should NOT be in the request
-      expect(mockCreateSession).toHaveBeenCalledWith(
-        expect.not.objectContaining({ unrestricted: expect.anything() }),
       );
     });
   });
@@ -352,12 +311,7 @@ describe('NewSessionDialog', () => {
       inks: {
         reviewer: {
           description: 'Code review',
-          provider: 'codex',
-          model: null,
-          mode: 'autonomous',
-          unrestricted: false,
-          instructions: null,
-          instructions_file: null,
+          command: 'codex --autonomous',
         },
       },
     });
@@ -382,9 +336,6 @@ describe('NewSessionDialog', () => {
       const summary = screen.getByTestId('ink-summary');
       expect(summary).toBeInTheDocument();
       expect(summary.textContent).toContain('codex');
-      expect(summary.textContent).toContain('autonomous');
-      // unrestricted is false, so 'unrestricted' text should NOT appear
-      expect(summary.textContent).not.toContain('unrestricted');
     });
   });
 

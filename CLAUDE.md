@@ -8,7 +8,7 @@ Rust workspace with three crates + a React web UI:
 
 - `crates/pulpod/` — Daemon binary (`pulpod`). Axum HTTP server, tmux backend, SQLite store.
 - `crates/pulpo-cli/` — CLI binary (`pulpo`). Thin client that talks to `pulpod`'s REST API.
-- `crates/pulpo-common/` — Shared types (Session, Provider, NodeInfo, API request/response types).
+- `crates/pulpo-common/` — Shared types (Session, NodeInfo, API request/response types).
 - `web/` — React 19 + Vite + Tailwind CSS v4 + shadcn/ui. Static SPA embedded into the `pulpod` binary via `rust-embed` for distribution.
 
 See `SPEC.md` for the full architecture spec, session lifecycle, API design, and phase roadmap.
@@ -260,7 +260,6 @@ pulpo/
 │   │   ├── main.rs               # Thin entry point (cfg(coverage) excluded)
 │   │   ├── lib.rs                # Daemon logic: Cli, init_tracing, build_app
 │   │   ├── config.rs             # TOML config loading
-│   │   ├── guard.rs              # Guard config resolution + flag building
 │   │   ├── platform.rs           # OS detection (macOS/Linux/WSL2)
 │   │   ├── api/                  # Axum REST API
 │   │   │   ├── mod.rs            # AppState, router setup
@@ -307,10 +306,9 @@ pulpo/
 │   │   └── lib.rs                # CLI logic: Cli, Commands, execute
 │   └── pulpo-common/src/
 │       ├── lib.rs
-│       ├── session.rs            # Session, Provider, SessionStatus types
+│       ├── session.rs            # Session, SessionStatus types
 │       ├── node.rs               # NodeInfo type
 │       ├── peer.rs               # PeerInfo, PeerStatus types
-│       ├── guard.rs              # GuardConfig type (binary unrestricted toggle)
 │       ├── event.rs              # SessionEvent for SSE + notifications
 │       └── api.rs                # API request/response types
 └── web/                          # React 19 + Vite + Tailwind v4 + shadcn/ui
@@ -334,12 +332,12 @@ pulpo/
     │   │   ├── dashboard/        # Status summary, node/session cards, new session
     │   │   ├── session/          # Chat view, terminal view (xterm.js)
     │   │   ├── history/          # Session filter, session list
-    │   │   ├── settings/         # Node, guard, peer settings
+    │   │   ├── settings/         # Node, peer settings
     │   │   └── connect/          # Connect form, saved connections
     │   └── pages/
     │       ├── dashboard.tsx     # Real-time session dashboard
     │       ├── history.tsx       # Session history with search/filter
-    │       ├── settings.tsx      # Node, guards, peers config
+    │       ├── settings.tsx      # Node, peers config
     │       └── connect.tsx       # Connection screen (standalone)
     ├── eslint.config.js
     ├── .prettierrc

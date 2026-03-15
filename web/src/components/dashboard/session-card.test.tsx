@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { toast } from 'sonner';
 import { SessionCard } from './session-card';
 import * as api from '@/api/client';
-import type { Session, GuardConfig } from '@/api/types';
+import type { Session } from '@/api/types';
 
 vi.mock('sonner', () => ({
   toast: { error: vi.fn() },
@@ -48,20 +48,12 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
     name: 'my-api',
-    provider: 'claude',
     status: 'active',
-    prompt: 'Fix the bug',
-    mode: 'interactive',
+    command: 'Fix the bug',
+    description: null,
     workdir: '/home/user/repo',
-    guard_config: null,
-    model: null,
-    allowed_tools: null,
-    system_prompt: null,
     metadata: null,
     ink: null,
-    max_turns: null,
-    max_budget_usd: null,
-    output_format: null,
     intervention_reason: null,
     intervention_at: null,
     last_output_at: null,
@@ -71,22 +63,16 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
-function makeGuard(unrestricted: boolean): GuardConfig {
-  return { unrestricted };
-}
-
 function clickExpand() {
   fireEvent.click(screen.getByTestId('btn-expand'));
 }
 
 describe('SessionCard', () => {
-  it('renders session name, provider, mode, status, and prompt', () => {
+  it('renders session name, command, status', () => {
     render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
     expect(screen.getByText('my-api')).toBeInTheDocument();
-    expect(screen.getByText('claude')).toBeInTheDocument();
-    expect(screen.getByText('interactive')).toBeInTheDocument();
     expect(screen.getByText('active')).toBeInTheDocument();
-    expect(screen.getByText('Fix the bug')).toBeInTheDocument();
+    expect(screen.getAllByText('Fix the bug').length).toBeGreaterThan(0);
   });
 
   it('shows workdir basename in header', () => {
@@ -94,34 +80,14 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('session-workdir')).toHaveTextContent('repo');
   });
 
-  it('shows ink and model when set', () => {
-    render(
-      <SessionCard
-        session={makeSession({ ink: 'reviewer', model: 'opus-4' })}
-        onRefresh={vi.fn()}
-      />,
-    );
+  it('shows ink when set', () => {
+    render(<SessionCard session={makeSession({ ink: 'reviewer' })} onRefresh={vi.fn()} />);
     expect(screen.getByTestId('session-ink')).toHaveTextContent('reviewer');
-    expect(screen.getByTestId('session-model')).toHaveTextContent('opus-4');
   });
 
-  it('hides ink and model when null', () => {
+  it('hides ink when null', () => {
     render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
     expect(screen.queryByTestId('session-ink')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('session-model')).not.toBeInTheDocument();
-  });
-
-  it('shows guard badge', () => {
-    render(
-      <SessionCard session={makeSession({ guard_config: makeGuard(false) })} onRefresh={vi.fn()} />,
-    );
-    expect(screen.getByTestId('guard-badge')).toBeInTheDocument();
-    expect(screen.getByText('restricted')).toBeInTheDocument();
-  });
-
-  it('shows no guard badge when null', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
-    expect(screen.queryByTestId('guard-badge')).not.toBeInTheDocument();
   });
 
   // Traffic light buttons
