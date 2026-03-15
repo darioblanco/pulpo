@@ -247,6 +247,16 @@ impl Store {
                 .await?;
         }
 
+        // Partial unique index: prevent two live sessions with the same name.
+        // SQLite enforces this at insert/update time, closing the race window
+        // between the application-level check and the actual insert.
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_live_name \
+             ON sessions(name) WHERE status IN ('creating', 'active', 'idle')",
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -835,6 +845,33 @@ mod tests {
                 .await
                 .unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn test_unique_index_prevents_duplicate_live_names() {
+        let store = test_store().await;
+        let s1 = make_session("dup-name");
+        store.insert_session(&s1).await.unwrap();
+        // Second insert with same name and live status should fail at DB level
+        let mut s2 = make_session("dup-name");
+        s2.id = uuid::Uuid::new_v4();
+        let result = store.insert_session(&s2).await;
+        assert!(result.is_err(), "expected unique constraint violation");
+    }
+
+    #[tokio::test]
+    async fn test_unique_index_allows_reuse_after_kill() {
+        let store = test_store().await;
+        let s1 = make_session("reuse-name");
+        store.insert_session(&s1).await.unwrap();
+        store
+            .update_session_status(&s1.id.to_string(), SessionStatus::Killed)
+            .await
+            .unwrap();
+        // New session with same name should succeed — old one is killed
+        let mut s2 = make_session("reuse-name");
+        s2.id = uuid::Uuid::new_v4();
+        store.insert_session(&s2).await.unwrap();
     }
 
     #[tokio::test]
