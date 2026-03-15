@@ -9,7 +9,6 @@ use tower_http::cors::{Any, CorsLayer};
 use super::AppState;
 use super::auth;
 use super::config;
-use super::culture;
 use super::events;
 use super::health;
 use super::inks;
@@ -73,19 +72,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
         .route("/api/v1/providers", get(providers::list))
         .route("/api/v1/inks", get(inks::list))
-        .route("/api/v1/culture", get(culture::list))
-        .route("/api/v1/culture/context", get(culture::context))
-        .route("/api/v1/culture/push", post(culture::push))
-        .route("/api/v1/culture/sync", get(culture::sync_status))
-        .route("/api/v1/culture/files", get(culture::list_files))
-        .route("/api/v1/culture/files/{*path}", get(culture::read_file))
-        .route(
-            "/api/v1/culture/{id}",
-            get(culture::get)
-                .put(culture::update)
-                .delete(culture::delete),
-        )
-        .route("/api/v1/culture/{id}/approve", post(culture::approve))
         .route("/api/v1/events", get(events::stream))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -152,7 +138,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -203,6 +188,7 @@ mod tests {
                 mode: Some("autonomous".into()),
                 unrestricted: Some(true),
                 instructions: Some("Review code".into()),
+                instructions_file: None,
             },
         );
         let config = Config {
@@ -219,7 +205,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: inks.clone(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -798,7 +783,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -935,7 +919,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(FailIsAliveBackend);
         let manager = SessionManager::new(
@@ -1185,7 +1168,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -1355,7 +1337,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -1462,7 +1443,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(

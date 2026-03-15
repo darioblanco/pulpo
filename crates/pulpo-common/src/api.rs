@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::BindMode;
-use crate::culture::{Culture, CultureKind};
 use crate::node::NodeInfo;
 use crate::peer::{PeerEntry, PeerInfo};
 use crate::session::{Provider, Session, SessionMode};
@@ -46,7 +45,7 @@ pub struct OutputQuery {
     pub lines: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
 }
@@ -204,6 +203,7 @@ pub struct InkConfigResponse {
     pub mode: Option<String>,
     pub unrestricted: Option<bool>,
     pub instructions: Option<String>,
+    pub instructions_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -305,85 +305,6 @@ pub struct ListSessionsQuery {
     pub search: Option<String>,
     pub sort: Option<String>,
     pub order: Option<String>,
-}
-
-// -- Culture types --
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CultureResponse {
-    pub culture: Vec<Culture>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct ListCultureQuery {
-    pub repo: Option<String>,
-    pub ink: Option<String>,
-    pub kind: Option<CultureKind>,
-    pub session_id: Option<String>,
-    pub limit: Option<usize>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct CultureContextQuery {
-    pub workdir: Option<String>,
-    pub ink: Option<String>,
-    pub limit: Option<usize>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct UpdateCultureRequest {
-    pub title: Option<String>,
-    pub body: Option<String>,
-    pub tags: Option<Vec<String>>,
-    pub relevance: Option<f64>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CultureItemResponse {
-    pub culture: Culture,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CultureDeleteResponse {
-    pub deleted: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CulturePushResponse {
-    pub pushed: bool,
-    pub message: String,
-}
-
-/// A file or directory entry in the culture repo tree.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CultureFileEntry {
-    /// Relative path from culture repo root (e.g. "culture/AGENTS.md").
-    pub path: String,
-    /// Whether this entry is a directory.
-    pub is_dir: bool,
-}
-
-/// Response for listing the culture repo file tree.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CultureFilesResponse {
-    pub files: Vec<CultureFileEntry>,
-}
-
-/// Response for reading a single file from the culture repo.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CultureFileContentResponse {
-    pub path: String,
-    pub content: String,
-}
-
-/// Response for `GET /api/v1/culture/sync` — sync loop status.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SyncStatusResponse {
-    pub enabled: bool,
-    pub last_sync: Option<String>,
-    pub last_error: Option<String>,
-    pub pending_commits: usize,
-    pub total_syncs: u64,
 }
 
 #[cfg(test)]
@@ -1474,155 +1395,6 @@ mod tests {
     }
 
     #[test]
-    fn test_culture_response_serialize() {
-        let resp = CultureResponse { culture: vec![] };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"culture\":[]"));
-    }
-
-    #[test]
-    fn test_culture_response_debug() {
-        let resp = CultureResponse { culture: vec![] };
-        let debug = format!("{resp:?}");
-        assert!(debug.contains("CultureResponse"));
-    }
-
-    #[test]
-    fn test_list_culture_query_default() {
-        let q = ListCultureQuery::default();
-        assert!(q.repo.is_none());
-        assert!(q.ink.is_none());
-        assert!(q.kind.is_none());
-        assert!(q.session_id.is_none());
-        assert!(q.limit.is_none());
-    }
-
-    #[test]
-    fn test_list_culture_query_deserialize() {
-        let json = r#"{"repo":"/tmp/repo","ink":"coder","kind":"failure","limit":10}"#;
-        let q: ListCultureQuery = serde_json::from_str(json).unwrap();
-        assert_eq!(q.repo, Some("/tmp/repo".into()));
-        assert_eq!(q.ink, Some("coder".into()));
-        assert_eq!(q.kind, Some(CultureKind::Failure));
-        assert_eq!(q.limit, Some(10));
-    }
-
-    #[test]
-    fn test_list_culture_query_debug() {
-        let q = ListCultureQuery {
-            repo: Some("/repo".into()),
-            ..Default::default()
-        };
-        let debug = format!("{q:?}");
-        assert!(debug.contains("/repo"));
-    }
-
-    #[test]
-    fn test_culture_context_query_default() {
-        let q = CultureContextQuery::default();
-        assert!(q.workdir.is_none());
-        assert!(q.ink.is_none());
-        assert!(q.limit.is_none());
-    }
-
-    #[test]
-    fn test_culture_context_query_deserialize() {
-        let json = r#"{"workdir":"/repo","ink":"reviewer","limit":5}"#;
-        let q: CultureContextQuery = serde_json::from_str(json).unwrap();
-        assert_eq!(q.workdir, Some("/repo".into()));
-        assert_eq!(q.ink, Some("reviewer".into()));
-        assert_eq!(q.limit, Some(5));
-    }
-
-    #[test]
-    fn test_culture_context_query_debug() {
-        let q = CultureContextQuery {
-            workdir: Some("/repo".into()),
-            ..Default::default()
-        };
-        let debug = format!("{q:?}");
-        assert!(debug.contains("/repo"));
-    }
-
-    #[test]
-    fn test_update_culture_request_deserialize() {
-        let json = r#"{"title":"new","body":"updated","tags":["a","b"],"relevance":0.8}"#;
-        let req: UpdateCultureRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.title, Some("new".into()));
-        assert_eq!(req.body, Some("updated".into()));
-        assert_eq!(req.tags, Some(vec!["a".into(), "b".into()]));
-        assert!((req.relevance.unwrap() - 0.8).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_update_culture_request_partial() {
-        let json = r#"{"title":"only-title"}"#;
-        let req: UpdateCultureRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.title, Some("only-title".into()));
-        assert!(req.body.is_none());
-        assert!(req.tags.is_none());
-        assert!(req.relevance.is_none());
-    }
-
-    #[test]
-    fn test_update_culture_request_debug() {
-        let req = UpdateCultureRequest {
-            title: Some("test".into()),
-            body: None,
-            tags: None,
-            relevance: None,
-        };
-        let debug = format!("{req:?}");
-        assert!(debug.contains("test"));
-    }
-
-    #[test]
-    fn test_culture_item_response_roundtrip() {
-        use chrono::Utc;
-        use uuid::Uuid;
-
-        let resp = CultureItemResponse {
-            culture: Culture {
-                id: Uuid::new_v4(),
-                session_id: Uuid::new_v4(),
-                kind: CultureKind::Summary,
-                scope_repo: Some("/repo".into()),
-                scope_ink: Some("coder".into()),
-                title: "test".into(),
-                body: "body".into(),
-                tags: vec!["tag".into()],
-                relevance: 0.5,
-                created_at: Utc::now(),
-                last_referenced_at: None,
-                reference_count: 0,
-            },
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let back: CultureItemResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.culture.title, "test");
-    }
-
-    #[test]
-    fn test_culture_delete_response_roundtrip() {
-        let resp = CultureDeleteResponse { deleted: true };
-        let json = serde_json::to_string(&resp).unwrap();
-        let back: CultureDeleteResponse = serde_json::from_str(&json).unwrap();
-        assert!(back.deleted);
-    }
-
-    #[test]
-    fn test_culture_push_response_roundtrip() {
-        let resp = CulturePushResponse {
-            pushed: true,
-            message: "pushed to remote".into(),
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let back: CulturePushResponse = serde_json::from_str(&json).unwrap();
-        assert!(back.pushed);
-        assert_eq!(back.message, "pushed to remote");
-    }
-
-    #[test]
     fn test_session_defaults_config_response_default() {
         let sd = SessionDefaultsConfigResponse::default();
         assert!(sd.provider.is_none());
@@ -1942,126 +1714,5 @@ mod tests {
         let parsed: ProvidersResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.providers.len(), 1);
         assert_eq!(parsed.providers[0].provider, Provider::Shell);
-    }
-
-    #[test]
-    fn test_culture_file_entry_serialize() {
-        let entry = CultureFileEntry {
-            path: "culture/AGENTS.md".into(),
-            is_dir: false,
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        assert!(json.contains("culture/AGENTS.md"));
-        assert!(json.contains("false"));
-        let parsed: CultureFileEntry = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.path, "culture/AGENTS.md");
-        assert!(!parsed.is_dir);
-    }
-
-    #[test]
-    fn test_culture_file_entry_clone_debug() {
-        let entry = CultureFileEntry {
-            path: "repos/foo/AGENTS.md".into(),
-            is_dir: false,
-        };
-        #[allow(clippy::redundant_clone)]
-        let cloned = entry.clone();
-        let debug = format!("{cloned:?}");
-        assert!(debug.contains("repos/foo/AGENTS.md"));
-    }
-
-    #[test]
-    fn test_culture_files_response_serialize() {
-        let resp = CultureFilesResponse {
-            files: vec![
-                CultureFileEntry {
-                    path: "culture".into(),
-                    is_dir: true,
-                },
-                CultureFileEntry {
-                    path: "culture/AGENTS.md".into(),
-                    is_dir: false,
-                },
-            ],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let parsed: CultureFilesResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.files.len(), 2);
-        assert!(parsed.files[0].is_dir);
-        assert!(!parsed.files[1].is_dir);
-    }
-
-    #[test]
-    fn test_culture_file_content_response_serialize() {
-        let resp = CultureFileContentResponse {
-            path: "culture/AGENTS.md".into(),
-            content: "# Culture\n\nSome content".into(),
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let parsed: CultureFileContentResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.path, "culture/AGENTS.md");
-        assert!(parsed.content.contains("# Culture"));
-    }
-
-    #[test]
-    fn test_sync_status_response_serialize() {
-        let resp = SyncStatusResponse {
-            enabled: true,
-            last_sync: Some("2026-03-12T00:00:00Z".into()),
-            last_error: None,
-            pending_commits: 3,
-            total_syncs: 42,
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let parsed: SyncStatusResponse = serde_json::from_str(&json).unwrap();
-        assert!(parsed.enabled);
-        assert_eq!(parsed.last_sync.as_deref(), Some("2026-03-12T00:00:00Z"));
-        assert!(parsed.last_error.is_none());
-        assert_eq!(parsed.pending_commits, 3);
-        assert_eq!(parsed.total_syncs, 42);
-    }
-
-    #[test]
-    fn test_sync_status_response_disabled() {
-        let resp = SyncStatusResponse {
-            enabled: false,
-            last_sync: None,
-            last_error: None,
-            pending_commits: 0,
-            total_syncs: 0,
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let parsed: SyncStatusResponse = serde_json::from_str(&json).unwrap();
-        assert!(!parsed.enabled);
-        assert!(parsed.last_sync.is_none());
-    }
-
-    #[test]
-    fn test_sync_status_response_with_error() {
-        let resp = SyncStatusResponse {
-            enabled: true,
-            last_sync: Some("2026-03-12T00:00:00Z".into()),
-            last_error: Some("fetch failed".into()),
-            pending_commits: 1,
-            total_syncs: 10,
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let parsed: SyncStatusResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.last_error.as_deref(), Some("fetch failed"));
-    }
-
-    #[test]
-    fn test_sync_status_response_debug_clone() {
-        let resp = SyncStatusResponse {
-            enabled: true,
-            last_sync: None,
-            last_error: None,
-            pending_commits: 0,
-            total_syncs: 0,
-        };
-        let cloned = resp.clone();
-        let debug = format!("{resp:?}");
-        assert!(debug.contains("SyncStatusResponse"));
-        assert_eq!(resp.enabled, cloned.enabled);
     }
 }

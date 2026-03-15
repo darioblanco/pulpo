@@ -1,6 +1,5 @@
 pub mod auth;
 pub mod config;
-pub mod culture;
 mod embed;
 pub mod events;
 pub mod health;
@@ -23,7 +22,6 @@ use pulpo_common::event::PulpoEvent;
 use tokio::sync::{RwLock, broadcast};
 
 use crate::config::Config;
-use crate::culture::sync::SyncStatus;
 use crate::peers::PeerRegistry;
 use crate::session::manager::SessionManager;
 use crate::watchdog::WatchdogRuntimeConfig;
@@ -45,8 +43,6 @@ pub struct AppState {
     pub event_tx: broadcast::Sender<PulpoEvent>,
     /// Watch channel sender for pushing watchdog config changes to the running loop.
     pub watchdog_config_tx: Option<tokio::sync::watch::Sender<WatchdogRuntimeConfig>>,
-    /// Shared sync status from the culture sync loop.
-    pub sync_status: Arc<RwLock<SyncStatus>>,
 }
 
 impl AppState {
@@ -65,7 +61,6 @@ impl AppState {
             cached_prober: None,
             event_tx,
             watchdog_config_tx: None,
-            sync_status: Arc::new(RwLock::new(SyncStatus::new(false))),
         })
     }
 
@@ -88,7 +83,6 @@ impl AppState {
             )),
             event_tx,
             watchdog_config_tx: None,
-            sync_status: Arc::new(RwLock::new(SyncStatus::new(false))),
         })
     }
 
@@ -99,7 +93,6 @@ impl AppState {
         peer_registry: PeerRegistry,
         event_tx: broadcast::Sender<PulpoEvent>,
         watchdog_config_tx: Option<tokio::sync::watch::Sender<WatchdogRuntimeConfig>>,
-        sync_status: Arc<RwLock<SyncStatus>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             config: Arc::new(RwLock::new(config)),
@@ -113,7 +106,6 @@ impl AppState {
             )),
             event_tx,
             watchdog_config_tx,
-            sync_status,
         })
     }
 }
@@ -175,7 +167,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -210,7 +201,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let config_path = tmpdir.path().join("config.toml");
         let backend = Arc::new(StubBackend);
@@ -265,7 +255,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -285,7 +274,6 @@ mod tests {
             finished_ttl_secs: 0,
         };
         let (config_tx, _config_rx) = tokio::sync::watch::channel(initial);
-        let sync_status = Arc::new(RwLock::new(SyncStatus::new(false)));
         let state = AppState::with_watchdog_tx(
             config,
             tmpdir.path().join("config.toml"),
@@ -293,7 +281,6 @@ mod tests {
             peer_registry,
             event_tx,
             Some(config_tx),
-            sync_status,
         );
         assert!(state.watchdog_config_tx.is_some());
     }
@@ -317,7 +304,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(
@@ -329,7 +315,6 @@ mod tests {
         .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        let sync_status = Arc::new(RwLock::new(SyncStatus::new(false)));
         let state = AppState::with_watchdog_tx(
             config,
             tmpdir.path().join("config.toml"),
@@ -337,7 +322,6 @@ mod tests {
             peer_registry,
             event_tx,
             None,
-            sync_status,
         );
         assert!(state.watchdog_config_tx.is_none());
     }
@@ -361,7 +345,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(

@@ -261,15 +261,54 @@ function generateDecorations(nodes: NodeLandmark[]): Decoration[] {
   return decorations;
 }
 
-// --- Assign octopus home position near its node ---
+// --- Status-based home zones ---
+//
+// Each status has a distinct region so sessions are visually grouped:
+//   Active/Creating — center-left, upper water (wide swim radius)
+//   Idle            — right side, mid-water (barely moves)
+//   Lost            — lower-right (drifting near bottom)
+//   Finished        — upper-left (floats upward)
+//   Killed          — bottom, near seabed (sinks)
 
-function assignHome(nodeX: number, index: number, total: number): [number, number] {
-  const cols = Math.min(total, 4);
-  const col = index % cols;
-  const row = Math.floor(index / cols);
-  const startX = nodeX - ((cols - 1) * 40) / 2;
-  const x = startX + col * 40;
-  const y = SWIM_ZONE_TOP + 40 + row * 50;
+interface StatusZone {
+  xOffset: number;
+  yBase: number;
+  cols: number;
+  spacingX: number;
+  spacingY: number;
+}
+
+const STATUS_ZONES: Record<string, StatusZone> = {
+  active: { xOffset: -40, yBase: SWIM_ZONE_TOP + 30, cols: 3, spacingX: 65, spacingY: 90 },
+  creating: { xOffset: -40, yBase: SWIM_ZONE_TOP + 30, cols: 3, spacingX: 65, spacingY: 90 },
+  idle: { xOffset: 130, yBase: SWIM_ZONE_TOP + 50, cols: 2, spacingX: 60, spacingY: 85 },
+  lost: { xOffset: 80, yBase: SWIM_ZONE_BOTTOM - 30, cols: 2, spacingX: 60, spacingY: 80 },
+  finished: { xOffset: -80, yBase: SWIM_ZONE_TOP + 15, cols: 2, spacingX: 60, spacingY: 85 },
+  killed: { xOffset: 30, yBase: SWIM_ZONE_BOTTOM - 10, cols: 2, spacingX: 55, spacingY: 75 },
+};
+
+/** Minimum world-unit distance between octopuses before repulsion kicks in. */
+export const SEPARATION_DIST = 70;
+
+/**
+ * Vertical scale factor for separation — octopuses are taller than wide
+ * (sprite + labels ~85 world units tall vs ~50 wide), so we need more
+ * vertical clearance. Effective vertical separation = SEPARATION_DIST * VERT_SCALE.
+ */
+export const SEPARATION_VERT_SCALE = 1.4;
+
+function assignHomeForStatus(
+  nodeX: number,
+  status: string,
+  indexInGroup: number,
+): [number, number] {
+  const zone = STATUS_ZONES[status] ?? STATUS_ZONES.active;
+  const cols = zone.cols;
+  const col = indexInGroup % cols;
+  const row = Math.floor(indexInGroup / cols);
+  const startX = nodeX + zone.xOffset - ((cols - 1) * zone.spacingX) / 2;
+  const x = startX + col * zone.spacingX;
+  const y = zone.yBase + row * zone.spacingY;
   return [x, y];
 }
 
@@ -303,15 +342,19 @@ export function syncSingleNode(
 
   fitCamera(world.camera, [newNode]);
 
-  // Diff octopuses
+  // Diff octopuses — group by status for zone-based home assignment
   const existingById = new Map(world.octopuses.map((o) => [o.sessionId, o]));
   const newOctopuses: OctopusEntity[] = [];
+  const statusIndex: Record<string, number> = {};
 
   for (let i = 0; i < sessions.length; i++) {
     const session = sessions[i];
+    const idx = statusIndex[session.status] ?? 0;
+    statusIndex[session.status] = idx + 1;
     const existing = existingById.get(session.id);
 
     if (existing) {
+      const statusChanged = existing.status !== session.status;
       existing.status = session.status;
       existing.ink = session.ink;
       existing.model = session.model;
@@ -323,9 +366,14 @@ export function syncSingleNode(
       existing.interventionReason = session.intervention_reason;
       existing.prompt = session.prompt;
       existing.nodeName = nodeName;
+      if (statusChanged) {
+        const [hx, hy] = assignHomeForStatus(0, session.status, idx);
+        existing.homeX = hx;
+        existing.homeY = hy;
+      }
       newOctopuses.push(existing);
     } else {
-      const [hx, hy] = assignHome(0, i, sessions.length);
+      const [hx, hy] = assignHomeForStatus(0, session.status, idx);
       newOctopuses.push({
         sessionId: session.id,
         name: session.name,
@@ -420,14 +468,18 @@ export function syncData(
 
   for (const node of newNodes) {
     const sessions = sessionsByNode[node.name] ?? [];
+    const statusIndex: Record<string, number> = {};
+
     for (let i = 0; i < sessions.length; i++) {
       const session = sessions[i];
+      const idx = statusIndex[session.status] ?? 0;
+      statusIndex[session.status] = idx + 1;
       const existing = existingById.get(session.id);
 
       if (existing) {
         // Update data fields, keep position and animation state
+        const statusChanged = existing.status !== session.status;
         existing.status = session.status;
-
         existing.ink = session.ink;
         existing.model = session.model;
         existing.mode = session.mode;
@@ -438,10 +490,15 @@ export function syncData(
         existing.interventionReason = session.intervention_reason;
         existing.prompt = session.prompt;
         existing.nodeName = node.name;
+        if (statusChanged) {
+          const [hx, hy] = assignHomeForStatus(node.x, session.status, idx);
+          existing.homeX = hx;
+          existing.homeY = hy;
+        }
         newOctopuses.push(existing);
       } else {
-        // New octopus — place near its node
-        const [hx, hy] = assignHome(node.x, i, sessions.length);
+        // New octopus — place near its node in status-appropriate zone
+        const [hx, hy] = assignHomeForStatus(node.x, session.status, idx);
         newOctopuses.push({
           sessionId: session.id,
           name: session.name,
@@ -522,6 +579,40 @@ export function update(world: WorldState, dt: number): void {
       oct.animTimer = 0;
       oct.animFrame = (oct.animFrame + 1) % 4;
     }
+  }
+
+  // Separation: push overlapping octopuses apart so labels stay readable.
+  // Uses elliptical distance — sprites are taller than wide (sprite + labels),
+  // so vertical proximity triggers repulsion sooner than horizontal.
+  for (let i = 0; i < world.octopuses.length; i++) {
+    const a = world.octopuses[i];
+    for (let j = i + 1; j < world.octopuses.length; j++) {
+      const b = world.octopuses[j];
+      const sdx = a.x - b.x;
+      const sdy = a.y - b.y;
+      // Shrink Y in distance calc so vertically-close octopuses appear "nearer"
+      const scaledDy = sdy / SEPARATION_VERT_SCALE;
+      const distSq = sdx * sdx + scaledDy * scaledDy;
+      if (distSq < SEPARATION_DIST * SEPARATION_DIST && distSq > 0.01) {
+        const dist = Math.sqrt(distSq);
+        const push = ((SEPARATION_DIST - dist) / SEPARATION_DIST) * 30 * cappedDt;
+        const realDist = Math.sqrt(sdx * sdx + sdy * sdy);
+        if (realDist > 0.01) {
+          const nx = sdx / realDist;
+          const ny = sdy / realDist;
+          // Bias vertical push so octopuses spread more in Y
+          a.x += nx * push;
+          a.y += ny * push * SEPARATION_VERT_SCALE;
+          b.x -= nx * push;
+          b.y -= ny * push * SEPARATION_VERT_SCALE;
+        }
+      }
+    }
+  }
+
+  // Clamp octopuses to swim zone after separation
+  for (const oct of world.octopuses) {
+    oct.y = Math.max(SWIM_ZONE_TOP, Math.min(SEABED_Y, oct.y));
   }
 
   // Update bubbles

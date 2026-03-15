@@ -273,21 +273,18 @@ pulpo/
 │   │   │   ├── peers.rs          # Peers endpoint
 │   │   │   ├── ws.rs             # WebSocket terminal streaming
 │   │   │   ├── inks.rs           # Inks endpoint
-│   │   │   ├── culture.rs      # Culture query endpoints
 │   │   │   ├── events.rs         # SSE event stream endpoint
 │   │   │   ├── static_files.rs   # rust-embed static file serving
 │   │   │   └── embed.rs          # rust-embed derive (excluded from coverage)
 │   │   ├── backend/              # Terminal backends
 │   │   │   ├── mod.rs            # Backend trait
 │   │   │   └── tmux.rs           # tmux backend (macOS/Linux)
-│   │   ├── culture/            # Culture extraction
-│   │   │   └── mod.rs            # Rule-based extractor (summary + failure detection)
 │   │   ├── session/              # Session lifecycle
 │   │   │   ├── mod.rs            # Session module
-│   │   │   ├── manager.rs        # Orchestration (spawn, kill, resume, culture extraction)
+│   │   │   ├── manager.rs        # Orchestration (spawn, kill, resume)
 │   │   │   └── pty_bridge.rs     # PTY bridge for WebSocket streaming
 │   │   ├── store/                # Persistence
-│   │   │   └── mod.rs            # SQLite store + migrations (sessions + culture)
+│   │   │   └── mod.rs            # SQLite store + migrations
 │   │   ├── notifications/        # Push notifications
 │   │   │   ├── mod.rs            # Module declaration
 │   │   │   └── discord.rs        # Discord webhook notifier + loop
@@ -314,7 +311,6 @@ pulpo/
 │       ├── node.rs               # NodeInfo type
 │       ├── peer.rs               # PeerInfo, PeerStatus types
 │       ├── guard.rs              # GuardConfig type (binary unrestricted toggle)
-│       ├── culture.rs          # Culture and CultureKind types
 │       ├── event.rs              # SessionEvent for SSE + notifications
 │       └── api.rs                # API request/response types
 └── web/                          # React 19 + Vite + Tailwind v4 + shadcn/ui

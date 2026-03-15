@@ -25,8 +25,6 @@ pub struct Config {
     pub session_defaults: SessionDefaultsConfig,
     #[serde(default)]
     pub notifications: NotificationsConfig,
-    #[serde(default)]
-    pub culture: CultureConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -45,65 +43,11 @@ pub struct InkConfig {
     /// or prepended to the prompt as a universal fallback.
     #[serde(default, alias = "system_prompt")]
     pub instructions: Option<String>,
-}
-
-/// Culture repository configuration (git-backed storage for extracted culture).
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct CultureConfig {
-    /// Optional git remote URL. When set, the culture repo will be pushed
-    /// to this remote after each commit, enabling multi-node culture sharing.
+    /// Path to a file containing instructions. Read at spawn time.
+    /// Takes precedence over inline `instructions` when both are set.
+    /// Relative paths are resolved against the session's workdir.
     #[serde(default)]
-    pub remote: Option<String>,
-    /// Inject relevant culture into agent prompts at session spawn time.
-    /// Includes a compact summary of past findings plus the repo path for
-    /// deeper exploration. Defaults to true when absent.
-    #[serde(default = "default_inject")]
-    pub inject: bool,
-    /// Days after last reference before an entry is considered stale.
-    /// `0` disables TTL-based decay. Defaults to 30 days.
-    #[serde(default = "default_ttl_days")]
-    pub ttl_days: u32,
-    /// When true, spawn a curator session to extract learnings from completed
-    /// sessions that did not leave a pending write-back file. Defaults to false.
-    #[serde(default)]
-    pub curator: bool,
-    /// Provider for curator sessions. Defaults to "claude" when absent.
-    #[serde(default)]
-    pub curator_provider: Option<String>,
-    /// Interval in seconds between sync pulls from the remote.
-    /// Only active when `remote` is set. Defaults to 300 (5 minutes).
-    #[serde(default = "default_sync_interval_secs")]
-    pub sync_interval_secs: u64,
-    /// Optional scope filter for sync. When set, files outside these paths
-    /// are reverted after pull. E.g. `["repos/my-repo", "culture"]`.
-    #[serde(default)]
-    pub sync_scopes: Option<Vec<String>>,
-}
-
-impl Default for CultureConfig {
-    fn default() -> Self {
-        Self {
-            remote: None,
-            inject: default_inject(),
-            ttl_days: default_ttl_days(),
-            curator: false,
-            curator_provider: None,
-            sync_interval_secs: default_sync_interval_secs(),
-            sync_scopes: None,
-        }
-    }
-}
-
-const fn default_inject() -> bool {
-    true
-}
-
-const fn default_ttl_days() -> u32 {
-    30
-}
-
-const fn default_sync_interval_secs() -> u64 {
-    300
+    pub instructions_file: Option<String>,
 }
 
 /// Notification configuration (webhooks for status updates).
@@ -388,6 +332,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                  specific line references. Do not make changes — only review and suggest."
                     .to_owned(),
             ),
+            instructions_file: None,
         },
     );
     inks.insert(
@@ -407,6 +352,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                  ready code. Run tests to verify your changes work correctly."
                     .to_owned(),
             ),
+            instructions_file: None,
         },
     );
     inks.insert(
@@ -426,6 +372,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                  doesn't break anything."
                     .to_owned(),
             ),
+            instructions_file: None,
         },
     );
     inks.insert(
@@ -446,6 +393,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                  code — only add tests."
                     .to_owned(),
             ),
+            instructions_file: None,
         },
     );
     inks.insert(
@@ -465,6 +413,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                  verify nothing is broken. Keep commits atomic and well-described."
                     .to_owned(),
             ),
+            instructions_file: None,
         },
     );
     inks
@@ -508,7 +457,6 @@ pub fn load(path: &str) -> Result<Config> {
             watchdog: WatchdogConfig::default(),
             inks: built_in_inks(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         })
     }
 }
@@ -596,7 +544,6 @@ data_dir = "/tmp/pulpo-test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         let expanded = config.data_dir();
         assert!(
@@ -622,7 +569,6 @@ data_dir = "/tmp/pulpo-test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         assert_eq!(config.data_dir(), "/absolute/path");
     }
@@ -756,7 +702,6 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         let debug = format!("{config:?}");
         assert!(debug.contains("node-a"));
@@ -843,7 +788,6 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -872,7 +816,6 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -903,7 +846,6 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -927,7 +869,6 @@ unrestricted = true
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                culture: CultureConfig::default(),
             },
             Path::new("/dev/null/impossible/config.toml"),
         );
@@ -953,7 +894,6 @@ unrestricted = true
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                culture: CultureConfig::default(),
             },
             Path::new(""),
         );
@@ -983,7 +923,6 @@ unrestricted = true
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                culture: CultureConfig::default(),
             },
             &dir_target,
         );
@@ -1008,7 +947,6 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         #[allow(clippy::redundant_clone)]
         let cloned = config.clone();
@@ -1052,7 +990,6 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("ser"));
@@ -1124,7 +1061,6 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         assert!(config.auth.token.is_empty());
         let generated = ensure_auth_token(&mut config);
@@ -1151,7 +1087,6 @@ unrestricted = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         let generated = ensure_auth_token(&mut config);
         assert!(!generated);
@@ -1220,7 +1155,6 @@ token = "my-secret-token"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1290,7 +1224,6 @@ token = "peer-secret"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1400,7 +1333,6 @@ breach_count = 5
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1610,7 +1542,6 @@ idle_action = "pause"
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1703,6 +1634,7 @@ provider = "codex"
                 mode: Some("autonomous".into()),
                 unrestricted: Some(false),
                 instructions: Some("Review only.".into()),
+                instructions_file: None,
             },
         );
         let config = Config {
@@ -1719,7 +1651,6 @@ provider = "codex"
             watchdog: WatchdogConfig::default(),
             inks,
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1739,6 +1670,7 @@ provider = "codex"
             mode: None,
             unrestricted: None,
             instructions: None,
+            instructions_file: None,
         };
         let cloned = p.clone();
         assert_eq!(format!("{p:?}"), format!("{cloned:?}"));
@@ -1839,7 +1771,6 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
                 }),
                 webhooks: vec![],
             },
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1946,7 +1877,6 @@ url = "https://example.com"
                     secret: Some("key".into()),
                 }],
             },
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2049,7 +1979,6 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2098,12 +2027,12 @@ name = "test"
     }
 
     #[test]
-    fn test_built_in_inks_have_system_prompts() {
+    fn test_built_in_inks_have_instructions_or_file() {
         let inks = built_in_inks();
         for (name, ink) in &inks {
             assert!(
-                ink.instructions.is_some(),
-                "Built-in ink '{name}' missing instructions"
+                ink.instructions.is_some() || ink.instructions_file.is_some(),
+                "Built-in ink '{name}' missing both instructions and instructions_file"
             );
         }
     }
@@ -2120,6 +2049,7 @@ name = "test"
                 mode: None,
                 unrestricted: None,
                 instructions: None,
+                instructions_file: None,
             },
         );
         let merged = merge_built_in_inks(user_inks);
@@ -2146,6 +2076,7 @@ name = "test"
                 mode: None,
                 unrestricted: None,
                 instructions: None,
+                instructions_file: None,
             },
         );
         let merged = merge_built_in_inks(user_inks);
@@ -2196,6 +2127,7 @@ provider = "codex"
             mode: None,
             unrestricted: None,
             instructions: None,
+            instructions_file: None,
         };
         let toml_str = toml::to_string(&ink).unwrap();
         assert!(toml_str.contains("description = \"Test description\""));
@@ -2207,88 +2139,29 @@ provider = "codex"
     }
 
     #[test]
-    fn test_culture_config_default_inject_true() {
-        let config: CultureConfig = toml::from_str("").unwrap();
-        assert!(config.inject);
-        assert!(config.remote.is_none());
-    }
-
-    #[test]
-    fn test_culture_config_inject_disabled() {
-        let config: CultureConfig = toml::from_str("inject = false").unwrap();
-        assert!(!config.inject);
-    }
-
-    #[test]
-    fn test_culture_config_with_remote_and_inject() {
-        let config: CultureConfig =
-            toml::from_str("remote = \"git@github.com:user/culture.git\"\ninject = true").unwrap();
-        assert!(config.inject);
+    fn test_ink_config_instructions_file_serialization() {
+        let ink = InkConfig {
+            description: None,
+            provider: None,
+            model: None,
+            mode: None,
+            unrestricted: None,
+            instructions: None,
+            instructions_file: Some("program.md".to_owned()),
+        };
+        let toml_str = toml::to_string(&ink).unwrap();
+        assert!(toml_str.contains("instructions_file = \"program.md\""));
+        let deserialized: InkConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(
-            config.remote.as_deref(),
-            Some("git@github.com:user/culture.git")
+            deserialized.instructions_file.as_deref(),
+            Some("program.md")
         );
     }
 
     #[test]
-    fn test_culture_config_default_ttl_days() {
-        let config: CultureConfig = toml::from_str("").unwrap();
-        assert_eq!(config.ttl_days, 30);
-    }
-
-    #[test]
-    fn test_culture_config_custom_ttl_days() {
-        let config: CultureConfig = toml::from_str("ttl_days = 90").unwrap();
-        assert_eq!(config.ttl_days, 90);
-    }
-
-    #[test]
-    fn test_culture_config_ttl_disabled() {
-        let config: CultureConfig = toml::from_str("ttl_days = 0").unwrap();
-        assert_eq!(config.ttl_days, 0);
-    }
-
-    #[test]
-    fn test_culture_config_curator_default_false() {
-        let config = CultureConfig::default();
-        assert!(!config.curator);
-        assert!(config.curator_provider.is_none());
-    }
-
-    #[test]
-    fn test_culture_config_curator_enabled() {
-        let config: CultureConfig =
-            toml::from_str("curator = true\ncurator_provider = \"codex\"").unwrap();
-        assert!(config.curator);
-        assert_eq!(config.curator_provider, Some("codex".into()));
-    }
-
-    #[test]
-    fn test_culture_config_sync_interval_default() {
-        let config = CultureConfig::default();
-        assert_eq!(config.sync_interval_secs, 300);
-    }
-
-    #[test]
-    fn test_culture_config_sync_interval_custom() {
-        let config: CultureConfig = toml::from_str("sync_interval_secs = 60").unwrap();
-        assert_eq!(config.sync_interval_secs, 60);
-    }
-
-    #[test]
-    fn test_culture_config_sync_scopes_default_none() {
-        let config = CultureConfig::default();
-        assert!(config.sync_scopes.is_none());
-    }
-
-    #[test]
-    fn test_culture_config_sync_scopes_set() {
-        let config: CultureConfig =
-            toml::from_str(r#"sync_scopes = ["repos/my-repo", "culture"]"#).unwrap();
-        let scopes = config.sync_scopes.unwrap();
-        assert_eq!(scopes.len(), 2);
-        assert_eq!(scopes[0], "repos/my-repo");
-        assert_eq!(scopes[1], "culture");
+    fn test_ink_config_instructions_file_default_none() {
+        let ink: InkConfig = toml::from_str("").unwrap();
+        assert!(ink.instructions_file.is_none());
     }
 
     #[test]
@@ -2322,7 +2195,6 @@ provider = "codex"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2353,7 +2225,6 @@ provider = "codex"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            culture: CultureConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();

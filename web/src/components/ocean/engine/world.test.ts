@@ -8,6 +8,8 @@ import {
   hitTest,
   hitTestNode,
   NODE_COLORS,
+  SEPARATION_DIST,
+  SEPARATION_VERT_SCALE,
 } from './world';
 
 function makeNode(overrides: Partial<NodeInfo> = {}): NodeInfo {
@@ -434,6 +436,199 @@ describe('world', () => {
       const oct = world.octopuses[0];
       for (let i = 0; i < 10; i++) update(world, 0.1);
       expect(oct.wanderTargetY).toBeLessThan(oct.homeY);
+    });
+  });
+
+  describe('status-based zones', () => {
+    it('assigns active and idle sessions to different home zones', () => {
+      const world = createWorld(800, 600);
+      const sessions = [
+        makeSession({ id: 's1', name: 'worker-1', status: 'active' }),
+        makeSession({ id: 's2', name: 'worker-2', status: 'idle' }),
+      ];
+      syncData(world, makeNode(), sessions, [], {});
+
+      const active = world.octopuses.find((o) => o.status === 'active')!;
+      const idle = world.octopuses.find((o) => o.status === 'idle')!;
+      // Idle home should be to the right of active home
+      expect(idle.homeX).toBeGreaterThan(active.homeX);
+    });
+
+    it('assigns killed sessions to lower zone than active', () => {
+      const world = createWorld(800, 600);
+      const sessions = [
+        makeSession({ id: 's1', status: 'active' }),
+        makeSession({ id: 's2', status: 'killed' }),
+      ];
+      syncData(world, makeNode(), sessions, [], {});
+
+      const active = world.octopuses.find((o) => o.status === 'active')!;
+      const killed = world.octopuses.find((o) => o.status === 'killed')!;
+      expect(killed.homeY).toBeGreaterThan(active.homeY);
+    });
+
+    it('assigns finished sessions to upper zone', () => {
+      const world = createWorld(800, 600);
+      const sessions = [
+        makeSession({ id: 's1', status: 'active' }),
+        makeSession({ id: 's2', status: 'finished' }),
+      ];
+      syncData(world, makeNode(), sessions, [], {});
+
+      const active = world.octopuses.find((o) => o.status === 'active')!;
+      const finished = world.octopuses.find((o) => o.status === 'finished')!;
+      expect(finished.homeY).toBeLessThan(active.homeY);
+    });
+
+    it('reassigns home when status changes', () => {
+      const world = createWorld(800, 600);
+      syncData(world, makeNode(), [makeSession({ id: 's1', status: 'active' })], [], {});
+      const originalHomeX = world.octopuses[0].homeX;
+
+      // Transition to idle
+      syncData(world, makeNode(), [makeSession({ id: 's1', status: 'idle' })], [], {});
+      expect(world.octopuses[0].homeX).not.toBe(originalHomeX);
+      expect(world.octopuses[0].homeX).toBeGreaterThan(originalHomeX);
+    });
+
+    it('does not change home when status stays the same', () => {
+      const world = createWorld(800, 600);
+      syncData(world, makeNode(), [makeSession({ id: 's1', status: 'active' })], [], {});
+      const homeX = world.octopuses[0].homeX;
+      const homeY = world.octopuses[0].homeY;
+
+      syncData(world, makeNode(), [makeSession({ id: 's1', status: 'active' })], [], {});
+      expect(world.octopuses[0].homeX).toBe(homeX);
+      expect(world.octopuses[0].homeY).toBe(homeY);
+    });
+
+    it('works with syncSingleNode too', () => {
+      const world = createWorld(800, 600);
+      const sessions = [
+        makeSession({ id: 's1', status: 'active' }),
+        makeSession({ id: 's2', status: 'idle' }),
+      ];
+      syncSingleNode(world, 'mac-studio', true, 'online', sessions, '#f472b6');
+
+      const active = world.octopuses.find((o) => o.status === 'active')!;
+      const idle = world.octopuses.find((o) => o.status === 'idle')!;
+      expect(idle.homeX).toBeGreaterThan(active.homeX);
+    });
+
+    it('reassigns home on status change in syncSingleNode', () => {
+      const world = createWorld(800, 600);
+      syncSingleNode(
+        world,
+        'mac-studio',
+        true,
+        'online',
+        [makeSession({ id: 's1', status: 'active' })],
+        '#f472b6',
+      );
+      const originalHomeY = world.octopuses[0].homeY;
+
+      syncSingleNode(
+        world,
+        'mac-studio',
+        true,
+        'online',
+        [makeSession({ id: 's1', status: 'killed' })],
+        '#f472b6',
+      );
+      expect(world.octopuses[0].homeY).toBeGreaterThan(originalHomeY);
+    });
+
+    it('assigns lost sessions to lower zone like killed', () => {
+      const world = createWorld(800, 600);
+      const sessions = [
+        makeSession({ id: 's1', status: 'active' }),
+        makeSession({ id: 's2', status: 'lost' }),
+      ];
+      syncData(world, makeNode(), sessions, [], {});
+
+      const active = world.octopuses.find((o) => o.status === 'active')!;
+      const lost = world.octopuses.find((o) => o.status === 'lost')!;
+      expect(lost.homeY).toBeGreaterThan(active.homeY);
+    });
+  });
+
+  describe('separation', () => {
+    it('pushes overlapping octopuses apart', () => {
+      const world = createWorld(800, 600);
+      const sessions = [makeSession({ id: 's1', name: 'a' }), makeSession({ id: 's2', name: 'b' })];
+      syncData(world, makeNode(), sessions, [], {});
+
+      // Force both to the same position
+      world.octopuses[0].x = 100;
+      world.octopuses[0].y = 100;
+      world.octopuses[1].x = 100;
+      world.octopuses[1].y = 100.5; // slight offset to establish direction
+
+      const distBefore = Math.abs(world.octopuses[0].y - world.octopuses[1].y);
+      for (let i = 0; i < 20; i++) update(world, 0.05);
+      const distAfter = Math.hypot(
+        world.octopuses[0].x - world.octopuses[1].x,
+        world.octopuses[0].y - world.octopuses[1].y,
+      );
+      expect(distAfter).toBeGreaterThan(distBefore);
+    });
+
+    it('does not push octopuses beyond separation distance', () => {
+      const world = createWorld(800, 600);
+      const sessions = [makeSession({ id: 's1', name: 'a' }), makeSession({ id: 's2', name: 'b' })];
+      syncData(world, makeNode(), sessions, [], {});
+
+      // Place far apart — should not be affected
+      world.octopuses[0].x = 0;
+      world.octopuses[0].y = 100;
+      world.octopuses[1].x = SEPARATION_DIST + 50;
+      world.octopuses[1].y = 100;
+
+      update(world, 0.05);
+
+      // They were already far apart, so dist should still be > SEPARATION_DIST
+      const dist = Math.abs(world.octopuses[0].x - world.octopuses[1].x);
+      expect(dist).toBeGreaterThanOrEqual(SEPARATION_DIST * 0.9);
+    });
+
+    it('applies stronger vertical push than horizontal (elliptical)', () => {
+      const world = createWorld(800, 600);
+      const sessions = [makeSession({ id: 's1', name: 'a' }), makeSession({ id: 's2', name: 'b' })];
+      syncData(world, makeNode(), sessions, [], {});
+
+      // Place diagonally close, set homes to same spot so only separation acts.
+      // Use a long wander timer so no random targets are picked during the test.
+      const cx = 100;
+      const cy = 120;
+      for (const oct of world.octopuses) {
+        oct.homeX = cx;
+        oct.homeY = cy;
+        oct.wanderTargetX = cx;
+        oct.wanderTargetY = cy;
+        oct.wanderTimer = 999;
+      }
+      world.octopuses[0].x = cx - 5;
+      world.octopuses[0].y = cy - 5;
+      world.octopuses[1].x = cx + 5;
+      world.octopuses[1].y = cy + 5;
+
+      for (let i = 0; i < 30; i++) update(world, 0.05);
+
+      const dy = Math.abs(world.octopuses[0].y - world.octopuses[1].y);
+      const dx = Math.abs(world.octopuses[0].x - world.octopuses[1].x);
+      // Vertical separation should be larger due to VERT_SCALE bias
+      expect(dy).toBeGreaterThan(dx);
+      expect(SEPARATION_VERT_SCALE).toBeGreaterThan(1);
+    });
+
+    it('clamps octopuses to swim zone after separation', () => {
+      const world = createWorld(800, 600);
+      syncData(world, makeNode(), [makeSession({ id: 's1' })], [], {});
+
+      // Force octopus above swim zone
+      world.octopuses[0].y = 10;
+      update(world, 0.05);
+      expect(world.octopuses[0].y).toBeGreaterThanOrEqual(50); // SWIM_ZONE_TOP
     });
   });
 

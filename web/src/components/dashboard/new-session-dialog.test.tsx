@@ -243,6 +243,7 @@ describe('NewSessionDialog', () => {
           mode: 'interactive',
           unrestricted: false,
           instructions: null,
+          instructions_file: null,
         },
       },
     });
@@ -264,6 +265,7 @@ describe('NewSessionDialog', () => {
           mode: 'interactive',
           unrestricted: false,
           instructions: null,
+          instructions_file: null,
         },
       },
     });
@@ -297,6 +299,7 @@ describe('NewSessionDialog', () => {
           mode: 'autonomous',
           unrestricted: false,
           instructions: null,
+          instructions_file: null,
         },
       },
     });
@@ -354,6 +357,7 @@ describe('NewSessionDialog', () => {
           mode: 'autonomous',
           unrestricted: false,
           instructions: null,
+          instructions_file: null,
         },
       },
     });

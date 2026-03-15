@@ -46,7 +46,3 @@ Common intervention reasons:
 - `memory_pressure` — system memory exceeded the configured threshold
 - `idle_timeout` — session was idle longer than allowed (when `idle_action = "kill"`)
 - `finished_ttl` — finished session exceeded its TTL grace period
-
-## Culture on Recovery
-
-When a session finishes or is killed, Pulpo automatically harvests any culture entries the agent wrote to the `pending/` directory. These entries are committed to the culture repo and become available to future sessions. This means even sessions that are killed by the watchdog can still contribute learnings.

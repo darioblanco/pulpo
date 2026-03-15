@@ -56,66 +56,6 @@ export interface InterventionEvent {
   created_at: string;
 }
 
-export interface Culture {
-  id: string;
-  session_id: string;
-  kind: 'summary' | 'failure';
-  scope_repo: string | null;
-  scope_ink: string | null;
-  title: string;
-  body: string;
-  tags: string[];
-  relevance: number;
-  created_at: string;
-  last_referenced_at: string | null;
-}
-
-export interface CultureResponse {
-  culture: Culture[];
-}
-
-export interface CultureItemResponse {
-  culture: Culture;
-}
-
-export interface CultureDeleteResponse {
-  deleted: boolean;
-}
-
-export interface CulturePushResponse {
-  pushed: boolean;
-  message: string;
-}
-
-export interface UpdateCultureRequest {
-  title?: string;
-  body?: string;
-  tags?: string[];
-  relevance?: number;
-}
-
-export interface CultureFileEntry {
-  path: string;
-  is_dir: boolean;
-}
-
-export interface CultureFilesResponse {
-  files: CultureFileEntry[];
-}
-
-export interface CultureFileContentResponse {
-  path: string;
-  content: string;
-}
-
-export interface SyncStatus {
-  enabled: boolean;
-  last_sync: string | null;
-  last_error: string | null;
-  pending_commits: number;
-  total_syncs: number;
-}
-
 export interface InkConfig {
   description: string | null;
   provider: string | null;
@@ -123,6 +63,7 @@ export interface InkConfig {
   mode: string | null;
   unrestricted: boolean | null;
   instructions: string | null;
+  instructions_file: string | null;
 }
 
 export interface InksResponse {

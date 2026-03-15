@@ -12,18 +12,9 @@ pub struct SessionEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CultureEvent {
-    pub action: String,
-    pub count: usize,
-    pub node_name: String,
-    pub timestamp: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PulpoEvent {
     Session(SessionEvent),
-    Culture(CultureEvent),
 }
 
 #[cfg(test)]
@@ -78,71 +69,6 @@ mod tests {
             output_snippet: None,
             timestamp: "t".into(),
         };
-        let cloned = event.clone();
-        assert_eq!(format!("{event:?}"), format!("{cloned:?}"));
-    }
-
-    // --- CultureEvent tests ---
-
-    #[test]
-    fn test_culture_event_serialize_roundtrip() {
-        let event = CultureEvent {
-            action: "synced".into(),
-            count: 3,
-            node_name: "node-1".into(),
-            timestamp: "2026-03-12T00:00:00Z".into(),
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        let deserialized: CultureEvent = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.action, "synced");
-        assert_eq!(deserialized.count, 3);
-        assert_eq!(deserialized.node_name, "node-1");
-        assert_eq!(deserialized.timestamp, "2026-03-12T00:00:00Z");
-    }
-
-    #[test]
-    fn test_culture_event_debug_clone() {
-        let event = CultureEvent {
-            action: "saved".into(),
-            count: 1,
-            node_name: "n".into(),
-            timestamp: "t".into(),
-        };
-        let cloned = event.clone();
-        assert_eq!(format!("{event:?}"), format!("{cloned:?}"));
-    }
-
-    // --- PulpoEvent tests ---
-
-    #[test]
-    fn test_pulpo_event_culture_serialize() {
-        let event = PulpoEvent::Culture(CultureEvent {
-            action: "synced".into(),
-            count: 2,
-            node_name: "node-1".into(),
-            timestamp: "2026-03-12T00:00:00Z".into(),
-        });
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(json.contains("\"kind\":\"culture\""));
-        assert!(json.contains("\"action\":\"synced\""));
-    }
-
-    #[test]
-    fn test_pulpo_event_deserialize_culture() {
-        let json =
-            r#"{"kind":"culture","action":"synced","count":2,"node_name":"n","timestamp":"t"}"#;
-        let event: PulpoEvent = serde_json::from_str(json).unwrap();
-        assert!(matches!(&event, PulpoEvent::Culture(ce) if ce.action == "synced"));
-    }
-
-    #[test]
-    fn test_pulpo_event_culture_debug_clone() {
-        let event = PulpoEvent::Culture(CultureEvent {
-            action: "harvested".into(),
-            count: 1,
-            node_name: "n".into(),
-            timestamp: "t".into(),
-        });
         let cloned = event.clone();
         assert_eq!(format!("{event:?}"), format!("{cloned:?}"));
     }

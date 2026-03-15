@@ -26,9 +26,3 @@ mode = "autonomous"
 unrestricted = false
 instructions = "Fix the reported bug with minimal changes. Run tests to verify."
 description = "Fast bug fixes — any provider"
-
-# Culture repo: git-backed storage for cross-session learning.
-# Set a remote to sync culture across nodes.
-[culture]
-remote = "git@github.com:yourorg/pulpo-culture.git"
-inject = true  # inject context into new sessions (default)

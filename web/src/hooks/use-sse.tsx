@@ -19,7 +19,6 @@ interface SSEContextValue {
   connected: boolean;
   sessions: Session[];
   setSessions: Dispatch<SetStateAction<Session[]>>;
-  cultureVersion: number;
 }
 
 const SSEContext = createContext<SSEContextValue | null>(null);
@@ -39,7 +38,6 @@ export function SSEProvider({ children }: { children: ReactNode }) {
   const { baseUrl, authToken } = useConnection();
   const [connected, setConnected] = useState(false);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [cultureVersion, setCultureVersion] = useState(0);
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelayRef = useRef(1000);
@@ -118,10 +116,6 @@ export function SSEProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    es.addEventListener('culture', () => {
-      setCultureVersion((v) => v + 1);
-    });
-
     es.onerror = () => {
       setConnected(false);
       es.close();
@@ -149,7 +143,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
   }, [baseUrl, authToken, connect, disconnect]);
 
   return (
-    <SSEContext.Provider value={{ connected, sessions, setSessions, cultureVersion }}>
+    <SSEContext.Provider value={{ connected, sessions, setSessions }}>
       {children}
     </SSEContext.Provider>
   );

@@ -2,6 +2,16 @@ import type { Sprites, BackgroundSprites } from './sprites';
 import type { WorldState, OctopusEntity } from './world';
 import { worldToScreen } from './camera';
 
+// Status colors matching the dashboard palette (hex equivalents of CSS oklch vars)
+export const STATUS_LABEL_COLORS: Record<string, string> = {
+  active: '#a78bfa', // purple (matches the active octopus sprite)
+  creating: '#d4a030', // amber
+  idle: '#d4a030', // amber/orange
+  lost: '#c87533', // darker orange
+  finished: '#34d399', // green
+  killed: '#f87171', // red
+};
+
 // --- Ambient effects (seeded per pool, deterministic from seed) ---
 
 interface AmbientState {
@@ -343,9 +353,8 @@ export function render(
   drawNodeLandmarks(ctx, world, sprites);
 
   // --- Octopuses ---
-  const nodeByName = new Map(world.nodes.map((n) => [n.name, n]));
   for (const oct of world.octopuses) {
-    drawOctopus(ctx, oct, sprites, world, time, nodeByName);
+    drawOctopus(ctx, oct, sprites, world, time);
   }
 
   // --- Bubbles ---
@@ -380,7 +389,6 @@ function drawOctopus(
   sprites: Sprites,
   world: WorldState,
   time: number,
-  nodeByName: Map<string, { color: string }>,
 ): void {
   const { camera } = world;
   const anim = oct.isSwimming ? 'swim' : 'idle';
@@ -430,8 +438,8 @@ function drawOctopus(
   ctx.imageSmoothingEnabled = false;
   ctx.restore();
 
-  // Name + provider badges
-  const nodeColor = nodeByName.get(oct.nodeName)?.color ?? '#d4e4ef';
+  // Name + provider badges — name uses status color for at-a-glance state
+  const statusColor = STATUS_LABEL_COLORS[oct.status] ?? '#d4e4ef';
   const fontSize = Math.max(10, 14 * (camera.zoom / 2));
   const padX = 4;
   const padY = 2;
@@ -447,7 +455,7 @@ function drawOctopus(
   const nameY = Math.round(badgeY);
   ctx.fillStyle = 'rgba(8, 18, 30, 0.7)';
   ctx.fillRect(nameX, nameY, nameW, nameH);
-  ctx.fillStyle = nodeColor;
+  ctx.fillStyle = statusColor;
   ctx.fillText(oct.name, nameX + padX, nameY + padY + fontSize - 1);
   badgeY += nameH + gap;
 

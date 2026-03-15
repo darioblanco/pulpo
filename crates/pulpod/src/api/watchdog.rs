@@ -179,7 +179,6 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                culture: crate::config::CultureConfig::default(),
             },
             manager,
             peer_registry,
@@ -217,7 +216,6 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                culture: crate::config::CultureConfig::default(),
             },
             config_path,
             manager,
@@ -408,9 +406,6 @@ mod tests {
         };
         let (config_tx, config_rx) = tokio::sync::watch::channel(initial);
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        let sync_status = std::sync::Arc::new(tokio::sync::RwLock::new(
-            crate::culture::sync::SyncStatus::new(false),
-        ));
         let state = AppState::with_watchdog_tx(
             Config {
                 node: NodeConfig {
@@ -426,14 +421,12 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                culture: crate::config::CultureConfig::default(),
             },
             std::path::PathBuf::new(),
             manager,
             peer_registry,
             event_tx,
             Some(config_tx),
-            sync_status,
         );
 
         // Update threshold via API

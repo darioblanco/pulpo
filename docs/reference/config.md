@@ -10,7 +10,7 @@ All sections are optional. Pulpo runs with zero config.
 |-------|------|---------|-------------|
 | `name` | string | hostname | Node display name |
 | `port` | u16 | `7433` | HTTP listen port |
-| `data_dir` | string | `~/.pulpo/data` | Data directory for SQLite, culture, logs |
+| `data_dir` | string | `~/.pulpo/data` | Data directory for SQLite, logs |
 | `bind` | string | `"local"` | `"local"`, `"public"`, `"tailscale"`, `"container"` |
 | `default_provider` | string | `"claude"` | Default provider when none specified |
 | `tag` | string | — | Tailscale ACL tag for filtering (e.g. `"pulpo"`) |
@@ -96,16 +96,3 @@ token = "secret"
 |-------|------|---------|-------------|
 | `url` | string | — | Webhook URL to POST events to |
 | `events` | string[] | `["finished", "killed"]` | Events that trigger notifications |
-
-## `[culture]`
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `remote` | string | — | Git remote URL for cross-node sync |
-| `inject` | bool | `true` | Inject culture context into new sessions |
-| `ttl_days` | u64 | `90` | Days before entries become stale |
-| `curator` | string | — | Provider for standalone curation sessions |
-| `sync_interval_secs` | u64 | `300` | Background sync interval |
-| `sync_scopes` | string[] | — | Only sync these scopes (empty = all) |
-
-Culture is stored as markdown files in `<data_dir>/culture/` in a local git repo with AGENTS.md format.

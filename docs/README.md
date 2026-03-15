@@ -3,7 +3,7 @@ home: true
 title: Pulpo Documentation
 heroText: Pulpo
 heroImage: https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.png
-tagline: Self-hosted control plane for coding agents. Durable sessions, collective culture, multi-node operations.
+tagline: Self-hosted control plane for coding agents. Durable sessions, multi-node operations.
 actions:
   - text: Install
     link: /getting-started/install
@@ -14,8 +14,6 @@ actions:
 features:
   - title: Session Lifecycle
     details: Explicit states (active, idle, finished, killed, lost) with resume semantics and crash recovery.
-  - title: Collective Culture
-    details: Agents write learnings back to a shared knowledge base that syncs across nodes — agents improve from each other.
   - title: Multi-Node Operations
     details: Manage agents across machines from a single API/CLI/web surface. Tailscale, mDNS, and seed discovery.
   - title: Provider Agnostic
@@ -31,7 +29,6 @@ features:
 - [Install](/getting-started/install)
 - [Quickstart](/getting-started/quickstart)
 - [Configuration Guide](/guides/configuration)
-- [Culture Guide](/guides/culture)
 - [Discovery Guide](/guides/discovery)
 - [Recovery Guide](/guides/recovery)
 - [CLI Reference](/reference/cli)

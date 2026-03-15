@@ -461,29 +461,6 @@ describe('useSSE', () => {
     expect(secondES.closed).toBe(false);
   });
 
-  it('starts with cultureVersion 0', () => {
-    mockFetch.mockResolvedValue({ json: () => Promise.resolve([]) });
-    const { result } = renderHook(() => useSSE(), { wrapper });
-    expect(result.current.cultureVersion).toBe(0);
-  });
-
-  it('increments cultureVersion on culture event', async () => {
-    mockFetch.mockResolvedValue({ json: () => Promise.resolve([]) });
-    const { result } = renderHook(() => useSSE(), { wrapper });
-
-    act(() => lastES().onopen?.());
-    expect(result.current.cultureVersion).toBe(0);
-
-    act(() => {
-      lastES()._fireEvent(
-        'culture',
-        JSON.stringify({ action: 'synced', count: 1, node_name: 'n', timestamp: 't' }),
-      );
-    });
-
-    expect(result.current.cultureVersion).toBe(1);
-  });
-
   it('disconnect clears reconnect timer', () => {
     vi.useFakeTimers();
     mockFetch.mockResolvedValue({ json: () => Promise.resolve([]) });

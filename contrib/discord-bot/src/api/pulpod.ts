@@ -35,6 +35,7 @@ export interface InkConfig {
   mode?: string;
   unrestricted?: boolean;
   instructions?: string;
+  instructions_file?: string;
 }
 
 export interface SessionEvent {
@@ -44,13 +45,6 @@ export interface SessionEvent {
   previous_status?: string;
   node_name: string;
   output_snippet?: string;
-  timestamp: string;
-}
-
-export interface CultureEvent {
-  action: string;
-  count: number;
-  node_name: string;
   timestamp: string;
 }
 

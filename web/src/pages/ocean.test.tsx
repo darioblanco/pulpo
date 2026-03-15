@@ -195,44 +195,6 @@ describe('OceanPage', () => {
     });
   });
 
-  it('shows culture current when multiple nodes exist', async () => {
-    mockGetPeers.mockResolvedValue({
-      local: {
-        name: 'mac-studio',
-        hostname: 'mac-studio.local',
-        os: 'macos',
-        arch: 'aarch64',
-        cpus: 12,
-        memory_mb: 32768,
-        gpu: null,
-      },
-      peers: [
-        {
-          name: 'linux-box',
-          address: '10.0.0.2:7433',
-          status: 'online',
-          node_info: null,
-          session_count: null,
-        },
-      ],
-    });
-    mockGetRemoteSessions.mockResolvedValue([]);
-
-    renderOcean();
-    await waitFor(() => {
-      expect(screen.getByTestId('culture-current')).toBeInTheDocument();
-      expect(screen.getByText('Culture: shared ocean')).toBeInTheDocument();
-    });
-  });
-
-  it('does not show culture current with single node', async () => {
-    renderOcean();
-    await waitFor(() => {
-      expect(screen.getByTestId('tide-pool-grid')).toBeInTheDocument();
-    });
-    expect(screen.queryByTestId('culture-current')).not.toBeInTheDocument();
-  });
-
   it('shows node name in tide pool header', async () => {
     renderOcean();
     await waitFor(() => {

@@ -52,19 +52,9 @@ pulpo list
 pulpo resume my-api
 ```
 
-## 7. Check culture
-
-After sessions finish, Pulpo harvests agent learnings into the culture repo. Query what agents have learned:
-
-```bash
-pulpo culture                        # list all entries
-pulpo culture --context              # see what gets injected into new sessions
-pulpo culture --context --repo /path # scoped to a specific repo
-```
-
 ## Next steps
 
-- [Configuration Guide](/guides/configuration) — inks, watchdog, peers, culture
+- [Configuration Guide](/guides/configuration) — inks, watchdog, peers
 - [Discovery Guide](/guides/discovery) — multi-node setup with Tailscale, mDNS, or seed
 - [CLI Reference](/reference/cli) — all commands and flags
 - [Session Lifecycle](/operations/session-lifecycle) — state machine, transitions, detection

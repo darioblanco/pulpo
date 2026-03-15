@@ -87,6 +87,7 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
                         mode: v.mode.clone(),
                         unrestricted: v.unrestricted,
                         instructions: v.instructions.clone(),
+                        instructions_file: v.instructions_file.clone(),
                     },
                 )
             })
@@ -215,6 +216,7 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
                         mode: v.mode,
                         unrestricted: v.unrestricted,
                         instructions: v.instructions,
+                        instructions_file: v.instructions_file,
                     },
                 )
             })
@@ -321,7 +323,6 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                culture: crate::config::CultureConfig::default(),
             },
             manager,
             peer_registry,
@@ -359,7 +360,6 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                culture: crate::config::CultureConfig::default(),
             },
             config_path,
             manager,
@@ -573,7 +573,6 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            culture: crate::config::CultureConfig::default(),
         };
         let resp = config_to_response(&config);
         assert_eq!(resp.node.name, "test");
@@ -812,6 +811,7 @@ mod tests {
                 mode: Some("interactive".into()),
                 unrestricted: Some(true),
                 instructions: Some("You are a reviewer.".into()),
+                instructions_file: None,
             },
         );
         let req = UpdateConfigRequest {
@@ -861,6 +861,7 @@ mod tests {
                         mode: None,
                         unrestricted: None,
                         instructions: None,
+                        instructions_file: None,
                     },
                 );
                 m
@@ -872,7 +873,6 @@ mod tests {
                 }),
                 webhooks: vec![],
             },
-            culture: crate::config::CultureConfig::default(),
         };
         let resp = config_to_response(&config);
         // Node fields
@@ -930,7 +930,6 @@ mod tests {
                     },
                 ],
             },
-            culture: crate::config::CultureConfig::default(),
         };
         let resp = config_to_response(&config);
         assert_eq!(resp.notifications.webhooks.len(), 2);
@@ -1067,7 +1066,6 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                culture: crate::config::CultureConfig::default(),
             },
             std::path::PathBuf::from("/dev/null/impossible/config.toml"),
             manager,

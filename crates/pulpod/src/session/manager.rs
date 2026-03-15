@@ -11,11 +11,8 @@ use uuid::Uuid;
 
 use pulpo_common::guard::GuardConfig;
 
-use tracing::{debug, warn};
-
 use crate::backend::Backend;
 use crate::config::{InkConfig, SessionDefaultsConfig};
-use crate::culture::repo::CultureRepo;
 use crate::guard::check_capability_warnings;
 use crate::store::Store;
 
@@ -23,12 +20,6 @@ use crate::store::Store;
 pub struct SessionManager {
     backend: Arc<dyn Backend>,
     store: Store,
-    culture_repo: Option<CultureRepo>,
-    inject_culture: bool,
-    #[cfg_attr(coverage, allow(dead_code))]
-    curator_enabled: bool,
-    #[cfg_attr(coverage, allow(dead_code))]
-    curator_provider: Option<String>,
     default_guard: GuardConfig,
     default_provider: Option<String>,
     session_defaults: SessionDefaultsConfig,
@@ -50,10 +41,6 @@ impl SessionManager {
         Self {
             backend,
             store,
-            culture_repo: None,
-            inject_culture: true,
-            curator_enabled: false,
-            curator_provider: None,
             default_guard,
             default_provider: None,
             session_defaults: SessionDefaultsConfig::default(),
@@ -81,24 +68,6 @@ impl SessionManager {
     pub fn with_session_defaults(mut self, defaults: SessionDefaultsConfig) -> Self {
         self.session_defaults = defaults;
         self
-    }
-
-    #[must_use]
-    pub fn with_culture_repo(mut self, repo: CultureRepo, inject: bool) -> Self {
-        self.inject_culture = inject;
-        self.culture_repo = Some(repo);
-        self
-    }
-
-    #[must_use]
-    pub fn with_curator(mut self, enabled: bool, provider: Option<String>) -> Self {
-        self.curator_enabled = enabled;
-        self.curator_provider = provider;
-        self
-    }
-
-    pub const fn culture_repo(&self) -> Option<&CultureRepo> {
-        self.culture_repo.as_ref()
     }
 
     #[must_use]
@@ -169,8 +138,6 @@ impl SessionManager {
         let mode = req.mode.unwrap_or_default();
         let guards = resolve_guard_config(&req, &self.default_guard);
         let name = req.name.clone();
-        // Inject culture context after name is determined (write-back path uses session name)
-        req = self.inject_culture_context(req, &name);
         let prompt = req.prompt.clone().unwrap_or_default();
         let backend_id = self.backend.session_id(&name);
         let mut spawn_params = build_spawn_params(
@@ -322,8 +289,23 @@ impl SessionManager {
             req.unrestricted = ink.unrestricted;
         }
 
+        // Resolve instructions: instructions_file takes precedence over inline instructions
+        let effective_instructions = if let Some(ref file_path) = ink.instructions_file {
+            let path = if std::path::Path::new(file_path).is_absolute() {
+                std::path::PathBuf::from(file_path)
+            } else {
+                let workdir = req.workdir.as_deref().unwrap_or(".");
+                std::path::Path::new(workdir).join(file_path)
+            };
+            Some(std::fs::read_to_string(&path).map_err(|e| {
+                anyhow!("failed to read instructions_file '{}': {e}", path.display())
+            })?)
+        } else {
+            ink.instructions.clone()
+        };
+
         // Instructions: provider-aware routing
-        if let Some(instructions) = &ink.instructions {
+        if let Some(instructions) = &effective_instructions {
             let provider = req
                 .provider
                 .or_else(|| ink.provider.as_ref().and_then(|p| p.parse().ok()))
@@ -341,45 +323,6 @@ impl SessionManager {
         }
 
         Ok(req)
-    }
-
-    /// Inject culture context into the request `prompt`/`system_prompt`.
-    /// Reads the compiled AGENTS.md files (global + repo + ink scopes) and
-    /// merges them into the session prompt, along with write-back instructions.
-    fn inject_culture_context(
-        &self,
-        mut req: CreateSessionRequest,
-        session_name: &str,
-    ) -> CreateSessionRequest {
-        if !self.inject_culture {
-            return req;
-        }
-        // Shell sessions have no agent to read culture context
-        if req.provider == Some(Provider::Shell) {
-            return req;
-        }
-        let Some(repo) = &self.culture_repo else {
-            return req;
-        };
-
-        let workdir = req.workdir.as_deref().unwrap_or_default();
-        let root = repo.root().display().to_string();
-        let context = build_culture_context(repo, workdir, req.ink.as_deref(), &root, session_name);
-
-        let provider = req.provider.unwrap_or(Provider::Claude);
-        if crate::guard::provider_capabilities(provider).system_prompt {
-            let existing = req.system_prompt.unwrap_or_default();
-            req.system_prompt = Some(if existing.is_empty() {
-                context
-            } else {
-                format!("{existing}\n\n{context}")
-            });
-        } else {
-            let prompt = req.prompt.unwrap_or_default();
-            req.prompt = Some(format!("{context}\n\n{prompt}"));
-        }
-
-        req
     }
 
     pub async fn get_session(&self, id: &str) -> Result<Option<Session>> {
@@ -438,7 +381,6 @@ impl SessionManager {
             .update_session_status(&session.id.to_string(), SessionStatus::Lost)
             .await?;
         session.status = SessionStatus::Lost;
-        self.extract_and_store_culture(session).await;
         Ok(true)
     }
 
@@ -461,7 +403,6 @@ impl SessionManager {
             .await?;
         let mut dead_session = session;
         dead_session.status = SessionStatus::Killed;
-        self.extract_and_store_culture(&dead_session).await;
         self.emit_event(&dead_session, Some(previous));
         Ok(())
     }
@@ -573,121 +514,6 @@ impl SessionManager {
 
     pub const fn store(&self) -> &Store {
         &self.store
-    }
-
-    /// Extract culture from a session and persist it to the git-backed culture repo.
-    /// Best-effort: logs warnings on failure but does not propagate errors.
-    async fn extract_and_store_culture(&self, session: &Session) {
-        let Some(repo) = &self.culture_repo else {
-            return;
-        };
-
-        // Harvest agent write-back from pending/ directory
-        #[cfg_attr(coverage, allow(unused_variables))]
-        let harvested = match repo
-            .harvest_pending(
-                &session.name,
-                session.id,
-                &session.workdir,
-                session.ink.as_deref(),
-            )
-            .await
-        {
-            Ok(count) if count > 0 => {
-                debug!(
-                    session_id = %session.id,
-                    count,
-                    "Harvested culture from session"
-                );
-                true
-            }
-            Err(e) => {
-                warn!(
-                    session_id = %session.id,
-                    "Failed to harvest culture: {e}"
-                );
-                false
-            }
-            _ => false,
-        };
-
-        // Curator fallback: spawn a curator session if no pending file was found
-        // and this session is not itself a curator (avoids infinite recursion).
-        #[cfg(not(coverage))]
-        if !harvested
-            && self.curator_enabled
-            && !session
-                .metadata
-                .as_ref()
-                .is_some_and(|m| m.contains_key("curator"))
-        {
-            self.spawn_curator(session);
-        }
-    }
-
-    /// Spawn a fire-and-forget curator session to extract learnings from a
-    /// completed session's output.
-    #[cfg(not(coverage))]
-    fn spawn_curator(&self, session: &Session) {
-        let backend_id = self.resolve_backend_id(session);
-        let output = self.capture_output(&session.id.to_string(), &backend_id, 200);
-        if output.trim().is_empty() {
-            return;
-        }
-
-        let repo_root = self
-            .culture_repo
-            .as_ref()
-            .map(|r| r.root().display().to_string())
-            .unwrap_or_default();
-
-        let prompt = build_curator_prompt(&session.name, &output, &repo_root);
-        let provider_str = self
-            .curator_provider
-            .clone()
-            .unwrap_or_else(|| "claude".into());
-        let provider = provider_str.parse::<Provider>().unwrap_or(Provider::Claude);
-
-        let mut metadata = HashMap::new();
-        metadata.insert("curator".into(), session.id.to_string());
-
-        let curator_name = format!("curator-{}", session.name);
-        let req = CreateSessionRequest {
-            name: curator_name,
-            workdir: Some(session.workdir.clone()),
-            provider: Some(provider),
-            prompt: Some(prompt),
-            mode: Some(SessionMode::Autonomous),
-            unrestricted: None,
-            model: None,
-            allowed_tools: None,
-            system_prompt: None,
-            metadata: Some(metadata),
-            ink: None,
-            max_turns: Some(1),
-            max_budget_usd: None,
-            output_format: None,
-            worktree: None,
-            conversation_id: None,
-        };
-
-        let mgr = self.clone();
-        tokio::spawn(async move {
-            match mgr.create_session(req).await {
-                Ok((s, _)) => {
-                    debug!(
-                        curator_session = %s.id,
-                        original_session = %s.metadata.as_ref()
-                            .and_then(|m| m.get("curator"))
-                            .map_or("?", String::as_str),
-                        "Spawned curator session"
-                    );
-                }
-                Err(e) => {
-                    warn!("Failed to spawn curator session: {e}");
-                }
-            }
-        });
     }
 }
 
@@ -828,162 +654,9 @@ pub(crate) fn build_command(
     format!("bash -c \"{escaped}; echo '[pulpo] Agent exited'; exec bash\"")
 }
 
-/// Build the prompt for a curator session that extracts learnings from
-/// another session's output.
-#[cfg_attr(coverage, allow(dead_code))]
-fn build_curator_prompt(session_name: &str, output: &str, culture_repo_root: &str) -> String {
-    format!(
-        "You are a culture curator for pulpo. Your ONLY job is to extract \
-         non-obvious learnings from the following session output and write them \
-         to a pending file.\n\n\
-         ## Session: {session_name}\n\n\
-         <output>\n{output}\n</output>\n\n\
-         ## Instructions\n\n\
-         1. Read the session output above carefully.\n\
-         2. Identify any non-obvious learnings — environment quirks, gotchas, \
-         patterns, or things a future agent couldn't figure out from the code.\n\
-         3. If you find a learning, write it to:\n\
-         `{culture_repo_root}/pending/{session_name}.md`\n\n\
-         Use this format:\n\
-         ```markdown\n\
-         # <Short title (10-120 chars)>\n\n\
-         <Detailed explanation (at least 30 chars). Explain WHY the finding matters,\n\
-         not just WHAT happened.>\n\
-         ```\n\n\
-         Good: `# SQLite WAL mode required for concurrent readers` + explanation of \
-         the failure mode without it.\n\
-         Bad: `# fix` + `Fixed the bug.` — too vague, would be rejected.\n\n\
-         4. If there are no non-obvious learnings, do nothing and exit. Most sessions \
-         have nothing worth writing — that's fine.\n\
-         5. Do NOT modify any code. Only write to the pending file."
-    )
-}
-
-/// Build culture context string for injection into agent sessions.
-///
-/// Reads the compiled AGENTS.md files from relevant scopes (global, repo, ink)
-/// and merges them. Includes write-back instructions so the agent can contribute
-/// new learnings.
-fn build_culture_context(
-    repo: &CultureRepo,
-    workdir: &str,
-    ink: Option<&str>,
-    repo_root: &str,
-    session_name: &str,
-) -> String {
-    use std::fmt::Write;
-    let mut ctx = String::new();
-
-    ctx.push_str("## Culture from previous sessions\n\n");
-
-    // Read compiled AGENTS.md from each applicable scope
-    #[allow(clippy::useless_let_if_seq)]
-    let mut has_content = false;
-
-    // 1. Global culture
-    if let Ok(Some(content)) = repo.read_agents_md("culture")
-        && !is_empty_agents_md(&content)
-    {
-        ctx.push_str("### Global culture\n\n");
-        ctx.push_str(content.trim());
-        ctx.push_str("\n\n");
-        has_content = true;
-    }
-
-    // 2. Repo-scoped culture
-    if !workdir.is_empty() {
-        let slug = std::path::Path::new(workdir)
-            .file_name()
-            .map_or_else(|| workdir.to_owned(), |n| n.to_string_lossy().to_string());
-        let scope = format!("repos/{slug}");
-        if let Ok(Some(content)) = repo.read_agents_md(&scope)
-            && !is_empty_agents_md(&content)
-        {
-            let _ = write!(ctx, "### Repository: {slug}\n\n");
-            ctx.push_str(content.trim());
-            ctx.push_str("\n\n");
-            has_content = true;
-        }
-    }
-
-    // 3. Ink-scoped culture
-    if let Some(ink_name) = ink {
-        let scope = format!("inks/{ink_name}");
-        if let Ok(Some(content)) = repo.read_agents_md(&scope)
-            && !is_empty_agents_md(&content)
-        {
-            let _ = write!(ctx, "### Ink: {ink_name}\n\n");
-            ctx.push_str(content.trim());
-            ctx.push_str("\n\n");
-            has_content = true;
-        }
-    }
-
-    if !has_content {
-        ctx.push_str("No previous findings for this repo/ink.\n\n");
-    }
-
-    // Write-back instructions
-    let _ = write!(
-        ctx,
-        "## Write-back: share your learnings\n\n\
-         When you finish your task, write any non-obvious learnings to:\n\n\
-         ```\n\
-         {repo_root}/pending/{session_name}.md\n\
-         ```\n\n\
-         Use this format:\n\n\
-         ```markdown\n\
-         # <Short title describing the learning (10-120 chars)>\n\n\
-         <Detailed explanation (at least 30 chars). Focus on things a future agent\n\
-         couldn't figure out from reading the code.>\n\n\
-         supersedes: <id of old entry if this replaces one>\n\
-         ```\n\n\
-         Good example:\n\n\
-         ```markdown\n\
-         # SQLite WAL mode must be enabled before concurrent readers\n\n\
-         The default journal mode blocks concurrent reads during writes. Set\n\
-         `PRAGMA journal_mode=WAL` at connection init — without this, the watchdog\n\
-         health checks timeout when a session save is in progress.\n\
-         ```\n\n\
-         Bad example (would be rejected):\n\n\
-         ```markdown\n\
-         # fix\n\n\
-         Fixed the bug.\n\
-         ```\n\n\
-         Guidelines:\n\
-         - Only write things that are NOT obvious from the code itself\n\
-         - Title must be 10-120 characters, body at least 30 characters\n\
-         - Include explanation, not just code blocks\n\
-         - One learning per file\n\
-         - Skip this if you didn't discover anything non-obvious\n\
-         - If your learning corrects or replaces an existing one shown above, \
-         add a `supersedes: <id>` line with the old entry's ID\n\
-         - Pulpo validates entries automatically and rejects low-quality ones\n\n\
-         Advanced: you can add optional YAML frontmatter for richer metadata:\n\n\
-         ```markdown\n\
-         ---\n\
-         kind: failure\n\
-         supersedes: <uuid>\n\
-         tags: [env, auth]\n\
-         ---\n\n\
-         # Title\n\n\
-         Body...\n\
-         ```\n\n\
-         Supported fields: `kind` (summary or failure), `supersedes`, `tags`."
-    );
-
-    ctx
-}
-
-/// Check if an AGENTS.md file has only the bootstrap template with no actual entries.
-fn is_empty_agents_md(content: &str) -> bool {
-    !content.contains("### [")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pulpo_common::culture::Culture;
     use pulpo_common::event::SessionEvent;
     use std::sync::Mutex;
 
@@ -991,7 +664,6 @@ mod tests {
     fn unwrap_session_event(event: PulpoEvent) -> SessionEvent {
         match event {
             PulpoEvent::Session(se) => se,
-            PulpoEvent::Culture(_) => panic!("expected Session event, got Culture"),
         }
     }
 
@@ -2373,30 +2045,6 @@ mod tests {
         assert!(warnings.is_empty());
     }
 
-    #[test]
-    fn test_inject_culture_shell_skipped() {
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: None,
-            inject_culture: true,
-            curator_enabled: false,
-            curator_provider: None,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            inks: HashMap::new(),
-            event_tx: None,
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let mut req = make_req("shell-culture-test");
-        req.provider = Some(Provider::Shell);
-        let result = mgr.inject_culture_context(req, "test-session");
-        // Shell sessions should skip culture injection
-        assert_eq!(result.system_prompt, None);
-    }
-
     #[tokio::test]
     async fn test_list_sessions_filtered() {
         let (mgr, _, _) = test_manager(MockBackend::new()).await;
@@ -2455,10 +2103,6 @@ mod tests {
         let inks = HashMap::new();
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: None,
-            inject_culture: false,
-            curator_enabled: false,
-            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2479,10 +2123,6 @@ mod tests {
         let inks = HashMap::new();
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: None,
-            inject_culture: false,
-            curator_enabled: false,
-            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2513,14 +2153,11 @@ mod tests {
                 mode: Some("autonomous".into()),
                 unrestricted: Some(false),
                 instructions: Some("Review code".into()),
+                instructions_file: None,
             },
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: None,
-            inject_culture: false,
-            curator_enabled: false,
-            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2554,14 +2191,11 @@ mod tests {
                 mode: None,
                 unrestricted: None,
                 instructions: None,
+                instructions_file: None,
             },
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: None,
-            inject_culture: false,
-            curator_enabled: false,
-            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2600,14 +2234,11 @@ mod tests {
                 mode: None,
                 unrestricted: None,
                 instructions: Some("You are an expert coder.".into()),
+                instructions_file: None,
             },
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: None,
-            inject_culture: false,
-            curator_enabled: false,
-            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2643,14 +2274,11 @@ mod tests {
                 mode: Some("autonomous".into()),
                 unrestricted: Some(false),
                 instructions: Some("Review code".into()),
+                instructions_file: None,
             },
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: None,
-            inject_culture: false,
-            curator_enabled: false,
-            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2693,14 +2321,11 @@ mod tests {
                 mode: None,
                 unrestricted: Some(false),
                 instructions: None,
+                instructions_file: None,
             },
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: None,
-            inject_culture: false,
-            curator_enabled: false,
-            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2732,14 +2357,11 @@ mod tests {
                 mode: None,
                 unrestricted: Some(false),
                 instructions: Some("Be careful".into()),
+                instructions_file: None,
             },
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: None,
-            inject_culture: false,
-            curator_enabled: false,
-            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2772,14 +2394,11 @@ mod tests {
                 mode: None,
                 unrestricted: None,
                 instructions: Some("Ink instructions".into()),
+                instructions_file: None,
             },
         );
         let mgr = SessionManager {
             backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: None,
-            inject_culture: false,
-            curator_enabled: false,
-            curator_provider: None,
             store: unsafe_empty_store(),
             default_guard: GuardConfig::default(),
             inks,
@@ -2807,6 +2426,198 @@ mod tests {
         assert_eq!(resolved.model, None);
         // Instructions → system_prompt (Claude provider)
         assert_eq!(resolved.system_prompt, Some("Ink instructions".into()));
+    }
+
+    // -- instructions_file tests --
+
+    #[test]
+    fn test_resolve_ink_instructions_file_absolute() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "Instructions from file.").unwrap();
+        let mut inks = HashMap::new();
+        inks.insert(
+            "file-ink".into(),
+            crate::config::InkConfig {
+                description: None,
+                provider: Some("claude".into()),
+                model: None,
+                mode: None,
+                unrestricted: None,
+                instructions: None,
+                instructions_file: Some(tmp.path().to_str().unwrap().to_owned()),
+            },
+        );
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            store: unsafe_empty_store(),
+            default_guard: GuardConfig::default(),
+            inks,
+            event_tx: None,
+            default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
+            node_name: String::new(),
+            stale_grace_secs: 0,
+        };
+        let req = CreateSessionRequest {
+            ink: Some("file-ink".into()),
+            ..make_req("test")
+        };
+        let resolved = mgr.resolve_ink(req).unwrap();
+        assert_eq!(
+            resolved.system_prompt.as_deref(),
+            Some("Instructions from file.")
+        );
+    }
+
+    #[test]
+    fn test_resolve_ink_instructions_file_relative() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let instructions_path = tmpdir.path().join("program.md");
+        std::fs::write(&instructions_path, "Relative file instructions.").unwrap();
+        let mut inks = HashMap::new();
+        inks.insert(
+            "rel-ink".into(),
+            crate::config::InkConfig {
+                description: None,
+                provider: Some("claude".into()),
+                model: None,
+                mode: None,
+                unrestricted: None,
+                instructions: None,
+                instructions_file: Some("program.md".into()),
+            },
+        );
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            store: unsafe_empty_store(),
+            default_guard: GuardConfig::default(),
+            inks,
+            event_tx: None,
+            default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
+            node_name: String::new(),
+            stale_grace_secs: 0,
+        };
+        let req = CreateSessionRequest {
+            ink: Some("rel-ink".into()),
+            workdir: Some(tmpdir.path().to_str().unwrap().into()),
+            ..make_req("test")
+        };
+        let resolved = mgr.resolve_ink(req).unwrap();
+        assert_eq!(
+            resolved.system_prompt.as_deref(),
+            Some("Relative file instructions.")
+        );
+    }
+
+    #[test]
+    fn test_resolve_ink_instructions_file_precedence() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "File wins.").unwrap();
+        let mut inks = HashMap::new();
+        inks.insert(
+            "both-ink".into(),
+            crate::config::InkConfig {
+                description: None,
+                provider: Some("claude".into()),
+                model: None,
+                mode: None,
+                unrestricted: None,
+                instructions: Some("Inline instructions.".into()),
+                instructions_file: Some(tmp.path().to_str().unwrap().to_owned()),
+            },
+        );
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            store: unsafe_empty_store(),
+            default_guard: GuardConfig::default(),
+            inks,
+            event_tx: None,
+            default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
+            node_name: String::new(),
+            stale_grace_secs: 0,
+        };
+        let req = CreateSessionRequest {
+            ink: Some("both-ink".into()),
+            ..make_req("test")
+        };
+        let resolved = mgr.resolve_ink(req).unwrap();
+        // instructions_file takes precedence over inline instructions
+        assert_eq!(resolved.system_prompt.as_deref(), Some("File wins."));
+    }
+
+    #[test]
+    fn test_resolve_ink_instructions_file_missing() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "bad-ink".into(),
+            crate::config::InkConfig {
+                description: None,
+                provider: Some("claude".into()),
+                model: None,
+                mode: None,
+                unrestricted: None,
+                instructions: None,
+                instructions_file: Some("/nonexistent/path/program.md".into()),
+            },
+        );
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            store: unsafe_empty_store(),
+            default_guard: GuardConfig::default(),
+            inks,
+            event_tx: None,
+            default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
+            node_name: String::new(),
+            stale_grace_secs: 0,
+        };
+        let req = CreateSessionRequest {
+            ink: Some("bad-ink".into()),
+            ..make_req("test")
+        };
+        let err = mgr.resolve_ink(req).unwrap_err();
+        assert!(err.to_string().contains("instructions_file"), "got: {err}");
+    }
+
+    #[test]
+    fn test_resolve_ink_instructions_file_non_claude() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "File instructions for codex.").unwrap();
+        let mut inks = HashMap::new();
+        inks.insert(
+            "codex-ink".into(),
+            crate::config::InkConfig {
+                description: None,
+                provider: Some("codex".into()),
+                model: None,
+                mode: None,
+                unrestricted: None,
+                instructions: None,
+                instructions_file: Some(tmp.path().to_str().unwrap().to_owned()),
+            },
+        );
+        let mgr = SessionManager {
+            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
+            store: unsafe_empty_store(),
+            default_guard: GuardConfig::default(),
+            inks,
+            event_tx: None,
+            default_provider: None,
+            session_defaults: SessionDefaultsConfig::default(),
+            node_name: String::new(),
+            stale_grace_secs: 0,
+        };
+        let req = CreateSessionRequest {
+            ink: Some("codex-ink".into()),
+            ..make_req("test")
+        };
+        let resolved = mgr.resolve_ink(req).unwrap();
+        // Codex: instructions prepended to prompt, not system_prompt
+        assert!(resolved.system_prompt.is_none());
+        let prompt = resolved.prompt.unwrap();
+        assert!(prompt.starts_with("File instructions for codex."));
     }
 
     /// Helper to create a `SessionManager` without a valid store (for sync-only tests).
@@ -3096,385 +2907,6 @@ mod tests {
             .unwrap();
         let result = mgr.delete_session("test").await;
         assert!(result.is_err());
-    }
-
-    // -- build_culture_context tests --
-
-    fn make_culture_item(title: &str, kind: pulpo_common::culture::CultureKind) -> Culture {
-        Culture {
-            id: Uuid::new_v4(),
-            session_id: Uuid::new_v4(),
-            kind,
-            scope_repo: Some("/tmp/repo".into()),
-            scope_ink: None,
-            title: title.into(),
-            body: "Details here.".into(),
-            tags: vec![],
-            relevance: 0.5,
-            created_at: Utc::now(),
-            last_referenced_at: None,
-            reference_count: 0,
-        }
-    }
-
-    #[tokio::test]
-    async fn test_build_culture_context_empty() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
-            .await
-            .unwrap();
-        let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root, "test-session");
-        assert!(ctx.contains("No previous findings"));
-        assert!(ctx.contains("pending/"));
-        assert!(ctx.contains("Write-back"));
-    }
-
-    #[tokio::test]
-    async fn test_build_culture_context_with_items() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
-            .await
-            .unwrap();
-        repo.save(&make_culture_item(
-            "Auth race condition",
-            pulpo_common::culture::CultureKind::Failure,
-        ))
-        .await
-        .unwrap();
-        repo.save(&make_culture_item(
-            "Uses pnpm not npm",
-            pulpo_common::culture::CultureKind::Summary,
-        ))
-        .await
-        .unwrap();
-
-        let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root, "test-session");
-        assert!(ctx.contains("[failure] Auth race condition"));
-        assert!(ctx.contains("[summary] Uses pnpm not npm"));
-        assert!(!ctx.contains("No previous findings"));
-    }
-
-    #[tokio::test]
-    async fn test_build_culture_context_includes_repo_root() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
-            .await
-            .unwrap();
-        let root = repo.root().display().to_string();
-        let ctx =
-            build_culture_context(&repo, "/home/user/my-project", None, &root, "test-session");
-        assert!(ctx.contains(&root));
-    }
-
-    #[tokio::test]
-    async fn test_build_culture_context_write_back_instructions() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
-            .await
-            .unwrap();
-        let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root, "test-session");
-        assert!(ctx.contains("Write-back: share your learnings"));
-        assert!(ctx.contains("pending/"));
-        assert!(ctx.contains(".md"));
-        assert!(ctx.contains("non-obvious"));
-        assert!(ctx.contains("Pulpo validates"));
-    }
-
-    #[tokio::test]
-    async fn test_build_culture_context_quality_examples() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
-            .await
-            .unwrap();
-        let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root, "test-session");
-        assert!(ctx.contains("Good example"));
-        assert!(ctx.contains("Bad example"));
-        assert!(ctx.contains("would be rejected"));
-        assert!(ctx.contains("10-120 characters"));
-        assert!(ctx.contains("at least 30 characters"));
-    }
-
-    #[tokio::test]
-    async fn test_build_culture_context_supersedes_instruction() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
-            .await
-            .unwrap();
-        let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root, "test-session");
-        assert!(ctx.contains("supersedes:"));
-        assert!(ctx.contains("corrects or replaces"));
-    }
-
-    #[tokio::test]
-    async fn test_build_culture_context_pending_path_uses_session_name() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
-            .await
-            .unwrap();
-        let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/tmp/repo", None, &root, "indigo-wave");
-        // The pending path should reference the culture repo root and session name
-        let expected = format!("{root}/pending/indigo-wave.md");
-        assert!(ctx.contains(&expected));
-    }
-
-    #[tokio::test]
-    async fn test_build_culture_context_merges_scopes() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
-            .await
-            .unwrap();
-
-        // Add a global culture entry
-        let mut global_item = make_culture_item(
-            "Global convention",
-            pulpo_common::culture::CultureKind::Summary,
-        );
-        global_item.scope_repo = None;
-        repo.save(&global_item).await.unwrap();
-
-        // Add a repo-scoped entry
-        repo.save(&make_culture_item(
-            "Repo finding",
-            pulpo_common::culture::CultureKind::Summary,
-        ))
-        .await
-        .unwrap();
-
-        // Add an ink-scoped entry
-        let mut ink_item =
-            make_culture_item("Ink pattern", pulpo_common::culture::CultureKind::Summary);
-        ink_item.scope_repo = None;
-        ink_item.scope_ink = Some("coder".into());
-        repo.save(&ink_item).await.unwrap();
-
-        let root = repo.root().display().to_string();
-        let ctx = build_culture_context(&repo, "/tmp/repo", Some("coder"), &root, "test-session");
-
-        // Should contain all three scopes
-        assert!(ctx.contains("Global culture"));
-        assert!(ctx.contains("Global convention"));
-        assert!(ctx.contains("Repository: repo"));
-        assert!(ctx.contains("Repo finding"));
-        assert!(ctx.contains("Ink: coder"));
-        assert!(ctx.contains("Ink pattern"));
-        assert!(!ctx.contains("No previous findings"));
-    }
-
-    // -- build_curator_prompt tests --
-
-    #[test]
-    fn test_build_curator_prompt_contains_session_name() {
-        let prompt = build_curator_prompt("indigo-wave", "some output", "/tmp/culture");
-        assert!(prompt.contains("indigo-wave"));
-        assert!(prompt.contains("some output"));
-        assert!(prompt.contains("/tmp/culture/pending/indigo-wave.md"));
-    }
-
-    #[test]
-    fn test_build_curator_prompt_contains_instructions() {
-        let prompt = build_curator_prompt("test-session", "output", "/root");
-        assert!(prompt.contains("culture curator"));
-        assert!(prompt.contains("non-obvious"));
-        assert!(prompt.contains("Do NOT modify any code"));
-    }
-
-    #[test]
-    fn test_build_curator_prompt_contains_quality_guidance() {
-        let prompt = build_curator_prompt("test-session", "output", "/root");
-        assert!(prompt.contains("10-120 chars"));
-        assert!(prompt.contains("at least 30 chars"));
-        assert!(prompt.contains("rejected"));
-    }
-
-    #[test]
-    fn test_is_empty_agents_md() {
-        assert!(is_empty_agents_md(
-            "## Session Learnings\n\n<!-- No learnings yet -->\n"
-        ));
-        assert!(is_empty_agents_md(
-            "# Culture\n\n## Commands\n\n## Testing\n"
-        ));
-        assert!(!is_empty_agents_md(
-            "## Session Learnings\n\n### [summary] A finding\n"
-        ));
-        assert!(!is_empty_agents_md("### [failure] Some bug"));
-    }
-
-    // -- inject_culture_context tests --
-
-    #[test]
-    fn test_inject_culture_disabled() {
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: None,
-            inject_culture: false,
-            curator_enabled: false,
-            curator_provider: None,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks: HashMap::new(),
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = make_req("test");
-        let result = mgr.inject_culture_context(req, "test-session");
-        // No modification when disabled
-        assert_eq!(result.prompt.as_deref(), Some("test"));
-        assert_eq!(result.system_prompt, None);
-    }
-
-    #[test]
-    fn test_inject_culture_no_repo() {
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: None,
-            inject_culture: true,
-            curator_enabled: false,
-            curator_provider: None,
-            store: unsafe_empty_store(),
-            default_guard: GuardConfig::default(),
-            inks: HashMap::new(),
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let req = make_req("test");
-        let result = mgr.inject_culture_context(req, "test-session");
-        assert_eq!(result.prompt.as_deref(), Some("test"));
-        assert_eq!(result.system_prompt, None);
-    }
-
-    async fn async_store() -> Store {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        store
-    }
-
-    #[tokio::test]
-    async fn test_inject_culture_claude_appends_system_prompt() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
-            .await
-            .unwrap();
-        repo.save(&make_culture_item(
-            "DB needs migration",
-            pulpo_common::culture::CultureKind::Summary,
-        ))
-        .await
-        .unwrap();
-
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: Some(repo),
-            inject_culture: true,
-            curator_enabled: false,
-            curator_provider: None,
-            store: async_store().await,
-            default_guard: GuardConfig::default(),
-            inks: HashMap::new(),
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let mut req = make_req("test");
-        req.provider = Some(Provider::Claude);
-        req.workdir = Some("/tmp/repo".into());
-        let result = mgr.inject_culture_context(req, "test-session");
-        // Claude: culture goes to system_prompt
-        let sp = result.system_prompt.unwrap();
-        assert!(sp.contains("DB needs migration"));
-        assert!(sp.contains("Write-back: share your learnings"));
-    }
-
-    #[tokio::test]
-    async fn test_inject_culture_codex_prepends_prompt() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
-            .await
-            .unwrap();
-        repo.save(&make_culture_item(
-            "Use pnpm",
-            pulpo_common::culture::CultureKind::Summary,
-        ))
-        .await
-        .unwrap();
-
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: Some(repo),
-            inject_culture: true,
-            curator_enabled: false,
-            curator_provider: None,
-            store: async_store().await,
-            default_guard: GuardConfig::default(),
-            inks: HashMap::new(),
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let mut req = make_req("test");
-        req.provider = Some(Provider::Codex);
-        req.workdir = Some("/tmp/repo".into());
-        let result = mgr.inject_culture_context(req, "test-session");
-        // Codex: culture prepended to prompt
-        let prompt = result.prompt.as_ref().unwrap();
-        assert!(prompt.starts_with("## Culture from previous sessions"));
-        assert!(prompt.contains("Use pnpm"));
-        assert!(prompt.ends_with("test"));
-        assert!(result.system_prompt.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_inject_culture_preserves_existing_system_prompt() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let repo = CultureRepo::init(tmpdir.path().to_str().unwrap(), None)
-            .await
-            .unwrap();
-
-        let mgr = SessionManager {
-            backend: Arc::new(MockBackend::new()) as Arc<dyn Backend>,
-            culture_repo: Some(repo),
-            inject_culture: true,
-            curator_enabled: false,
-            curator_provider: None,
-            store: async_store().await,
-            default_guard: GuardConfig::default(),
-            inks: HashMap::new(),
-            event_tx: None,
-            default_provider: None,
-            session_defaults: SessionDefaultsConfig::default(),
-            node_name: String::new(),
-            stale_grace_secs: 0,
-        };
-        let mut req = make_req("test");
-        req.provider = Some(Provider::Claude);
-        req.workdir = Some("/tmp/repo".into());
-        req.system_prompt = Some("Be careful with auth module.".into());
-        let result = mgr.inject_culture_context(req, "test-session");
-        let sp = result.system_prompt.unwrap();
-        // Existing system prompt preserved, culture appended
-        assert!(sp.starts_with("Be careful with auth module."));
-        assert!(sp.contains("Culture from previous sessions"));
     }
 
     // ───────────────────────────────────────────────────────────

@@ -12,7 +12,6 @@ use tracing::{debug, info, warn};
 use pulpo_common::session::{InterventionCode, Session};
 
 use crate::backend::Backend;
-use crate::culture::repo::CultureRepo;
 use crate::store::Store;
 
 /// The marker emitted by the agent wrapper when the agent process exits.
@@ -67,12 +66,11 @@ pub struct WatchdogRuntimeConfig {
     pub finished_ttl_secs: u64,
 }
 
-/// Context for handling agent-finished transitions (culture harvest + events).
+/// Context for handling agent-finished transitions (status update + events).
 #[cfg_attr(coverage, allow(dead_code))]
 pub struct FinishedContext {
     pub event_tx: Option<broadcast::Sender<PulpoEvent>>,
     pub node_name: String,
-    pub culture_repo: Option<CultureRepo>,
 }
 
 /// Runs the watchdog loop that monitors system memory and intervenes when sustained pressure
@@ -404,7 +402,7 @@ async fn check_session_idle(
     }
 }
 
-/// Handle a session whose agent has exited: transition to Finished, emit event, harvest culture.
+/// Handle a session whose agent has exited: transition to Finished and emit event.
 async fn handle_session_finished(store: &Store, session: &Session, ctx: &FinishedContext) {
     let previous = session.status;
     info!(
@@ -434,36 +432,6 @@ async fn handle_session_finished(store: &Store, session: &Session, ctx: &Finishe
             timestamp: chrono::Utc::now().to_rfc3339(),
         };
         let _ = tx.send(PulpoEvent::Session(event));
-    }
-
-    // Harvest culture (best-effort). Gated from coverage: requires a real git repo.
-    // The harvest_pending function itself is tested in culture::repo tests.
-    #[cfg(not(coverage))]
-    if let Some(repo) = &ctx.culture_repo {
-        match repo
-            .harvest_pending(
-                &session.name,
-                session.id,
-                &session.workdir,
-                session.ink.as_deref(),
-            )
-            .await
-        {
-            Ok(count) if count > 0 => {
-                debug!(
-                    session_id = %session.id,
-                    count,
-                    "Harvested culture from finished session"
-                );
-            }
-            Err(e) => {
-                warn!(
-                    session_id = %session.id,
-                    "Failed to harvest culture from finished session: {e}"
-                );
-            }
-            _ => {}
-        }
     }
 }
 
@@ -765,7 +733,6 @@ mod tests {
         FinishedContext {
             event_tx: None,
             node_name: "test-node".into(),
-            culture_repo: None,
         }
     }
 
@@ -3027,7 +2994,6 @@ mod tests {
         let ctx = FinishedContext {
             event_tx: Some(event_tx),
             node_name: "test-node".into(),
-            culture_repo: None,
         };
 
         let idle_config = IdleConfig {
@@ -3048,7 +3014,6 @@ mod tests {
                 assert_eq!(se.previous_status, Some("active".into()));
                 assert_eq!(se.node_name, "test-node");
             }
-            PulpoEvent::Culture(_) => panic!("Expected Session event"),
         }
     }
 
@@ -3100,7 +3065,6 @@ mod tests {
         let ctx = FinishedContext {
             event_tx: Some(event_tx),
             node_name: "n".into(),
-            culture_repo: None,
         };
 
         let idle_config = IdleConfig {
@@ -3125,7 +3089,6 @@ mod tests {
             PulpoEvent::Session(se) => {
                 assert_eq!(se.previous_status, Some("idle".into()));
             }
-            PulpoEvent::Culture(_) => panic!("Expected Session event"),
         }
     }
 
@@ -3245,15 +3208,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_finished_no_culture_repo() {
-        // Test handle_session_finished without culture repo (common case)
+    async fn test_finished_transitions_to_finished() {
         let store = test_store().await;
-        let session = create_running_session(&store, "no-culture").await;
+        let session = create_running_session(&store, "finish-test").await;
 
         let ctx = FinishedContext {
             event_tx: None,
             node_name: "n".into(),
-            culture_repo: None,
         };
         handle_session_finished(&store, &session, &ctx).await;
 

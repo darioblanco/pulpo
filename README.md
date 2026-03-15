@@ -26,7 +26,6 @@ Coding agents are powerful, but running them across multiple machines is operati
 - **Cross-node operations** — manage agents on multiple machines from a single API/CLI/web surface, with Tailscale, mDNS, or seed-based discovery.
 - **Watchdog interventions** — memory pressure detection, idle handling, and configurable kill policies with audit trails.
 - **Provider-agnostic** — Claude Code, Codex, Gemini CLI, OpenCode, or bare shell. Same lifecycle, same controls.
-- **Collective culture** — agents write learnings back to a shared AGENTS.md-based knowledge base. Culture syncs across nodes, so agents improve from each other's sessions over time.
 - **Self-hosted and open source** — your machines, your data, your control.
 
 ## Get Started

@@ -1,13 +1,11 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use pulpo_common::api::{
-    AuthTokenResponse, CreateSessionResponse, CultureDeleteResponse, CultureItemResponse,
-    CulturePushResponse, CultureResponse, InterventionEventResponse, PeersResponse,
+    AuthTokenResponse, CreateSessionResponse, InterventionEventResponse, PeersResponse,
     ProvidersResponse,
 };
 #[cfg(test)]
 use pulpo_common::api::{ProviderCapabilitiesResponse, ProviderInfoResponse};
-use pulpo_common::culture::Culture;
 use pulpo_common::session::Session;
 
 #[derive(Parser, Debug)]
@@ -172,46 +170,6 @@ pub enum Commands {
     /// Open the web dashboard in your browser
     Ui,
 
-    /// Query extracted culture from past sessions
-    #[command(visible_alias = "kn")]
-    Culture {
-        /// Filter by session ID
-        #[arg(long)]
-        session: Option<String>,
-
-        /// Filter by kind (summary, failure)
-        #[arg(long)]
-        kind: Option<String>,
-
-        /// Filter by repo/workdir
-        #[arg(long)]
-        repo: Option<String>,
-
-        /// Filter by ink name
-        #[arg(long)]
-        ink: Option<String>,
-
-        /// Maximum results
-        #[arg(long, default_value = "20")]
-        limit: usize,
-
-        /// Context mode: find relevant culture for a workdir
-        #[arg(long)]
-        context: bool,
-
-        /// Get a single culture item by ID
-        #[arg(long)]
-        get: Option<String>,
-
-        /// Delete a culture item by ID
-        #[arg(long)]
-        delete: Option<String>,
-
-        /// Push local culture to configured remote
-        #[arg(long)]
-        push: bool,
-    },
-
     /// Manage scheduled agent runs via crontab
     #[command(visible_alias = "sched")]
     Schedule {
@@ -323,35 +281,6 @@ fn format_interventions(events: &[InterventionEventResponse]) -> String {
     let mut lines = vec![format!("{:<8} {:<20} {}", "ID", "TIMESTAMP", "REASON")];
     for e in events {
         lines.push(format!("{:<8} {:<20} {}", e.id, e.created_at, e.reason));
-    }
-    lines.join("\n")
-}
-
-/// Format culture items as a table.
-fn format_culture(items: &[Culture]) -> String {
-    if items.is_empty() {
-        return "No culture found.".into();
-    }
-    let mut lines = vec![format!(
-        "{:<10} {:<40} {:<10} {:<6} {}",
-        "KIND", "TITLE", "REPO", "REL", "TAGS"
-    )];
-    for k in items {
-        let title = if k.title.len() > 38 {
-            format!("{}…", &k.title[..37])
-        } else {
-            k.title.clone()
-        };
-        let repo = k
-            .scope_repo
-            .as_deref()
-            .and_then(|r| r.rsplit('/').next())
-            .unwrap_or("-");
-        let tags = k.tags.join(",");
-        lines.push(format!(
-            "{:<10} {:<40} {:<10} {:<6.2} {}",
-            k.kind, title, repo, k.relevance, tags
-        ));
     }
     lines.join("\n")
 }
@@ -1157,90 +1086,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             eprintln!("Resumed session \"{}\"", session.name);
             attach_session(backend_id)?;
             Ok(format!("Detached from session \"{}\".", session.name))
-        }
-        Commands::Culture {
-            session,
-            kind,
-            repo,
-            ink,
-            limit,
-            context,
-            get,
-            delete,
-            push,
-        } => {
-            // Single-item get
-            if let Some(id) = get {
-                let endpoint = format!("{url}/api/v1/culture/{id}");
-                let resp = authed_get(&client, endpoint, token.as_deref())
-                    .send()
-                    .await
-                    .map_err(|e| friendly_error(&e, node))?;
-                let text = ok_or_api_error(resp).await?;
-                let resp: CultureItemResponse = serde_json::from_str(&text)?;
-                return Ok(format_culture(&[resp.culture]));
-            }
-
-            // Delete by ID
-            if let Some(id) = delete {
-                let endpoint = format!("{url}/api/v1/culture/{id}");
-                let resp = authed_delete(&client, endpoint, token.as_deref())
-                    .send()
-                    .await
-                    .map_err(|e| friendly_error(&e, node))?;
-                let text = ok_or_api_error(resp).await?;
-                let resp: CultureDeleteResponse = serde_json::from_str(&text)?;
-                return Ok(if resp.deleted {
-                    format!("Deleted culture item {id}")
-                } else {
-                    format!("Culture item {id} not found")
-                });
-            }
-
-            // Push to remote
-            if *push {
-                let endpoint = format!("{url}/api/v1/culture/push");
-                let resp = authed_post(&client, endpoint, token.as_deref())
-                    .send()
-                    .await
-                    .map_err(|e| friendly_error(&e, node))?;
-                let text = ok_or_api_error(resp).await?;
-                let resp: CulturePushResponse = serde_json::from_str(&text)?;
-                return Ok(resp.message);
-            }
-
-            // List / context query
-            let mut params = vec![format!("limit={limit}")];
-            let endpoint = if *context {
-                if let Some(r) = repo {
-                    params.push(format!("workdir={r}"));
-                }
-                if let Some(i) = ink {
-                    params.push(format!("ink={i}"));
-                }
-                format!("{url}/api/v1/culture/context?{}", params.join("&"))
-            } else {
-                if let Some(s) = session {
-                    params.push(format!("session_id={s}"));
-                }
-                if let Some(k) = kind {
-                    params.push(format!("kind={k}"));
-                }
-                if let Some(r) = repo {
-                    params.push(format!("repo={r}"));
-                }
-                if let Some(i) = ink {
-                    params.push(format!("ink={i}"));
-                }
-                format!("{url}/api/v1/culture?{}", params.join("&"))
-            };
-            let resp = authed_get(&client, endpoint, token.as_deref())
-                .send()
-                .await
-                .map_err(|e| friendly_error(&e, node))?;
-            let text = ok_or_api_error(resp).await?;
-            let resp: CultureResponse = serde_json::from_str(&text)?;
-            Ok(format_culture(&resp.culture))
         }
         Commands::Schedule { action } => execute_schedule(action, node),
     }
@@ -3619,199 +3464,5 @@ mod tests {
     fn test_schedule_action_debug() {
         let action = ScheduleAction::List;
         assert_eq!(format!("{action:?}"), "List");
-    }
-
-    // ── Culture CLI tests ─────────────────────────────────────────────
-
-    #[test]
-    fn test_cli_parse_culture() {
-        let cli = Cli::try_parse_from(["pulpo", "culture"]).unwrap();
-        assert!(matches!(cli.command, Commands::Culture { .. }));
-    }
-
-    #[test]
-    fn test_cli_parse_culture_alias() {
-        let cli = Cli::try_parse_from(["pulpo", "kn"]).unwrap();
-        assert!(matches!(cli.command, Commands::Culture { .. }));
-    }
-
-    #[test]
-    fn test_cli_parse_culture_with_filters() {
-        let cli = Cli::try_parse_from([
-            "pulpo",
-            "culture",
-            "--kind",
-            "failure",
-            "--repo",
-            "/tmp/repo",
-            "--ink",
-            "coder",
-            "--limit",
-            "5",
-        ])
-        .unwrap();
-        match &cli.command {
-            Commands::Culture {
-                kind,
-                repo,
-                ink,
-                limit,
-                ..
-            } => {
-                assert_eq!(kind.as_deref(), Some("failure"));
-                assert_eq!(repo.as_deref(), Some("/tmp/repo"));
-                assert_eq!(ink.as_deref(), Some("coder"));
-                assert_eq!(*limit, 5);
-            }
-            _ => panic!("expected Culture command"),
-        }
-    }
-
-    #[test]
-    fn test_cli_parse_culture_context() {
-        let cli =
-            Cli::try_parse_from(["pulpo", "culture", "--context", "--repo", "/tmp/repo"]).unwrap();
-        match &cli.command {
-            Commands::Culture { context, repo, .. } => {
-                assert!(*context);
-                assert_eq!(repo.as_deref(), Some("/tmp/repo"));
-            }
-            _ => panic!("expected Culture command"),
-        }
-    }
-
-    #[test]
-    fn test_format_culture_empty() {
-        assert_eq!(format_culture(&[]), "No culture found.");
-    }
-
-    #[test]
-    fn test_format_culture_items() {
-        use chrono::Utc;
-        use pulpo_common::culture::{Culture, CultureKind};
-        use uuid::Uuid;
-
-        let items = vec![
-            Culture {
-                id: Uuid::new_v4(),
-                session_id: Uuid::new_v4(),
-                kind: CultureKind::Summary,
-                scope_repo: Some("/tmp/repo".into()),
-                scope_ink: Some("coder".into()),
-                title: "Fixed the auth bug".into(),
-                body: "Details".into(),
-                tags: vec!["claude".into(), "completed".into()],
-                relevance: 0.7,
-                created_at: Utc::now(),
-                last_referenced_at: None,
-                reference_count: 0,
-            },
-            Culture {
-                id: Uuid::new_v4(),
-                session_id: Uuid::new_v4(),
-                kind: CultureKind::Failure,
-                scope_repo: None,
-                scope_ink: None,
-                title: "OOM crash during build".into(),
-                body: "Details".into(),
-                tags: vec!["failure".into()],
-                relevance: 0.9,
-                created_at: Utc::now(),
-                last_referenced_at: None,
-                reference_count: 0,
-            },
-        ];
-
-        let output = format_culture(&items);
-        assert!(output.contains("KIND"));
-        assert!(output.contains("TITLE"));
-        assert!(output.contains("summary"));
-        assert!(output.contains("failure"));
-        assert!(output.contains("Fixed the auth bug"));
-        assert!(output.contains("repo"));
-        assert!(output.contains("0.70"));
-    }
-
-    #[test]
-    fn test_format_culture_long_title_truncated() {
-        use chrono::Utc;
-        use pulpo_common::culture::{Culture, CultureKind};
-        use uuid::Uuid;
-
-        let items = vec![Culture {
-            id: Uuid::new_v4(),
-            session_id: Uuid::new_v4(),
-            kind: CultureKind::Summary,
-            scope_repo: Some("/repo".into()),
-            scope_ink: None,
-            title: "A very long title that exceeds the maximum display width for culture items in the CLI".into(),
-            body: "Body".into(),
-            tags: vec![],
-            relevance: 0.5,
-            created_at: Utc::now(),
-            last_referenced_at: None,
-            reference_count: 0,
-        }];
-
-        let output = format_culture(&items);
-        assert!(output.contains('…'));
-    }
-
-    #[test]
-    fn test_cli_parse_culture_get() {
-        let cli = Cli::try_parse_from(["pulpo", "culture", "--get", "abc-123"]).unwrap();
-        match &cli.command {
-            Commands::Culture { get, .. } => {
-                assert_eq!(get.as_deref(), Some("abc-123"));
-            }
-            _ => panic!("expected Culture command"),
-        }
-    }
-
-    #[test]
-    fn test_cli_parse_culture_delete() {
-        let cli = Cli::try_parse_from(["pulpo", "culture", "--delete", "abc-123"]).unwrap();
-        match &cli.command {
-            Commands::Culture { delete, .. } => {
-                assert_eq!(delete.as_deref(), Some("abc-123"));
-            }
-            _ => panic!("expected Culture command"),
-        }
-    }
-
-    #[test]
-    fn test_cli_parse_culture_push() {
-        let cli = Cli::try_parse_from(["pulpo", "culture", "--push"]).unwrap();
-        match &cli.command {
-            Commands::Culture { push, .. } => {
-                assert!(*push);
-            }
-            _ => panic!("expected Culture command"),
-        }
-    }
-
-    #[test]
-    fn test_format_culture_no_repo() {
-        use chrono::Utc;
-        use pulpo_common::culture::{Culture, CultureKind};
-        use uuid::Uuid;
-
-        let items = vec![Culture {
-            id: Uuid::new_v4(),
-            session_id: Uuid::new_v4(),
-            kind: CultureKind::Summary,
-            scope_repo: None,
-            scope_ink: None,
-            title: "Global finding".into(),
-            body: "Body".into(),
-            tags: vec![],
-            relevance: 0.5,
-            created_at: Utc::now(),
-            last_referenced_at: None,
-            reference_count: 0,
-        }];
-
-        let output = format_culture(&items);
-        assert!(output.contains('-')); // "-" for no repo
     }
 }

@@ -1,5 +1,5 @@
 import { EmbedBuilder } from 'discord.js';
-import type { CultureEvent, InkConfig, Session, SessionEvent } from '../api/pulpod.js';
+import type { InkConfig, Session, SessionEvent } from '../api/pulpod.js';
 
 const STATUS_COLORS: Record<string, number> = {
   active: 0x2ecc71,
@@ -75,24 +75,6 @@ export function eventEmbed(event: SessionEvent): EmbedBuilder {
 
   embed.setTimestamp(new Date(event.timestamp));
   return embed;
-}
-
-const ACTION_LABELS: Record<string, string> = {
-  synced: '\u{1F504} Culture synced',
-  saved: '\u{1F4BE} Culture saved',
-  harvested: '\u{1F33E} Culture harvested',
-};
-
-export function cultureEventEmbed(event: CultureEvent): EmbedBuilder {
-  const title = ACTION_LABELS[event.action] ?? `Culture: ${event.action}`;
-  return new EmbedBuilder()
-    .setTitle(title)
-    .setColor(0x9b59b6)
-    .addFields(
-      { name: 'Node', value: event.node_name, inline: true },
-      { name: 'Entries', value: String(event.count), inline: true },
-    )
-    .setTimestamp(new Date(event.timestamp));
 }
 
 export function inkListEmbed(inks: Record<string, InkConfig>): EmbedBuilder {

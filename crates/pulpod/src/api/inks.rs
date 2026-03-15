@@ -91,7 +91,6 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                culture: crate::config::CultureConfig::default(),
             },
             manager,
             peer_registry,
@@ -117,6 +116,7 @@ mod tests {
                 mode: Some("autonomous".into()),
                 unrestricted: Some(true),
                 instructions: Some("Review code".into()),
+                instructions_file: None,
             },
         );
         let manager = SessionManager::new(
@@ -142,7 +142,6 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: inks.clone(),
                 notifications: crate::config::NotificationsConfig::default(),
-                culture: crate::config::CultureConfig::default(),
             },
             manager,
             peer_registry,
@@ -166,6 +165,7 @@ mod tests {
                 mode: None,
                 unrestricted: None,
                 instructions: None,
+                instructions_file: None,
             },
         );
         let resp = InksResponse { inks };

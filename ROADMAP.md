@@ -43,10 +43,10 @@ Pulpo is lower-value if you:
 
 ### Unique wedge
 
-Pulpo's defensible wedge is: **agent runtime control plane with collective culture for trusted self-hosted environments**.
+Pulpo's defensible wedge is: **agent runtime control plane for trusted self-hosted environments**.
 
 Not unique: prompting UX, code-gen quality, chat interfaces.
-Unique: cross-node session lifecycle, watchdog interventions, idle/finished/lost detection and resume semantics, provider-agnostic operational API, **agent-driven culture accumulation** — agents learn from each other's sessions and improve over time via AGENTS.md-formatted shared learnings.
+Unique: cross-node session lifecycle, watchdog interventions, idle/finished/lost detection and resume semantics, provider-agnostic operational API, multi-node orchestration with peer discovery, inks-based role abstraction.
 
 ## Product Thesis
 
@@ -78,46 +78,22 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
 - Scheduling via crontab wrapper
 - Discord integration in `contrib/`
 - Inks: 6-field universal roles (description, provider, model, mode, unrestricted, instructions)
-- **Culture system** (C1–C4 complete): agent-driven collective learning across nodes
-  - C1 — AGENTS.md as the format: markdown files in scoped directories (`culture/`, `repos/<slug>/`, `inks/<ink>/`), bootstrap template, file browser UI, JSON→markdown migration (`4661f4d`, `d7672a9`)
-  - C2 — Structured write-back and harvest: agents write `pending/<session>.md` files, harvested on session completion, rule-based extraction removed (`e895aa8`, `b5b5b59`)
-  - C3 — Culture lifecycle: relevance scoring via `last_referenced_at`, TTL decay with stale flagging, supersede/contradiction replacement, approve/reject curation, standalone curator fallback (`250d7cf`)
-  - C4 — Cross-node sync: background pull loop with rebase-first conflict resolution, selective scope filtering, `Mutex` concurrency guard, `GET /api/v1/culture/sync` status endpoint, culture SSE events (`caba6f7`)
-- **Integration polish** (P1–P4 complete):
-  - P1 — Real-time culture in web UI: SSE-driven auto-refresh, toast notifications on sync
-  - P2 — Discord culture notifications: culture event listener + embed formatting
-  - P3 — Node info completeness: real memory + GPU detection in peers endpoint
-  - P4 — SPEC.md refresh: culture system, sync, SSE event types documented
+- **Integration polish**:
+  - Node info completeness: real memory + GPU detection in peers endpoint
 - **Session lifecycle hardening** (S1–S5 complete): user-centric state machine with full detection
   - S1 — State rename: Running/Completed/Dead/Stale → Active/Idle/Finished/Killed/Lost (`d71ab54`)
   - S2 — Idle detection: Active ⇄ Idle transitions based on output snapshots and waiting patterns (`68bf3d7`)
-  - S3 — Finished detection: `[pulpo] Agent exited` marker detection, culture harvest on finish, resume from Finished (`5d4c1d2`)
+  - S3 — Finished detection: `[pulpo] Agent exited` marker detection, resume from Finished (`5d4c1d2`)
   - S4 — Lost refinement: finished TTL cleanup, resume semantics (Lost + Finished allowed, Killed blocked) (`36ad150`)
   - S5 — Session lifecycle documentation: full state machine reference at `docs/operations/session-lifecycle.md`, SPEC.md updated
-- **Culture quality** (Q1–Q5 complete): validation, deduplication, and dynamic relevance
-  - Q1 — Content validation: reject low-quality entries (title 10-120 chars, body 30+ chars, no code-only, no title=body), good/bad examples in write-back instructions (`3835740`)
-  - Q2 — Deduplication: case-insensitive title similarity check, auto-supersede when new entry is longer (`5e2b66b`)
-  - Q3 — Clean compiled output: exclude stale/superseded entries from AGENTS.md, HTML comment with excluded count (`cd307bd`)
-  - Q4 — Dynamic relevance: age decay (0.1/month, capped at 6 months) + reference boost (0.05/ref, capped at 4), `reference_count` field (`abfc4b7`)
-  - Q5 — Robust pending format: optional YAML frontmatter for kind/supersedes/tags, graceful fallback (`95b55fa`)
 
 ## What's Next
 
-Culture effectiveness metrics and automated pruning. See Future Directions below.
-
 ## Future Directions
-
-After session lifecycle is solid, potential next phases:
-
-### Culture quality
-
-- Improve what agents write back (better prompts, validation, deduplication)
-- Culture effectiveness metrics: do agents with culture produce better results?
-- Automated culture pruning based on staleness and contradiction detection
 
 ### Fleet observability
 
-- Aggregated metrics across nodes (session counts, culture growth, sync health)
+- Aggregated metrics across nodes (session counts, resource usage)
 - Cross-node session routing and load balancing
 - Fleet-wide dashboard view
 
@@ -131,7 +107,6 @@ After session lifecycle is solid, potential next phases:
 ### Real-world hardening
 
 - Multi-node stress testing with concurrent sessions
-- Edge case handling for network partitions during culture sync
 - Provider binary upgrade resilience (agent binary updated mid-session)
 
 ## Parked (revisit when demanded by real usage)
@@ -164,9 +139,6 @@ Pulpo is succeeding if we can show:
 - Time-to-recover from agent/node failure is materially reduced
 - Users run mixed providers through one operational surface
 - Multi-node usage increases vs single-node-only usage
-- Culture entries are actionable (agents produce better results with culture than without)
-- Write-back rate: agents actually write pending culture files in a meaningful percentage of sessions
-- Culture noise ratio decreases over time as lifecycle pruning takes effect
 
 If these metrics do not improve, the roadmap should be reconsidered.
 

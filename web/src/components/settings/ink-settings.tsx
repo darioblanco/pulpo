@@ -30,6 +30,7 @@ const emptyInk: InkConfig = {
   mode: null,
   unrestricted: null,
   instructions: null,
+  instructions_file: null,
 };
 
 export function InkSettings({ inks, onInksChange, peers = [] }: InkSettingsProps) {

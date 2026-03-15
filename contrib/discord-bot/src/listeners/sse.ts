@@ -1,7 +1,7 @@
 import { EventSource } from 'eventsource';
 import type { Client, TextChannel } from 'discord.js';
-import type { CultureEvent, PulpodClient, SessionEvent } from '../api/pulpod.js';
-import { cultureEventEmbed, eventEmbed } from '../formatters/embed.js';
+import type { PulpodClient, SessionEvent } from '../api/pulpod.js';
+import { eventEmbed } from '../formatters/embed.js';
 import type { BotConfig } from '../config.js';
 
 export function startSseListener(
@@ -20,15 +20,6 @@ export function startSseListener(
       await handleSessionEvent(discordClient, pulpodClient, config, event);
     } catch (err) {
       console.error('[SSE] Failed to handle event:', err);
-    }
-  });
-
-  es.addEventListener('culture', async (e: MessageEvent) => {
-    try {
-      const event: CultureEvent = JSON.parse(e.data);
-      await handleCultureEvent(discordClient, config, event);
-    } catch (err) {
-      console.error('[SSE] Failed to handle culture event:', err);
     }
   });
 
@@ -78,24 +69,5 @@ async function handleSessionEvent(
     await (channel as TextChannel).send({ embeds: [embed] });
   } catch (err) {
     console.error(`[SSE] Failed to send to channel ${channelId}:`, err);
-  }
-}
-
-async function handleCultureEvent(
-  discordClient: Client,
-  config: BotConfig,
-  event: CultureEvent,
-): Promise<void> {
-  const channelId = config.notificationChannelId;
-  if (!channelId) return;
-
-  try {
-    const channel = await discordClient.channels.fetch(channelId);
-    if (!channel?.isTextBased()) return;
-
-    const embed = cultureEventEmbed(event);
-    await (channel as TextChannel).send({ embeds: [embed] });
-  } catch (err) {
-    console.error(`[SSE] Failed to send culture event to channel ${channelId}:`, err);
   }
 }

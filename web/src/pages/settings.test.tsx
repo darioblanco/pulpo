@@ -317,6 +317,7 @@ describe('SettingsPage', () => {
           mode: 'interactive',
           unrestricted: false,
           instructions: null,
+          instructions_file: null,
         },
       },
     };
@@ -341,6 +342,7 @@ describe('SettingsPage', () => {
           mode: 'autonomous',
           unrestricted: false,
           instructions: null,
+          instructions_file: null,
         },
       },
     };

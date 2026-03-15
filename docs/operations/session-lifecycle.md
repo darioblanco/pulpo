@@ -54,7 +54,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 ### Active/Idle → Finished
 - **Trigger**: Watchdog detects `[pulpo] Agent exited` marker in captured output.
 - **Detection**: Every agent command is wrapped with `echo '[pulpo] Agent exited'; exec bash`. The watchdog checks for this marker before any idle logic. The `exec bash` keeps the tmux shell alive for inspection.
-- **Side effects**: SSE event emitted, culture harvested (pending files from the session).
+- **Side effects**: SSE event emitted.
 
 ### Active/Idle → Killed
 - **Trigger**: User runs `pulpo kill`, watchdog memory intervention, or watchdog idle timeout with `action: kill`.
@@ -144,7 +144,5 @@ events = ["finished", "killed", "lost"]
 - **Interactive session never finishes**: Interactive sessions cycle Active ⇄ Idle indefinitely. They become Finished only when the user exits the agent (causing `[pulpo] Agent exited`), or Killed by user/watchdog.
 
 - **Lost on daemon restart**: When the daemon starts, all Active and Idle sessions whose tmux sessions are gone are marked Lost. The user can resume them with `pulpo resume` (which auto-attaches).
-
-- **Culture extraction timing**: Culture is harvested (pending files) on Finished and Killed transitions. For Finished, the watchdog triggers it. For Killed, the SessionManager triggers it.
 
 - **Finished + TTL → Killed**: When `finished_ttl_secs > 0`, finished sessions are automatically cleaned up after the grace period. This prevents tmux shell accumulation. The status changes from Finished to Killed, blocking further resume.

@@ -7,7 +7,6 @@ import { AppLayout } from '@/components/layout/app-layout';
 import { DashboardPage } from '@/pages/dashboard';
 import { HistoryPage } from '@/pages/history';
 import { SettingsPage } from '@/pages/settings';
-import { CulturePage } from '@/pages/culture';
 import { OceanPage } from '@/pages/ocean';
 import { ConnectPage } from '@/pages/connect';
 
@@ -22,7 +21,6 @@ export function App() {
                 <Route index element={<OceanPage />} />
                 <Route path="sessions" element={<DashboardPage />} />
                 <Route path="history" element={<HistoryPage />} />
-                <Route path="culture" element={<CulturePage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>
               <Route path="connect" element={<ConnectPage />} />

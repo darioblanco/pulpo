@@ -99,41 +99,6 @@ url = "https://example.com/hooks/pulpo"
 events = ["finished", "killed", "lost"]
 ```
 
-## Culture
-
-Pulpo's culture system lets agents accumulate and share learnings across sessions and nodes. Culture is stored as AGENTS.md-formatted markdown files in a local git repo at `<data_dir>/culture/`.
-
-```toml
-[culture]
-remote = "git@github.com:yourorg/pulpo-culture.git"  # Git remote for cross-node sync
-inject = true                    # Inject culture context into new sessions (default: true)
-ttl_days = 90                    # Days before entries become stale (default: 90)
-curator = "claude"               # Provider to use for standalone curation (optional)
-sync_interval_secs = 300         # Background sync interval (default: 300)
-sync_scopes = ["culture", "repos/my-repo"]  # Only sync these scopes (optional, default: all)
-```
-
-### How culture works
-
-1. **Injection**: When a session spawns, relevant culture entries are compiled into a context block and injected as instructions.
-2. **Write-back**: Agents write discoveries to `pending/<session>.md` files during their session.
-3. **Harvest**: When a session finishes or is killed, pending files are validated, deduplicated, and committed.
-4. **Lifecycle**: Entries have relevance scores that decay over time. Stale entries are excluded from compilation. Entries can be superseded or approved/rejected.
-5. **Sync**: A background loop pulls from the remote, resolving conflicts with rebase-first strategy. Fire-and-forget push after each commit.
-
-### Culture CLI
-
-```bash
-pulpo culture                              # List all entries
-pulpo culture --context                    # See compiled context (what agents receive)
-pulpo culture --context --repo /path       # Scoped to a repo
-pulpo culture --get <id>                   # Get a specific entry
-pulpo culture --delete <id>                # Delete an entry
-pulpo culture --push                       # Manual push to remote
-```
-
-See the [Culture Guide](/guides/culture) for the AGENTS.md format and writing practices.
-
 ## Peers
 
 Manual peer entries coexist with automatic discovery:

@@ -12,7 +12,6 @@ pulpo kill <NAME>                         Kill a running session
 pulpo delete <NAME>                       Delete session record (alias: rm)
 pulpo resume <NAME>                       Resume a lost or finished session (auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions
-pulpo culture [OPTIONS]                   Query and manage culture entries
 pulpo nodes                               List known nodes/peers
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
 pulpo ui                                  Open web UI in browser
@@ -61,20 +60,6 @@ pulpo spawn auth-refactor --worktree --workdir ~/myproject "refactor auth module
 ```
 
 Worktrees are created at `<repo>/.claude/worktrees/<session-name>`. Other providers can work in a Claude-created worktree by pointing `--workdir` at it.
-
-## Culture Options
-
-```text
-pulpo culture                              List all entries
-pulpo culture --context                    Show compiled context (what agents receive)
-pulpo culture --context --repo <PATH>      Context scoped to a repo
-pulpo culture --context --ink <NAME>       Context scoped to an ink
-pulpo culture --get <ID>                   Get a specific entry
-pulpo culture --delete <ID>                Delete an entry
-pulpo culture --push                       Push culture repo to remote
-pulpo culture --kind <KIND>                Filter by kind (summary, failure)
-pulpo culture --session <ID>               Filter by session
-```
 
 ## Schedule Subcommands
 

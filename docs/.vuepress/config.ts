@@ -33,7 +33,6 @@ export default defineUserConfig({
       '/getting-started/': ['/getting-started/install', '/getting-started/quickstart'],
       '/guides/': [
         '/guides/configuration',
-        '/guides/culture',
         '/guides/discovery',
         '/guides/recovery',
       ],

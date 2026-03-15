@@ -90,21 +90,6 @@ Returns which providers are installed and which flags each supports.
 | POST | `/api/v1/peers` | Add a manual peer |
 | DELETE | `/api/v1/peers/:name` | Remove a manual peer |
 
-## Culture
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/culture` | List culture entries (supports `?scope_repo=...&scope_ink=...&kind=...&status=...`) |
-| GET | `/api/v1/culture/:id` | Get a specific entry |
-| PUT | `/api/v1/culture/:id` | Update an entry |
-| DELETE | `/api/v1/culture/:id` | Delete an entry |
-| POST | `/api/v1/culture/:id/approve` | Approve or reject an entry |
-| GET | `/api/v1/culture/context` | Get compiled culture context (what agents receive) |
-| POST | `/api/v1/culture/push` | Push culture repo to remote |
-| GET | `/api/v1/culture/sync` | Sync status (last sync, errors, pending commits) |
-| GET | `/api/v1/culture/files` | List files in the culture repo |
-| GET | `/api/v1/culture/files/*path` | Read a specific file from the culture repo |
-
 ## Events (SSE)
 
 | Method | Path | Description |
@@ -113,7 +98,6 @@ Returns which providers are installed and which flags each supports.
 
 Event types:
 - **Session events**: `created`, `active`, `idle`, `finished`, `killed`, `lost`, `resumed`
-- **Culture events**: `synced`, `saved`, `harvested`
 
 ```bash
 curl -N http://localhost:7433/api/v1/events

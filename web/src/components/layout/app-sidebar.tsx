@@ -1,4 +1,4 @@
-import { Waves, LayoutList, History, BookOpen, Settings } from 'lucide-react';
+import { Waves, LayoutList, History, Settings } from 'lucide-react';
 import { Link, useLocation } from 'react-router';
 import {
   Sidebar,
@@ -17,7 +17,6 @@ const navItems = [
   { to: '/', icon: Waves, label: 'Ocean' },
   { to: '/sessions', icon: LayoutList, label: 'Sessions' },
   { to: '/history', icon: History, label: 'History' },
-  { to: '/culture', icon: BookOpen, label: 'Culture' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 

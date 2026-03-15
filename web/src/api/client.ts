@@ -11,14 +11,6 @@ import type {
   InksResponse,
   CreateSessionRequest,
   CreateSessionResponse,
-  CultureResponse,
-  CultureItemResponse,
-  CultureDeleteResponse,
-  CulturePushResponse,
-  CultureFilesResponse,
-  CultureFileContentResponse,
-  UpdateCultureRequest,
-  SyncStatus,
 } from './types';
 
 let getBaseUrl: () => string = () => '';
@@ -238,94 +230,5 @@ export async function updateRemoteConfig(
     const err = await res.json();
     throw new Error(err.error || 'Failed to update remote config');
   }
-  return res.json();
-}
-
-export async function listCulture(params?: {
-  session_id?: string;
-  kind?: string;
-  repo?: string;
-  ink?: string;
-  limit?: number;
-}): Promise<CultureResponse> {
-  const query = new URLSearchParams();
-  if (params?.session_id) query.set('session_id', params.session_id);
-  if (params?.kind) query.set('kind', params.kind);
-  if (params?.repo) query.set('repo', params.repo);
-  if (params?.ink) query.set('ink', params.ink);
-  if (params?.limit) query.set('limit', String(params.limit));
-  const qs = query.toString();
-  const res = await authFetch(`${resolveBaseUrl()}/culture${qs ? `?${qs}` : ''}`);
-  if (!res.ok) throw new Error('Failed to fetch culture');
-  return res.json();
-}
-
-export async function getCultureContext(params?: {
-  workdir?: string;
-  ink?: string;
-  limit?: number;
-}): Promise<CultureResponse> {
-  const query = new URLSearchParams();
-  if (params?.workdir) query.set('workdir', params.workdir);
-  if (params?.ink) query.set('ink', params.ink);
-  if (params?.limit) query.set('limit', String(params.limit));
-  const qs = query.toString();
-  const res = await authFetch(`${resolveBaseUrl()}/culture/context${qs ? `?${qs}` : ''}`);
-  if (!res.ok) throw new Error('Failed to fetch culture context');
-  return res.json();
-}
-
-export async function getCultureItem(id: string): Promise<CultureItemResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/culture/${id}`);
-  if (!res.ok) throw new Error('Failed to fetch culture item');
-  return res.json();
-}
-
-export async function updateCulture(
-  id: string,
-  data: UpdateCultureRequest,
-): Promise<CultureItemResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/culture/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error('Failed to update culture item');
-  return res.json();
-}
-
-export async function deleteCulture(id: string): Promise<CultureDeleteResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/culture/${id}`, { method: 'DELETE' });
-  if (!res.ok) throw new Error('Failed to delete culture item');
-  return res.json();
-}
-
-export async function pushCulture(): Promise<CulturePushResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/culture/push`, { method: 'POST' });
-  if (!res.ok) throw new Error('Failed to push culture');
-  return res.json();
-}
-
-export async function approveCulture(id: string): Promise<CultureItemResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/culture/${id}/approve`, { method: 'POST' });
-  if (!res.ok) throw new Error('Failed to approve culture item');
-  return res.json();
-}
-
-export async function listCultureFiles(): Promise<CultureFilesResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/culture/files`);
-  if (!res.ok) throw new Error('Failed to list culture files');
-  return res.json();
-}
-
-export async function readCultureFile(path: string): Promise<CultureFileContentResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/culture/files/${path}`);
-  if (!res.ok) throw new Error('Failed to read culture file');
-  return res.json();
-}
-
-export async function getCultureSyncStatus(): Promise<SyncStatus> {
-  const res = await authFetch(`${resolveBaseUrl()}/culture/sync`);
-  if (!res.ok) throw new Error('Failed to fetch sync status');
   return res.json();
 }

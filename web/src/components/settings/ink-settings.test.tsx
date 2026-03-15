@@ -20,6 +20,7 @@ const emptyInk: InkConfig = {
   mode: null,
   unrestricted: null,
   instructions: null,
+  instructions_file: null,
 };
 
 const reviewerInk: InkConfig = {
@@ -29,6 +30,7 @@ const reviewerInk: InkConfig = {
   mode: 'interactive',
   unrestricted: false,
   instructions: 'You are a code reviewer.',
+  instructions_file: null,
 };
 
 const onlinePeer: PeerInfo = {
