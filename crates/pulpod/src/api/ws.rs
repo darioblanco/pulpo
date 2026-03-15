@@ -87,17 +87,58 @@ async fn handle_stream(
             return;
         };
 
-        // Get the child PID so we can resize the script PTY via tmux
+        // script's child (tmux) runs on the PTY slave. Find the child PID,
+        // then look up its TTY device so we can resize the PTY directly.
         let child_pid = child.id();
-        info!("PTY bridge started for {session_id} (child pid: {child_pid:?})");
+        let tty_fd = child_pid.and_then(|script_pid| {
+            // Wait briefly for script to fork its child
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            // Find script's child process (tmux)
+            let output = std::process::Command::new("pgrep")
+                .args(["-P", &script_pid.to_string()])
+                .output()
+                .ok()?;
+            let tmux_pid = String::from_utf8_lossy(&output.stdout)
+                .trim()
+                .lines()
+                .next()?
+                .to_owned();
+            // Get the child's TTY
+            let output = std::process::Command::new("ps")
+                .args(["-p", &tmux_pid, "-o", "tty="])
+                .output()
+                .ok()?;
+            let tty = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            if tty.is_empty() || tty == "??" {
+                return None;
+            }
+            let path = format!("/dev/{tty}");
+            let fd = std::fs::OpenOptions::new().write(true).open(&path).ok()?;
+            info!("PTY device for {session_id}: {path} (tmux pid {tmux_pid})");
+            Some(fd)
+        });
+        info!(
+            "PTY bridge started for {session_id} (child pid: {child_pid:?}, tty_fd: {})",
+            if tty_fd.is_some() { "found" } else { "none" }
+        );
 
         let (ws_sender, ws_receiver) = socket.split();
-        let resize_backend = backend.clone();
-        let resize_id = session_id.to_owned();
         let result =
             pty_bridge::run_bridge(stdout, stdin, ws_sender, ws_receiver, move |cols, rows| {
-                debug!("Resize {resize_id}: {cols}x{rows}");
-                resize_backend.resize(&resize_id, cols, rows)
+                debug!("Resize: {cols}x{rows}");
+                if let Some(ref fd) = tty_fd {
+                    use std::os::fd::AsFd;
+                    let ws = rustix::termios::Winsize {
+                        ws_col: cols,
+                        ws_row: rows,
+                        ws_xpixel: 0,
+                        ws_ypixel: 0,
+                    };
+                    if let Err(e) = rustix::termios::tcsetwinsize(fd.as_fd(), ws) {
+                        debug!("tcsetwinsize failed: {e}");
+                    }
+                }
+                Ok(())
             })
             .await;
         if let Err(e) = &result {
