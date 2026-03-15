@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.0.24](https://github.com/darioblanco/pulpo/compare/v0.0.23...v0.0.24) (2026-03-15)
+
+
+### Bug Fixes
+
+* resize script PTY directly via its TTY device fd ([27bcaa6](https://github.com/darioblanco/pulpo/commit/27bcaa68944f79015dd8df9c1e891bbcab6ca86c))
+* revert to script-based PTY bridge (pty-process grantpt fails on macOS daemons) ([461bd6f](https://github.com/darioblanco/pulpo/commit/461bd6f8195fc7e99462ca3c3d2f7ae2e9aa8619))
+* set window-size manual on every resize, not just session creation ([712fae8](https://github.com/darioblanco/pulpo/commit/712fae89305867812c2f5e6336189ffa51ddffa1))
+
 ## [0.0.23](https://github.com/darioblanco/pulpo/compare/v0.0.22...v0.0.23) (2026-03-14)
 
 
