@@ -239,6 +239,12 @@ impl Backend for TmuxBackend {
     }
 
     fn resize(&self, backend_id: &str, cols: u16, rows: u16) -> Result<()> {
+        // Ensure window-size=manual so resize sticks (the script PTY's
+        // default 80x24 would otherwise constrain the window).
+        let _ = run_tmux(
+            build_set_window_size_manual_command(backend_id),
+            "set tmux window-size manual",
+        );
         run_tmux(
             build_resize_command(backend_id, cols, rows),
             "resize tmux window",
