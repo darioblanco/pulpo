@@ -61,74 +61,43 @@ pub async fn stream(
 async fn handle_stream(
     socket: axum::extract::ws::WebSocket,
     session_id: &str,
-    _backend: &Arc<dyn crate::backend::Backend>,
+    backend: &Arc<dyn crate::backend::Backend>,
 ) {
     #[cfg(not(coverage))]
     {
         use crate::session::pty_bridge;
-        use pty_process::Pty;
-        use std::os::fd::{AsFd, OwnedFd};
         use tracing::{debug, warn};
 
-        // Create a PTY pair — gives us full resize control (no `script` wrapper).
-        let pty = match Pty::new() {
-            Ok(p) => p,
-            Err(e) => {
-                warn!("PTY creation failed for {session_id}: {e}");
-                return;
-            }
-        };
-
-        // Clone the fd for resize calls — the bridge will own the Pty for I/O.
-        let resize_fd: OwnedFd = match pty.as_fd().try_clone_to_owned() {
-            Ok(fd) => fd,
-            Err(e) => {
-                warn!("PTY fd clone failed for {session_id}: {e}");
-                return;
-            }
-        };
-
-        let pts = match pty.pts() {
-            Ok(p) => p,
-            Err(e) => {
-                warn!("PTS failed for {session_id}: {e}");
-                return;
-            }
-        };
-
-        let mut child = match pty_process::Command::new("tmux")
-            .args(["attach-session", "-t", session_id])
-            .env_remove("TMUX")
-            .env("TERM", "xterm-256color")
-            .spawn(&pts)
-        {
+        // Use the backend's script-based spawn_attach for the PTY.
+        // Then clone the child's stdout fd for resize via tcsetwinsize.
+        let mut child = match backend.spawn_attach(session_id) {
             Ok(c) => c,
             Err(e) => {
-                warn!("Failed to spawn tmux attach for {session_id}: {e}");
+                warn!("Failed to spawn PTY for {session_id}: {e:#}");
                 return;
             }
         };
-        // Drop the slave end in the parent — child has its own copy.
-        // Keeps the PTY open only as long as the child runs.
-        drop(pts);
 
-        info!("PTY bridge started for {session_id}");
-        // Use pty-process's own split (not tokio::io::split) — it handles
-        // the AsyncFd polling correctly. OwnedWritePty also exposes resize().
-        let (reader, writer) = pty.into_split();
+        let Some(stdout) = child.stdout.take() else {
+            warn!("No stdout pipe for {session_id}");
+            return;
+        };
+        let Some(stdin) = child.stdin.take() else {
+            warn!("No stdin pipe for {session_id}");
+            return;
+        };
+
+        // Get the child PID so we can resize the script PTY via tmux
+        let child_pid = child.id();
+        info!("PTY bridge started for {session_id} (child pid: {child_pid:?})");
+
         let (ws_sender, ws_receiver) = socket.split();
-        let name_owned = session_id.to_owned();
+        let resize_backend = backend.clone();
+        let resize_id = session_id.to_owned();
         let result =
-            pty_bridge::run_bridge(reader, writer, ws_sender, ws_receiver, move |cols, rows| {
-                debug!("Resize {name_owned}: {cols}x{rows}");
-                let ws = rustix::termios::Winsize {
-                    ws_col: cols,
-                    ws_row: rows,
-                    ws_xpixel: 0,
-                    ws_ypixel: 0,
-                };
-                rustix::termios::tcsetwinsize(&resize_fd, ws)?;
-                Ok(())
+            pty_bridge::run_bridge(stdout, stdin, ws_sender, ws_receiver, move |cols, rows| {
+                debug!("Resize {resize_id}: {cols}x{rows}");
+                resize_backend.resize(&resize_id, cols, rows)
             })
             .await;
         if let Err(e) = &result {
@@ -154,7 +123,7 @@ async fn handle_stream(
             let _ = ws_sender.send(response).await;
         }
         let _ = session_id;
-        let _ = _backend;
+        let _ = backend;
     }
 }
 
@@ -218,7 +187,7 @@ mod tests {
         }
     }
 
-    async fn test_state_with_backend(backend: Arc<dyn Backend>) -> Arc<AppState> {
+    async fn test_state_withbackend(backend: Arc<dyn Backend>) -> Arc<AppState> {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -255,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stream_not_found() {
-        let state = test_state_with_backend(Arc::new(StubBackend)).await;
+        let state = test_state_withbackend(Arc::new(StubBackend)).await;
         // We can't easily test the WS upgrade without a real HTTP request,
         // but we can verify the session validation by calling the handler
         // without the WebSocketUpgrade (which would fail at the extractor level).
@@ -269,7 +238,7 @@ mod tests {
     #[tokio::test]
     async fn test_stream_not_running() {
         // Create a session, then kill it, verify it would fail the running check
-        let state = test_state_with_backend(Arc::new(DeadBackend)).await;
+        let state = test_state_withbackend(Arc::new(DeadBackend)).await;
         let req = CreateSessionRequest {
             name: "dead-test".into(),
             workdir: Some("/tmp".into()),
@@ -300,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stub_backend_methods() {
+    fn test_stubbackend_methods() {
         let b = StubBackend;
         assert!(b.create_session("n", "d", "c").is_ok());
         assert!(b.kill_session("n").is_ok());
@@ -311,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dead_backend_methods() {
+    fn test_deadbackend_methods() {
         let b = DeadBackend;
         assert!(b.create_session("n", "d", "c").is_ok());
         assert!(b.kill_session("n").is_ok());
@@ -324,7 +293,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_backend_id_with_explicit() {
         use pulpo_common::session::*;
-        let state = test_state_with_backend(Arc::new(StubBackend)).await;
+        let state = test_state_withbackend(Arc::new(StubBackend)).await;
         let session = Session {
             id: uuid::Uuid::new_v4(),
             name: "my-session".into(),
@@ -364,7 +333,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_backend_id_fallback() {
         use pulpo_common::session::*;
-        let state = test_state_with_backend(Arc::new(StubBackend)).await;
+        let state = test_state_withbackend(Arc::new(StubBackend)).await;
         let session = Session {
             id: uuid::Uuid::new_v4(),
             name: "my-session".into(),
