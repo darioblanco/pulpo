@@ -18,7 +18,7 @@
 
 - **`pulpod`** — daemon runtime. Axum HTTP server, session manager, watchdog, peer discovery. Embeds the web UI via `rust-embed`.
 - **`pulpo`** — CLI client. Thin HTTP client that talks to `pulpod`'s REST API.
-- **`pulpo-common`** — shared types (Session, Provider, API types) used by both crates.
+- **`pulpo-common`** — shared types (Session, API types) used by both crates.
 - **`web/`** — React 19 + Vite + Tailwind v4 + shadcn/ui SPA. Includes an ocean-themed dashboard with pixel art octopus sprites.
 
 ## Control Surfaces
@@ -40,19 +40,17 @@ Sessions move through explicit states with clear transitions:
 
 The watchdog drives transitions by monitoring terminal output, detecting agent exit markers, and enforcing memory/idle policies. See [Session Lifecycle](/operations/session-lifecycle) for the full state machine.
 
-## Provider Abstraction
+## Command-Based Sessions
 
-Pulpo manages agents through a provider-agnostic adapter layer. Each provider translates Pulpo's session model into the specific CLI flags and behaviors:
+Pulpo is command-agnostic — each session runs an arbitrary shell command. There is no built-in provider abstraction. You pass the exact command you want to run:
 
-| Provider | Binary | Autonomous | Unrestricted | System Prompt | Model |
-|----------|--------|------------|--------------|---------------|-------|
-| Claude Code | `claude` | `--print` | `--dangerously-skip-permissions` | `--system-prompt` | `--model` |
-| Codex | `codex` | `--quiet` | `--full-auto` | prepend to prompt | `--model` |
-| Gemini CLI | `gemini` | `--sandbox=false` | — | prepend to prompt | `--model` |
-| OpenCode | `opencode` | — | — | prepend to prompt | — |
-| Shell | `bash` | N/A | N/A | N/A | N/A |
+```bash
+pulpo spawn my-task -- claude -p "fix auth tests"
+pulpo spawn lint-check -- npm run lint
+pulpo spawn review -- gemini "review this code"
+```
 
-Provider availability is checked at spawn time via PATH detection.
+Inks provide reusable command templates (see [Configuration Guide](/guides/configuration)).
 
 ## Multi-Node Architecture
 
@@ -68,7 +66,7 @@ Each node runs independently with its own SQLite store. Session state stays loca
 ## Data Flow
 
 ```
-Session spawn → apply_defaults → resolve_ink → build_command → tmux create
+Session spawn → resolve_ink → build_command → tmux create
        ↓                                                                           ↓
     SQLite                                                                     Agent runs
        ↓                                                                           ↓
@@ -82,7 +80,7 @@ Session spawn → apply_defaults → resolve_ink → build_command → tmux crea
 ## Design Principles
 
 - **Infrastructure layer, not agent intelligence** — Pulpo manages the runtime, not the prompts
-- **Provider-agnostic** — same lifecycle and controls regardless of which agent you run
+- **Command-agnostic** — same lifecycle and controls regardless of which command you run
 - **Explicit failure states** — every session is in a known, auditable state
 - **Zero-config local start** — `pulpod` runs out of the box, progressive operational depth
 - **No unsafe code** — `forbid(unsafe_code)` workspace-wide

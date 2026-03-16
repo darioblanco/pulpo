@@ -16,9 +16,9 @@ features:
     details: Explicit states (active, idle, finished, killed, lost) with resume semantics and crash recovery.
   - title: Multi-Node Operations
     details: Manage agents across machines from a single API/CLI/web surface. Tailscale, mDNS, and seed discovery.
-  - title: Provider Agnostic
-    details: Claude Code, Codex, Gemini CLI, OpenCode, or bare shell — same lifecycle, same controls.
-  - title: Watchdog & Guardrails
+  - title: Command Agnostic
+    details: Run any shell command — Claude Code, Codex, Gemini CLI, or your own scripts. Same lifecycle, same controls.
+  - title: Watchdog & Monitoring
     details: Memory pressure detection, idle handling, configurable kill policies, and intervention audit trails.
   - title: API First
     details: REST, SSE, MCP, CLI, web UI, and Discord bot — integrate with anything.

@@ -45,7 +45,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 - **Trigger**: Watchdog detects output unchanged — either via known waiting patterns (immediate) or sustained unchanged output (20+ seconds).
 - **Detection**: The watchdog compares `output_snapshot` on each tick. Two paths to Idle:
   1. **Pattern match (immediate)**: If output is unchanged and the last 5 lines match known waiting patterns (permission prompts, "what's next?" prompts), transition happens on the first unchanged tick.
-  2. **Sustained silence (universal)**: If `last_output_at` is more than 20 seconds ago, transition happens regardless of terminal content. This catches all providers without needing provider-specific patterns.
+  2. **Sustained silence (universal)**: If `last_output_at` is more than 20 seconds ago, transition happens regardless of terminal content. This catches all commands without needing command-specific patterns.
 
 ### Idle → Active
 - **Trigger**: Watchdog detects output changed since last tick.
@@ -72,8 +72,8 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 
 | From State | Resume? | What happens |
 |-----------|---------|--------------|
-| **Lost** | Yes | Recreates tmux session, restarts agent with `--resume <conversation-id>` |
-| **Finished** | Yes | Restarts agent in the tmux session (or recreates if gone) |
+| **Lost** | Yes | Recreates tmux session, re-executes the session command |
+| **Finished** | Yes | Re-executes the command in the tmux session (or recreates if gone) |
 | **Killed** | No | Error: "session cannot be resumed" |
 | **Active/Idle** | No | Error: session is still running |
 | **Creating** | No | Error: session is still running |
@@ -88,19 +88,7 @@ The watchdog inspects the last 5 lines of terminal output for these patterns (ca
 - `Press Enter`
 - `approve this`
 
-These cover permission prompts from Claude Code, Codex, and other agents.
-
-## Mode × Guard Matrix
-
-The `unrestricted` setting is a **guard toggle**, not a mode. It passes through to agent CLI flags (e.g., `--dangerously-skip-permissions` for Claude Code). Pulpo does not enforce permissions — the agent binary does. Pulpo only observes terminal output.
-
-| Mode | Unrestricted | Behavior |
-|------|-------------|----------|
-| **Interactive** | false | Cycles Active ⇄ Idle. Idle fires on permission prompts AND "what's next?" prompts. |
-| **Interactive** | true | Cycles Active ⇄ Idle. Idle fires only on "what's next?" prompts (no permission prompts). |
-| **Autonomous** | false | Active → Idle → Active → ... → Finished. May hit Idle on permission prompts. |
-| **Autonomous** | true | Active → Finished. Agent runs without stopping. |
-| **Shell** | N/A | Cycles Active ⇄ Idle based on whether a command is running in bash. |
+These cover permission prompts from various coding agents.
 
 ## Ocean Visual Mapping
 
@@ -141,7 +129,7 @@ events = ["finished", "killed", "lost"]
 
 - **Agent exits but `exec bash` keeps tmux alive**: This is intentional. The `[pulpo] Agent exited` marker distinguishes "agent done" from "shell still running". The Finished state reflects the agent's completion while keeping the tmux shell accessible for inspection.
 
-- **Interactive session never finishes**: Interactive sessions cycle Active ⇄ Idle indefinitely. They become Finished only when the user exits the agent (causing `[pulpo] Agent exited`), or Killed by user/watchdog.
+- **Long-running session never finishes**: Some sessions cycle Active ⇄ Idle indefinitely. They become Finished only when the command exits (causing `[pulpo] Agent exited`), or Killed by user/watchdog.
 
 - **Lost on daemon restart**: When the daemon starts, all Active and Idle sessions whose tmux sessions are gone are marked Lost. The user can resume them with `pulpo resume` (which auto-attaches).
 

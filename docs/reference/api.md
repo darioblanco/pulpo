@@ -33,7 +33,7 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/sessions` | List sessions (supports `?status=active&provider=claude`) |
+| GET | `/api/v1/sessions` | List sessions (supports `?status=active`) |
 | POST | `/api/v1/sessions` | Create (spawn) a new session |
 | GET | `/api/v1/sessions/:id` | Get session details |
 | DELETE | `/api/v1/sessions/:id` | Delete session record |
@@ -50,31 +50,15 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 ```json
 {
   "name": "my-api",
+  "command": "claude -p 'Fix the auth bug'",
   "workdir": "/path/to/repo",
-  "prompt": "Fix the auth bug",
-  "provider": "claude",
-  "mode": "autonomous",
-  "unrestricted": false,
-  "model": "claude-sonnet-4-20250514",
   "ink": "reviewer",
-  "worktree": true,
-  "system_prompt": "Be thorough",
-  "allowed_tools": ["Bash", "Read"],
-  "max_turns": 50,
-  "max_budget_usd": 10.0,
-  "output_format": "stream-json"
+  "description": "Fix auth bug in login endpoint",
+  "metadata": {}
 }
 ```
 
-`name` is required. All other fields are optional. Defaults are applied from session_defaults → inks → node config.
-
-## Providers
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/providers` | List available providers with compatibility matrix |
-
-Returns which providers are installed and which flags each supports.
+`name` is required. All other fields are optional. If `ink` is specified, its `command` is used as the default (explicit `command` overrides it).
 
 ## Inks
 

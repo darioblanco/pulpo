@@ -15,7 +15,6 @@ Primary docs:
 - /docs/guides/configuration.md
 - /docs/guides/discovery.md
 - /docs/guides/recovery.md
-- /docs/guides/culture.md
 - /docs/reference/cli.md
 - /docs/reference/config.md
 - /docs/reference/api.md
@@ -26,8 +25,8 @@ Primary docs:
 Canonical runtime concepts:
 - Session states: creating, active, idle, finished, killed, lost.
 - Resume applies to lost and finished sessions. Killed sessions cannot be resumed.
-- Providers: Claude Code, Codex, Gemini CLI, OpenCode, Shell (bare tmux).
-- Culture: agents write learnings back to AGENTS.md-formatted files; syncs across nodes via git.
+- Sessions run arbitrary shell commands — no built-in provider abstraction.
+- Inks are reusable command templates with a description and command field.
 - pulpod exposes REST and SSE on port 7433 by default.
 - Config path defaults to ~/.pulpo/config.toml.
 

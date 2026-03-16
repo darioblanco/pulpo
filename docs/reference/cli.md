@@ -3,7 +3,7 @@
 ## Commands
 
 ```text
-pulpo spawn <NAME> [OPTIONS] [PROMPT...]  Spawn a new agent session (auto-attaches)
+pulpo spawn <NAME> [OPTIONS] [-- <COMMAND...>]  Spawn a new session (auto-attaches)
 pulpo list                                List sessions (alias: ls)
 pulpo logs <NAME> [--follow]              Show session output
 pulpo attach <NAME>                       Attach to tmux session
@@ -19,47 +19,22 @@ pulpo ui                                  Open web UI in browser
 
 ## Spawn Options
 
-The first positional argument is the session **name** (required). Remaining positional arguments form the **prompt**.
+The first positional argument is the session **name** (required). Everything after `--` is the **command** to run in the tmux session.
 
 ```bash
-pulpo spawn my-api --workdir ~/repos/my-api "Fix failing auth tests"
+pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests"
 ```
 
 By default, `spawn` auto-attaches to the tmux session. Use `--detach` / `-d` to skip attachment (useful in scripts and the web UI).
 
-| Flag | Description | Providers |
-|------|-------------|-----------|
-| `--workdir <PATH>` | Working directory (default: current) | All |
-| `--detach` / `-d` | Don't attach to the session after spawning | All |
-| `--provider <NAME>` | Agent provider | All |
-| `--auto` | Autonomous mode (fire-and-forget) | All |
-| `--ink <NAME>` | Ink preset from config | All |
-| `--unrestricted` | Disable safety guardrails | Claude, Gemini |
-| `--model <MODEL>` | Model override | Claude, Codex, Gemini |
-| `--worktree` | Git worktree isolation | Claude |
-| `--system-prompt <TEXT>` | System prompt | Claude |
-| `--allowed-tools <TOOLS>` | Allowed tools (comma-separated) | Claude |
-| `--max-turns <N>` | Max agent turns | Claude |
-| `--max-budget <USD>` | Max budget in USD | Claude |
-| `--output-format <FMT>` | Output format | Claude, Gemini, OpenCode |
+| Flag | Description |
+|------|-------------|
+| `--workdir <PATH>` | Working directory (default: current) |
+| `--detach` / `-d` | Don't attach to the session after spawning |
+| `--ink <NAME>` | Ink preset from config (provides a default command) |
+| `--description <TEXT>` | Human-readable description for the session |
 
-### Providers
-
-Available providers: `claude`, `codex`, `gemini`, `opencode`, `shell`
-
-Provider availability is checked at spawn time. Use `shell` for a bare tmux session without any agent.
-
-### Worktree Isolation
-
-The `--worktree` flag (Claude only) gives each session its own git worktree — an isolated copy of the repo on a separate branch:
-
-```bash
-# Two agents working on the same repo in parallel
-pulpo spawn caching --worktree --workdir ~/myproject "add caching layer"
-pulpo spawn auth-refactor --worktree --workdir ~/myproject "refactor auth module"
-```
-
-Worktrees are created at `<repo>/.claude/worktrees/<session-name>`. Other providers can work in a Claude-created worktree by pointing `--workdir` at it.
+The command is whatever you want to run — any agent CLI, script, or shell command. If `--ink` is specified and no command is given after `--`, the ink's command is used.
 
 ## Schedule Subcommands
 

@@ -19,7 +19,6 @@ name = "mac-mini"           # Node name (default: hostname)
 port = 7433                  # HTTP port (default: 7433)
 data_dir = "~/.pulpo/data"   # Data directory (default: ~/.pulpo/data)
 bind = "local"               # "local", "public", "tailscale", "container"
-default_provider = "claude"  # Default provider when none specified
 ```
 
 Bind modes:
@@ -28,47 +27,21 @@ Bind modes:
 - `tailscale` — binds to Tailscale IP, auto-serves HTTPS via `tailscale serve`, peer discovery via Tailscale API
 - `container` — binds to `0.0.0.0`, no auth (trusts container network isolation)
 
-## Session Defaults
-
-Override default values for new sessions:
-
-```toml
-[session_defaults]
-provider = "claude"
-model = "claude-sonnet-4-20250514"
-mode = "autonomous"
-max_turns = 50
-max_budget_usd = 10.0
-output_format = "stream-json"
-```
-
-These apply when the user doesn't specify values explicitly. Explicit request values always win.
-
 ## Inks
 
-Inks are reusable agent role definitions. Each ink can set up to 6 fields:
+Inks are reusable command templates. Each ink has 2 fields:
 
 ```toml
 [inks.reviewer]
 description = "Code reviewer focused on correctness and security"
-provider = "claude"
-model = "claude-sonnet-4-20250514"
-mode = "autonomous"
-unrestricted = false
-instructions = "You are a senior reviewer. Focus on correctness, security, and performance."
+command = "claude -p 'review this code for correctness, security, and performance'"
 
 [inks.quick-fix]
-provider = "codex"
-mode = "autonomous"
-unrestricted = true
-instructions = "Fix the issue quickly with minimal changes."
+description = "Quick fix with Codex"
+command = "codex --quiet 'Fix the issue quickly with minimal changes.'"
 ```
 
-Use with: `pulpo spawn auth-review --ink reviewer "Review the auth module"`
-
-Instructions routing:
-- **Claude**: instructions are passed as `--system-prompt`
-- **Other providers** (Codex, Gemini, OpenCode): instructions are prepended to the prompt
+Use with: `pulpo spawn auth-review --ink reviewer`
 
 ## Watchdog
 

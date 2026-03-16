@@ -12,23 +12,9 @@ All sections are optional. Pulpo runs with zero config.
 | `port` | u16 | `7433` | HTTP listen port |
 | `data_dir` | string | `~/.pulpo/data` | Data directory for SQLite, logs |
 | `bind` | string | `"local"` | `"local"`, `"public"`, `"tailscale"`, `"container"` |
-| `default_provider` | string | `"claude"` | Default provider when none specified |
 | `tag` | string | — | Tailscale ACL tag for filtering (e.g. `"pulpo"`) |
 | `seed` | string | — | Seed peer address for gossip discovery (e.g. `"10.0.0.5:7433"`) |
 | `discovery_interval_secs` | u64 | `30` | How often to run peer discovery |
-
-## `[session_defaults]`
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `provider` | string | — | Default provider for new sessions |
-| `model` | string | — | Default model |
-| `mode` | string | — | `"interactive"` or `"autonomous"` |
-| `max_turns` | u32 | — | Maximum agent turns |
-| `max_budget_usd` | f64 | — | Maximum budget in USD |
-| `output_format` | string | — | Output format (e.g. `"stream-json"`) |
-
-Session defaults fill in values when the user doesn't specify them. Priority: explicit request > ink > session_defaults > node default_provider > Claude.
 
 ## `[auth]`
 
@@ -55,11 +41,7 @@ Not needed for `local`, `tailscale`, or `container` modes.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `description` | string | — | Human-readable ink description |
-| `provider` | string | — | Agent provider (`claude`, `codex`, `gemini`, `opencode`) |
-| `model` | string | — | Model override |
-| `mode` | string | — | `"interactive"` or `"autonomous"` |
-| `unrestricted` | bool | — | Disable safety guardrails |
-| `instructions` | string | — | Instructions (system prompt for Claude, prompt prepend for others) |
+| `command` | string | — | Shell command to run (e.g. `"claude -p 'review code'"`) |
 
 ## `[peers]` / `[peers.<name>]`
 
