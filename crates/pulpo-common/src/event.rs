@@ -123,7 +123,7 @@ mod tests {
         let original = PulpoEvent::Session(SessionEvent {
             session_id: "s1".into(),
             session_name: "test".into(),
-            status: "finished".into(),
+            status: "ready".into(),
             previous_status: Some("active".into()),
             node_name: "n".into(),
             output_snippet: Some("done".into()),
@@ -132,7 +132,7 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: PulpoEvent = serde_json::from_str(&json).unwrap();
         assert!(
-            matches!(&deserialized, PulpoEvent::Session(se) if se.session_id == "s1" && se.status == "finished")
+            matches!(&deserialized, PulpoEvent::Session(se) if se.session_id == "s1" && se.status == "ready")
         );
     }
 }

@@ -10,7 +10,7 @@ interface SessionFilterProps {
 
 export function SessionFilter({
   onFilter,
-  statusOptions = ['finished', 'killed'],
+  statusOptions = ['ready', 'killed'],
 }: SessionFilterProps) {
   const [search, setSearch] = useState('');
   const [activeStatus, setActiveStatus] = useState<string | undefined>(undefined);

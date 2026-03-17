@@ -208,12 +208,12 @@ mod tests {
     #[test]
     fn test_should_notify_with_filter() {
         let config = WebhookEndpointConfig {
-            events: vec!["finished".into(), "killed".into()],
+            events: vec!["ready".into(), "killed".into()],
             ..test_config()
         };
         assert!(!should_notify(&config, "active"));
         assert!(should_notify(&config, "killed"));
-        assert!(should_notify(&config, "finished"));
+        assert!(should_notify(&config, "ready"));
     }
 
     // --- WebhookNotifier tests ---

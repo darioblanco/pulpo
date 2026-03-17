@@ -250,7 +250,8 @@ mod tests {
             interval: std::time::Duration::from_secs(10),
             breach_count: 3,
             idle: crate::watchdog::IdleConfig::default(),
-            finished_ttl_secs: 0,
+            ready_ttl_secs: 0,
+            adopt_tmux: true,
         };
         let (config_tx, _config_rx) = tokio::sync::watch::channel(initial);
         let state = AppState::with_watchdog_tx(

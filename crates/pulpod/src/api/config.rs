@@ -38,7 +38,8 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
             breach_count: config.watchdog.breach_count,
             idle_timeout_secs: config.watchdog.idle_timeout_secs,
             idle_action: config.watchdog.idle_action.clone(),
-            finished_ttl_secs: config.watchdog.finished_ttl_secs,
+            ready_ttl_secs: config.watchdog.ready_ttl_secs,
+            adopt_tmux: config.watchdog.adopt_tmux,
         },
         notifications: NotificationsConfigResponse {
             discord: config
@@ -770,7 +771,8 @@ mod tests {
                 breach_count: 3,
                 idle_timeout_secs: 300,
                 idle_action: "pause".into(),
-                finished_ttl_secs: 0,
+                ready_ttl_secs: 0,
+                adopt_tmux: true,
             },
             inks: {
                 let mut m = HashMap::new();
@@ -832,7 +834,7 @@ mod tests {
                     crate::config::WebhookEndpointConfig {
                         name: "ci-hook".into(),
                         url: "https://example.com/hook".into(),
-                        events: vec!["finished".into(), "killed".into()],
+                        events: vec!["ready".into(), "killed".into()],
                         secret: Some("s3cret".into()),
                     },
                     crate::config::WebhookEndpointConfig {
@@ -849,7 +851,7 @@ mod tests {
         let w0 = &resp.notifications.webhooks[0];
         assert_eq!(w0.name, "ci-hook");
         assert_eq!(w0.url, "https://example.com/hook");
-        assert_eq!(w0.events, vec!["finished", "killed"]);
+        assert_eq!(w0.events, vec!["ready", "killed"]);
         assert!(w0.has_secret);
         let w1 = &resp.notifications.webhooks[1];
         assert_eq!(w1.name, "logs-hook");

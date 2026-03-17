@@ -49,7 +49,7 @@ pub enum SessionStatus {
     Creating,
     Active,
     Idle,
-    Finished,
+    Ready,
     Killed,
     Lost,
 }
@@ -60,7 +60,7 @@ impl fmt::Display for SessionStatus {
             Self::Creating => write!(f, "creating"),
             Self::Active => write!(f, "active"),
             Self::Idle => write!(f, "idle"),
-            Self::Finished => write!(f, "finished"),
+            Self::Ready => write!(f, "ready"),
             Self::Killed => write!(f, "killed"),
             Self::Lost => write!(f, "lost"),
         }
@@ -75,7 +75,7 @@ impl FromStr for SessionStatus {
             "creating" => Ok(Self::Creating),
             "active" => Ok(Self::Active),
             "idle" => Ok(Self::Idle),
-            "finished" => Ok(Self::Finished),
+            "ready" => Ok(Self::Ready),
             "killed" => Ok(Self::Killed),
             "lost" => Ok(Self::Lost),
             other => Err(format!("unknown session status: {other}")),
@@ -148,8 +148,8 @@ mod tests {
             "\"idle\""
         );
         assert_eq!(
-            serde_json::to_string(&SessionStatus::Finished).unwrap(),
-            "\"finished\""
+            serde_json::to_string(&SessionStatus::Ready).unwrap(),
+            "\"ready\""
         );
         assert_eq!(
             serde_json::to_string(&SessionStatus::Killed).unwrap(),
@@ -176,8 +176,8 @@ mod tests {
             SessionStatus::Idle
         );
         assert_eq!(
-            serde_json::from_str::<SessionStatus>("\"finished\"").unwrap(),
-            SessionStatus::Finished
+            serde_json::from_str::<SessionStatus>("\"ready\"").unwrap(),
+            SessionStatus::Ready
         );
         assert_eq!(
             serde_json::from_str::<SessionStatus>("\"killed\"").unwrap(),
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(SessionStatus::Creating.to_string(), "creating");
         assert_eq!(SessionStatus::Active.to_string(), "active");
         assert_eq!(SessionStatus::Idle.to_string(), "idle");
-        assert_eq!(SessionStatus::Finished.to_string(), "finished");
+        assert_eq!(SessionStatus::Ready.to_string(), "ready");
         assert_eq!(SessionStatus::Killed.to_string(), "killed");
         assert_eq!(SessionStatus::Lost.to_string(), "lost");
     }
@@ -219,8 +219,8 @@ mod tests {
             SessionStatus::Idle
         );
         assert_eq!(
-            "finished".parse::<SessionStatus>().unwrap(),
-            SessionStatus::Finished
+            "ready".parse::<SessionStatus>().unwrap(),
+            SessionStatus::Ready
         );
         assert_eq!(
             "killed".parse::<SessionStatus>().unwrap(),
@@ -327,7 +327,7 @@ mod tests {
             workdir: "/tmp".into(),
             command: "echo test".into(),
             description: None,
-            status: SessionStatus::Finished,
+            status: SessionStatus::Ready,
             exit_code: Some(0),
             backend_session_id: None,
             output_snapshot: None,

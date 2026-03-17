@@ -36,7 +36,7 @@ struct DiscordPayload {
 /// Returns the Discord embed color for a given session status.
 ///
 /// - active   → green  (`0x2ecc71`)
-/// - finished → blue   (`0x3498db`)
+/// - ready    → blue   (`0x3498db`)
 /// - killed   → red    (`0xe74c3c`)
 /// - lost     → orange (`0xe67e22`)
 /// - other    → gray   (`0x95a5a6`)
@@ -44,7 +44,7 @@ pub const fn status_color(status: &str) -> u32 {
     // const fn can't use match on &str, so use byte comparison
     match status.as_bytes() {
         b"active" => 0x2e_cc71,
-        b"finished" => 0x34_98db,
+        b"ready" => 0x34_98db,
         b"killed" => 0xe7_4c3c,
         b"lost" => 0xe6_7e22,
         _ => 0x95_a5a6,
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn test_status_color_completed() {
-        assert_eq!(status_color("finished"), 0x34_98db);
+        assert_eq!(status_color("ready"), 0x34_98db);
     }
 
     #[test]
@@ -223,18 +223,18 @@ mod tests {
         };
         assert!(should_notify(&config, "active"));
         assert!(should_notify(&config, "killed"));
-        assert!(should_notify(&config, "finished"));
+        assert!(should_notify(&config, "ready"));
     }
 
     #[test]
     fn test_should_notify_with_filter() {
         let config = DiscordWebhookConfig {
             webhook_url: "https://example.com".into(),
-            events: vec!["finished".into(), "killed".into()],
+            events: vec!["ready".into(), "killed".into()],
         };
         assert!(!should_notify(&config, "active"));
         assert!(should_notify(&config, "killed"));
-        assert!(should_notify(&config, "finished"));
+        assert!(should_notify(&config, "ready"));
         assert!(!should_notify(&config, "lost"));
     }
 
@@ -279,7 +279,7 @@ mod tests {
     fn test_build_payload_with_output_snippet() {
         let event = SessionEvent {
             output_snippet: Some("hello world".into()),
-            ..test_event("finished")
+            ..test_event("ready")
         };
         let payload = build_discord_payload(&event);
 

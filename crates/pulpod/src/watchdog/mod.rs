@@ -62,13 +62,15 @@ pub struct WatchdogRuntimeConfig {
     pub interval: Duration,
     pub breach_count: u32,
     pub idle: IdleConfig,
-    /// Seconds after Finished before tmux shell is killed (0 = disabled).
-    pub finished_ttl_secs: u64,
+    /// Seconds after Ready before tmux shell is killed (0 = disabled).
+    pub ready_ttl_secs: u64,
+    /// Auto-adopt external tmux sessions into pulpo management.
+    pub adopt_tmux: bool,
 }
 
-/// Context for handling agent-finished transitions (status update + events).
+/// Context for handling agent-ready transitions (status update + events).
 #[cfg_attr(coverage, allow(dead_code))]
-pub struct FinishedContext {
+pub struct ReadyContext {
     pub event_tx: Option<broadcast::Sender<PulpoEvent>>,
     pub node_name: String,
 }
@@ -83,7 +85,7 @@ pub async fn run_watchdog_loop(
     reader: Box<dyn MemoryReader>,
     config_rx: tokio::sync::watch::Receiver<WatchdogRuntimeConfig>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
-    finished_ctx: FinishedContext,
+    ready_ctx: ReadyContext,
 ) {
     let initial = config_rx.borrow().clone();
     let mut current_interval = initial.interval;
@@ -145,14 +147,19 @@ pub async fn run_watchdog_loop(
                     }
                 }
 
-                // Idle + finished detection runs on every tick, independent of memory checks
+                // Idle + ready detection runs on every tick, independent of memory checks
                 if cfg.idle.enabled {
-                    check_idle_sessions(&backend, &store, &cfg.idle, &finished_ctx).await;
+                    check_idle_sessions(&backend, &store, &cfg.idle, &ready_ctx).await;
                 }
 
-                // Clean up finished sessions whose tmux shell has exceeded the TTL
-                if cfg.finished_ttl_secs > 0 {
-                    cleanup_finished_sessions(&backend, &store, cfg.finished_ttl_secs).await;
+                // Clean up ready sessions whose tmux shell has exceeded the TTL
+                if cfg.ready_ttl_secs > 0 {
+                    cleanup_ready_sessions(&backend, &store, cfg.ready_ttl_secs).await;
+                }
+
+                // Auto-adopt external tmux sessions
+                if cfg.adopt_tmux {
+                    adopt_tmux_sessions(&backend, &store, &ready_ctx).await;
                 }
             }
             _ = shutdown_rx.changed() => {
@@ -287,7 +294,7 @@ async fn check_idle_sessions(
     backend: &Arc<dyn Backend>,
     store: &Store,
     idle_config: &IdleConfig,
-    finished_ctx: &FinishedContext,
+    ready_ctx: &ReadyContext,
 ) {
     let sessions = match store.list_sessions().await {
         Ok(s) => s,
@@ -315,7 +322,7 @@ async fn check_idle_sessions(
             session,
             now,
             timeout,
-            finished_ctx,
+            ready_ctx,
         )
         .await;
     }
@@ -328,7 +335,7 @@ async fn check_session_idle(
     session: &pulpo_common::session::Session,
     now: chrono::DateTime<chrono::Utc>,
     timeout: chrono::Duration,
-    finished_ctx: &FinishedContext,
+    ready_ctx: &ReadyContext,
 ) {
     // Capture current output to track activity
     let bid = resolve_backend_id(session, backend.as_ref());
@@ -343,9 +350,9 @@ async fn check_session_idle(
         }
     };
 
-    // Check for agent exit marker → transition to Finished
+    // Check for agent exit marker → transition to Ready
     if detect_agent_exited(&current_output) {
-        handle_session_finished(store, session, finished_ctx).await;
+        handle_session_ready(store, session, ready_ctx).await;
         return;
     }
 
@@ -402,20 +409,20 @@ async fn check_session_idle(
     }
 }
 
-/// Handle a session whose agent has exited: transition to Finished and emit event.
-async fn handle_session_finished(store: &Store, session: &Session, ctx: &FinishedContext) {
+/// Handle a session whose agent has exited: transition to Ready and emit event.
+async fn handle_session_ready(store: &Store, session: &Session, ctx: &ReadyContext) {
     let previous = session.status;
     info!(
         session_name = %session.name,
-        "Agent exited, transitioning to finished"
+        "Agent exited, transitioning to ready"
     );
     if let Err(e) = store
-        .update_session_status(&session.id.to_string(), SessionStatus::Finished)
+        .update_session_status(&session.id.to_string(), SessionStatus::Ready)
         .await
     {
         warn!(
             session_name = %session.name,
-            "Failed to transition to finished: {e}"
+            "Failed to transition to ready: {e}"
         );
         return;
     }
@@ -425,7 +432,7 @@ async fn handle_session_finished(store: &Store, session: &Session, ctx: &Finishe
         let event = SessionEvent {
             session_id: session.id.to_string(),
             session_name: session.name.clone(),
-            status: SessionStatus::Finished.to_string(),
+            status: SessionStatus::Ready.to_string(),
             previous_status: Some(previous.to_string()),
             node_name: ctx.node_name.clone(),
             output_snippet: session.output_snapshot.clone(),
@@ -538,27 +545,20 @@ async fn handle_idle_session(
     }
 }
 
-/// Kill tmux shells for Finished sessions that have exceeded the TTL grace period.
-async fn cleanup_finished_sessions(
-    backend: &Arc<dyn Backend>,
-    store: &Store,
-    finished_ttl_secs: u64,
-) {
+/// Kill tmux shells for Ready sessions that have exceeded the TTL grace period.
+async fn cleanup_ready_sessions(backend: &Arc<dyn Backend>, store: &Store, ready_ttl_secs: u64) {
     let sessions = match store.list_sessions().await {
         Ok(s) => s,
         Err(e) => {
-            warn!("Finished cleanup: failed to list sessions: {e}");
+            warn!("Ready cleanup: failed to list sessions: {e}");
             return;
         }
     };
 
     let now = chrono::Utc::now();
-    let ttl = chrono::Duration::seconds(finished_ttl_secs.try_into().unwrap_or(i64::MAX));
+    let ttl = chrono::Duration::seconds(ready_ttl_secs.try_into().unwrap_or(i64::MAX));
 
-    for session in sessions
-        .iter()
-        .filter(|s| s.status == SessionStatus::Finished)
-    {
+    for session in sessions.iter().filter(|s| s.status == SessionStatus::Ready) {
         let age = now - session.updated_at;
         if age <= ttl {
             continue;
@@ -568,7 +568,7 @@ async fn cleanup_finished_sessions(
         if let Err(e) = backend.kill_session(&bid) {
             debug!(
                 session_name = %session.name,
-                "Finished cleanup: tmux already gone: {e}"
+                "Ready cleanup: tmux already gone: {e}"
             );
         }
         if let Err(e) = store
@@ -577,14 +577,145 @@ async fn cleanup_finished_sessions(
         {
             warn!(
                 session_name = %session.name,
-                "Finished cleanup: failed to mark killed: {e}"
+                "Ready cleanup: failed to mark killed: {e}"
             );
         } else {
             info!(
                 session_name = %session.name,
                 age_secs = age.num_seconds(),
-                "Finished cleanup: killed tmux shell after TTL"
+                "Ready cleanup: killed tmux shell after TTL"
             );
+        }
+    }
+}
+
+/// Known agent process names — adopted as Active.
+const AGENT_PROCESSES: &[&str] = &["claude", "codex", "gemini", "opencode"];
+
+/// Known shell process names — adopted as Ready.
+const SHELL_PROCESSES: &[&str] = &["bash", "zsh", "sh", "fish", "nu"];
+
+/// Determine the status for an adopted tmux session based on its running process.
+pub fn classify_adopted_process(process: &str) -> SessionStatus {
+    let lower = process.to_lowercase();
+    if AGENT_PROCESSES.iter().any(|a| lower.contains(a)) {
+        SessionStatus::Active
+    } else if SHELL_PROCESSES.iter().any(|s| lower == *s) {
+        SessionStatus::Ready
+    } else {
+        // Unknown process — conservatively treat as Active
+        SessionStatus::Active
+    }
+}
+
+/// Auto-discover tmux sessions not tracked by pulpo and adopt them.
+async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &ReadyContext) {
+    // Get all tmux session names
+    let tmux_sessions = match backend.list_sessions() {
+        Ok(s) => s,
+        Err(e) => {
+            debug!("Adopt: failed to list tmux sessions: {e}");
+            return;
+        }
+    };
+
+    if tmux_sessions.is_empty() {
+        return;
+    }
+
+    // Get all pulpo sessions to build known sets
+    let pulpo_sessions = match store.list_sessions().await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("Adopt: failed to list pulpo sessions: {e}");
+            return;
+        }
+    };
+
+    // Build sets of known backend IDs and live session names
+    let live_statuses = [
+        SessionStatus::Creating,
+        SessionStatus::Active,
+        SessionStatus::Idle,
+        SessionStatus::Ready,
+    ];
+    let known_ids: std::collections::HashSet<String> = pulpo_sessions
+        .iter()
+        .filter_map(|s| s.backend_session_id.clone())
+        .collect();
+    let known_names: std::collections::HashSet<&str> = pulpo_sessions
+        .iter()
+        .filter(|s| live_statuses.contains(&s.status))
+        .map(|s| s.name.as_str())
+        .collect();
+
+    for tmux_name in &tmux_sessions {
+        // Skip if already tracked by backend ID or live name
+        if known_ids.contains(tmux_name) || known_names.contains(tmux_name.as_str()) {
+            continue;
+        }
+
+        // Get pane info for classification
+        let (process, workdir) = match backend.pane_info(tmux_name) {
+            Ok(info) => info,
+            Err(e) => {
+                debug!("Adopt: failed to get pane info for {tmux_name}: {e}");
+                continue;
+            }
+        };
+
+        let status = classify_adopted_process(&process);
+        let command = if status == SessionStatus::Active {
+            process.clone()
+        } else {
+            format!("(adopted) {process}")
+        };
+
+        let session = pulpo_common::session::Session {
+            id: uuid::Uuid::new_v4(),
+            name: tmux_name.clone(),
+            workdir,
+            command,
+            description: Some("Adopted from tmux".into()),
+            status,
+            exit_code: None,
+            backend_session_id: Some(tmux_name.clone()),
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+
+        if let Err(e) = store.insert_session(&session).await {
+            warn!("Adopt: failed to insert session {tmux_name}: {e}");
+            continue;
+        }
+
+        info!(
+            session_name = %tmux_name,
+            process = %process,
+            status = %status,
+            "Adopted external tmux session"
+        );
+
+        // Emit SSE event
+        if let Some(tx) = &ctx.event_tx {
+            let event = SessionEvent {
+                session_id: session.id.to_string(),
+                session_name: tmux_name.clone(),
+                status: status.to_string(),
+                previous_status: None,
+                node_name: ctx.node_name.clone(),
+                output_snippet: None,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            };
+            let _ = tx.send(PulpoEvent::Session(event));
         }
     }
 }
@@ -595,6 +726,7 @@ mod tests {
     use crate::backend::Backend;
     use anyhow::Result;
     use pulpo_common::session::{Session, SessionStatus};
+    use std::collections::HashMap;
     use std::sync::Mutex;
     use tokio::time;
 
@@ -642,6 +774,8 @@ mod tests {
         fail_capture: bool,
         fail_kill: bool,
         fail_create: bool,
+        tmux_sessions: Vec<String>,
+        pane_infos: HashMap<String, (String, String)>,
     }
 
     impl MockBackend {
@@ -655,6 +789,8 @@ mod tests {
                 fail_capture: false,
                 fail_kill: false,
                 fail_create: false,
+                tmux_sessions: Vec::new(),
+                pane_infos: HashMap::new(),
             }
         }
 
@@ -719,6 +855,15 @@ mod tests {
         fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
+        fn list_sessions(&self) -> Result<Vec<String>> {
+            Ok(self.tmux_sessions.clone())
+        }
+        fn pane_info(&self, backend_id: &str) -> Result<(String, String)> {
+            self.pane_infos
+                .get(backend_id)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("no pane info for {backend_id}"))
+        }
     }
 
     async fn test_store() -> Store {
@@ -729,8 +874,8 @@ mod tests {
         store
     }
 
-    fn test_finished_ctx() -> FinishedContext {
-        FinishedContext {
+    fn test_ready_ctx() -> ReadyContext {
+        ReadyContext {
             event_tx: None,
             node_name: "test-node".into(),
         }
@@ -772,7 +917,8 @@ mod tests {
             interval,
             breach_count,
             idle,
-            finished_ttl_secs: 0,
+            ready_ttl_secs: 0,
+            adopt_tmux: false,
         };
         let (_, rx) = tokio::sync::watch::channel(cfg);
         rx
@@ -792,7 +938,8 @@ mod tests {
             interval,
             breach_count,
             idle,
-            finished_ttl_secs: 0,
+            ready_ttl_secs: 0,
+            adopt_tmux: false,
         };
         tokio::sync::watch::channel(cfg)
     }
@@ -818,7 +965,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         // Let it run briefly then shutdown
@@ -862,7 +1009,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         time::sleep(Duration::from_millis(50)).await;
@@ -912,7 +1059,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -962,7 +1109,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -1028,7 +1175,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -1060,7 +1207,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         time::sleep(Duration::from_millis(50)).await;
@@ -1108,7 +1255,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -1174,7 +1321,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -1251,7 +1398,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -1315,7 +1462,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         time::sleep(Duration::from_millis(100)).await;
@@ -1367,7 +1514,7 @@ mod tests {
                 },
             ),
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         time::sleep(Duration::from_millis(80)).await;
@@ -1547,7 +1694,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
         // Session should have transitioned from Active to Idle (output unchanged > 20s)
         let fetched = store
@@ -1595,7 +1742,7 @@ mod tests {
 
         let backend_clone = backend.clone();
         let dyn_backend: Arc<dyn Backend> = backend_clone;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
         // Session should be dead with intervention reason
         let fetched = store
@@ -1651,7 +1798,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
         // idle_since should be cleared (output changed from "old output" to "test output")
         let fetched = store
@@ -1675,7 +1822,7 @@ mod tests {
             workdir: "/tmp/repo".into(),
             command: "echo hello".into(),
             description: Some("test".into()),
-            status: SessionStatus::Finished,
+            status: SessionStatus::Ready,
             exit_code: Some(0),
             backend_session_id: None,
             output_snapshot: None,
@@ -1698,7 +1845,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
         // Session should remain completed
         let fetched = store
@@ -1706,7 +1853,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Finished);
+        assert_eq!(fetched.status, SessionStatus::Ready);
     }
 
     #[tokio::test]
@@ -1722,7 +1869,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
         // Session should remain running — capture failed so idle check skipped
         let sessions = store.list_sessions().await.unwrap();
@@ -1764,7 +1911,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
         // Should NOT be marked idle (not enough time elapsed)
         let fetched = store
@@ -1811,7 +1958,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
         // idle_since should still be set and status stays Idle
         let fetched = store
@@ -1859,7 +2006,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
         // Session should remain Idle since kill failed
         let fetched = store
@@ -1889,7 +2036,7 @@ mod tests {
 
         let dyn_backend: Arc<dyn Backend> = backend;
         // Should not panic
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
     }
 
     #[tokio::test]
@@ -1927,7 +2074,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
         // Should transition to Idle (created_at used as fallback for last_output_at)
         let fetched = store
@@ -1958,7 +2105,7 @@ mod tests {
 
         let dyn_backend: Arc<dyn Backend> = backend;
         // Should not panic
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
     }
 
     #[tokio::test]
@@ -2011,7 +2158,7 @@ mod tests {
             Box::new(reader),
             make_config(90, Duration::from_millis(10), 3, idle_config),
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         time::sleep(Duration::from_millis(50)).await;
@@ -2244,7 +2391,7 @@ mod tests {
             &session,
             now,
             timeout,
-            &test_finished_ctx(),
+            &test_ready_ctx(),
         )
         .await;
 
@@ -2470,7 +2617,7 @@ mod tests {
             Box::new(reader),
             config_rx,
             shutdown_rx,
-            test_finished_ctx(),
+            test_ready_ctx(),
         ));
 
         // Let it run a tick with high threshold — no intervention
@@ -2487,7 +2634,8 @@ mod tests {
                     enabled: false,
                     ..IdleConfig::default()
                 },
-                finished_ttl_secs: 0,
+                ready_ttl_secs: 0,
+                adopt_tmux: false,
             })
             .unwrap();
 
@@ -2515,7 +2663,8 @@ mod tests {
             interval: Duration::from_secs(10),
             breach_count: 3,
             idle: IdleConfig::default(),
-            finished_ttl_secs: 0,
+            ready_ttl_secs: 0,
+            adopt_tmux: false,
         };
         let debug = format!("{cfg:?}");
         assert!(debug.contains("90"));
@@ -2533,7 +2682,8 @@ mod tests {
                 timeout_secs: 300,
                 action: IdleAction::Kill,
             },
-            finished_ttl_secs: 0,
+            ready_ttl_secs: 0,
+            adopt_tmux: false,
         };
         #[allow(clippy::redundant_clone)]
         let cloned = cfg.clone();
@@ -2616,7 +2766,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
         let fetched = store
             .get_session(&session.id.to_string())
@@ -2662,7 +2812,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
         let fetched = store
             .get_session(&session.id.to_string())
@@ -2721,7 +2871,7 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend.clone();
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
         // Both Active and Idle sessions should have been processed
         let capture_count = backend.capture_calls.lock().unwrap().len();
@@ -2752,7 +2902,7 @@ mod tests {
         );
     }
 
-    // --- S3: Agent exit / Finished detection tests ---
+    // --- S3: Agent exit / Ready detection tests ---
 
     #[test]
     fn test_detect_agent_exited_present() {
@@ -2779,7 +2929,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_finished_transition_on_agent_exit() {
+    async fn test_ready_transition_on_agent_exit() {
         // Backend returns output containing agent exit marker
         let backend =
             Arc::new(MockBackend::new().with_output("work done\n[pulpo] Agent exited\n$ "));
@@ -2793,25 +2943,25 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
-        // Session should now be Finished
+        // Session should now be Ready
         let fetched = store
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Finished);
+        assert_eq!(fetched.status, SessionStatus::Ready);
     }
 
     #[tokio::test]
-    async fn test_finished_transition_emits_event() {
+    async fn test_ready_transition_emits_event() {
         let backend = Arc::new(MockBackend::new().with_output("done\n[pulpo] Agent exited\n$ "));
         let store = test_store().await;
         let session = create_running_session(&store, "event-me").await;
 
         let (event_tx, mut event_rx) = broadcast::channel::<PulpoEvent>(16);
-        let ctx = FinishedContext {
+        let ctx = ReadyContext {
             event_tx: Some(event_tx),
             node_name: "test-node".into(),
         };
@@ -2825,12 +2975,12 @@ mod tests {
         let dyn_backend: Arc<dyn Backend> = backend;
         check_idle_sessions(&dyn_backend, &store, &idle_config, &ctx).await;
 
-        // Should have received a Finished event
+        // Should have received a Ready event
         let event = event_rx.try_recv().unwrap();
         match event {
             PulpoEvent::Session(se) => {
                 assert_eq!(se.session_id, session.id.to_string());
-                assert_eq!(se.status, "finished");
+                assert_eq!(se.status, "ready");
                 assert_eq!(se.previous_status, Some("active".into()));
                 assert_eq!(se.node_name, "test-node");
             }
@@ -2838,7 +2988,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_finished_skips_idle_logic() {
+    async fn test_ready_skips_idle_logic() {
         // If agent exited, session should NOT go through idle detection
         let backend = Arc::new(MockBackend::new().with_output("[pulpo] Agent exited"));
         let store = test_store().await;
@@ -2856,20 +3006,20 @@ mod tests {
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_finished_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
 
-        // Should be Finished, NOT Killed
+        // Should be Ready, NOT Killed
         let fetched = store
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Finished);
+        assert_eq!(fetched.status, SessionStatus::Ready);
     }
 
     #[tokio::test]
-    async fn test_finished_from_idle_state() {
-        // An Idle session should also transition to Finished if agent exits
+    async fn test_ready_from_idle_state() {
+        // An Idle session should also transition to Ready if agent exits
         let backend =
             Arc::new(MockBackend::new().with_output("waiting...\n[pulpo] Agent exited\n$ "));
         let store = test_store().await;
@@ -2882,7 +3032,7 @@ mod tests {
         session.status = SessionStatus::Idle;
 
         let (event_tx, mut event_rx) = broadcast::channel::<PulpoEvent>(16);
-        let ctx = FinishedContext {
+        let ctx = ReadyContext {
             event_tx: Some(event_tx),
             node_name: "n".into(),
         };
@@ -2901,7 +3051,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Finished);
+        assert_eq!(fetched.status, SessionStatus::Ready);
 
         // Event should say previous was "idle"
         let event = event_rx.try_recv().unwrap();
@@ -2912,17 +3062,17 @@ mod tests {
         }
     }
 
-    // --- S4: Finished TTL cleanup tests ---
+    // --- S4: Ready TTL cleanup tests ---
 
     #[tokio::test]
-    async fn test_cleanup_finished_sessions_kills_expired() {
+    async fn test_cleanup_ready_sessions_kills_expired() {
         let backend = Arc::new(MockBackend::new());
         let store = test_store().await;
         let session = create_running_session(&store, "expired").await;
 
-        // Mark as Finished with old updated_at
+        // Mark as Ready with old updated_at
         store
-            .update_session_status(&session.id.to_string(), SessionStatus::Finished)
+            .update_session_status(&session.id.to_string(), SessionStatus::Ready)
             .await
             .unwrap();
         // Manually set updated_at to 2 hours ago
@@ -2934,7 +3084,7 @@ mod tests {
             .unwrap();
 
         let dyn_backend: Arc<dyn Backend> = backend.clone();
-        cleanup_finished_sessions(&dyn_backend, &store, 3600).await; // TTL = 1 hour
+        cleanup_ready_sessions(&dyn_backend, &store, 3600).await; // TTL = 1 hour
 
         // Should be Killed now
         let fetched = store
@@ -2954,52 +3104,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cleanup_finished_sessions_skips_recent() {
+    async fn test_cleanup_ready_sessions_skips_recent() {
         let backend = Arc::new(MockBackend::new());
         let store = test_store().await;
         let session = create_running_session(&store, "recent").await;
 
-        // Mark as Finished (just now, so within TTL)
+        // Mark as Ready (just now, so within TTL)
         store
-            .update_session_status(&session.id.to_string(), SessionStatus::Finished)
+            .update_session_status(&session.id.to_string(), SessionStatus::Ready)
             .await
             .unwrap();
 
         let dyn_backend: Arc<dyn Backend> = backend.clone();
-        cleanup_finished_sessions(&dyn_backend, &store, 3600).await; // TTL = 1 hour
+        cleanup_ready_sessions(&dyn_backend, &store, 3600).await; // TTL = 1 hour
 
-        // Should still be Finished
+        // Should still be Ready
         let fetched = store
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Finished);
+        assert_eq!(fetched.status, SessionStatus::Ready);
         assert!(backend.kill_calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn test_cleanup_finished_sessions_ignores_active() {
+    async fn test_cleanup_ready_sessions_ignores_active() {
         let backend = Arc::new(MockBackend::new());
         let store = test_store().await;
         let _session = create_running_session(&store, "active-one").await;
 
         let dyn_backend: Arc<dyn Backend> = backend.clone();
-        cleanup_finished_sessions(&dyn_backend, &store, 1).await; // TTL = 1 sec
+        cleanup_ready_sessions(&dyn_backend, &store, 1).await; // TTL = 1 sec
 
-        // Should still be Active (cleanup only targets Finished)
+        // Should still be Active (cleanup only targets Ready)
         assert!(backend.kill_calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
-    async fn test_cleanup_finished_kill_failure_still_marks_killed() {
+    async fn test_cleanup_ready_kill_failure_still_marks_killed() {
         // Even if backend.kill_session fails (tmux already gone), status should update
         let backend = Arc::new(MockBackend::failing_kill());
         let store = test_store().await;
         let session = create_running_session(&store, "gone").await;
 
         store
-            .update_session_status(&session.id.to_string(), SessionStatus::Finished)
+            .update_session_status(&session.id.to_string(), SessionStatus::Ready)
             .await
             .unwrap();
         // Set updated_at to 2 hours ago
@@ -3011,7 +3161,7 @@ mod tests {
             .unwrap();
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        cleanup_finished_sessions(&dyn_backend, &store, 3600).await;
+        cleanup_ready_sessions(&dyn_backend, &store, 3600).await;
 
         // Should still be marked as Killed even though backend.kill failed
         let fetched = store
@@ -3028,33 +3178,240 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_finished_transitions_to_finished() {
+    async fn test_ready_transitions_to_ready() {
         let store = test_store().await;
         let session = create_running_session(&store, "finish-test").await;
 
-        let ctx = FinishedContext {
+        let ctx = ReadyContext {
             event_tx: None,
             node_name: "n".into(),
         };
-        handle_session_finished(&store, &session, &ctx).await;
+        handle_session_ready(&store, &session, &ctx).await;
 
         let fetched = store
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Finished);
+        assert_eq!(fetched.status, SessionStatus::Ready);
     }
 
     #[tokio::test]
-    async fn test_cleanup_finished_no_finished_sessions() {
+    async fn test_cleanup_ready_no_ready_sessions() {
         let backend = Arc::new(MockBackend::new());
         let store = test_store().await;
 
         // No sessions at all
         let dyn_backend: Arc<dyn Backend> = backend.clone();
-        cleanup_finished_sessions(&dyn_backend, &store, 3600).await;
+        cleanup_ready_sessions(&dyn_backend, &store, 3600).await;
 
         assert!(backend.kill_calls.lock().unwrap().is_empty());
+    }
+
+    // --- S5: classify_adopted_process tests ---
+
+    #[test]
+    fn test_classify_agent_processes() {
+        assert_eq!(classify_adopted_process("claude"), SessionStatus::Active);
+        assert_eq!(classify_adopted_process("codex"), SessionStatus::Active);
+        assert_eq!(classify_adopted_process("gemini"), SessionStatus::Active);
+        assert_eq!(classify_adopted_process("opencode"), SessionStatus::Active);
+    }
+
+    #[test]
+    fn test_classify_agent_case_insensitive() {
+        assert_eq!(classify_adopted_process("Claude"), SessionStatus::Active);
+        assert_eq!(classify_adopted_process("CODEX"), SessionStatus::Active);
+    }
+
+    #[test]
+    fn test_classify_shell_processes() {
+        assert_eq!(classify_adopted_process("bash"), SessionStatus::Ready);
+        assert_eq!(classify_adopted_process("zsh"), SessionStatus::Ready);
+        assert_eq!(classify_adopted_process("sh"), SessionStatus::Ready);
+        assert_eq!(classify_adopted_process("fish"), SessionStatus::Ready);
+        assert_eq!(classify_adopted_process("nu"), SessionStatus::Ready);
+    }
+
+    #[test]
+    fn test_classify_unknown_process() {
+        // Unknown processes are conservatively Active
+        assert_eq!(classify_adopted_process("python"), SessionStatus::Active);
+        assert_eq!(classify_adopted_process("node"), SessionStatus::Active);
+    }
+
+    // --- S6: adopt_tmux_sessions tests ---
+
+    #[tokio::test]
+    async fn test_adopt_no_tmux_sessions() {
+        let backend = Arc::new(MockBackend::new());
+        let store = test_store().await;
+        let ctx = test_ready_ctx();
+
+        let dyn_backend: Arc<dyn Backend> = backend;
+        adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
+
+        let sessions = store.list_sessions().await.unwrap();
+        assert!(sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_adopt_skips_known_sessions() {
+        let mut backend = MockBackend::new();
+        backend.tmux_sessions = vec!["existing".into()];
+        backend
+            .pane_infos
+            .insert("existing".into(), ("bash".into(), "/tmp".into()));
+        let backend = Arc::new(backend);
+        let store = test_store().await;
+        // Create a session that has backend_session_id matching a tmux name
+        let _session = create_running_session(&store, "existing").await;
+
+        let ctx = test_ready_ctx();
+        let dyn_backend: Arc<dyn Backend> = backend;
+        adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
+
+        // Only the original session should exist (not adopted again)
+        let sessions = store.list_sessions().await.unwrap();
+        assert_eq!(sessions.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_adopt_agent_session_as_active() {
+        let mut backend = MockBackend::new();
+        backend.tmux_sessions = vec!["my-claude".into()];
+        backend
+            .pane_infos
+            .insert("my-claude".into(), ("claude".into(), "/home/user".into()));
+        let backend = Arc::new(backend);
+        let store = test_store().await;
+
+        let ctx = test_ready_ctx();
+        let dyn_backend: Arc<dyn Backend> = backend;
+        adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
+
+        let sessions = store.list_sessions().await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].name, "my-claude");
+        assert_eq!(sessions[0].status, SessionStatus::Active);
+        assert_eq!(sessions[0].command, "claude");
+        assert_eq!(sessions[0].workdir, "/home/user");
+        assert_eq!(sessions[0].description, Some("Adopted from tmux".into()));
+        assert_eq!(sessions[0].backend_session_id, Some("my-claude".into()));
+    }
+
+    #[tokio::test]
+    async fn test_adopt_shell_session_as_ready() {
+        let mut backend = MockBackend::new();
+        backend.tmux_sessions = vec!["bare-shell".into()];
+        backend
+            .pane_infos
+            .insert("bare-shell".into(), ("bash".into(), "/tmp".into()));
+        let backend = Arc::new(backend);
+        let store = test_store().await;
+
+        let ctx = test_ready_ctx();
+        let dyn_backend: Arc<dyn Backend> = backend;
+        adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
+
+        let sessions = store.list_sessions().await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].status, SessionStatus::Ready);
+        assert_eq!(sessions[0].command, "(adopted) bash");
+    }
+
+    #[tokio::test]
+    async fn test_adopt_emits_sse_event() {
+        let mut backend = MockBackend::new();
+        backend.tmux_sessions = vec!["event-session".into()];
+        backend
+            .pane_infos
+            .insert("event-session".into(), ("codex".into(), "/repo".into()));
+        let backend = Arc::new(backend);
+        let store = test_store().await;
+
+        let (event_tx, mut event_rx) = broadcast::channel::<PulpoEvent>(16);
+        let ctx = ReadyContext {
+            event_tx: Some(event_tx),
+            node_name: "test-node".into(),
+        };
+
+        let dyn_backend: Arc<dyn Backend> = backend;
+        adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
+
+        let event = event_rx.try_recv().unwrap();
+        match event {
+            PulpoEvent::Session(se) => {
+                assert_eq!(se.session_name, "event-session");
+                assert_eq!(se.status, "active");
+                assert!(se.previous_status.is_none());
+                assert_eq!(se.node_name, "test-node");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_adopt_skips_pane_info_failure() {
+        let mut backend = MockBackend::new();
+        backend.tmux_sessions = vec!["no-info".into()];
+        // No pane_info entry → pane_info will return error
+        let backend = Arc::new(backend);
+        let store = test_store().await;
+
+        let ctx = test_ready_ctx();
+        let dyn_backend: Arc<dyn Backend> = backend;
+        adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
+
+        // Should not have adopted (pane_info failed)
+        let sessions = store.list_sessions().await.unwrap();
+        assert!(sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_adopt_multiple_sessions() {
+        let mut backend = MockBackend::new();
+        backend.tmux_sessions = vec!["agent-1".into(), "shell-1".into()];
+        backend
+            .pane_infos
+            .insert("agent-1".into(), ("claude".into(), "/code".into()));
+        backend
+            .pane_infos
+            .insert("shell-1".into(), ("zsh".into(), "/home".into()));
+        let backend = Arc::new(backend);
+        let store = test_store().await;
+
+        let ctx = test_ready_ctx();
+        let dyn_backend: Arc<dyn Backend> = backend;
+        adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
+
+        let sessions = store.list_sessions().await.unwrap();
+        assert_eq!(sessions.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_adopt_skips_by_live_name() {
+        // Ready session with same name should prevent adoption
+        let mut backend = MockBackend::new();
+        backend.tmux_sessions = vec!["my-session".into()];
+        backend
+            .pane_infos
+            .insert("my-session".into(), ("bash".into(), "/tmp".into()));
+        let backend = Arc::new(backend);
+        let store = test_store().await;
+        // Create a ready session with the same name
+        let mut session = create_running_session(&store, "my-session").await;
+        store
+            .update_session_status(&session.id.to_string(), SessionStatus::Ready)
+            .await
+            .unwrap();
+        session.status = SessionStatus::Ready;
+
+        let ctx = test_ready_ctx();
+        let dyn_backend: Arc<dyn Backend> = backend;
+        adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
+
+        // Should still be just 1 session
+        let sessions = store.list_sessions().await.unwrap();
+        assert_eq!(sessions.len(), 1);
     }
 }

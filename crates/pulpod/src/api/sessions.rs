@@ -371,7 +371,7 @@ mod tests {
         assert_eq!(sessions.len(), 1);
 
         let query = ListSessionsQuery {
-            status: Some("finished".into()),
+            status: Some("ready".into()),
             ..Default::default()
         };
         let Json(sessions) = list(State(state), Query(query)).await.unwrap();

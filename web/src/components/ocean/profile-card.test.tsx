@@ -57,14 +57,14 @@ describe('ProfileCard', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'finished' })}
+          octopus={makeOctopus({ status: 'ready' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
         />
       </MemoryRouter>,
     );
-    expect(screen.getByText('finished')).toBeInTheDocument();
+    expect(screen.getByText('ready')).toBeInTheDocument();
   });
 
   it('renders command', () => {
@@ -230,11 +230,11 @@ describe('ProfileCard', () => {
     expect(el).toHaveTextContent('active for 12m');
   });
 
-  it('shows finished duration for terminal statuses', () => {
+  it('shows ready duration for terminal statuses', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'finished' })}
+          octopus={makeOctopus({ status: 'ready' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -242,7 +242,7 @@ describe('ProfileCard', () => {
       </MemoryRouter>,
     );
     const el = screen.getByTestId('profile-duration');
-    expect(el).toHaveTextContent('finished after 12m');
+    expect(el).toHaveTextContent('ready after 12m');
   });
 
   it('renders last active when present', () => {
@@ -398,11 +398,11 @@ describe('ProfileCard', () => {
     expect(screen.getByTestId('kill-button')).toBeInTheDocument();
   });
 
-  it('does not show Kill button for finished sessions', () => {
+  it('does not show Kill button for ready sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'finished' })}
+          octopus={makeOctopus({ status: 'ready' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -474,11 +474,11 @@ describe('ProfileCard', () => {
     expect(screen.getByTestId('delete-button')).toBeInTheDocument();
   });
 
-  it('shows Delete button for finished sessions', () => {
+  it('shows Delete button for ready sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'finished' })}
+          octopus={makeOctopus({ status: 'ready' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -534,11 +534,11 @@ describe('ProfileCard', () => {
     expect(screen.queryByTestId('attach-button')).not.toBeInTheDocument();
   });
 
-  it('shows Resume button for finished sessions', () => {
+  it('shows Resume button for ready sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'finished' })}
+          octopus={makeOctopus({ status: 'ready' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}

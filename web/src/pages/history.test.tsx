@@ -32,7 +32,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
     name: 'my-api',
-    status: 'finished',
+    status: 'ready',
     command: 'Fix the bug',
     description: null,
     workdir: '/repo',
@@ -91,12 +91,12 @@ describe('HistoryPage', () => {
     });
   });
 
-  it('fetches with default filter (finished,killed)', async () => {
+  it('fetches with default filter (ready,killed)', async () => {
     mockGetSessions.mockResolvedValue([]);
     renderHistory();
     await waitFor(() => {
       expect(mockGetSessions).toHaveBeenCalledWith({
-        status: 'finished,killed',
+        status: 'ready,killed',
       });
     });
   });

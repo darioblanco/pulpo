@@ -22,13 +22,13 @@ beforeEach(() => {
 describe('OutputView', () => {
   it('renders output container', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<OutputView sessionId="sess-1" sessionStatus="finished" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="ready" />);
     expect(screen.getByTestId('output-view')).toBeInTheDocument();
   });
 
   it('fetches and displays output', async () => {
     mockGetSessionOutput.mockResolvedValue({ output: 'Hello from agent' });
-    render(<OutputView sessionId="sess-1" sessionStatus="finished" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="ready" />);
     await waitFor(() => {
       expect(screen.getByText('Hello from agent')).toBeInTheDocument();
     });
@@ -36,7 +36,7 @@ describe('OutputView', () => {
 
   it('strips ANSI codes from output', async () => {
     mockGetSessionOutput.mockResolvedValue({ output: '\x1B[32mGreen text\x1B[0m' });
-    render(<OutputView sessionId="sess-1" sessionStatus="finished" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="ready" />);
     await waitFor(() => {
       expect(screen.getByText('Green text')).toBeInTheDocument();
     });
@@ -44,7 +44,7 @@ describe('OutputView', () => {
 
   it('shows "No output yet" when output is empty', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<OutputView sessionId="sess-1" sessionStatus="finished" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="ready" />);
     expect(screen.getByText('No output yet')).toBeInTheDocument();
   });
 
@@ -62,9 +62,9 @@ describe('OutputView', () => {
     expect(screen.getByText('Send')).toBeInTheDocument();
   });
 
-  it('hides input field for finished sessions', () => {
+  it('hides input field for ready sessions', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<OutputView sessionId="sess-1" sessionStatus="finished" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="ready" />);
     expect(screen.queryByTestId('output-input')).not.toBeInTheDocument();
   });
 
@@ -156,7 +156,7 @@ describe('OutputView', () => {
 
   it('handles fetch errors silently', async () => {
     mockGetSessionOutput.mockRejectedValue(new Error('Network error'));
-    render(<OutputView sessionId="sess-1" sessionStatus="finished" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="ready" />);
     await waitFor(() => {
       expect(screen.getByTestId('output-view')).toBeInTheDocument();
     });

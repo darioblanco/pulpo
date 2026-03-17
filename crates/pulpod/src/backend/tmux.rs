@@ -98,6 +98,44 @@ fn build_resize_command(session_name: &str, cols: u16, rows: u16) -> Command {
     cmd
 }
 
+#[cfg_attr(coverage, allow(dead_code))]
+fn build_list_sessions_command() -> Command {
+    let mut cmd = Command::new("tmux");
+    cmd.args(["list-sessions", "-F", "#{session_name}"]);
+    cmd
+}
+
+#[cfg_attr(coverage, allow(dead_code))]
+fn build_pane_info_command(session_name: &str) -> Command {
+    let mut cmd = Command::new("tmux");
+    cmd.args([
+        "list-panes",
+        "-t",
+        session_name,
+        "-F",
+        "#{pane_current_command}\t#{pane_current_path}",
+    ]);
+    cmd
+}
+
+/// Parse `list-sessions -F '#{session_name}'` output into session names.
+pub fn parse_list_sessions(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// Parse `list-panes -F '#{pane_current_command}\t#{pane_current_path}'` output.
+/// Returns `(process_name, working_dir)` from the first pane.
+pub fn parse_pane_info(output: &str) -> Option<(String, String)> {
+    let line = output.lines().next()?;
+    let (process, path) = line.split_once('\t')?;
+    Some((process.to_owned(), path.to_owned()))
+}
+
 /// Parse tmux version from `tmux -V` output (e.g., "tmux 3.4" -> `Some((3, 4))`).
 ///
 /// Handles formats like "tmux 3.4", "tmux 3.2a", "tmux next-3.4".
@@ -262,6 +300,26 @@ impl Backend for TmuxBackend {
 
         cmd.spawn().context("spawn script+tmux attach")
     }
+
+    fn list_sessions(&self) -> Result<Vec<String>> {
+        let output = build_list_sessions_command()
+            .stderr(Stdio::piped())
+            .output()
+            .context("Failed to list tmux sessions")?;
+        if !output.status.success() {
+            // tmux returns non-zero when no server is running — not an error
+            return Ok(Vec::new());
+        }
+        Ok(parse_list_sessions(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
+    }
+
+    fn pane_info(&self, backend_id: &str) -> Result<(String, String)> {
+        let output = run_tmux(build_pane_info_command(backend_id), "get pane info")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        parse_pane_info(&stdout).context("Failed to parse pane info")
+    }
 }
 
 #[cfg(test)]
@@ -375,6 +433,77 @@ mod tests {
             args,
             vec!["resize-window", "-t", "pulpo-test", "-x", "120", "-y", "40"]
         );
+    }
+
+    #[test]
+    fn test_build_list_sessions_command() {
+        let cmd = build_list_sessions_command();
+        assert_eq!(cmd.get_program(), "tmux");
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(args, vec!["list-sessions", "-F", "#{session_name}"]);
+    }
+
+    #[test]
+    fn test_build_pane_info_command() {
+        let cmd = build_pane_info_command("my-session");
+        assert_eq!(cmd.get_program(), "tmux");
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            vec![
+                "list-panes",
+                "-t",
+                "my-session",
+                "-F",
+                "#{pane_current_command}\t#{pane_current_path}"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_list_sessions() {
+        let output = "session-1\nsession-2\nmy-work\n";
+        let sessions = parse_list_sessions(output);
+        assert_eq!(sessions, vec!["session-1", "session-2", "my-work"]);
+    }
+
+    #[test]
+    fn test_parse_list_sessions_empty() {
+        assert!(parse_list_sessions("").is_empty());
+        assert!(parse_list_sessions("\n").is_empty());
+    }
+
+    #[test]
+    fn test_parse_list_sessions_whitespace() {
+        let output = "  session-1  \n  session-2  \n";
+        let sessions = parse_list_sessions(output);
+        assert_eq!(sessions, vec!["session-1", "session-2"]);
+    }
+
+    #[test]
+    fn test_parse_pane_info() {
+        let output = "claude\t/home/user/repo\n";
+        let (process, path) = parse_pane_info(output).unwrap();
+        assert_eq!(process, "claude");
+        assert_eq!(path, "/home/user/repo");
+    }
+
+    #[test]
+    fn test_parse_pane_info_bash() {
+        let output = "bash\t/tmp\n";
+        let (process, path) = parse_pane_info(output).unwrap();
+        assert_eq!(process, "bash");
+        assert_eq!(path, "/tmp");
+    }
+
+    #[test]
+    fn test_parse_pane_info_empty() {
+        assert!(parse_pane_info("").is_none());
+    }
+
+    #[test]
+    fn test_parse_pane_info_no_tab() {
+        assert!(parse_pane_info("no-tab-here").is_none());
     }
 
     #[test]

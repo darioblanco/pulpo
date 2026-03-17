@@ -54,6 +54,19 @@ pub trait Backend: Send + Sync {
     fn spawn_attach(&self, _backend_id: &str) -> Result<tokio::process::Child> {
         anyhow::bail!("spawn_attach not supported by this backend")
     }
+
+    /// List all session names known to the backend runtime.
+    /// Default returns empty — only real backends (tmux) override this.
+    fn list_sessions(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    /// Get the current pane process and working directory for a backend session.
+    /// Returns `(process_name, working_dir)`.
+    /// Default returns an error — only real backends (tmux) override this.
+    fn pane_info(&self, _backend_id: &str) -> Result<(String, String)> {
+        anyhow::bail!("pane_info not supported by this backend")
+    }
 }
 
 #[cfg(test)]
@@ -106,6 +119,19 @@ mod tests {
         let b = MinimalBackend;
         let err = b.spawn_attach("x").unwrap_err();
         assert!(err.to_string().contains("spawn_attach not supported"));
+    }
+
+    #[test]
+    fn test_default_list_sessions() {
+        let b = MinimalBackend;
+        assert!(b.list_sessions().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_default_pane_info() {
+        let b = MinimalBackend;
+        let err = b.pane_info("x").unwrap_err();
+        assert!(err.to_string().contains("pane_info not supported"));
     }
 
     #[test]

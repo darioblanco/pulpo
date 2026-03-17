@@ -17,15 +17,15 @@ const STATUS_COLORS: Record<string, string> = {
   creating: '#60a5fa',
   idle: '#fbbf24',
   lost: '#fbbf24',
-  finished: '#34d399',
+  ready: '#34d399',
   killed: '#f87171',
 };
 
-const ENDED_STATUSES = ['finished', 'killed'];
+const ENDED_STATUSES = ['ready', 'killed'];
 const LIVE_STATUSES = ['active', 'idle', 'creating'];
-const RESUMABLE_STATUSES = ['lost', 'finished'];
+const RESUMABLE_STATUSES = ['lost', 'ready'];
 const KILLABLE_STATUSES = ['active', 'creating'];
-const DELETABLE_STATUSES = ['finished', 'killed', 'lost', 'idle'];
+const DELETABLE_STATUSES = ['ready', 'killed', 'lost', 'idle'];
 
 function truncateCommand(command: string, maxLen = 40): string {
   if (command.length <= maxLen) return command;
@@ -61,7 +61,7 @@ export function ProfileCard({
 
   const duration = useMemo(() => {
     const dur = formatDuration(octopus.createdAt);
-    return isEnded ? `finished after ${dur}` : `active for ${dur}`;
+    return isEnded ? `ready after ${dur}` : `active for ${dur}`;
   }, [octopus.createdAt, isEnded]);
 
   const lastActive = useMemo(() => {

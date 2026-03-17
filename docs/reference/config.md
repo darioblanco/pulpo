@@ -32,7 +32,7 @@ Not needed for `local`, `tailscale`, or `container` modes.
 | `check_interval_secs` | u64 | `10` | Check interval in seconds |
 | `idle_timeout_secs` | u64 | `600` | Seconds idle before action triggers |
 | `idle_action` | string | `"alert"` | `"alert"` (mark idle) or `"kill"` |
-| `finished_ttl_secs` | u64 | `0` | Seconds after Finished before kill (0 = disabled) |
+| `ready_ttl_secs` | u64 | `0` | Seconds after Ready before kill (0 = disabled) |
 | `memory_threshold` | u8 | `90` | Memory usage % to trigger intervention |
 | `breach_count` | u32 | `3` | Consecutive breaches before kill |
 
@@ -70,11 +70,11 @@ token = "secret"
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `webhook_url` | string | — | Discord webhook URL |
-| `events` | string[] | `["finished", "killed"]` | Events that trigger notifications |
+| `events` | string[] | `["ready", "killed"]` | Events that trigger notifications |
 
 ## `[notifications.webhook]`
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `url` | string | — | Webhook URL to POST events to |
-| `events` | string[] | `["finished", "killed"]` | Events that trigger notifications |
+| `events` | string[] | `["ready", "killed"]` | Events that trigger notifications |

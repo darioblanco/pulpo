@@ -148,12 +148,12 @@ describe('world', () => {
       world.octopuses[0].x = 42;
 
       // Sync again with updated status
-      const updated = [makeSession({ id: 's1', name: 'worker-1', status: 'finished' })];
+      const updated = [makeSession({ id: 's1', name: 'worker-1', status: 'ready' })];
       syncData(world, makeNode(), updated, [], {});
 
       expect(world.octopuses[0].animFrame).toBe(3);
       expect(world.octopuses[0].x).toBe(42);
-      expect(world.octopuses[0].status).toBe('finished');
+      expect(world.octopuses[0].status).toBe('ready');
     });
 
     it('updates new session fields on existing octopus', () => {
@@ -249,12 +249,12 @@ describe('world', () => {
       world.octopuses[0].animFrame = 3;
       world.octopuses[0].x = 42;
 
-      const updated = [makeSession({ id: 's1', name: 'worker-1', status: 'finished' })];
+      const updated = [makeSession({ id: 's1', name: 'worker-1', status: 'ready' })];
       syncSingleNode(world, 'mac-studio', true, 'online', updated, '#f472b6');
 
       expect(world.octopuses[0].animFrame).toBe(3);
       expect(world.octopuses[0].x).toBe(42);
-      expect(world.octopuses[0].status).toBe('finished');
+      expect(world.octopuses[0].status).toBe('ready');
     });
 
     it('populates new session fields on octopus', () => {
@@ -409,9 +409,9 @@ describe('world', () => {
       expect(oct.wanderTargetY).toBeGreaterThan(startY);
     });
 
-    it('makes finished octopuses float up', () => {
+    it('makes ready octopuses float up', () => {
       const world = createWorld(800, 600);
-      syncData(world, makeNode(), [makeSession({ id: 's1', status: 'finished' })], [], {});
+      syncData(world, makeNode(), [makeSession({ id: 's1', status: 'ready' })], [], {});
 
       const oct = world.octopuses[0];
       for (let i = 0; i < 10; i++) update(world, 0.1);
@@ -447,17 +447,17 @@ describe('world', () => {
       expect(killed.homeY).toBeGreaterThan(active.homeY);
     });
 
-    it('assigns finished sessions to upper zone', () => {
+    it('assigns ready sessions to upper zone', () => {
       const world = createWorld(800, 600);
       const sessions = [
         makeSession({ id: 's1', status: 'active' }),
-        makeSession({ id: 's2', status: 'finished' }),
+        makeSession({ id: 's2', status: 'ready' }),
       ];
       syncData(world, makeNode(), sessions, [], {});
 
       const active = world.octopuses.find((o) => o.status === 'active')!;
-      const finished = world.octopuses.find((o) => o.status === 'finished')!;
-      expect(finished.homeY).toBeLessThan(active.homeY);
+      const ready = world.octopuses.find((o) => o.status === 'ready')!;
+      expect(ready.homeY).toBeLessThan(active.homeY);
     });
 
     it('reassigns home when status changes', () => {

@@ -72,7 +72,7 @@ export function DashboardPage() {
       const changes = detectStatusChanges(previousSessionsRef.current, sessions);
       for (const change of changes) {
         const label =
-          change.to === 'finished' ? 'finished' : change.to === 'killed' ? 'killed' : 'resumed';
+          change.to === 'ready' ? 'ready' : change.to === 'killed' ? 'killed' : 'resumed';
         toast(`${change.sessionName} ${label}`);
         showDesktopNotification(change);
       }
@@ -112,7 +112,7 @@ export function DashboardPage() {
               <Tabs defaultValue="local" data-testid="node-tabs">
                 <TabsList>
                   <TabsTrigger value="local" data-testid="tab-local">
-                    <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-status-finished" />
+                    <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-status-ready" />
                     {localNode?.name ?? 'local'}
                     <span className="ml-1.5 text-xs text-muted-foreground">
                       ({activeSessions.length})
@@ -123,7 +123,7 @@ export function DashboardPage() {
                       <span
                         className={`mr-1.5 inline-block h-2 w-2 rounded-full ${
                           peer.status === 'online'
-                            ? 'bg-status-finished'
+                            ? 'bg-status-ready'
                             : peer.status === 'offline'
                               ? 'bg-status-killed'
                               : 'bg-muted-foreground'

@@ -94,7 +94,7 @@ pulpo spawn my-api --workdir ~/repos/my-api -- claude "Fix the auth bug"
 pulpo list
 pulpo logs my-api
 pulpo kill my-api
-pulpo resume my-api         # after reboot, resume conversation (auto-attaches)
+pulpo resume my-api         # resume lost or ready session (auto-attaches)
 pulpo nodes                 # list all pulpod peers on the Tailnet
 pulpo list --node server    # list sessions on a remote node
 
@@ -123,7 +123,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
     │                   │                   │
     ▼                   ▼                   ▼
 ┌────────┐       ┌──────────┐        ┌──────────┐
-│CREATING│──────▶│  ACTIVE  │───────▶│ FINISHED │
+│CREATING│──────▶│  ACTIVE  │───────▶│  READY   │
 └────────┘       └──────────┘        └──────────┘
                    ▲      │                │
             output │      │ waiting        │ TTL / user
@@ -145,8 +145,8 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 - **CREATING**: tmux session is being set up
 - **ACTIVE**: agent is working — terminal output is changing
 - **IDLE**: agent needs attention — waiting for user input or at its prompt
-- **FINISHED**: agent process exited — task is done. Detected by `[pulpo] Agent exited` marker
-- **KILLED**: session was terminated by user, watchdog (memory/idle), or finished TTL cleanup
+- **READY**: agent process exited — task is done. Detected by `[pulpo] Agent exited` marker
+- **KILLED**: session was terminated by user, watchdog (memory/idle), or ready TTL cleanup
 - **LOST**: tmux process disappeared unexpectedly (crash, reboot)
 
 ### State Quick Reference
@@ -156,13 +156,13 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 | `creating` | tmux session being set up       | `pulpo spawn <name>` just ran     | Wait (auto-attached)            |
 | `active`   | Agent is working                | Session started / output changed  | `logs`, `attach`, `kill`        |
 | `idle`     | Agent waiting for input         | Watchdog detected waiting pattern | `attach` to interact, or `kill` |
-| `finished` | Agent exited                    | `[pulpo] Agent exited` detected   | `resume` or `delete`            |
+| `ready`    | Agent exited                    | `[pulpo] Agent exited` detected   | `resume` or `delete`            |
 | `killed`   | Session terminated              | User, watchdog, or TTL cleanup    | `spawn` new or `delete`         |
 | `lost`     | tmux process disappeared        | Daemon restart / reboot / crash   | `resume` (auto-attaches)        |
 
 Key distinctions:
-- **Idle** is a live state — the agent process is running but waiting. **Finished** means the agent exited.
-- **Finished** is resumable (restarts the agent). **Killed** is not resumable (requires fresh `spawn`).
+- **Idle** is a live state — the agent process is running but waiting. **Ready** means the agent exited.
+- **Ready** is resumable (restarts the agent). **Killed** is not resumable (requires fresh `spawn`).
 - **Lost** means the tmux process is gone but may be recoverable via `resume`.
 
 ### Persistence (what survives a reboot)
@@ -176,7 +176,7 @@ Stored in `~/.pulpo/state.db` (SQLite):
 | `workdir`         | Absolute path to the working directory                  |
 | `command`         | Shell command executed in the session                   |
 | `description`     | Optional human-readable description                     |
-| `status`          | `creating`, `active`, `idle`, `finished`, `killed`, `lost` |
+| `status`          | `creating`, `active`, `idle`, `ready`, `killed`, `lost` |
 | `exit_code`       | Process exit code (null if still running)               |
 | `backend_session_id`    | Backend-specific session identifier                     |
 | `output_snapshot` | Last N lines of terminal output                         |
@@ -402,7 +402,7 @@ GET    /events                SSE event stream
 ```
 
 `/events` emits tagged SSE events:
-- `event: session` — session lifecycle updates (`creating`, `active`, `idle`, `finished`, `killed`, `lost`)
+- `event: session` — session lifecycle updates (`creating`, `active`, `idle`, `ready`, `killed`, `lost`)
 
 ### Quick Reference
 
@@ -686,7 +686,7 @@ description = "Autonomous coder with tests and clear commit messages"
 
 [notifications.discord]
 webhook_url = "https://discord.com/api/webhooks/..."
-events = ["running", "completed", "dead"]   # optional filter; omit for all events
+events = ["active", "ready", "killed"]   # optional filter; omit for all events
 ```
 
 ---

@@ -46,7 +46,8 @@ const testConfig: ConfigResponse = {
     breach_count: 3,
     idle_timeout_secs: 300,
     idle_action: 'pause',
-    finished_ttl_secs: 0,
+    ready_ttl_secs: 0,
+    adopt_tmux: true,
   },
   notifications: {
     discord: null,
@@ -148,7 +149,7 @@ describe('SettingsPage', () => {
       notifications: {
         discord: {
           webhook_url: 'https://discord.com/api/webhooks/test',
-          events: ['session.created', 'session.finished'],
+          events: ['session.created', 'session.ready'],
         },
         webhooks: [],
       },
@@ -169,7 +170,7 @@ describe('SettingsPage', () => {
         'https://discord.com/api/webhooks/test',
       );
       expect(within(discordContent).getByLabelText('Events')).toHaveValue(
-        'session.created, session.finished',
+        'session.created, session.ready',
       );
     });
   });

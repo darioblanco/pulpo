@@ -76,7 +76,7 @@ describe('NotificationsSettings', () => {
       <NotificationsSettings
         {...defaults}
         discordWebhookUrl="https://discord.com/api/webhooks/test"
-        discordEvents="session.created, session.finished"
+        discordEvents="session.created, session.ready"
       />,
     );
     fireEvent.click(screen.getByTestId('tab-discord'));
@@ -85,7 +85,7 @@ describe('NotificationsSettings', () => {
       'https://discord.com/api/webhooks/test',
     );
     expect(within(discordContent).getByLabelText('Events')).toHaveValue(
-      'session.created, session.finished',
+      'session.created, session.ready',
     );
   });
 
@@ -189,13 +189,13 @@ describe('NotificationsSettings', () => {
     );
     const webhookSection = screen.getByTestId('webhook-0');
     fireEvent.change(within(webhookSection).getByLabelText('Events'), {
-      target: { value: 'killed, finished' },
+      target: { value: 'killed, ready' },
     });
     expect(onWebhooksChange).toHaveBeenCalledWith([
       {
         name: 'hook',
         url: 'https://a.com',
-        events: ['killed', 'finished'],
+        events: ['killed', 'ready'],
         has_secret: false,
         secret: '',
       },

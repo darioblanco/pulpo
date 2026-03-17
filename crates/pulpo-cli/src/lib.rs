@@ -496,7 +496,7 @@ async fn follow_logs(
 
         // Check session status
         let status = fetch_session_status(client, base, name, token).await?;
-        let is_terminal = status == "finished" || status == "killed" || status == "lost";
+        let is_terminal = status == "ready" || status == "killed" || status == "lost";
 
         // Fetch latest output
         let new_output = fetch_output(client, base, name, lines, token).await?;
@@ -737,9 +737,9 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                         "Session \"{name}\" is lost (agent process died). Resume it first:\n  pulpo resume {name}"
                     );
                 }
-                "finished" | "killed" => {
+                "killed" => {
                     anyhow::bail!(
-                        "Session \"{name}\" is {} — cannot attach to a finished session.",
+                        "Session \"{name}\" is {} — cannot attach to a killed session.",
                         session.status
                     );
                 }
@@ -1790,7 +1790,7 @@ mod tests {
                 "claude -p 'A very long command that exceeds fifty characters in total length here'"
                     .into(),
             description: None,
-            status: SessionStatus::Finished,
+            status: SessionStatus::Ready,
             exit_code: None,
             backend_session_id: None,
             output_snapshot: None,
@@ -2593,7 +2593,7 @@ mod tests {
                     let count = status_count_inner.clone();
                     async move {
                         let n = count.fetch_add(1, Ordering::SeqCst);
-                        let status = if n < 2 { "active" } else { "finished" };
+                        let status = if n < 2 { "active" } else { "ready" };
                         format!(
                             r#"{{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"{status}","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#
                         )

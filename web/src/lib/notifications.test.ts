@@ -29,9 +29,9 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('detectStatusChanges', () => {
-  it('detects active → finished transition', () => {
+  it('detects active → ready transition', () => {
     const prev = [makeSession({ id: '1', status: 'active' })];
-    const curr = [makeSession({ id: '1', status: 'finished' })];
+    const curr = [makeSession({ id: '1', status: 'ready' })];
 
     const changes = detectStatusChanges(prev, curr);
 
@@ -40,7 +40,7 @@ describe('detectStatusChanges', () => {
       sessionId: '1',
       sessionName: 'my-api',
       from: 'active',
-      to: 'finished',
+      to: 'ready',
     });
   });
 
@@ -93,7 +93,7 @@ describe('detectStatusChanges', () => {
       makeSession({ id: '2', name: 'refactor', status: 'active' }),
     ];
     const curr = [
-      makeSession({ id: '1', name: 'api-fix', status: 'finished' }),
+      makeSession({ id: '1', name: 'api-fix', status: 'ready' }),
       makeSession({ id: '2', name: 'refactor', status: 'killed' }),
     ];
 
@@ -130,15 +130,15 @@ describe('detectStatusChanges', () => {
 });
 
 describe('formatStatusLabel', () => {
-  it('returns finished label', () => {
+  it('returns ready label', () => {
     expect(
       formatStatusLabel({
         sessionId: '1',
         sessionName: 'my-api',
         from: 'active',
-        to: 'finished',
+        to: 'ready',
       }),
-    ).toBe('my-api finished');
+    ).toBe('my-api ready');
   });
 
   it('returns killed label', () => {
@@ -171,13 +171,13 @@ describe('processSessionChanges', () => {
     const toast = vi.fn();
     const notify = vi.fn();
     const prev = [makeSession({ id: '1', status: 'active' })];
-    const current = [makeSession({ id: '1', status: 'finished' })];
+    const current = [makeSession({ id: '1', status: 'ready' })];
 
     processSessionChanges(prev, current, toast, notify);
 
-    expect(toast).toHaveBeenCalledWith('my-api finished');
+    expect(toast).toHaveBeenCalledWith('my-api ready');
     expect(notify).toHaveBeenCalledWith(
-      expect.objectContaining({ sessionName: 'my-api', to: 'finished' }),
+      expect.objectContaining({ sessionName: 'my-api', to: 'ready' }),
     );
   });
 
@@ -276,18 +276,18 @@ describe('showDesktopNotification', () => {
     vi.unstubAllGlobals();
   });
 
-  it('creates notification for finished session', () => {
+  it('creates notification for ready session', () => {
     const change: StatusChange = {
       sessionId: '1',
       sessionName: 'my-api',
       from: 'active',
-      to: 'finished',
+      to: 'ready',
     };
 
     showDesktopNotification(change);
 
-    expect(NotificationConstructor).toHaveBeenCalledWith('Session finished: my-api', {
-      body: 'my-api finished successfully',
+    expect(NotificationConstructor).toHaveBeenCalledWith('Session ready: my-api', {
+      body: 'my-api is ready',
     });
   });
 
@@ -328,7 +328,7 @@ describe('showDesktopNotification', () => {
       sessionId: '1',
       sessionName: 'my-api',
       from: 'active',
-      to: 'finished',
+      to: 'ready',
     });
 
     expect(NotificationConstructor).not.toHaveBeenCalled();
@@ -341,7 +341,7 @@ describe('showDesktopNotification', () => {
       sessionId: '1',
       sessionName: 'my-api',
       from: 'active',
-      to: 'finished',
+      to: 'ready',
     });
 
     // Should not throw

@@ -102,8 +102,8 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('btn-kill')).not.toBeDisabled();
   });
 
-  it('disables kill dot for finished sessions', () => {
-    render(<SessionCard session={makeSession({ status: 'finished' })} onRefresh={vi.fn()} />);
+  it('disables kill dot for ready sessions', () => {
+    render(<SessionCard session={makeSession({ status: 'ready' })} onRefresh={vi.fn()} />);
     expect(screen.getByTestId('btn-kill')).toBeDisabled();
   });
 
@@ -156,8 +156,8 @@ describe('SessionCard', () => {
     expect(screen.queryByTestId('mock-output-view')).not.toBeInTheDocument();
   });
 
-  it('shows OutputView for finished session', () => {
-    render(<SessionCard session={makeSession({ status: 'finished' })} onRefresh={vi.fn()} />);
+  it('shows OutputView for ready session', () => {
+    render(<SessionCard session={makeSession({ status: 'ready' })} onRefresh={vi.fn()} />);
     clickExpand();
     expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
@@ -267,7 +267,7 @@ describe('SessionCard', () => {
   it('shows intervention badge for killed sessions only', () => {
     render(
       <SessionCard
-        session={makeSession({ status: 'finished', intervention_reason: 'test' })}
+        session={makeSession({ status: 'ready', intervention_reason: 'test' })}
         onRefresh={vi.fn()}
       />,
     );

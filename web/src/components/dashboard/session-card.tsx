@@ -177,7 +177,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
           {session.status === 'active' && <TerminalView sessionId={session.id} />}
 
           {(session.status === 'lost' ||
-            session.status === 'finished' ||
+            session.status === 'ready' ||
             session.status === 'killed') && (
             <OutputView sessionId={session.id} sessionStatus={session.status} />
           )}

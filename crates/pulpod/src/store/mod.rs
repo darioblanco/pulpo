@@ -225,7 +225,7 @@ impl Store {
         }
 
         // Idempotent migration: rename session status values
-        // running→active, completed→finished, dead→killed, stale→lost
+        // running→active, completed→ready, dead→killed, stale→lost
         let has_old_statuses: i32 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM sessions WHERE status IN ('running', 'completed', 'dead', 'stale')",
         )
@@ -235,7 +235,7 @@ impl Store {
             sqlx::query("UPDATE sessions SET status = 'active' WHERE status = 'running'")
                 .execute(&self.pool)
                 .await?;
-            sqlx::query("UPDATE sessions SET status = 'finished' WHERE status = 'completed'")
+            sqlx::query("UPDATE sessions SET status = 'ready' WHERE status = 'completed'")
                 .execute(&self.pool)
                 .await?;
             sqlx::query("UPDATE sessions SET status = 'killed' WHERE status = 'dead'")
@@ -270,6 +270,27 @@ impl Store {
                 .execute(&self.pool)
                 .await?;
         }
+
+        // Idempotent migration: rename finished → exited
+        sqlx::query("UPDATE sessions SET status = 'exited' WHERE status = 'finished'")
+            .execute(&self.pool)
+            .await?;
+
+        // Idempotent migration: rename exited → ready
+        sqlx::query("UPDATE sessions SET status = 'ready' WHERE status = 'exited'")
+            .execute(&self.pool)
+            .await?;
+
+        // Update partial unique index to include 'ready' status
+        sqlx::query("DROP INDEX IF EXISTS idx_sessions_live_name")
+            .execute(&self.pool)
+            .await?;
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_live_name \
+             ON sessions(name) WHERE status IN ('creating', 'active', 'idle', 'ready')",
+        )
+        .execute(&self.pool)
+        .await?;
 
         Ok(())
     }
@@ -326,7 +347,7 @@ impl Store {
 
     pub async fn has_active_session_by_name(&self, name: &str) -> Result<bool> {
         let row = sqlx::query(
-            "SELECT 1 FROM sessions WHERE name = ? AND status IN ('creating', 'active', 'idle') LIMIT 1",
+            "SELECT 1 FROM sessions WHERE name = ? AND status IN ('creating', 'active', 'idle', 'ready') LIMIT 1",
         )
         .bind(name)
         .fetch_optional(&self.pool)
@@ -792,6 +813,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_has_active_session_by_name_ready() {
+        let store = test_store().await;
+        let mut session = make_session("ready-session");
+        session.status = SessionStatus::Ready;
+        store.insert_session(&session).await.unwrap();
+
+        assert!(
+            store
+                .has_active_session_by_name("ready-session")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
     async fn test_unique_index_prevents_duplicate_live_names() {
         let store = test_store().await;
         let s1 = make_session("dup-name");
@@ -845,7 +881,7 @@ mod tests {
         store.insert_session(&session).await.unwrap();
 
         store
-            .update_session_status(&session.id.to_string(), SessionStatus::Finished)
+            .update_session_status(&session.id.to_string(), SessionStatus::Ready)
             .await
             .unwrap();
 
@@ -854,7 +890,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Finished);
+        assert_eq!(fetched.status, SessionStatus::Ready);
     }
 
     #[tokio::test]
@@ -1069,7 +1105,7 @@ mod tests {
         let mut s1 = make_session("running-1");
         s1.status = SessionStatus::Active;
         let mut s2 = make_session("completed-1");
-        s2.status = SessionStatus::Finished;
+        s2.status = SessionStatus::Ready;
         store.insert_session(&s1).await.unwrap();
         store.insert_session(&s2).await.unwrap();
 
@@ -1088,7 +1124,7 @@ mod tests {
         let mut s1 = make_session("running-2");
         s1.status = SessionStatus::Active;
         let mut s2 = make_session("completed-2");
-        s2.status = SessionStatus::Finished;
+        s2.status = SessionStatus::Ready;
         let mut s3 = make_session("dead-1");
         s3.status = SessionStatus::Killed;
         store.insert_session(&s1).await.unwrap();
@@ -1096,7 +1132,7 @@ mod tests {
         store.insert_session(&s3).await.unwrap();
 
         let query = ListSessionsQuery {
-            status: Some("active,finished".into()),
+            status: Some("active,ready".into()),
             ..Default::default()
         };
         let sessions = store.list_sessions_filtered(&query).await.unwrap();
@@ -1195,7 +1231,7 @@ mod tests {
         s1.status = SessionStatus::Active;
         s1.command = "Fix the API".into();
         let mut s2 = make_session("api-refactor");
-        s2.status = SessionStatus::Finished;
+        s2.status = SessionStatus::Ready;
         s2.command = "Refactor the API".into();
         let mut s3 = make_session("ui-fix");
         s3.status = SessionStatus::Active;
@@ -1220,7 +1256,7 @@ mod tests {
         let mut s1 = make_session("first");
         s1.status = SessionStatus::Active;
         let mut s2 = make_session("second");
-        s2.status = SessionStatus::Finished;
+        s2.status = SessionStatus::Ready;
         store.insert_session(&s1).await.unwrap();
         store.insert_session(&s2).await.unwrap();
 
@@ -2000,7 +2036,7 @@ mod tests {
         let a = store.get_session(&id_a).await.unwrap().unwrap();
         assert_eq!(a.status, SessionStatus::Active);
         let b = store.get_session(&id_b).await.unwrap().unwrap();
-        assert_eq!(b.status, SessionStatus::Finished);
+        assert_eq!(b.status, SessionStatus::Ready);
         let c = store.get_session(&id_c).await.unwrap().unwrap();
         assert_eq!(c.status, SessionStatus::Killed);
         let d = store.get_session(&id_d).await.unwrap().unwrap();

@@ -65,7 +65,7 @@ describe('sessionEmbed', () => {
 
   it('uses correct colors for different statuses', () => {
     expect(sessionEmbed(mockSession({ status: 'active' })).toJSON().color).toBe(0x2ecc71);
-    expect(sessionEmbed(mockSession({ status: 'finished' })).toJSON().color).toBe(0x3498db);
+    expect(sessionEmbed(mockSession({ status: 'ready' })).toJSON().color).toBe(0x3498db);
     expect(sessionEmbed(mockSession({ status: 'killed' })).toJSON().color).toBe(0xe74c3c);
     expect(sessionEmbed(mockSession({ status: 'lost' })).toJSON().color).toBe(0xe67e22);
     expect(sessionEmbed(mockSession({ status: 'idle' })).toJSON().color).toBe(0xf59e0b);
@@ -153,14 +153,14 @@ describe('sessionListEmbed', () => {
   it('lists sessions with status emojis', () => {
     const sessions = [
       mockSession({ name: 'session-1', status: 'active' }),
-      mockSession({ name: 'session-2', status: 'finished' }),
+      mockSession({ name: 'session-2', status: 'ready' }),
     ];
     const embed = sessionListEmbed(sessions);
     const json = embed.toJSON();
     expect(json.description).toContain('session-1');
     expect(json.description).toContain('session-2');
     expect(json.description).toContain('active');
-    expect(json.description).toContain('finished');
+    expect(json.description).toContain('ready');
   });
 
   it('truncates to 25 sessions and shows footer', () => {

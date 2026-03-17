@@ -77,7 +77,8 @@ export interface WatchdogConfigResponse {
   breach_count: number;
   idle_timeout_secs: number;
   idle_action: string;
-  finished_ttl_secs: number;
+  ready_ttl_secs: number;
+  adopt_tmux: boolean;
 }
 
 export interface DiscordWebhookConfigResponse {

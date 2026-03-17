@@ -9,7 +9,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
     │                   │                         │
     ▼                   ▼                         ▼
 ┌────────┐       ┌──────────┐              ┌──────────┐
-│CREATING│──────▶│  ACTIVE  │─────────────▶│ FINISHED │
+│CREATING│──────▶│  ACTIVE  │─────────────▶│  READY   │
 └────────┘       └──────────┘              └──────────┘
                    ▲      │                      │
             output │      │ waiting for          │ TTL expired
@@ -32,7 +32,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 | **Creating** | tmux session is being set up | No |
 | **Active** | Agent is working — terminal output is changing | No |
 | **Idle** | Agent needs attention — waiting for input or at its prompt | No |
-| **Finished** | Agent process exited — task is done | Yes (resumable) |
+| **Ready** | Agent process exited — task is done | Yes (resumable) |
 | **Killed** | Session was terminated by user, watchdog, or TTL cleanup | Yes (not resumable) |
 | **Lost** | tmux process disappeared unexpectedly (crash, reboot) | Yes (resumable) |
 
@@ -51,7 +51,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 - **Trigger**: Watchdog detects output changed since last tick.
 - **Detection**: New output in the terminal means the agent (or user) resumed work.
 
-### Active/Idle → Finished
+### Active/Idle → Ready
 - **Trigger**: Watchdog detects `[pulpo] Agent exited` marker in captured output.
 - **Detection**: Every agent command is wrapped with `echo '[pulpo] Agent exited'; exec bash`. The watchdog checks for this marker before any idle logic. The `exec bash` keeps the tmux shell alive for inspection.
 - **Side effects**: SSE event emitted.
@@ -64,16 +64,16 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 - **Trigger**: `is_alive()` returns false for a session that was Active or Idle.
 - **Detection**: On `get_session` or `list_sessions`, if the backend (tmux) session is gone, the session is marked Lost. A 5-second grace period protects freshly spawned sessions from false positives.
 
-### Finished → Killed
-- **Trigger**: `finished_ttl_secs` expires (if configured > 0).
-- **Detection**: Watchdog checks `updated_at` of Finished sessions against the TTL on each tick. After expiry, kills the tmux shell and marks Killed.
+### Ready → Killed
+- **Trigger**: `ready_ttl_secs` expires (if configured > 0).
+- **Detection**: Watchdog checks `updated_at` of Ready sessions against the TTL on each tick. After expiry, kills the tmux shell and marks Killed.
 
 ## Resume Semantics
 
 | From State | Resume? | What happens |
 |-----------|---------|--------------|
 | **Lost** | Yes | Recreates tmux session, re-executes the session command |
-| **Finished** | Yes | Re-executes the command in the tmux session (or recreates if gone) |
+| **Ready** | Yes | Re-executes the command in the tmux session (or recreates if gone) |
 | **Killed** | No | Error: "session cannot be resumed" |
 | **Active/Idle** | No | Error: session is still running |
 | **Creating** | No | Error: session is still running |
@@ -96,7 +96,7 @@ These cover permission prompts from various coding agents.
 |-------|-------|--------|----------|
 | Active | Lavender | active-swim | Full swimming animation |
 | Idle | Amber/Gold | idle-idle | Minimal movement, small radius |
-| Finished | Emerald | finished-idle | Stationary |
+| Ready | Emerald | ready-idle | Stationary |
 | Killed | Red | killed-idle | Stationary (same sprite as Lost, recolored) |
 | Lost | Red | lost-idle | Stationary (same sprite as Killed, recolored) |
 
@@ -110,27 +110,27 @@ enabled = true
 check_interval_secs = 10     # How often to check
 idle_timeout_secs = 600       # Seconds before idle action triggers
 idle_action = "alert"         # "alert" (mark idle_since) or "kill"
-finished_ttl_secs = 0         # Seconds after Finished before tmux is killed (0 = disabled)
+ready_ttl_secs = 0            # Seconds after Ready before tmux is killed (0 = disabled)
 memory_threshold = 90         # Memory % to trigger intervention
 breach_count = 3              # Consecutive breaches before kill
 ```
 
 ### Notification Events
 
-Default notification events: `["finished", "killed"]`. Configure via:
+Default notification events: `["ready", "killed"]`. Configure via:
 
 ```toml
 [notifications.discord]
 webhook_url = "https://discord.com/api/webhooks/..."
-events = ["finished", "killed", "lost"]
+events = ["ready", "killed", "lost"]
 ```
 
 ## Corner Cases
 
-- **Agent exits but `exec bash` keeps tmux alive**: This is intentional. The `[pulpo] Agent exited` marker distinguishes "agent done" from "shell still running". The Finished state reflects the agent's completion while keeping the tmux shell accessible for inspection.
+- **Agent exits but `exec bash` keeps tmux alive**: This is intentional. The `[pulpo] Agent exited` marker distinguishes "agent done" from "shell still running". The Ready state reflects the agent's completion while keeping the tmux shell accessible for inspection.
 
-- **Long-running session never finishes**: Some sessions cycle Active ⇄ Idle indefinitely. They become Finished only when the command exits (causing `[pulpo] Agent exited`), or Killed by user/watchdog.
+- **Long-running session never exits**: Some sessions cycle Active ⇄ Idle indefinitely. They become Ready only when the command exits (causing `[pulpo] Agent exited`), or Killed by user/watchdog.
 
 - **Lost on daemon restart**: When the daemon starts, all Active and Idle sessions whose tmux sessions are gone are marked Lost. The user can resume them with `pulpo resume` (which auto-attaches).
 
-- **Finished + TTL → Killed**: When `finished_ttl_secs > 0`, finished sessions are automatically cleaned up after the grace period. This prevents tmux shell accumulation. The status changes from Finished to Killed, blocking further resume.
+- **Ready + TTL → Killed**: When `ready_ttl_secs > 0`, ready sessions are automatically cleaned up after the grace period. This prevents tmux shell accumulation. The status changes from Ready to Killed, blocking further resume.

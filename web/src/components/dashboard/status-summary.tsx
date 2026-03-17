@@ -8,7 +8,7 @@ export function StatusSummary({ sessions }: StatusSummaryProps) {
   const active = sessions.filter((s) => s.status === 'active' || s.status === 'creating').length;
   const idle = sessions.filter((s) => s.status === 'idle').length;
   const lost = sessions.filter((s) => s.status === 'lost').length;
-  const finished = sessions.filter((s) => s.status === 'finished').length;
+  const ready = sessions.filter((s) => s.status === 'ready').length;
   const killed = sessions.filter((s) => s.status === 'killed').length;
 
   return (
@@ -19,7 +19,7 @@ export function StatusSummary({ sessions }: StatusSummaryProps) {
       <StatusDot color="bg-status-active" label="active" count={active} testId="count-active" />
       <StatusDot color="bg-status-idle" label="idle" count={idle} testId="count-idle" />
       <StatusDot color="bg-status-lost" label="lost" count={lost} testId="count-lost" />
-      <StatusDot color="bg-status-finished" label="done" count={finished} testId="count-finished" />
+      <StatusDot color="bg-status-ready" label="done" count={ready} testId="count-ready" />
       <StatusDot color="bg-status-killed" label="killed" count={killed} testId="count-killed" />
     </div>
   );

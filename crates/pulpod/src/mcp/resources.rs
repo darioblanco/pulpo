@@ -72,9 +72,9 @@ async fn read_cluster_status(mcp: &PulpoMcp, uri: &str) -> Result<ReadResourceRe
         .count();
 
     let running_count = by_status.get("active").copied().unwrap_or(0);
-    let completed_count = by_status.get("finished").copied().unwrap_or(0);
+    let completed_count = by_status.get("ready").copied().unwrap_or(0);
     let summary = format!(
-        "{total} sessions ({running_count} active, {completed_count} finished). {available_count} nodes online."
+        "{total} sessions ({running_count} active, {completed_count} ready). {available_count} nodes online."
     );
 
     let peer_list: Vec<_> = peers

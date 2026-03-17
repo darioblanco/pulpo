@@ -101,7 +101,13 @@ pub struct WatchdogConfigResponse {
     pub idle_timeout_secs: u64,
     pub idle_action: String,
     #[serde(default)]
-    pub finished_ttl_secs: u64,
+    pub ready_ttl_secs: u64,
+    #[serde(default = "default_adopt_tmux")]
+    pub adopt_tmux: bool,
+}
+
+const fn default_adopt_tmux() -> bool {
+    true
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -182,7 +188,8 @@ pub struct UpdateWatchdogRequest {
     pub breach_count: Option<u32>,
     pub idle_timeout_secs: Option<u64>,
     pub idle_action: Option<String>,
-    pub finished_ttl_secs: Option<u64>,
+    pub ready_ttl_secs: Option<u64>,
+    pub adopt_tmux: Option<bool>,
 }
 
 /// Update request for notification settings.
@@ -250,7 +257,8 @@ mod tests {
                 breach_count: 3,
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
-                finished_ttl_secs: 0,
+                ready_ttl_secs: 0,
+                adopt_tmux: true,
             },
             notifications: NotificationsConfigResponse {
                 discord: None,

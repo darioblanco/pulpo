@@ -10,14 +10,14 @@ export function HistoryPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<ListSessionsParams>({ status: 'finished,killed' });
+  const [filter, setFilter] = useState<ListSessionsParams>({ status: 'ready,killed' });
 
   const fetchSessions = useCallback(async (params: ListSessionsParams) => {
     setLoading(true);
     try {
       const data = await getSessions({
         ...params,
-        status: params.status || 'finished,killed',
+        status: params.status || 'ready,killed',
       });
       setSessions(data);
       setError(null);

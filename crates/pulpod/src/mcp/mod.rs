@@ -53,7 +53,7 @@ pub struct SpawnSessionParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListSessionsParams {
-    /// Filter by status (creating, active, finished, killed, lost).
+    /// Filter by status (creating, active, ready, killed, lost).
     pub status: Option<String>,
     /// Target node name. If omitted, queries locally.
     pub node: Option<String>,
@@ -373,7 +373,7 @@ impl PulpoMcp {
                 Ok(Some(session)) => {
                     let is_terminal = matches!(
                         session.status,
-                        SessionStatus::Finished | SessionStatus::Killed | SessionStatus::Lost
+                        SessionStatus::Ready | SessionStatus::Killed | SessionStatus::Lost
                     );
                     if is_terminal {
                         let output = self.fetch_output(session_id, node, output_lines).await;
@@ -508,7 +508,7 @@ impl PulpoMcp {
 
     #[tool(
         name = "list_sessions",
-        description = "List all sessions, optionally filtered by status (active, finished, killed, lost)."
+        description = "List all sessions, optionally filtered by status (active, ready, killed, lost)."
     )]
     async fn list_sessions(&self, Parameters(params): Parameters<ListSessionsParams>) -> String {
         let result = if self.is_local(params.node.as_deref()) {
@@ -656,7 +656,7 @@ impl PulpoMcp {
 
     #[tool(
         name = "wait_for_session",
-        description = "Poll a session until it reaches a terminal status (finished, killed, lost) or times out. Returns the final session state, last output lines, and whether it timed out. Useful for autonomous workflows that need to wait for a session to finish."
+        description = "Poll a session until it reaches a terminal status (ready, killed, lost) or times out. Returns the final session state, last output lines, and whether it timed out. Useful for autonomous workflows that need to wait for a session to finish."
     )]
     async fn wait_for_session(
         &self,
@@ -1682,7 +1682,7 @@ mod tests {
                 workdir: "/tmp".into(),
                 command: "echo hello".into(),
                 description: Some("test".into()),
-                status: SessionStatus::Finished,
+                status: SessionStatus::Ready,
                 exit_code: Some(0),
                 backend_session_id: None,
                 output_snapshot: None,
@@ -1803,7 +1803,7 @@ mod tests {
                 workdir: "/tmp".into(),
                 command: "echo hello".into(),
                 description: Some("test".into()),
-                status: SessionStatus::Finished,
+                status: SessionStatus::Ready,
                 exit_code: None,
                 backend_session_id: None,
                 output_snapshot: None,
@@ -2039,7 +2039,7 @@ mod tests {
             workdir: "/tmp/remote".into(),
             command: "echo hello".into(),
             description: Some("done".into()),
-            status: SessionStatus::Finished,
+            status: SessionStatus::Ready,
             exit_code: Some(0),
             backend_session_id: None,
             output_snapshot: None,
@@ -2325,7 +2325,7 @@ mod tests {
         let result = mcp.wait_for_session(Parameters(params)).await;
         let wait: WaitResult = serde_json::from_str(&result).unwrap();
         assert!(!wait.timed_out);
-        assert_eq!(wait.session.status, SessionStatus::Finished);
+        assert_eq!(wait.session.status, SessionStatus::Ready);
         // Remote path returns empty output (line 484)
         assert!(wait.output.is_empty());
     }
@@ -3126,7 +3126,7 @@ mod tests {
         let result = mcp.spawn_and_wait(Parameters(params)).await;
         let wait: WaitResult = serde_json::from_str(&result).unwrap();
         assert!(!wait.timed_out);
-        assert_eq!(wait.session.status, SessionStatus::Finished);
+        assert_eq!(wait.session.status, SessionStatus::Ready);
         // Remote returns empty output
         assert!(wait.output.is_empty());
     }

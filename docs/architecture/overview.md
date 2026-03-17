@@ -36,7 +36,7 @@
 
 Sessions move through explicit states with clear transitions:
 
-**Creating** → **Active** ⇄ **Idle** → **Finished** → (TTL) → **Killed**
+**Creating** → **Active** ⇄ **Idle** → **Ready** → (TTL) → **Killed**
 
 The watchdog drives transitions by monitoring terminal output, detecting agent exit markers, and enforcing memory/idle policies. See [Session Lifecycle](/operations/session-lifecycle) for the full state machine.
 
@@ -72,7 +72,7 @@ Session spawn → resolve_ink → build_command → tmux create
        ↓                                                                           ↓
    Watchdog ←── check output ──────────────────────────────────────────── terminal output
        ↓
-  State transitions (active ⇄ idle → finished/killed/lost)
+  State transitions (active ⇄ idle → ready/killed/lost)
        ↓
   SSE events → web UI / Discord / webhooks
 ```

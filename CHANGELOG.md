@@ -5,7 +5,7 @@
 
 ### Features
 
-* always use Ghostty terminal, auto-resume for lost/finished sessions ([5bbd2ae](https://github.com/darioblanco/pulpo/commit/5bbd2ae72f6eaa5897442bf1cf91734ca693e142))
+* always use Ghostty terminal, auto-resume for lost/ready sessions ([5bbd2ae](https://github.com/darioblanco/pulpo/commit/5bbd2ae72f6eaa5897442bf1cf91734ca693e142))
 * show git hash in version output to distinguish source vs release ([79e242f](https://github.com/darioblanco/pulpo/commit/79e242f9b9cfae87d84b364cb2b176cf7d5adcdd))
 * **web:** make Ocean the home page and use TerminalView in attach modal ([5c11516](https://github.com/darioblanco/pulpo/commit/5c115168525c73fe00cf196f6defdaea743adbfa))
 
@@ -75,8 +75,8 @@
 * **docker:** add Tailscale sidecar compose profile ([a5da0a8](https://github.com/darioblanco/pulpo/commit/a5da0a88124ea8e05a1a46528dcb05e32bacfdda))
 * live watchdog config reload via watch channel ([3c397bc](https://github.com/darioblanco/pulpo/commit/3c397bc93574469d8287cbaf2d7829f21f7f2139))
 * provider availability detection, compatibility matrix, and bare shell sessions ([33ef3c1](https://github.com/darioblanco/pulpo/commit/33ef3c1891db44b69e5c43c1c9748bc7a932206b))
-* **session:** finished detection on agent exit marker ([5d4c1d2](https://github.com/darioblanco/pulpo/commit/5d4c1d2de95d6a82f3dea6af30bf9dc5b05149c3))
-* **session:** finished TTL cleanup and resume semantics ([36ad150](https://github.com/darioblanco/pulpo/commit/36ad15037374f57b68bda928b5aec5de9fd27fdb))
+* **session:** ready detection on agent exit marker ([5d4c1d2](https://github.com/darioblanco/pulpo/commit/5d4c1d2de95d6a82f3dea6af30bf9dc5b05149c3))
+* **session:** ready TTL cleanup and resume semantics ([36ad150](https://github.com/darioblanco/pulpo/commit/36ad15037374f57b68bda928b5aec5de9fd27fdb))
 * **session:** idle detection with Active ⇄ Idle state transitions ([68bf3d7](https://github.com/darioblanco/pulpo/commit/68bf3d7e5a237728db7b17e885a2d34e7ee8a285))
 * **web:** real-time culture updates via SSE events ([a093e9d](https://github.com/darioblanco/pulpo/commit/a093e9df382a9c7cf70ad0f66aac64927ce0089c))
 

@@ -10,7 +10,7 @@ pulpo attach <NAME>                       Attach to tmux session
 pulpo input <NAME> [TEXT]                 Send text input to a session
 pulpo kill <NAME>                         Kill a running session
 pulpo delete <NAME>                       Delete session record (alias: rm)
-pulpo resume <NAME>                       Resume a lost or finished session (auto-attaches)
+pulpo resume <NAME>                       Resume a lost or ready session (auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions
 pulpo nodes                               List known nodes/peers
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)

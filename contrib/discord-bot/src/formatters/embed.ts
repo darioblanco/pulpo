@@ -3,7 +3,7 @@ import type { InkConfig, Session, SessionEvent } from '../api/pulpod.js';
 
 const STATUS_COLORS: Record<string, number> = {
   active: 0x2ecc71,
-  finished: 0x3498db,
+  ready: 0x3498db,
   killed: 0xe74c3c,
   lost: 0xe67e22,
   idle: 0xf59e0b,
@@ -17,7 +17,7 @@ function statusColor(status: string): number {
 function statusEmoji(status: string): string {
   const emojis: Record<string, string> = {
     active: '\u{1F7E2}',
-    finished: '\u{1F535}',
+    ready: '\u{1F535}',
     killed: '\u{1F534}',
     lost: '\u{1F7E0}',
     idle: '\u{1F7E1}',

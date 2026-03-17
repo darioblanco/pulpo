@@ -51,6 +51,12 @@ impl backend::Backend for CoverageBackend {
     fn setup_logging(&self, _: &str, _: &str) -> anyhow::Result<()> {
         Ok(())
     }
+    fn list_sessions(&self) -> anyhow::Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+    fn pane_info(&self, _: &str) -> anyhow::Result<(String, String)> {
+        Ok(("bash".into(), "/tmp".into()))
+    }
 }
 
 /// Holds shutdown senders for all background loops.
@@ -192,7 +198,8 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                         watchdog::IdleAction::Alert
                     },
                 },
-                finished_ttl_secs: config.watchdog.finished_ttl_secs,
+                ready_ttl_secs: config.watchdog.ready_ttl_secs,
+                adopt_tmux: config.watchdog.adopt_tmux,
             };
             let (wd_config_tx, wd_config_rx) = watch::channel(wd_runtime.clone());
             let (wd_shutdown_tx, wd_shutdown_rx) = watch::channel(false);
@@ -202,7 +209,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                 breach_count = wd_runtime.breach_count,
                 "Starting memory watchdog"
             );
-            let finished_ctx = watchdog::FinishedContext {
+            let ready_ctx = watchdog::ReadyContext {
                 event_tx: Some(event_tx.clone()),
                 node_name,
             };
@@ -212,7 +219,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                 Box::new(reader),
                 wd_config_rx,
                 wd_shutdown_rx,
-                finished_ctx,
+                ready_ctx,
             ));
             shutdown_handle.add_sender(wd_shutdown_tx);
             Some(wd_config_tx)
@@ -767,7 +774,7 @@ data_dir = "{}"
 
 [notifications.discord]
 webhook_url = "https://discord.com/api/webhooks/123/abc"
-events = ["finished", "killed"]
+events = ["ready", "killed"]
 "#,
                 data_dir.display()
             ),

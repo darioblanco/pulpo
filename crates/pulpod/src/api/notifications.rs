@@ -261,7 +261,7 @@ mod tests {
                 WebhookEndpointUpdateRequest {
                     name: "ci-hook".into(),
                     url: "https://example.com/hook".into(),
-                    events: vec!["finished".into()],
+                    events: vec!["ready".into()],
                     secret: Some("s3cret".into()),
                 },
                 WebhookEndpointUpdateRequest {

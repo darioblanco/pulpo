@@ -8,7 +8,7 @@ export const STATUS_LABEL_COLORS: Record<string, string> = {
   creating: '#d4a030', // amber
   idle: '#d4a030', // amber/orange
   lost: '#c87533', // darker orange
-  finished: '#34d399', // green
+  ready: '#34d399', // green
   killed: '#f87171', // red
 };
 

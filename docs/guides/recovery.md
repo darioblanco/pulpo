@@ -7,7 +7,7 @@
 | **Creating** | tmux session is being set up | No |
 | **Active** | Agent is working — terminal output is changing | No |
 | **Idle** | Agent needs attention — waiting for input or at its prompt | No |
-| **Finished** | Agent process exited — task is done | Yes (resumable) |
+| **Ready** | Agent process exited — task is done | Yes (resumable) |
 | **Killed** | Session was terminated by user, watchdog, or TTL cleanup | Yes (not resumable) |
 | **Lost** | tmux process disappeared unexpectedly (crash, reboot) | Yes (resumable) |
 
@@ -22,7 +22,7 @@ pulpo resume my-api
 
 `resume` auto-attaches to the tmux session after restarting the agent. Detach with `Ctrl-b d`.
 
-It works for **lost** (tmux gone after crash/reboot) and **finished** (agent exited normally) sessions. The session command is re-executed in a new tmux session.
+It works for **lost** (tmux gone after crash/reboot) and **ready** (agent exited normally) sessions. The session command is re-executed in a new tmux session.
 
 **Killed** sessions cannot be resumed — start a new session with `pulpo spawn`.
 
@@ -45,4 +45,4 @@ pulpo interventions <name>
 Common intervention reasons:
 - `memory_pressure` — system memory exceeded the configured threshold
 - `idle_timeout` — session was idle longer than allowed (when `idle_action = "kill"`)
-- `finished_ttl` — finished session exceeded its TTL grace period
+- `ready_ttl` — ready session exceeded its TTL grace period

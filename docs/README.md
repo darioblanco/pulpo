@@ -13,7 +13,7 @@ actions:
     type: secondary
 features:
   - title: Session Lifecycle
-    details: Explicit states (active, idle, finished, killed, lost) with resume semantics and crash recovery.
+    details: Explicit states (active, idle, ready, killed, lost) with resume semantics and crash recovery.
   - title: Multi-Node Operations
     details: Manage agents across machines from a single API/CLI/web surface. Tailscale, mDNS, and seed discovery.
   - title: Command Agnostic

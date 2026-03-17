@@ -46,7 +46,7 @@ Pulpo is lower-value if you:
 Pulpo's defensible wedge is: **agent runtime control plane for trusted self-hosted environments**.
 
 Not unique: prompting UX, code-gen quality, chat interfaces.
-Unique: cross-node session lifecycle, watchdog interventions, idle/finished/lost detection and resume semantics, command-agnostic operational API, multi-node orchestration with peer discovery, inks-based role abstraction.
+Unique: cross-node session lifecycle, watchdog interventions, idle/ready/lost detection and resume semantics, command-agnostic operational API, multi-node orchestration with peer discovery, inks-based role abstraction.
 
 ## Product Thesis
 
@@ -63,8 +63,8 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
 - `pulpod` daemon + REST API + embedded web UI
 - `pulpo` CLI
 - SQLite-backed session persistence
-- Session lifecycle: `creating`, `active`, `idle`, `finished`, `killed`, `lost`
-- Resume flow from `lost` and `finished` states
+- Session lifecycle: `creating`, `active`, `idle`, `ready`, `killed`, `lost`
+- Resume flow from `lost` and `ready` states
 - Watchdog interventions (memory + idle) with live config reload via watch channel
 - Machine-readable intervention reason codes (`InterventionCode` enum)
 - **Command-agnostic sessions**: sessions take an arbitrary shell `command` instead of a provider enum. Provider, mode, model, guard, and unrestricted fields removed. Inks simplified to `description` + `command`. Any CLI tool (Claude Code, Codex, Gemini, OpenCode, or custom scripts) can be launched via command.
@@ -78,10 +78,10 @@ Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team
 - **Integration polish**:
   - Node info completeness: real memory + GPU detection in peers endpoint
 - **Session lifecycle hardening** (S1–S5 complete): user-centric state machine with full detection
-  - S1 — State rename: Running/Completed/Dead/Stale → Active/Idle/Finished/Killed/Lost (`d71ab54`)
+  - S1 — State rename: Running/Completed/Dead/Stale → Active/Idle/Ready/Killed/Lost (`d71ab54`)
   - S2 — Idle detection: Active ⇄ Idle transitions based on output snapshots and waiting patterns (`68bf3d7`)
-  - S3 — Finished detection: `[pulpo] Agent exited` marker detection, resume from Finished (`5d4c1d2`)
-  - S4 — Lost refinement: finished TTL cleanup, resume semantics (Lost + Finished allowed, Killed blocked) (`36ad150`)
+  - S3 — Ready detection: `[pulpo] Agent exited` marker detection, resume from Ready (`5d4c1d2`)
+  - S4 — Lost refinement: ready TTL cleanup, resume semantics (Lost + Ready allowed, Killed blocked) (`36ad150`)
   - S5 — Session lifecycle documentation: full state machine reference at `docs/operations/session-lifecycle.md`, SPEC.md updated
 
 ## What's Next

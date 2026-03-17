@@ -28,7 +28,7 @@ describe('StatusSummary', () => {
     expect(screen.getByTestId('count-active').textContent).toBe('0');
     expect(screen.getByTestId('count-idle').textContent).toBe('0');
     expect(screen.getByTestId('count-lost').textContent).toBe('0');
-    expect(screen.getByTestId('count-finished').textContent).toBe('0');
+    expect(screen.getByTestId('count-ready').textContent).toBe('0');
     expect(screen.getByTestId('count-killed').textContent).toBe('0');
   });
 
@@ -38,9 +38,9 @@ describe('StatusSummary', () => {
       makeSession({ id: '2', status: 'active' }),
       makeSession({ id: '3', status: 'creating' }),
       makeSession({ id: '4', status: 'lost' }),
-      makeSession({ id: '5', status: 'finished' }),
-      makeSession({ id: '6', status: 'finished' }),
-      makeSession({ id: '7', status: 'finished' }),
+      makeSession({ id: '5', status: 'ready' }),
+      makeSession({ id: '6', status: 'ready' }),
+      makeSession({ id: '7', status: 'ready' }),
       makeSession({ id: '8', status: 'killed' }),
       makeSession({ id: '9', status: 'idle' }),
     ];
@@ -48,7 +48,7 @@ describe('StatusSummary', () => {
     expect(screen.getByTestId('count-active').textContent).toBe('3');
     expect(screen.getByTestId('count-idle').textContent).toBe('1');
     expect(screen.getByTestId('count-lost').textContent).toBe('1');
-    expect(screen.getByTestId('count-finished').textContent).toBe('3');
+    expect(screen.getByTestId('count-ready').textContent).toBe('3');
     expect(screen.getByTestId('count-killed').textContent).toBe('1');
   });
 

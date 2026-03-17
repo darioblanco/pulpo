@@ -110,7 +110,7 @@ const BEHAVIOR: Record<string, BehaviorConfig> = {
   creating: { radius: 30, speed: 15, intervalMin: 2, intervalMax: 4 },
   idle: { radius: 8, speed: 5, intervalMin: 4, intervalMax: 8 },
   lost: { radius: 8, speed: 5, intervalMin: 4, intervalMax: 8 },
-  finished: { radius: 40, speed: 10, intervalMin: 3, intervalMax: 6 },
+  ready: { radius: 40, speed: 10, intervalMin: 3, intervalMax: 6 },
   killed: { radius: 5, speed: 2, intervalMin: 5, intervalMax: 10 },
 };
 
@@ -264,7 +264,7 @@ function generateDecorations(nodes: NodeLandmark[]): Decoration[] {
 //   Active/Creating — center-left, upper water (wide swim radius)
 //   Idle            — right side, mid-water (barely moves)
 //   Lost            — lower-right (drifting near bottom)
-//   Finished        — upper-left (floats upward)
+//   Ready         — upper-left (floats upward)
 //   Killed          — bottom, near seabed (sinks)
 
 interface StatusZone {
@@ -280,7 +280,7 @@ const STATUS_ZONES: Record<string, StatusZone> = {
   creating: { xOffset: -40, yBase: SWIM_ZONE_TOP + 30, cols: 3, spacingX: 65, spacingY: 90 },
   idle: { xOffset: 130, yBase: SWIM_ZONE_TOP + 50, cols: 2, spacingX: 60, spacingY: 85 },
   lost: { xOffset: 80, yBase: SWIM_ZONE_BOTTOM - 30, cols: 2, spacingX: 60, spacingY: 80 },
-  finished: { xOffset: -80, yBase: SWIM_ZONE_TOP + 15, cols: 2, spacingX: 60, spacingY: 85 },
+  ready: { xOffset: -80, yBase: SWIM_ZONE_TOP + 15, cols: 2, spacingX: 60, spacingY: 85 },
   killed: { xOffset: 30, yBase: SWIM_ZONE_BOTTOM - 10, cols: 2, spacingX: 55, spacingY: 75 },
 };
 
@@ -541,7 +541,7 @@ export function update(world: WorldState, dt: number): void {
     }
 
     // Special status overrides
-    if (oct.status === 'finished') {
+    if (oct.status === 'ready') {
       oct.wanderTargetY = Math.max(SWIM_ZONE_TOP - 20, oct.homeY - 30);
     } else if (oct.status === 'killed') {
       oct.wanderTargetY = SWIM_ZONE_BOTTOM + 10;

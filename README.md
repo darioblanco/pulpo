@@ -22,7 +22,7 @@
 
 Coding agents are powerful, but running them across multiple machines is operationally painful. Pulpo is infrastructure that makes agent execution **reliable**, **observable**, and **controllable** — without replacing the agents themselves.
 
-- **Session lifecycle** — explicit states (`active`, `idle`, `finished`, `killed`, `lost`) with resume semantics for crash recovery.
+- **Session lifecycle** — explicit states (`active`, `idle`, `ready`, `killed`, `lost`) with resume semantics for crash recovery.
 - **Cross-node operations** — manage agents on multiple machines from a single API/CLI/web surface, with Tailscale, mDNS, or seed-based discovery.
 - **Watchdog interventions** — memory pressure detection, idle handling, and configurable kill policies with audit trails.
 - **Provider-agnostic** — Claude Code, Codex, Gemini CLI, OpenCode, or bare shell. Same lifecycle, same controls.

@@ -121,9 +121,9 @@ describe('getSessions', () => {
     const sessions: unknown[] = [];
     mockFetch.mockResolvedValue(jsonResponse(sessions));
 
-    await getSessions({ status: 'finished', search: undefined });
+    await getSessions({ status: 'ready', search: undefined });
 
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=finished', { headers: {} });
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions?status=ready', { headers: {} });
   });
 
   it('uses absolute URL when base is set', async () => {

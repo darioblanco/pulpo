@@ -323,7 +323,7 @@ impl SessionManager {
             .ok_or_else(|| anyhow!("session not found: {id}"))?;
 
         let previous_status = session.status;
-        if previous_status != SessionStatus::Lost && previous_status != SessionStatus::Finished {
+        if previous_status != SessionStatus::Lost && previous_status != SessionStatus::Ready {
             bail!("session cannot be resumed (status: {previous_status})");
         }
 
@@ -1060,7 +1060,7 @@ mod tests {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let session = mgr.create_session(make_req("test")).await.unwrap();
 
-        // Session is Active, not Lost/Finished
+        // Session is Active, not Lost/Ready
         let result = mgr.resume_session(&session.id.to_string()).await;
         assert!(result.is_err());
         assert!(

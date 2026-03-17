@@ -23,8 +23,8 @@ Primary docs:
 - /docs/operations/release-and-distribution.md
 
 Canonical runtime concepts:
-- Session states: creating, active, idle, finished, killed, lost.
-- Resume applies to lost and finished sessions. Killed sessions cannot be resumed.
+- Session states: creating, active, idle, ready, killed, lost.
+- Resume applies to lost and ready sessions. Killed sessions cannot be resumed.
 - Sessions run arbitrary shell commands — no built-in provider abstraction.
 - Inks are reusable command templates with a description and command field.
 - pulpod exposes REST and SSE on port 7433 by default.

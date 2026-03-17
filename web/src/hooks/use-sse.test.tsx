@@ -175,13 +175,13 @@ describe('useSSE', () => {
         JSON.stringify({
           session_id: 'sess-1',
           session_name: 'my-api',
-          status: 'finished',
+          status: 'ready',
           output_snippet: null,
         }),
       );
     });
 
-    expect(result.current.sessions[0].status).toBe('finished');
+    expect(result.current.sessions[0].status).toBe('ready');
   });
 
   it('setSessions updates sessions', () => {

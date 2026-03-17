@@ -108,9 +108,12 @@ pub struct WatchdogConfig {
     pub idle_timeout_secs: u64,
     #[serde(default = "default_idle_action")]
     pub idle_action: String,
-    /// Seconds after Finished before tmux shell is killed (0 = disabled).
-    #[serde(default)]
-    pub finished_ttl_secs: u64,
+    /// Seconds after Ready before tmux shell is killed (0 = disabled).
+    #[serde(default, alias = "finished_ttl_secs", alias = "exited_ttl_secs")]
+    pub ready_ttl_secs: u64,
+    /// Auto-adopt external tmux sessions into pulpo management.
+    #[serde(default = "default_adopt_tmux")]
+    pub adopt_tmux: bool,
 }
 
 impl WatchdogConfig {
@@ -146,9 +149,14 @@ impl Default for WatchdogConfig {
             breach_count: default_breach_count(),
             idle_timeout_secs: default_idle_timeout_secs(),
             idle_action: default_idle_action(),
-            finished_ttl_secs: 0,
+            ready_ttl_secs: 0,
+            adopt_tmux: default_adopt_tmux(),
         }
     }
+}
+
+const fn default_adopt_tmux() -> bool {
+    true
 }
 
 const fn default_watchdog_enabled() -> bool {
@@ -1130,7 +1138,8 @@ breach_count = 5
                 breach_count: 5,
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
-                finished_ttl_secs: 0,
+                ready_ttl_secs: 0,
+                adopt_tmux: true,
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1487,7 +1496,7 @@ data_dir = "/tmp/test"
 
 [notifications.discord]
 webhook_url = "https://discord.com/api/webhooks/123/abc"
-events = ["finished", "killed"]
+events = ["ready", "killed"]
 "#,
         )
         .unwrap();
@@ -1497,7 +1506,7 @@ events = ["finished", "killed"]
             discord.webhook_url,
             "https://discord.com/api/webhooks/123/abc"
         );
-        assert_eq!(discord.events, vec!["finished", "killed"]);
+        assert_eq!(discord.events, vec!["ready", "killed"]);
     }
 
     #[test]
@@ -1612,14 +1621,14 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
         let config = WebhookEndpointConfig {
             name: "ci".into(),
             url: "https://ci.example.com/hook".into(),
-            events: vec!["finished".into()],
+            events: vec!["ready".into()],
             secret: Some("s3cret".into()),
         };
         let toml_str = toml::to_string(&config).unwrap();
         let parsed: WebhookEndpointConfig = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.name, "ci");
         assert_eq!(parsed.url, "https://ci.example.com/hook");
-        assert_eq!(parsed.events, vec!["finished"]);
+        assert_eq!(parsed.events, vec!["ready"]);
         assert_eq!(parsed.secret, Some("s3cret".into()));
     }
 

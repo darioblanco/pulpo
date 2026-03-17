@@ -18,7 +18,7 @@ interface AttachModalProps {
 }
 
 const LIVE_STATUSES = ['active', 'idle', 'creating'];
-const RESUMABLE_STATUSES = ['lost', 'finished'];
+const RESUMABLE_STATUSES = ['lost', 'ready'];
 
 export function AttachModal({
   sessionName,

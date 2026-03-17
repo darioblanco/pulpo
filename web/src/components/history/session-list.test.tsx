@@ -24,7 +24,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
     name: 'my-api',
-    status: 'finished',
+    status: 'ready',
     command: 'Fix the bug',
     description: null,
     workdir: '/repo',

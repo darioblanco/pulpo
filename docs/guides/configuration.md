@@ -45,7 +45,7 @@ Use with: `pulpo spawn auth-review --ink reviewer`
 
 ## Watchdog
 
-The watchdog monitors sessions for memory pressure, idle detection, and finished session cleanup:
+The watchdog monitors sessions for memory pressure, idle detection, and ready session cleanup:
 
 ```toml
 [watchdog]
@@ -53,7 +53,7 @@ enabled = true                # Enable watchdog (default: true)
 check_interval_secs = 10      # How often to check (default: 10)
 idle_timeout_secs = 600        # Seconds idle before action (default: 600)
 idle_action = "alert"          # "alert" (mark idle) or "kill" (default: "alert")
-finished_ttl_secs = 0          # Seconds after Finished before kill (0 = disabled)
+ready_ttl_secs = 0             # Seconds after Ready before kill (0 = disabled)
 memory_threshold = 90          # Memory % to trigger intervention (default: 90)
 breach_count = 3               # Consecutive breaches before kill (default: 3)
 ```
@@ -65,11 +65,11 @@ See [Session Lifecycle](/operations/session-lifecycle) for how the watchdog driv
 ```toml
 [notifications.discord]
 webhook_url = "https://discord.com/api/webhooks/..."
-events = ["finished", "killed", "lost"]   # default: ["finished", "killed"]
+events = ["ready", "killed", "lost"]      # default: ["ready", "killed"]
 
 [notifications.webhook]
 url = "https://example.com/hooks/pulpo"
-events = ["finished", "killed", "lost"]
+events = ["ready", "killed", "lost"]
 ```
 
 ## Peers

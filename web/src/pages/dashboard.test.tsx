@@ -258,7 +258,7 @@ describe('DashboardPage', () => {
       {
         id: 'sess-2',
         name: 'done-task',
-        status: 'finished',
+        status: 'ready',
         command: 'Done',
         description: null,
         workdir: '/repo',
@@ -392,21 +392,21 @@ describe('DashboardPage', () => {
       expect(screen.getByTestId('count-active').textContent).toBe('1');
     });
 
-    // Now send a session event changing status to finished
+    // Now send a session event changing status to ready
     const sessionHandler = es.listeners['session']?.[0];
     expect(sessionHandler).toBeDefined();
     sessionHandler({
       data: JSON.stringify({
         session_id: 'sess-1',
         session_name: 'my-task',
-        status: 'finished',
+        status: 'ready',
         output_snippet: null,
       }),
     });
 
     // The notification processing should fire (previousRef has length > 0)
     await waitFor(() => {
-      expect(screen.getByTestId('count-finished').textContent).toBe('1');
+      expect(screen.getByTestId('count-ready').textContent).toBe('1');
     });
   });
 

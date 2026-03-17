@@ -15,6 +15,8 @@ const defaults = {
   onIdleTimeoutSecsChange: vi.fn(),
   idleAction: 'pause',
   onIdleActionChange: vi.fn(),
+  adoptTmux: true,
+  onAdoptTmuxChange: vi.fn(),
 };
 
 describe('WatchdogSettings', () => {
@@ -97,6 +99,19 @@ describe('WatchdogSettings', () => {
     render(<WatchdogSettings {...defaults} onIdleActionChange={onIdleActionChange} />);
     fireEvent.click(screen.getByTestId('idle-action-kill'));
     expect(onIdleActionChange).toHaveBeenCalledWith('kill');
+  });
+
+  it('renders adopt-tmux toggle', () => {
+    render(<WatchdogSettings {...defaults} />);
+    expect(screen.getByTestId('adopt-tmux-toggle')).toBeInTheDocument();
+    expect(screen.getByText('Auto-adopt tmux sessions')).toBeInTheDocument();
+  });
+
+  it('calls onAdoptTmuxChange when toggled', () => {
+    const onAdoptTmuxChange = vi.fn();
+    render(<WatchdogSettings {...defaults} onAdoptTmuxChange={onAdoptTmuxChange} />);
+    fireEvent.click(screen.getByTestId('adopt-tmux-toggle'));
+    expect(onAdoptTmuxChange).toHaveBeenCalledWith(false);
   });
 
   it('handles invalid number input with 0', () => {

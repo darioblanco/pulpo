@@ -5,7 +5,7 @@ import { deleteSession, downloadSessionOutput } from '@/api/client';
 import type { Session } from '@/api/types';
 
 const statusColors: Record<string, string> = {
-  finished: 'bg-status-finished',
+  ready: 'bg-status-ready',
   killed: 'bg-status-killed',
   active: 'bg-status-active',
   lost: 'bg-status-lost',

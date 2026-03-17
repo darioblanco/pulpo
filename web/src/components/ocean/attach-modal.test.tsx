@@ -87,12 +87,12 @@ describe('AttachModal', () => {
     });
   });
 
-  it('resumes finished session then shows terminal', async () => {
+  it('resumes ready session then shows terminal', async () => {
     render(
       <AttachModal
         sessionName="worker-alpha"
         sessionId="sess-1"
-        sessionStatus="finished"
+        sessionStatus="ready"
         open={true}
         onOpenChange={vi.fn()}
       />,
