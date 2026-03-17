@@ -64,6 +64,20 @@ fn build_set_mouse_command(session_name: &str) -> Command {
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
+fn build_set_clipboard_command(session_name: &str) -> Command {
+    let mut cmd = Command::new("tmux");
+    cmd.args(["set-option", "-t", session_name, "set-clipboard", "on"]);
+    cmd
+}
+
+#[cfg_attr(coverage, allow(dead_code))]
+fn build_allow_passthrough_command(session_name: &str) -> Command {
+    let mut cmd = Command::new("tmux");
+    cmd.args(["set-option", "-t", session_name, "allow-passthrough", "on"]);
+    cmd
+}
+
+#[cfg_attr(coverage, allow(dead_code))]
 fn build_send_keys_command(session_name: &str, text: &str) -> Command {
     let mut cmd = Command::new("tmux");
     cmd.args(["send-keys", "-t", session_name, text, "Enter"]);
@@ -222,6 +236,16 @@ impl Backend for TmuxBackend {
         run_tmux(
             build_set_mouse_command(backend_id),
             "enable tmux mouse mode",
+        )?;
+        // Enable clipboard forwarding for image paste support
+        run_tmux(
+            build_set_clipboard_command(backend_id),
+            "enable tmux clipboard",
+        )?;
+        // Allow escape sequence passthrough (image paste, OSC sequences)
+        run_tmux(
+            build_allow_passthrough_command(backend_id),
+            "enable tmux passthrough",
         )?;
         Ok(())
     }
@@ -394,6 +418,28 @@ mod tests {
         assert_eq!(cmd.get_program(), "tmux");
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(args, vec!["set-option", "-t", "pulpo-test", "mouse", "on"]);
+    }
+
+    #[test]
+    fn test_build_set_clipboard_command() {
+        let cmd = build_set_clipboard_command("pulpo-test");
+        assert_eq!(cmd.get_program(), "tmux");
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            vec!["set-option", "-t", "pulpo-test", "set-clipboard", "on"]
+        );
+    }
+
+    #[test]
+    fn test_build_allow_passthrough_command() {
+        let cmd = build_allow_passthrough_command("pulpo-test");
+        assert_eq!(cmd.get_program(), "tmux");
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            vec!["set-option", "-t", "pulpo-test", "allow-passthrough", "on"]
+        );
     }
 
     #[test]

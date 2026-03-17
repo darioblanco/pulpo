@@ -153,10 +153,15 @@ endif
 
 # ─── Install & Deploy ────────────────────────────────────────────────────────
 
-# Install binaries to /usr/local/bin
+# Install binaries to /usr/local/bin (uses sudo if needed)
 install: build
-	cp target/release/pulpod /usr/local/bin/
-	cp target/release/pulpo /usr/local/bin/
+	@if [ -w /usr/local/bin ]; then \
+		cp target/release/pulpod /usr/local/bin/; \
+		cp target/release/pulpo /usr/local/bin/; \
+	else \
+		sudo cp target/release/pulpod /usr/local/bin/; \
+		sudo cp target/release/pulpo /usr/local/bin/; \
+	fi
 
 # Install and load launchd service (macOS)
 service-install:
