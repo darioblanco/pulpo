@@ -1,158 +1,169 @@
 # Pulpo Roadmap
 
-Strategic direction for Pulpo as an open-source control plane for coding agents.
+Strategic direction for Pulpo as the runtime infrastructure for coding agents.
 
 ## Mission
 
-Pulpo is infrastructure for agent runtime operations on your own machines.
+Pulpo is the place where coding agents run — across your machines, in the background, managed from your phone.
 
-It is not trying to be the best coding agent. It is the layer that makes fast-moving agents (Claude Code, Codex, and others) reliable, observable, and controllable across nodes.
+It is not an agent framework, not a prompt tool, not an orchestration layer. It is the infrastructure that makes agents reliable, observable, and manageable when you stop watching them.
 
-## Market Reality (2026)
+## The Shift We're Building For
 
-Agent capabilities are commoditizing quickly:
+Coding agents are evolving from **pair programmers** (you watch, they code) to **background workers** (you describe, walk away, come back to a PR). This shift creates infrastructure needs that no agent tool solves:
 
-- Claude Code is a full-featured terminal/IDE/web workflow with MCP and multi-agent patterns.
-- Codex CLI is a local coding agent in terminal form.
-- GitHub Copilot now includes coding-agent workflows tied to issues/PRs.
-- OpenHands offers CLI, local GUI, cloud, and enterprise deployment paths.
-- Aider remains a strong terminal-first pair-programming tool.
-- Continue is pushing source-controlled agent checks in CI.
-- SWE-agent is focused on benchmarked issue-to-fix automation.
+- **Where do agents run?** Not your laptop — it sleeps, runs out of battery, you close the lid. They need servers, and you need to manage those servers.
+- **How do you know what's happening?** You're at dinner. Is the migration agent stuck? Did the refactor finish? You need visibility without being attached.
+- **What happens when things go wrong?** Memory pressure, stuck agents, crashed machines. Someone (or something) needs to supervise.
+- **Who ran what, when?** As agents produce more code, audit trails matter.
 
-Implication: Pulpo should not compete on core agent intelligence or IDE UX. It should win on runtime operations for self-hosted, multi-node agent execution.
+This is the gap between "run an agent in your terminal" and "run agents as infrastructure." Pulpo fills it.
 
-## Is Pulpo Helpful? Is It Unique?
+## Competitive Landscape (March 2026)
 
-### Helpful when
+**Agent TUI managers** (Agent Deck 1.6k stars, NTM 191 stars): Manage multiple agent sessions in a terminal. Single-machine, no API, no remote access. Pulpo's multi-node + web UI + API are the differentiators.
 
-Pulpo is high-value if you:
+**Orchestration frameworks** (Gas Town 12.4k stars): Multi-agent coordination — decompose work, assign to agents, track progress. Complementary to Pulpo, not competitive. Gas Town doesn't care where agents run; Pulpo doesn't care how they coordinate.
 
-- run agents on multiple machines,
-- need sessions to survive daemon restarts/reboots,
-- want intervention and recovery semantics you can audit,
-- need a unified API/CLI/web surface independent of provider churn.
+**Agent tools** (Claude Code, Codex, Aider, OpenHands): The agents themselves. Pulpo runs them all, competes with none.
 
-### Not especially helpful when
-
-Pulpo is lower-value if you:
-
-- use one laptop and one agent surface,
-- only need pair-programming inside an IDE,
-- do not need operational controls or history beyond local agent tooling.
-
-### Unique wedge
-
-Pulpo's defensible wedge is: **agent runtime control plane for trusted self-hosted environments**.
-
-Not unique: prompting UX, code-gen quality, chat interfaces.
-Unique: cross-node session lifecycle, watchdog interventions, idle/ready/lost detection and resume semantics, command-agnostic operational API, multi-node orchestration with peer discovery, inks-based role abstraction.
-
-## Product Thesis
-
-Pulpo should be the "Kubernetes-lite for coding agent sessions" on personal/team infrastructure:
-
-- predictable lifecycle,
-- explicit failure states,
-- policy and budget guardrails,
-- audit-friendly event streams,
-- command-agnostic session portability.
+**Pulpo's wedge: multi-node runtime + mobile management + API surface.** Nobody else lets you spawn an agent on a remote server from your phone and get notified when it's done.
 
 ## Shipped
 
 - `pulpod` daemon + REST API + embedded web UI
-- `pulpo` CLI
-- SQLite-backed session persistence
-- Session lifecycle: `creating`, `active`, `idle`, `ready`, `killed`, `lost`
-- Resume flow from `lost` and `ready` states
-- Watchdog interventions (memory + idle) with live config reload via watch channel
-- Machine-readable intervention reason codes (`InterventionCode` enum)
-- **Command-agnostic sessions**: sessions take an arbitrary shell `command` instead of a provider enum. Provider, mode, model, guard, and unrestricted fields removed. Inks simplified to `description` + `command`. Any CLI tool (Claude Code, Codex, Gemini, OpenCode, or custom scripts) can be launched via command.
-- Multi-node support (manual peers + mDNS in `public` mode)
-- Full config surface via API/UI (watchdog, notifications, per-session overrides, bind mode)
-- SSE events (`/api/v1/events`)
-- MCP server mode (`pulpod mcp`)
-- Scheduling via crontab wrapper
-- Discord integration in `contrib/`
-- Inks: 2-field universal roles (description, command)
-- **Integration polish**:
-  - Node info completeness: real memory + GPU detection in peers endpoint
-- **Session lifecycle hardening** (S1–S5 complete): user-centric state machine with full detection
-  - S1 — State rename: Running/Completed/Dead/Stale → Active/Idle/Ready/Killed/Lost (`d71ab54`)
-  - S2 — Idle detection: Active ⇄ Idle transitions based on output snapshots and waiting patterns (`68bf3d7`)
-  - S3 — Ready detection: `[pulpo] Agent exited` marker detection, resume from Ready (`5d4c1d2`)
-  - S4 — Lost refinement: ready TTL cleanup, resume semantics (Lost + Ready allowed, Killed blocked) (`36ad150`)
-  - S5 — Session lifecycle documentation: full state machine reference at `docs/operations/session-lifecycle.md`, SPEC.md updated
+- `pulpo` CLI with attach, spawn, resume, kill, logs, schedule
+- SQLite-backed session persistence with full lifecycle state machine
+- Session statuses: `creating`, `active`, `idle`, `ready`, `killed`, `lost`
+- Resume from `lost` and `ready` states
+- Watchdog: memory pressure intervention, idle detection, ready TTL cleanup
+- Auto-adopt: discovers external tmux sessions and brings them under management
+- Command-agnostic sessions (any CLI tool, any command)
+- Inks: reusable command templates with description + command
+- Multi-node: Tailscale, mDNS, seed-based peer discovery
+- SSE event stream, MCP server, Discord bot, webhook notifications
+- Crontab-based scheduling
+- Ocean gamification UI with canvas rendering
+- Homebrew distribution (`brew install darioblanco/tap/pulpo`)
 
 ## What's Next
 
-## Future Directions
+### Phase 1: Mobile-First Experience
 
-### Fleet observability
+Make Pulpo the best way to manage agents from your phone. This is the strongest differentiator — no competitor has it.
 
-- Aggregated metrics across nodes (session counts, resource usage)
-- Cross-node session routing and load balancing
-- Fleet-wide dashboard view
+**P1.1 — PWA**
+- Web app manifest + service worker (via `vite-plugin-pwa`)
+- App icons generated from logo.png (192x192, 512x512, apple-touch-icon)
+- Install prompt UI ("Add to Home Screen")
+- Cache app shell for instant load, network-first for API calls
+- Standalone display mode (no browser chrome)
 
-### Packaging and distribution
+**P1.2 — Push notifications**
+- Service worker Push API integration
+- Notify on: session ready, session killed, watchdog intervention
+- Replace browser-only Notification API with SW-based push
+- Settings toggle for notification preferences
 
-- Homebrew formula for macOS
-- Docker image for Linux deployment
-- Streamlined onboarding (guided setup wizard)
-- README and documentation for open-source readiness
+**P1.3 — Default-to-shell spawn**
+- `pulpo spawn my-session` with no command → opens user's `$SHELL`
+- Session is tracked, attachable, manageable
+- Classified as `ready` (no active agent work)
+- Removes the "command is required" friction
 
-### Real-world hardening
+### Phase 2: Seamless Remote Spawn
 
-- Multi-node stress testing with concurrent sessions
-- Provider binary upgrade resilience (agent binary updated mid-session)
+Make "spawn agent on another machine" as easy as spawning locally.
 
-## Parked (revisit when demanded by real usage)
+**P2.1 — Cross-node spawn from CLI**
+- `pulpo spawn --node server fix-api -- claude -p 'fix the bug'`
+- CLI proxies the request to the target node's API
+- Auto-discovers node address from peer registry
+- Token forwarding for authenticated remote nodes
 
-- MCP server expansion — the existing `pulpod mcp` STDIO server (12 tools, 4 resources) works and is well-tested, but the industry is trending toward REST APIs over MCP for agent integration. Keep as-is; no new MCP tools until demand proves otherwise. STDIO-only transport means no additional attack surface beyond local process access.
-- Node labels/tags and scheduling constraints — useful at fleet scale, premature now
-- Per-ink policy bundles — inks already cover the common case; per-ink budgets/limits add complexity without clear demand
-- SLO metrics endpoint — observability for its own sake; the dashboard already shows what matters
-- Team-friendly multi-user auth — only if real users demand it
-- Docker deployment profiles — only if self-hosted adoption grows
-- Restart-required UI for bind/port changes — narrow edge case, self-diagnosing
+**P2.2 — Fleet dashboard**
+- Single view showing all nodes and all sessions across the fleet
+- Node health cards (CPU, memory, session count)
+- Spawn-on-node from the web UI (node selector in spawn dialog)
+- Session filtering by node
 
-## De-prioritized / Removed
+**P2.3 — Smart node selection**
+- `pulpo spawn --auto fix-api -- claude` → picks the least-loaded node
+- Simple heuristic: lowest memory usage + fewest active sessions
+- Opt-in, not default (explicit is better than magic)
 
-- Voice-command surfaces as a core product track
-- Broad chat-platform feature expansion beyond control-plane needs
-- Competing directly with IDE-native agent UX
-- Building a monolithic all-in-one agent framework
-- Event replay/export endpoint — speculative, no clear consumer
-- Adapter contract tests against real provider binaries — fragile, environment-dependent
+### Phase 3: Background Agent Operations
 
-These may exist as contrib experiments, but they are not core sequencing drivers.
+Make agents reliable when nobody is watching.
 
-## Success Criteria (to validate the thesis)
+**P3.1 — Session cost tracking**
+- Track wall-clock time per session
+- Configurable cost-per-hour estimate (user sets their API cost rate)
+- Dashboard shows cumulative cost per session, per day, per node
+- Budget alerts via notifications
 
-Pulpo is succeeding if we can show:
+**P3.2 — Enhanced scheduling**
+- `pulpo schedule` with node targeting: run nightly jobs on the beefy server
+- Schedule status in dashboard (next run, last run, last result)
+- Retry on failure with configurable backoff
 
-- Resume success rate after restart/reboot is consistently high
-- Low false-positive watchdog kills and clear intervention explanations
-- Time-to-recover from agent/node failure is materially reduced
-- Users run mixed agent commands through one operational surface
-- Multi-node usage increases vs single-node-only usage
+**P3.3 — Output-based completion detection**
+- Detect PR URLs in agent output → link in dashboard
+- Detect error patterns → auto-alert
+- Configurable output matchers (regex → action)
 
-If these metrics do not improve, the roadmap should be reconsidered.
+### Phase 4: Team Readiness
+
+When it's not just you anymore.
+
+**P4.1 — Session ownership and audit**
+- Track who spawned each session (user identity from token)
+- Audit log: who did what, when, on which node
+- Read-only dashboard access for observers
+
+**P4.2 — Resource policies**
+- Per-node session limits (max 5 concurrent agents)
+- Memory reservation per session
+- Auto-kill sessions exceeding time limits
+
+**P4.3 — Shared ink library**
+- Sync inks across nodes automatically
+- Ink versioning (so a team agrees on standard workflows)
+
+## Parked
+
+Revisit when demanded by real usage, not by speculation.
+
+- **Agent-to-agent communication** — orchestration frameworks (Gas Town) handle this better. Pulpo is infrastructure, not workflow.
+- **MCP server expansion** — the existing STDIO server (12 tools, 4 resources) works. REST APIs are winning over MCP for integration. Keep as-is.
+- **Multi-user auth** — only if team adoption materializes.
+- **Docker runtime backend** — only if container-based agent execution shows demand.
+- **Node labels/scheduling constraints** — useful at fleet scale, premature now.
+- **SLO metrics / Prometheus endpoint** — observability for its own sake; dashboard shows what matters.
+
+## Removed
+
+- Kubernetes-lite framing — too grandiose for the actual product. Pulpo is infrastructure, not a platform.
+- Voice-command surfaces
+- IDE-native UX competition
+- Event replay/export endpoint
+- Adapter contract tests against provider binaries
+
+## Success Criteria
+
+Pulpo is succeeding if:
+
+- You spawn agents on remote machines without SSH
+- You check agent status from your phone while away from your desk
+- Watchdog catches runaway agents before they burn through your API budget
+- Sessions survive machine reboots and you resume them without losing context
+- Multiple agents run overnight and you wake up to PRs, not crashed terminals
 
 ## Architectural Principles
 
-- Infrastructure/runtime layer, not agent intelligence layer
-- Command-agnostic sessions over provider lock-in
-- Reliability before feature breadth
-- Explicit, auditable failure semantics
+- Infrastructure layer, not intelligence layer
+- Command-agnostic: runs any agent, any command
+- Multi-node native: sessions are not tied to localhost
+- Mobile-first web UI: the phone is the primary management surface
+- Explicit failure semantics: every state transition is observable and auditable
 - Zero-config local start, progressive operational depth
-
-## Sources informing this refactor
-
-- OpenAI Codex CLI repo/docs: https://github.com/openai/codex
-- Anthropic Claude Code docs: https://docs.anthropic.com/en/docs/claude-code/overview
-- GitHub Copilot agents docs: https://docs.github.com/en/copilot/how-tos/use-copilot-agents
-- OpenHands docs/repo: https://docs.all-hands.dev/ and https://github.com/All-Hands-AI/OpenHands
-- Aider docs/repo: https://aider.chat/docs/ and https://github.com/Aider-AI/aider
-- Continue repo/docs: https://github.com/continuedev/continue
-- SWE-agent repo: https://github.com/SWE-agent/SWE-agent
