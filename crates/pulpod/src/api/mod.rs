@@ -7,6 +7,7 @@ pub mod inks;
 pub mod node;
 pub mod notifications;
 pub mod peers;
+pub mod push;
 
 pub mod routes;
 pub mod sessions;
@@ -24,6 +25,7 @@ use tokio::sync::{RwLock, broadcast};
 use crate::config::Config;
 use crate::peers::PeerRegistry;
 use crate::session::manager::SessionManager;
+use crate::store::Store;
 use crate::watchdog::WatchdogRuntimeConfig;
 
 const EVENT_CHANNEL_CAPACITY: usize = 256;
@@ -33,6 +35,7 @@ pub struct AppState {
     pub config_path: PathBuf,
     pub session_manager: SessionManager,
     pub peer_registry: PeerRegistry,
+    pub store: Store,
     /// On-demand peer prober with TTL cache. Only present in production builds;
     /// excluded under coverage because the monomorphized
     /// `CachedProber<HttpPeerProber>` methods are never exercised (the handler
@@ -50,6 +53,7 @@ impl AppState {
         config: Config,
         session_manager: SessionManager,
         peer_registry: PeerRegistry,
+        store: Store,
     ) -> Arc<Self> {
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         Arc::new(Self {
@@ -57,6 +61,7 @@ impl AppState {
             config_path: PathBuf::new(),
             session_manager,
             peer_registry,
+            store,
             #[cfg(not(coverage))]
             cached_prober: None,
             event_tx,
@@ -70,12 +75,14 @@ impl AppState {
         session_manager: SessionManager,
         peer_registry: PeerRegistry,
         event_tx: broadcast::Sender<PulpoEvent>,
+        store: Store,
     ) -> Arc<Self> {
         Arc::new(Self {
             config: Arc::new(RwLock::new(config)),
             config_path,
             session_manager,
             peer_registry,
+            store,
             #[cfg(not(coverage))]
             cached_prober: Some(crate::peers::health::CachedProber::new(
                 crate::peers::health::HttpPeerProber::new(),
@@ -93,12 +100,14 @@ impl AppState {
         peer_registry: PeerRegistry,
         event_tx: broadcast::Sender<PulpoEvent>,
         watchdog_config_tx: Option<tokio::sync::watch::Sender<WatchdogRuntimeConfig>>,
+        store: Store,
     ) -> Arc<Self> {
         Arc::new(Self {
             config: Arc::new(RwLock::new(config)),
             config_path,
             session_manager,
             peer_registry,
+            store,
             #[cfg(not(coverage))]
             cached_prober: Some(crate::peers::health::CachedProber::new(
                 crate::peers::health::HttpPeerProber::new(),
@@ -168,9 +177,10 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry);
+        let state = AppState::new(config, manager, peer_registry, store);
         assert_eq!(state.config.read().await.node.name, "test");
         assert!(state.config_path.as_os_str().is_empty());
     }
@@ -196,7 +206,8 @@ mod tests {
         };
         let config_path = tmpdir.path().join("config.toml");
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let state = AppState::with_event_tx(
@@ -205,6 +216,7 @@ mod tests {
             manager,
             peer_registry,
             event_tx,
+            store,
         );
         assert_eq!(state.config.read().await.node.name, "test");
         assert_eq!(state.config_path, config_path);
@@ -242,7 +254,8 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let initial = crate::watchdog::WatchdogRuntimeConfig {
@@ -261,6 +274,7 @@ mod tests {
             peer_registry,
             event_tx,
             Some(config_tx),
+            store,
         );
         assert!(state.watchdog_config_tx.is_some());
     }
@@ -285,7 +299,8 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let state = AppState::with_watchdog_tx(
@@ -295,6 +310,7 @@ mod tests {
             peer_registry,
             event_tx,
             None,
+            store,
         );
         assert!(state.watchdog_config_tx.is_none());
     }
@@ -319,9 +335,10 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry);
+        let state = AppState::new(config, manager, peer_registry, store);
         let _router = router(state);
     }
 }

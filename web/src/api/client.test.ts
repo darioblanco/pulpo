@@ -25,6 +25,9 @@ import {
   resolveWsUrl,
   resolveBaseUrl,
   authHeaders,
+  getVapidKey,
+  subscribePush,
+  unsubscribePush,
 } from './client';
 
 const mockFetch = vi.fn();
@@ -672,5 +675,72 @@ describe('resolveWsUrl', () => {
     testToken = 'remote-token';
     const url = resolveWsUrl('/api/v1/sessions/s1/stream');
     expect(url).toBe('ws://mac-mini:7433/api/v1/sessions/s1/stream?token=remote-token');
+  });
+});
+
+describe('getVapidKey', () => {
+  it('fetches /api/v1/push/vapid-key', async () => {
+    const resp = { public_key: 'BNhJo...' };
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(resp) });
+
+    const result = await getVapidKey();
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/push/vapid-key', { headers: {} });
+    expect(result).toEqual(resp);
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({ ok: false });
+
+    await expect(getVapidKey()).rejects.toThrow('Failed to get VAPID key');
+  });
+});
+
+describe('subscribePush', () => {
+  it('posts subscription to /api/v1/push/subscribe', async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+
+    const subscription: PushSubscriptionJSON = {
+      endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+      keys: { p256dh: 'key-data', auth: 'auth-data' },
+    };
+    await subscribePush(subscription);
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+        keys: { p256dh: 'key-data', auth: 'auth-data' },
+      }),
+    });
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({ ok: false });
+
+    await expect(
+      subscribePush({ endpoint: 'https://example.com', keys: { p256dh: 'k', auth: 'a' } }),
+    ).rejects.toThrow('Failed to subscribe');
+  });
+});
+
+describe('unsubscribePush', () => {
+  it('posts endpoint to /api/v1/push/unsubscribe', async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await unsubscribePush('https://fcm.googleapis.com/fcm/send/abc');
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/push/unsubscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: 'https://fcm.googleapis.com/fcm/send/abc' }),
+    });
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({ ok: false });
+
+    await expect(unsubscribePush('https://example.com')).rejects.toThrow('Failed to unsubscribe');
   });
 });

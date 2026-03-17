@@ -9,7 +9,11 @@ export default defineConfig({
     tailwindcss(),
     react(),
     VitePWA({
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
       registerType: 'autoUpdate',
+      injectRegister: 'auto',
       includeAssets: ['favicon.png', 'logo.png', 'icons/*.png'],
       manifest: {
         name: 'Pulpo',
@@ -37,29 +41,6 @@ export default defineConfig({
             sizes: '512x512',
             type: 'image/png',
             purpose: 'maskable',
-          },
-        ],
-      },
-      workbox: {
-        // Cache the app shell (HTML, JS, CSS) — exclude sprites (loaded via runtime cache)
-        globPatterns: ['**/*.{js,css,html,woff2}', 'favicon.png', 'icons/*.png'],
-        // Network-first for API calls — always try live data
-        runtimeCaching: [
-          {
-            urlPattern: /^\/api\//,
-            handler: 'NetworkOnly',
-          },
-          {
-            // Cache sprite images (they don't change often)
-            urlPattern: /\/sprites\//,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'sprites',
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
-              },
-            },
           },
         ],
       },

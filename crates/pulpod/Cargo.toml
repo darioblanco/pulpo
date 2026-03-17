@@ -56,6 +56,8 @@ sha2.workspace = true
 hex.workspace = true
 pty-process.workspace = true
 rustix.workspace = true
+p256.workspace = true
+web-push.workspace = true
 
 [dev-dependencies]
 axum-test = "17"

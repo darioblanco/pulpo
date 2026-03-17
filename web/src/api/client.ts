@@ -11,6 +11,7 @@ import type {
   InksResponse,
   CreateSessionRequest,
   CreateSessionResponse,
+  VapidPublicKeyResponse,
 } from './types';
 
 let getBaseUrl: () => string = () => '';
@@ -231,4 +232,31 @@ export async function updateRemoteConfig(
     throw new Error(err.error || 'Failed to update remote config');
   }
   return res.json();
+}
+
+export async function getVapidKey(): Promise<VapidPublicKeyResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/push/vapid-key`);
+  if (!res.ok) throw new Error('Failed to get VAPID key');
+  return res.json();
+}
+
+export async function subscribePush(subscription: PushSubscriptionJSON): Promise<void> {
+  const res = await authFetch(`${resolveBaseUrl()}/push/subscribe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      endpoint: subscription.endpoint,
+      keys: subscription.keys,
+    }),
+  });
+  if (!res.ok) throw new Error('Failed to subscribe');
+}
+
+export async function unsubscribePush(endpoint: string): Promise<void> {
+  const res = await authFetch(`${resolveBaseUrl()}/push/unsubscribe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ endpoint }),
+  });
+  if (!res.ok) throw new Error('Failed to unsubscribe');
 }

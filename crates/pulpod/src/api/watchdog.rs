@@ -162,7 +162,8 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -180,6 +181,7 @@ mod tests {
             },
             manager,
             peer_registry,
+            store,
         )
     }
 
@@ -189,7 +191,8 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let config_path = tmpdir.path().join("config.toml");
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
@@ -211,6 +214,7 @@ mod tests {
             manager,
             peer_registry,
             event_tx,
+            store,
         )
     }
 
@@ -380,7 +384,8 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let initial = crate::watchdog::WatchdogRuntimeConfig {
             threshold: 90,
@@ -411,6 +416,7 @@ mod tests {
             peer_registry,
             event_tx,
             Some(config_tx),
+            store,
         );
 
         // Update threshold via API

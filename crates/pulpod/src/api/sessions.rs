@@ -315,7 +315,8 @@ mod tests {
         store.migrate().await.unwrap();
         let pool = store.pool().clone();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -333,6 +334,7 @@ mod tests {
             },
             manager,
             peer_registry,
+            store,
         );
         (state, pool)
     }
@@ -595,7 +597,8 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(FailingBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -613,6 +616,7 @@ mod tests {
             },
             manager,
             peer_registry,
+            store,
         )
     }
 
@@ -667,7 +671,8 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(FailCreateBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -685,6 +690,7 @@ mod tests {
             },
             manager,
             peer_registry,
+            store,
         );
 
         let req = CreateSessionRequest {
@@ -753,7 +759,8 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(CaptureFailBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -771,6 +778,7 @@ mod tests {
             },
             manager,
             peer_registry,
+            store,
         )
     }
 
@@ -1142,7 +1150,8 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StaleBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -1160,6 +1169,7 @@ mod tests {
             },
             manager,
             peer_registry,
+            store,
         );
 
         // Create a session (StaleBackend.is_alive returns false)
@@ -1192,7 +1202,8 @@ mod tests {
         store.migrate().await.unwrap();
         let pool = store.pool().clone();
         let backend = Arc::new(StaleBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -1210,6 +1221,7 @@ mod tests {
             },
             manager,
             peer_registry,
+            store,
         );
 
         // Create first session, mark it lost
@@ -1304,7 +1316,8 @@ mod tests {
         let backend = Arc::new(ResumeFailBackend {
             created: std::sync::Mutex::new(false),
         });
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -1322,6 +1335,7 @@ mod tests {
             },
             manager,
             peer_registry,
+            store,
         );
 
         // Create a session

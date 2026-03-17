@@ -261,7 +261,8 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -280,6 +281,7 @@ mod tests {
             },
             manager,
             peer_registry,
+            store,
         )
     }
 
@@ -289,7 +291,8 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let config_path = tmpdir.path().join("config.toml");
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
@@ -312,6 +315,7 @@ mod tests {
             manager,
             peer_registry,
             event_tx,
+            store,
         )
     }
 
@@ -791,6 +795,7 @@ mod tests {
                     events: vec!["session.created".into()],
                 }),
                 webhooks: vec![],
+                ..Default::default()
             },
         };
         let resp = config_to_response(&config);
@@ -844,6 +849,7 @@ mod tests {
                         secret: None,
                     },
                 ],
+                ..Default::default()
             },
         };
         let resp = config_to_response(&config);
@@ -955,7 +961,8 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
 
         // Use /dev/null/impossible as config path (can't create dirs under /dev/null)
@@ -979,6 +986,7 @@ mod tests {
             manager,
             peer_registry,
             event_tx,
+            store,
         );
 
         let req = UpdateConfigRequest {

@@ -3,6 +3,24 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import { NotificationsSettings } from './notifications-settings';
 import type { WebhookFormData } from './notifications-settings';
 
+const mockEnable = vi.fn();
+const mockDisable = vi.fn();
+
+vi.mock('@/hooks/use-push-notifications', () => ({
+  usePushNotifications: vi.fn(() => ({
+    isSupported: true,
+    isEnabled: false,
+    isLoading: false,
+    permission: 'default' as NotificationPermission,
+    enable: mockEnable,
+    disable: mockDisable,
+  })),
+}));
+
+import { usePushNotifications } from '@/hooks/use-push-notifications';
+
+const mockUsePush = vi.mocked(usePushNotifications);
+
 const defaults = {
   discordWebhookUrl: '',
   onDiscordWebhookUrlChange: vi.fn(),
@@ -258,5 +276,119 @@ describe('NotificationsSettings', () => {
     expect(screen.getByTestId('webhook-0')).toBeInTheDocument();
     expect(screen.getByDisplayValue('ci-hook')).toBeInTheDocument();
     expect(screen.getByDisplayValue('https://ci.example.com')).toBeInTheDocument();
+  });
+
+  it('renders push notifications section', () => {
+    render(<NotificationsSettings {...defaults} />);
+    expect(screen.getByTestId('push-section')).toBeInTheDocument();
+    expect(screen.getByTestId('push-toggle')).toBeInTheDocument();
+    expect(screen.getByText('Disabled')).toBeInTheDocument();
+    expect(screen.getByText(/Receive notifications when sessions finish/)).toBeInTheDocument();
+  });
+
+  it('shows Enabled label when push is enabled', () => {
+    mockUsePush.mockReturnValue({
+      isSupported: true,
+      isEnabled: true,
+      isLoading: false,
+      permission: 'granted',
+      enable: mockEnable,
+      disable: mockDisable,
+    });
+    render(<NotificationsSettings {...defaults} />);
+    expect(screen.getByText('Enabled')).toBeInTheDocument();
+  });
+
+  it('shows Blocked label when permission denied', () => {
+    mockUsePush.mockReturnValue({
+      isSupported: true,
+      isEnabled: false,
+      isLoading: false,
+      permission: 'denied',
+      enable: mockEnable,
+      disable: mockDisable,
+    });
+    render(<NotificationsSettings {...defaults} />);
+    expect(screen.getByText('Blocked')).toBeInTheDocument();
+  });
+
+  it('shows Not supported label when push not supported', () => {
+    mockUsePush.mockReturnValue({
+      isSupported: false,
+      isEnabled: false,
+      isLoading: false,
+      permission: 'default',
+      enable: mockEnable,
+      disable: mockDisable,
+    });
+    render(<NotificationsSettings {...defaults} />);
+    expect(screen.getByText('Not supported')).toBeInTheDocument();
+  });
+
+  it('disables toggle when not supported', () => {
+    mockUsePush.mockReturnValue({
+      isSupported: false,
+      isEnabled: false,
+      isLoading: false,
+      permission: 'default',
+      enable: mockEnable,
+      disable: mockDisable,
+    });
+    render(<NotificationsSettings {...defaults} />);
+    expect(screen.getByTestId('push-toggle')).toBeDisabled();
+  });
+
+  it('disables toggle when loading', () => {
+    mockUsePush.mockReturnValue({
+      isSupported: true,
+      isEnabled: false,
+      isLoading: true,
+      permission: 'default',
+      enable: mockEnable,
+      disable: mockDisable,
+    });
+    render(<NotificationsSettings {...defaults} />);
+    expect(screen.getByTestId('push-toggle')).toBeDisabled();
+  });
+
+  it('disables toggle when permission denied', () => {
+    mockUsePush.mockReturnValue({
+      isSupported: true,
+      isEnabled: false,
+      isLoading: false,
+      permission: 'denied',
+      enable: mockEnable,
+      disable: mockDisable,
+    });
+    render(<NotificationsSettings {...defaults} />);
+    expect(screen.getByTestId('push-toggle')).toBeDisabled();
+  });
+
+  it('calls enable when toggled on', () => {
+    mockUsePush.mockReturnValue({
+      isSupported: true,
+      isEnabled: false,
+      isLoading: false,
+      permission: 'default',
+      enable: mockEnable,
+      disable: mockDisable,
+    });
+    render(<NotificationsSettings {...defaults} />);
+    fireEvent.click(screen.getByTestId('push-toggle'));
+    expect(mockEnable).toHaveBeenCalled();
+  });
+
+  it('calls disable when toggled off', () => {
+    mockUsePush.mockReturnValue({
+      isSupported: true,
+      isEnabled: true,
+      isLoading: false,
+      permission: 'granted',
+      enable: mockEnable,
+      disable: mockDisable,
+    });
+    render(<NotificationsSettings {...defaults} />);
+    fireEvent.click(screen.getByTestId('push-toggle'));
+    expect(mockDisable).toHaveBeenCalled();
   });
 });

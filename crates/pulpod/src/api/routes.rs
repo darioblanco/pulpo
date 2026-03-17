@@ -16,6 +16,7 @@ use super::node;
 use super::notifications;
 use super::peers;
 
+use super::push;
 use super::sessions;
 use super::static_files;
 use super::watchdog;
@@ -71,6 +72,9 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/sessions/{id}/stream", get(ws::stream))
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
         .route("/api/v1/inks", get(inks::list))
+        .route("/api/v1/push/vapid-key", get(push::get_vapid_key))
+        .route("/api/v1/push/subscribe", post(push::subscribe_push))
+        .route("/api/v1/push/unsubscribe", post(push::unsubscribe_push))
         .route("/api/v1/events", get(events::stream))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -137,9 +141,10 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry);
+        let state = AppState::new(config, manager, peer_registry, store);
         let app = build(state);
         TestServer::new(app).unwrap()
     }
@@ -191,9 +196,9 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, inks).with_no_stale_grace();
+        let manager = SessionManager::new(backend, store.clone(), inks).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry);
+        let state = AppState::new(config, manager, peer_registry, store);
         let app = build(state);
         let server = TestServer::new(app).unwrap();
         let resp = server.get("/api/v1/inks").await;
@@ -748,9 +753,10 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = crate::api::AppState::new(config, manager, peer_registry);
+        let state = crate::api::AppState::new(config, manager, peer_registry, store);
         let app = build(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -866,9 +872,10 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(FailIsAliveBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = crate::api::AppState::new(config, manager, peer_registry);
+        let state = crate::api::AppState::new(config, manager, peer_registry, store);
 
         // Create a session (create works, but later get_session will call is_alive → error)
         let req = pulpo_common::api::CreateSessionRequest {
@@ -1057,9 +1064,10 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry);
+        let state = AppState::new(config, manager, peer_registry, store);
         let app = build(state);
         TestServer::new(app).unwrap()
     }
@@ -1218,9 +1226,10 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = crate::api::AppState::new(config, manager, peer_registry);
+        let state = crate::api::AppState::new(config, manager, peer_registry, store);
         let app = build(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1316,9 +1325,10 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry);
+        let state = AppState::new(config, manager, peer_registry, store);
 
         // Subscribe to the event_tx before building the router so we can send events
         let event_tx = state.event_tx.clone();
@@ -1435,5 +1445,80 @@ mod tests {
             "https://discord.com/api/webhooks/test"
         );
         assert_eq!(body["discord"]["events"], serde_json::json!(["active"]));
+    }
+
+    // -- Push endpoint integration tests --
+
+    async fn test_server_with_vapid() -> TestServer {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test-node".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig {
+                vapid: crate::config::VapidConfig {
+                    private_key: "test-priv-key".into(),
+                    public_key: "test-pub-key".into(),
+                },
+                ..Default::default()
+            },
+        };
+        let backend = Arc::new(StubBackend);
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let state = AppState::new(config, manager, peer_registry, store);
+        let app = build(state);
+        TestServer::new(app).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_get_vapid_key() {
+        let server = test_server_with_vapid().await;
+        let resp = server.get("/api/v1/push/vapid-key").await;
+        resp.assert_status_ok();
+        let body: serde_json::Value = resp.json();
+        assert_eq!(body["public_key"], "test-pub-key");
+    }
+
+    #[tokio::test]
+    async fn test_get_vapid_key_empty() {
+        let server = test_server().await;
+        let resp = server.get("/api/v1/push/vapid-key").await;
+        resp.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_push_subscribe_and_unsubscribe() {
+        let server = test_server_with_vapid().await;
+
+        // Subscribe
+        let resp = server
+            .post("/api/v1/push/subscribe")
+            .json(&serde_json::json!({
+                "endpoint": "https://push.example.com/sub",
+                "keys": { "p256dh": "p", "auth": "a" }
+            }))
+            .await;
+        resp.assert_status(StatusCode::NO_CONTENT);
+
+        // Unsubscribe
+        let resp = server
+            .post("/api/v1/push/unsubscribe")
+            .json(&serde_json::json!({
+                "endpoint": "https://push.example.com/sub"
+            }))
+            .await;
+        resp.assert_status(StatusCode::NO_CONTENT);
     }
 }

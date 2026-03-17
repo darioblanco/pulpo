@@ -157,3 +157,15 @@ export interface CreateSessionRequest {
 export interface CreateSessionResponse {
   session: Session;
 }
+
+export interface VapidPublicKeyResponse {
+  public_key: string;
+}
+
+export interface PushSubscriptionRequest {
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+}

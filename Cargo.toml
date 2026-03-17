@@ -81,6 +81,8 @@ base64 = "0.22"
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
+p256 = "0.13"
+web-push = "0.11"
 
 # Service discovery
 mdns-sd = "0.18"

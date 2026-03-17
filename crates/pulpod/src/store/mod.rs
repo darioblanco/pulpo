@@ -9,6 +9,14 @@ use uuid::Uuid;
 
 use pulpo_common::session::InterventionCode;
 
+/// A Web Push subscription stored for sending push notifications.
+#[derive(Debug, Clone)]
+pub struct PushSubscription {
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
+}
+
 /// A single intervention event for audit trail purposes.
 #[derive(Debug, Clone)]
 pub struct InterventionEvent {
@@ -292,6 +300,19 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
+        // Idempotent migration: push subscriptions table for Web Push notifications
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                endpoint TEXT NOT NULL UNIQUE,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -534,6 +555,49 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    // -- Push subscription methods --
+
+    pub async fn save_push_subscription(
+        &self,
+        endpoint: &str,
+        p256dh: &str,
+        auth: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO push_subscriptions (endpoint, p256dh, auth, created_at) \
+             VALUES (?, ?, ?, ?)",
+        )
+        .bind(endpoint)
+        .bind(p256dh)
+        .bind(auth)
+        .bind(Utc::now().to_rfc3339())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_push_subscription(&self, endpoint: &str) -> Result<()> {
+        sqlx::query("DELETE FROM push_subscriptions WHERE endpoint = ?")
+            .bind(endpoint)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_push_subscriptions(&self) -> Result<Vec<PushSubscription>> {
+        let rows = sqlx::query("SELECT endpoint, p256dh, auth FROM push_subscriptions")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|r| PushSubscription {
+                endpoint: r.get("endpoint"),
+                p256dh: r.get("p256dh"),
+                auth: r.get("auth"),
+            })
+            .collect())
     }
 }
 
@@ -2060,5 +2124,146 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(fetched.status, SessionStatus::Idle);
+    }
+
+    // -- Push subscription tests --
+
+    #[tokio::test]
+    async fn test_push_subscription_save_and_list() {
+        let store = test_store().await;
+        store
+            .save_push_subscription("https://push.example.com/1", "p256dh-key", "auth-key")
+            .await
+            .unwrap();
+
+        let subs = store.list_push_subscriptions().await.unwrap();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].endpoint, "https://push.example.com/1");
+        assert_eq!(subs[0].p256dh, "p256dh-key");
+        assert_eq!(subs[0].auth, "auth-key");
+    }
+
+    #[tokio::test]
+    async fn test_push_subscription_save_replaces_on_same_endpoint() {
+        let store = test_store().await;
+        store
+            .save_push_subscription("https://push.example.com/1", "old-p256dh", "old-auth")
+            .await
+            .unwrap();
+        store
+            .save_push_subscription("https://push.example.com/1", "new-p256dh", "new-auth")
+            .await
+            .unwrap();
+
+        let subs = store.list_push_subscriptions().await.unwrap();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].p256dh, "new-p256dh");
+        assert_eq!(subs[0].auth, "new-auth");
+    }
+
+    #[tokio::test]
+    async fn test_push_subscription_multiple_endpoints() {
+        let store = test_store().await;
+        store
+            .save_push_subscription("https://push.example.com/1", "p1", "a1")
+            .await
+            .unwrap();
+        store
+            .save_push_subscription("https://push.example.com/2", "p2", "a2")
+            .await
+            .unwrap();
+
+        let subs = store.list_push_subscriptions().await.unwrap();
+        assert_eq!(subs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_push_subscription_delete() {
+        let store = test_store().await;
+        store
+            .save_push_subscription("https://push.example.com/1", "p1", "a1")
+            .await
+            .unwrap();
+        store
+            .save_push_subscription("https://push.example.com/2", "p2", "a2")
+            .await
+            .unwrap();
+
+        store
+            .delete_push_subscription("https://push.example.com/1")
+            .await
+            .unwrap();
+
+        let subs = store.list_push_subscriptions().await.unwrap();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].endpoint, "https://push.example.com/2");
+    }
+
+    #[tokio::test]
+    async fn test_push_subscription_delete_nonexistent() {
+        let store = test_store().await;
+        // Should not error when deleting a non-existent endpoint
+        store
+            .delete_push_subscription("https://push.example.com/nonexistent")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_push_subscription_list_empty() {
+        let store = test_store().await;
+        let subs = store.list_push_subscriptions().await.unwrap();
+        assert!(subs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_push_subscription_debug_clone() {
+        let sub = PushSubscription {
+            endpoint: "https://push.example.com/1".into(),
+            p256dh: "key".into(),
+            auth: "auth".into(),
+        };
+        let debug = format!("{sub:?}");
+        assert!(debug.contains("push.example.com"));
+        #[allow(clippy::redundant_clone)]
+        let cloned = sub.clone();
+        assert_eq!(cloned.endpoint, "https://push.example.com/1");
+    }
+
+    #[tokio::test]
+    async fn test_push_subscription_after_table_dropped() {
+        let store = test_store().await;
+        sqlx::query("DROP TABLE push_subscriptions")
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let result = store.list_push_subscriptions().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_push_subscription_save_after_table_dropped() {
+        let store = test_store().await;
+        sqlx::query("DROP TABLE push_subscriptions")
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let result = store
+            .save_push_subscription("https://push.example.com/1", "p", "a")
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_push_subscription_delete_after_table_dropped() {
+        let store = test_store().await;
+        sqlx::query("DROP TABLE push_subscriptions")
+            .execute(store.pool())
+            .await
+            .unwrap();
+        let result = store
+            .delete_push_subscription("https://push.example.com/1")
+            .await;
+        assert!(result.is_err());
     }
 }

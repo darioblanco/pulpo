@@ -4,7 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import { FormField } from './form-field';
+import { usePushNotifications } from '@/hooks/use-push-notifications';
 import type { WebhookEndpointConfigResponse } from '@/api/types';
 
 export interface WebhookFormData extends WebhookEndpointConfigResponse {
@@ -28,6 +31,7 @@ export function NotificationsSettings({
   webhooks,
   onWebhooksChange,
 }: NotificationsSettingsProps) {
+  const { isSupported, isEnabled, isLoading, permission, enable, disable } = usePushNotifications();
   const discordActive = discordWebhookUrl.trim().length > 0;
   const webhooksActive = webhooks.length > 0;
 
@@ -71,6 +75,30 @@ export function NotificationsSettings({
         </CardDescription>
       </CardHeader>
       <CardContent>
+        <div className="mb-4 grid gap-2" data-testid="push-section">
+          <div className="flex items-center gap-3">
+            <Switch
+              id="push-notifications"
+              data-testid="push-toggle"
+              checked={isEnabled}
+              disabled={!isSupported || isLoading || permission === 'denied'}
+              onCheckedChange={(checked) => (checked ? enable() : disable())}
+            />
+            <Label htmlFor="push-notifications">
+              {!isSupported
+                ? 'Not supported'
+                : permission === 'denied'
+                  ? 'Blocked'
+                  : isEnabled
+                    ? 'Enabled'
+                    : 'Disabled'}
+            </Label>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Receive notifications when sessions finish, even when the app is closed.
+          </p>
+        </div>
+        <Separator className="mb-4" />
         <Tabs defaultValue="webhooks" data-testid="notifications-tabs">
           <TabsList className="mb-4 w-full">
             <TabsTrigger value="webhooks" className="flex-1 gap-2" data-testid="tab-webhooks">

@@ -147,8 +147,18 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let config_path = std::path::PathBuf::from(expanded.as_ref());
 
     // Auto-generate auth token on first run
-    if config::ensure_auth_token(&mut config) {
+    let mut config_changed = config::ensure_auth_token(&mut config);
+    if config_changed {
         info!("Generated new auth token");
+    }
+
+    // Auto-generate VAPID keys on first run
+    if config::ensure_vapid_keys(&mut config) {
+        info!("Generated new VAPID keys for Web Push");
+        config_changed = true;
+    }
+
+    if config_changed {
         config::save(&config, &config_path)?;
     }
 
@@ -174,7 +184,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let node_name = config.node.name.clone();
     let (event_tx, _) = broadcast::channel::<PulpoEvent>(256);
 
-    let manager = SessionManager::new(backend, store, config.inks.clone())
+    let manager = SessionManager::new(backend, store.clone(), config.inks.clone())
         .with_event_tx(event_tx.clone(), node_name.clone());
 
     let peer_registry = peers::PeerRegistry::new(&config.peers);
@@ -326,6 +336,25 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         info!(webhook = %name, "Webhook notifications enabled");
     }
 
+    // Start Web Push notification loop (always enabled when VAPID keys are present)
+    if !config.notifications.vapid.private_key.is_empty()
+        && !config.notifications.vapid.public_key.is_empty()
+    {
+        let notifier = notifications::web_push::WebPushNotifier::new(
+            store.clone(),
+            config.notifications.vapid.private_key.clone(),
+        );
+        let push_rx = event_tx.subscribe();
+        let (push_shutdown_tx, push_shutdown_rx) = watch::channel(false);
+        tokio::spawn(notifications::web_push::run_notification_loop(
+            notifier,
+            push_rx,
+            push_shutdown_rx,
+        ));
+        shutdown_handle.add_sender(push_shutdown_tx);
+        info!("Web Push notifications enabled");
+    }
+
     #[cfg(not(coverage))]
     let wd_tx = watchdog_config_tx;
     #[cfg(coverage)]
@@ -338,6 +367,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         peer_registry,
         event_tx,
         wd_tx,
+        store.clone(),
     );
 
     let app = api::router(state);
@@ -502,7 +532,8 @@ pub async fn build_mcp_server(cli: &Cli) -> Result<mcp::PulpoMcp> {
     #[cfg(coverage)]
     let backend: Arc<dyn backend::Backend> = Arc::new(CoverageBackend);
 
-    let manager = session::manager::SessionManager::new(backend, store, config.inks.clone());
+    let manager =
+        session::manager::SessionManager::new(backend, store.clone(), config.inks.clone());
     let peer_registry = peers::PeerRegistry::new(&config.peers);
 
     Ok(mcp::PulpoMcp::new(manager, peer_registry, config))
@@ -790,6 +821,86 @@ events = ["ready", "killed"]
         let (_app, addr, handle) = build_app(&cli).await.unwrap();
         assert_eq!(addr, "127.0.0.1:0");
         // Shutdown should signal the discord notification loop too
+        handle.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_build_app_generates_vapid_keys() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let config_path = tmpdir.path().join("config.toml");
+        let data_dir = tmpdir.path().join("data");
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[node]
+name = "test"
+port = 0
+data_dir = "{}"
+"#,
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let cli = Cli {
+            config: config_path.to_str().unwrap().into(),
+            port: Some(0),
+            command: None,
+        };
+
+        let (_app, _addr, handle) = build_app(&cli).await.unwrap();
+
+        // VAPID keys should have been auto-generated and saved
+        let saved = config::load(config_path.to_str().unwrap()).unwrap();
+        assert!(!saved.notifications.vapid.private_key.is_empty());
+        assert!(!saved.notifications.vapid.public_key.is_empty());
+        assert_eq!(saved.notifications.vapid.private_key.len(), 43);
+        assert_eq!(saved.notifications.vapid.public_key.len(), 87);
+
+        handle.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_build_app_preserves_existing_vapid_keys() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let config_path = tmpdir.path().join("config.toml");
+        let data_dir = tmpdir.path().join("data");
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[node]
+name = "test"
+port = 0
+data_dir = "{}"
+
+[auth]
+token = "existing-token"
+
+[notifications.vapid]
+private_key = "existing-priv"
+public_key = "existing-pub"
+"#,
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let cli = Cli {
+            config: config_path.to_str().unwrap().into(),
+            port: Some(0),
+            command: None,
+        };
+
+        let (_app, _addr, handle) = build_app(&cli).await.unwrap();
+
+        // Existing keys should be preserved
+        let saved = config::load(config_path.to_str().unwrap()).unwrap();
+        assert_eq!(saved.notifications.vapid.private_key, "existing-priv");
+        assert_eq!(saved.notifications.vapid.public_key, "existing-pub");
+        assert_eq!(saved.auth.token, "existing-token");
+
         handle.shutdown();
     }
 

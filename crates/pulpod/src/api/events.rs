@@ -81,8 +81,8 @@ mod tests {
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
-        let manager =
-            SessionManager::new(Arc::new(StubBackend), store, HashMap::new()).with_no_stale_grace();
+        let manager = SessionManager::new(Arc::new(StubBackend), store.clone(), HashMap::new())
+            .with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -100,6 +100,7 @@ mod tests {
             },
             manager,
             peer_registry,
+            store,
         );
 
         let mut rx = state.event_tx.subscribe();

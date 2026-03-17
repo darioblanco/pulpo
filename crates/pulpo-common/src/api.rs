@@ -213,6 +213,30 @@ pub struct AddPeerRequest {
     pub address: String,
 }
 
+// -- Web Push types --
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct VapidPublicKeyResponse {
+    pub public_key: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PushSubscriptionRequest {
+    pub endpoint: String,
+    pub keys: PushSubscriptionKeys,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PushSubscriptionKeys {
+    pub p256dh: String,
+    pub auth: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PushUnsubscribeRequest {
+    pub endpoint: String,
+}
+
 use crate::session::InterventionCode;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -815,6 +839,95 @@ mod tests {
         };
         let debug = format!("{q:?}");
         assert!(debug.contains("active"));
+    }
+
+    // -- Web Push type tests --
+
+    #[test]
+    fn test_vapid_public_key_response_serialize() {
+        let resp = VapidPublicKeyResponse {
+            public_key: "BPXYZ123".into(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("BPXYZ123"));
+    }
+
+    #[test]
+    fn test_vapid_public_key_response_deserialize() {
+        let json = r#"{"public_key":"BPXYZ123"}"#;
+        let resp: VapidPublicKeyResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.public_key, "BPXYZ123");
+    }
+
+    #[test]
+    fn test_vapid_public_key_response_debug() {
+        let resp = VapidPublicKeyResponse {
+            public_key: "key".into(),
+        };
+        let debug = format!("{resp:?}");
+        assert!(debug.contains("VapidPublicKeyResponse"));
+    }
+
+    #[test]
+    fn test_push_subscription_request_deserialize() {
+        let json = r#"{"endpoint":"https://push.example.com","keys":{"p256dh":"p256dh-val","auth":"auth-val"}}"#;
+        let req: PushSubscriptionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.endpoint, "https://push.example.com");
+        assert_eq!(req.keys.p256dh, "p256dh-val");
+        assert_eq!(req.keys.auth, "auth-val");
+    }
+
+    #[test]
+    fn test_push_subscription_request_missing_fields() {
+        let json = r#"{"endpoint":"https://push.example.com"}"#;
+        let result = serde_json::from_str::<PushSubscriptionRequest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_push_subscription_request_debug() {
+        let req = PushSubscriptionRequest {
+            endpoint: "https://push.example.com".into(),
+            keys: PushSubscriptionKeys {
+                p256dh: "p".into(),
+                auth: "a".into(),
+            },
+        };
+        let debug = format!("{req:?}");
+        assert!(debug.contains("PushSubscriptionRequest"));
+    }
+
+    #[test]
+    fn test_push_subscription_keys_debug() {
+        let keys = PushSubscriptionKeys {
+            p256dh: "p".into(),
+            auth: "a".into(),
+        };
+        let debug = format!("{keys:?}");
+        assert!(debug.contains("PushSubscriptionKeys"));
+    }
+
+    #[test]
+    fn test_push_unsubscribe_request_deserialize() {
+        let json = r#"{"endpoint":"https://push.example.com"}"#;
+        let req: PushUnsubscribeRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.endpoint, "https://push.example.com");
+    }
+
+    #[test]
+    fn test_push_unsubscribe_request_missing_endpoint() {
+        let json = r"{}";
+        let result = serde_json::from_str::<PushUnsubscribeRequest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_push_unsubscribe_request_debug() {
+        let req = PushUnsubscribeRequest {
+            endpoint: "ep".into(),
+        };
+        let debug = format!("{req:?}");
+        assert!(debug.contains("PushUnsubscribeRequest"));
     }
 
     #[test]

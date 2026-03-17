@@ -182,7 +182,8 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store, HashMap::new()).with_no_stale_grace();
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&peers_config);
         AppState::new(
             Config {
@@ -200,6 +201,7 @@ mod tests {
             },
             manager,
             peer_registry,
+            store,
         )
     }
 

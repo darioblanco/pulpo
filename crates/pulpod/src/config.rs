@@ -39,6 +39,20 @@ pub struct NotificationsConfig {
     /// Generic webhook endpoints.
     #[serde(default)]
     pub webhooks: Vec<WebhookEndpointConfig>,
+    /// VAPID keys for Web Push notifications.
+    #[serde(default)]
+    pub vapid: VapidConfig,
+}
+
+/// VAPID key configuration for Web Push notifications.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct VapidConfig {
+    /// Base64url-encoded P-256 private key (32 bytes).
+    #[serde(default)]
+    pub private_key: String,
+    /// Base64url-encoded P-256 uncompressed public key (65 bytes).
+    #[serde(default)]
+    pub public_key: String,
 }
 
 /// Discord webhook configuration.
@@ -88,6 +102,25 @@ pub fn generate_token() -> String {
 pub fn ensure_auth_token(config: &mut Config) -> bool {
     if config.auth.token.is_empty() {
         config.auth.token = generate_token();
+        true
+    } else {
+        false
+    }
+}
+
+/// If VAPID keys are empty, generate a new P-256 key pair. Returns `true` if new keys were generated.
+pub fn ensure_vapid_keys(config: &mut Config) -> bool {
+    if config.notifications.vapid.private_key.is_empty()
+        && config.notifications.vapid.public_key.is_empty()
+    {
+        let secret_key = p256::SecretKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+        let private_bytes = secret_key.to_bytes();
+        let public_bytes = secret_key.public_key().to_sec1_bytes();
+
+        config.notifications.vapid.private_key =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(private_bytes);
+        config.notifications.vapid.public_key =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(public_bytes);
         true
     } else {
         false
@@ -1557,6 +1590,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
                     events: vec!["killed".into()],
                 }),
                 webhooks: vec![],
+                ..Default::default()
             },
         };
         save(&config, &path).unwrap();
@@ -1583,6 +1617,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
                 events: vec![],
             }),
             webhooks: vec![],
+            ..Default::default()
         };
         let cloned = config.clone();
         assert_eq!(format!("{config:?}"), format!("{cloned:?}"));
@@ -1662,6 +1697,7 @@ url = "https://example.com"
                     events: vec!["killed".into()],
                     secret: Some("key".into()),
                 }],
+                ..Default::default()
             },
         };
         save(&config, &path).unwrap();
@@ -1917,5 +1953,180 @@ command = "codex -p 'review'"
     fn test_ink_config_command_default_none() {
         let ink: InkConfig = toml::from_str("").unwrap();
         assert!(ink.command.is_none());
+    }
+
+    // -- VAPID key generation tests --
+
+    #[test]
+    fn test_vapid_config_default() {
+        let vapid = VapidConfig::default();
+        assert!(vapid.private_key.is_empty());
+        assert!(vapid.public_key.is_empty());
+    }
+
+    #[test]
+    fn test_vapid_config_debug_clone() {
+        let vapid = VapidConfig {
+            private_key: "priv".into(),
+            public_key: "pub".into(),
+        };
+        let cloned = vapid.clone();
+        assert_eq!(format!("{vapid:?}"), format!("{cloned:?}"));
+    }
+
+    #[test]
+    fn test_ensure_vapid_keys_generates_when_empty() {
+        let mut config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig::default(),
+        };
+        assert!(config.notifications.vapid.private_key.is_empty());
+        assert!(config.notifications.vapid.public_key.is_empty());
+
+        let generated = ensure_vapid_keys(&mut config);
+        assert!(generated);
+        assert!(!config.notifications.vapid.private_key.is_empty());
+        assert!(!config.notifications.vapid.public_key.is_empty());
+    }
+
+    #[test]
+    fn test_ensure_vapid_keys_correct_lengths() {
+        let mut config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig::default(),
+        };
+        ensure_vapid_keys(&mut config);
+
+        // Private key: 32 bytes → 43 chars base64url (no padding)
+        assert_eq!(config.notifications.vapid.private_key.len(), 43);
+        // Public key: 65 bytes → 87 chars base64url (no padding)
+        assert_eq!(config.notifications.vapid.public_key.len(), 87);
+    }
+
+    #[test]
+    fn test_ensure_vapid_keys_are_base64url() {
+        let mut config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig::default(),
+        };
+        ensure_vapid_keys(&mut config);
+
+        for key in [
+            &config.notifications.vapid.private_key,
+            &config.notifications.vapid.public_key,
+        ] {
+            assert!(
+                key.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                "Key should be base64url: {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ensure_vapid_keys_preserves_existing() {
+        let mut config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig {
+                vapid: VapidConfig {
+                    private_key: "existing-private".into(),
+                    public_key: "existing-public".into(),
+                },
+                ..Default::default()
+            },
+        };
+        let generated = ensure_vapid_keys(&mut config);
+        assert!(!generated);
+        assert_eq!(config.notifications.vapid.private_key, "existing-private");
+        assert_eq!(config.notifications.vapid.public_key, "existing-public");
+    }
+
+    #[test]
+    fn test_ensure_vapid_keys_uniqueness() {
+        let mut config1 = Config {
+            node: NodeConfig::default(),
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig::default(),
+        };
+        let mut config2 = config1.clone();
+        ensure_vapid_keys(&mut config1);
+        ensure_vapid_keys(&mut config2);
+        assert_ne!(
+            config1.notifications.vapid.private_key,
+            config2.notifications.vapid.private_key
+        );
+    }
+
+    #[test]
+    fn test_vapid_keys_save_and_load_roundtrip() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("vapid-rt.toml");
+        let mut config = Config {
+            node: NodeConfig {
+                name: "vapid-rt".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig::default(),
+        };
+        ensure_vapid_keys(&mut config);
+        let private_key = config.notifications.vapid.private_key.clone();
+        let public_key = config.notifications.vapid.public_key.clone();
+
+        save(&config, &path).unwrap();
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.notifications.vapid.private_key, private_key);
+        assert_eq!(loaded.notifications.vapid.public_key, public_key);
+    }
+
+    #[test]
+    fn test_notifications_config_default_has_empty_vapid() {
+        let config = NotificationsConfig::default();
+        assert!(config.vapid.private_key.is_empty());
+        assert!(config.vapid.public_key.is_empty());
     }
 }
