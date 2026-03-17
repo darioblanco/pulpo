@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.0.24](https://github.com/darioblanco/pulpo/compare/v0.0.23...v0.0.24) (2026-03-17)
+
+
+### Features
+
+* rename Finished→Ready status + auto-adopt external tmux sessions ([12a0f05](https://github.com/darioblanco/pulpo/commit/12a0f058789dd7a9b24fc7ec4c0af5eaca130bc3))
+
+
+### Bug Fixes
+
+* add partial unique index to prevent duplicate live session names ([60b71fb](https://github.com/darioblanco/pulpo/commit/60b71fb28da4e3241244ab2db6e4b7dc9b34d120))
+* enable tmux clipboard and passthrough for image paste support ([6c12972](https://github.com/darioblanco/pulpo/commit/6c12972fb56b21282df102cb61713ce15467404e))
+* remove window-size manual — let tmux auto-size to PTY client ([9421b4d](https://github.com/darioblanco/pulpo/commit/9421b4d038be4668defb7121f3f18e68d8e2551b))
+* resize script PTY directly via its TTY device fd ([27bcaa6](https://github.com/darioblanco/pulpo/commit/27bcaa68944f79015dd8df9c1e891bbcab6ca86c))
+* revert to script-based PTY bridge (pty-process grantpt fails on macOS daemons) ([461bd6f](https://github.com/darioblanco/pulpo/commit/461bd6f8195fc7e99462ca3c3d2f7ae2e9aa8619))
+* set window-size manual on every resize, not just session creation ([712fae8](https://github.com/darioblanco/pulpo/commit/712fae89305867812c2f5e6336189ffa51ddffa1))
+
 ## [0.0.23](https://github.com/darioblanco/pulpo/compare/v0.0.22...v0.0.23) (2026-03-14)
 
 
