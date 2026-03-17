@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { resolveWsUrl } from '@/api/client';
 
 interface TerminalViewProps {
@@ -8,6 +8,10 @@ interface TerminalViewProps {
 }
 
 const TERMINAL_FONT_FAMILY = "'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Fira Code', monospace";
+
+function getTerminalFontSize(): number {
+  return typeof window !== 'undefined' && window.innerWidth < 640 ? 15 : 13;
+}
 
 const DEFAULT_CLASS =
   'h-[clamp(160px,30vh,380px)] min-h-[100px] max-h-[80vh] w-full min-w-0 resize-y overflow-hidden bg-[#0a1628]';
@@ -19,6 +23,7 @@ export function TerminalView({ sessionId, className }: TerminalViewProps) {
   const terminalRef = useRef<import('ghostty-web').Terminal | null>(null);
   const fitAddonRef = useRef<import('ghostty-web').FitAddon | null>(null);
   const receivedDataRef = useRef(false);
+  const [fontSize] = useState(getTerminalFontSize);
 
   useEffect(() => {
     let disposed = false;
@@ -31,7 +36,7 @@ export function TerminalView({ sessionId, className }: TerminalViewProps) {
       if (disposed || !hostRef.current) return;
 
       const terminal = new Terminal({
-        fontSize: 13,
+        fontSize,
         fontFamily: TERMINAL_FONT_FAMILY,
         theme: {
           background: '#0a1628',
@@ -114,7 +119,7 @@ export function TerminalView({ sessionId, className }: TerminalViewProps) {
       fitAddonRef.current?.dispose();
       terminalRef.current?.dispose();
     };
-  }, [sessionId]);
+  }, [sessionId, fontSize]);
 
   return (
     <div data-testid="terminal-view" ref={containerRef} className={className ?? DEFAULT_CLASS}>

@@ -149,7 +149,7 @@ export function ProfileCard({
             {onAttach && LIVE_STATUSES.includes(octopus.status) && (
               <button
                 onClick={() => onAttach(octopus.name)}
-                className="rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+                className="min-h-[44px] min-w-[44px] rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
                 style={{ backgroundColor: '#2563eb' }}
                 data-testid="attach-button"
               >
@@ -159,7 +159,7 @@ export function ProfileCard({
             {onAttach && RESUMABLE_STATUSES.includes(octopus.status) && (
               <button
                 onClick={() => onAttach(octopus.name)}
-                className="rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+                className="min-h-[44px] min-w-[44px] rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
                 style={{ backgroundColor: '#16a34a' }}
                 data-testid="resume-button"
               >
@@ -169,7 +169,7 @@ export function ProfileCard({
             {onKill && KILLABLE_STATUSES.includes(octopus.status) && (
               <button
                 onClick={() => onKill(octopus.name)}
-                className="rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+                className="min-h-[44px] min-w-[44px] rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
                 style={{ backgroundColor: '#dc2626' }}
                 data-testid="kill-button"
               >
@@ -179,7 +179,7 @@ export function ProfileCard({
             {onDelete && DELETABLE_STATUSES.includes(octopus.status) && (
               <button
                 onClick={() => onDelete(octopus.name)}
-                className="rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+                className="min-h-[44px] min-w-[44px] rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
                 style={{ backgroundColor: '#6b7280' }}
                 data-testid="delete-button"
               >

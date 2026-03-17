@@ -78,6 +78,7 @@ describe('SessionCard', () => {
   it('shows workdir basename in header', () => {
     render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
     expect(screen.getByTestId('session-workdir')).toHaveTextContent('repo');
+    expect(screen.getByTestId('session-workdir-short')).toHaveTextContent('repo');
   });
 
   it('shows ink when set', () => {
@@ -240,6 +241,37 @@ describe('SessionCard', () => {
       expect(toast.error).toHaveBeenCalledWith('Resume failed');
     });
     expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  // Fullscreen
+
+  it('shows fullscreen button when expanded for active session', () => {
+    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    clickExpand();
+    expect(screen.getByTestId('btn-fullscreen')).toBeInTheDocument();
+  });
+
+  it('does not show fullscreen button for non-active sessions', () => {
+    render(<SessionCard session={makeSession({ status: 'ready' })} onRefresh={vi.fn()} />);
+    clickExpand();
+    expect(screen.queryByTestId('btn-fullscreen')).not.toBeInTheDocument();
+  });
+
+  it('opens fullscreen terminal overlay on click', () => {
+    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    clickExpand();
+    fireEvent.click(screen.getByTestId('btn-fullscreen'));
+    expect(screen.getByTestId('fullscreen-terminal')).toBeInTheDocument();
+    expect(screen.getByText('Close')).toBeInTheDocument();
+  });
+
+  it('closes fullscreen terminal overlay on close click', () => {
+    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    clickExpand();
+    fireEvent.click(screen.getByTestId('btn-fullscreen'));
+    expect(screen.getByTestId('fullscreen-terminal')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('btn-fullscreen-close'));
+    expect(screen.queryByTestId('fullscreen-terminal')).not.toBeInTheDocument();
   });
 
   // Intervention

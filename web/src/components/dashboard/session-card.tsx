@@ -29,6 +29,7 @@ function truncateCommand(command: string, maxLen = 40): string {
 
 export function SessionCard({ session, onRefresh }: SessionCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [interventionEvents, setInterventionEvents] = useState<InterventionEvent[]>([]);
   const [interventionsExpanded, setInterventionsExpanded] = useState(false);
 
@@ -77,12 +78,16 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
                 type="button"
                 title={canKill ? 'Kill session' : 'Session not active'}
                 disabled={!canKill}
-                className={`h-3 w-3 rounded-full ${canKill ? 'bg-[#ff5f57] hover:brightness-110 cursor-pointer' : 'bg-[#ff5f57]/30'}`}
-              />
+                className={`flex items-center justify-center p-2 -m-1 ${canKill ? 'cursor-pointer' : ''}`}
+              >
+                <span
+                  className={`block h-3 w-3 rounded-full ${canKill ? 'bg-[#ff5f57] hover:brightness-110' : 'bg-[#ff5f57]/30'}`}
+                />
+              </button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Kill session "{session.name}"?</AlertDialogTitle>
+                <AlertDialogTitle>Kill session &quot;{session.name}&quot;?</AlertDialogTitle>
                 <AlertDialogDescription>
                   This will terminate the session and stop the active agent. This action cannot be
                   undone.
@@ -106,15 +111,21 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
             title={canResume ? 'Resume session' : ''}
             disabled={!canResume}
             onClick={handleResume}
-            className={`h-3 w-3 rounded-full ${canResume ? 'bg-[#febc2e] hover:brightness-110 cursor-pointer' : 'bg-[#febc2e]/30'}`}
-          />
+            className={`flex items-center justify-center p-2 -m-1 ${canResume ? 'cursor-pointer' : ''}`}
+          >
+            <span
+              className={`block h-3 w-3 rounded-full ${canResume ? 'bg-[#febc2e] hover:brightness-110' : 'bg-[#febc2e]/30'}`}
+            />
+          </button>
           <button
             data-testid="btn-expand"
             type="button"
             title={expanded ? 'Collapse' : 'Expand'}
             onClick={() => setExpanded(!expanded)}
-            className="h-3 w-3 cursor-pointer rounded-full bg-[#28c840] hover:brightness-110"
-          />
+            className="flex cursor-pointer items-center justify-center p-2 -m-1"
+          >
+            <span className="block h-3 w-3 rounded-full bg-[#28c840] hover:brightness-110" />
+          </button>
         </div>
 
         {/* Session info — clickable to expand */}
@@ -128,7 +139,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-x-2 overflow-hidden"
         >
           <strong className="shrink-0 font-mono text-xs text-[#c0d0e0]">{session.name}</strong>
-          <span className="hidden text-[0.6rem] uppercase text-[#5a7a9a] sm:inline">
+          <span className="truncate max-w-[120px] sm:max-w-[200px] lg:max-w-none text-[0.6rem] uppercase text-[#5a7a9a]">
             {truncateCommand(session.command)}
           </span>
           {session.status === 'killed' && session.intervention_reason && (
@@ -144,11 +155,14 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
           {/* Right side: metadata + status */}
           <span className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[0.6rem] text-[#5a7a9a]">
             {session.ink && (
-              <span data-testid="session-ink" className="hidden lg:inline">
+              <span data-testid="session-ink" className="truncate text-xs">
                 {session.ink}
               </span>
             )}
             <span data-testid="session-workdir" className="hidden md:inline">
+              {session.workdir.split('/').pop() || session.workdir}
+            </span>
+            <span data-testid="session-workdir-short" className="md:hidden">
               {session.workdir.split('/').pop() || session.workdir}
             </span>
             <span className="text-[#7a9aba]">{session.status}</span>
@@ -171,10 +185,48 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
         </p>
       </div>
 
+      {/* Fullscreen terminal overlay (mobile only) */}
+      {fullscreen && expanded && session.status === 'active' && (
+        <div
+          data-testid="fullscreen-terminal"
+          className="fixed inset-0 z-50 flex flex-col bg-[#0a1628]"
+        >
+          <div className="flex items-center justify-between border-b border-[#1e2d3d] bg-[#0d1f33] px-3 py-2">
+            <span className="font-mono text-xs text-[#c0d0e0]">{session.name}</span>
+            <button
+              data-testid="btn-fullscreen-close"
+              type="button"
+              onClick={() => setFullscreen(false)}
+              className="cursor-pointer rounded px-2 py-1 text-xs text-[#c0d0e0] hover:bg-[#1e2d3d]"
+            >
+              Close
+            </button>
+          </div>
+          <div className="min-h-0 flex-1">
+            <TerminalView
+              sessionId={session.id}
+              className="h-full w-full min-w-0 overflow-hidden bg-[#0a1628]"
+            />
+          </div>
+        </div>
+      )}
+
       {/* Expanded body */}
       {expanded && (
         <div className="bg-[#0a1628]">
-          {session.status === 'active' && <TerminalView sessionId={session.id} />}
+          {session.status === 'active' && (
+            <div className="relative">
+              <TerminalView sessionId={session.id} />
+              <button
+                data-testid="btn-fullscreen"
+                type="button"
+                onClick={() => setFullscreen(true)}
+                className="absolute right-2 top-2 cursor-pointer rounded bg-[#1e2d3d] px-2 py-1 text-xs text-[#c0d0e0] hover:bg-[#2a3d4d] sm:hidden"
+              >
+                Fullscreen
+              </button>
+            </div>
+          )}
 
           {(session.status === 'lost' ||
             session.status === 'ready' ||

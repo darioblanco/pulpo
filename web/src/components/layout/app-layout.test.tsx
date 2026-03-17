@@ -59,4 +59,24 @@ describe('AppLayout', () => {
     expect(screen.getByTestId('child')).toBeInTheDocument();
     expect(screen.getByTestId('app-sidebar')).toBeInTheDocument();
   });
+
+  it('shows disconnected banner when SSE is not connected', () => {
+    render(
+      <MemoryRouter>
+        <ConnectionProvider>
+          <SSEProvider>
+            <TooltipProvider>
+              <Routes>
+                <Route element={<AppLayout />}>
+                  <Route index element={<div>Content</div>} />
+                </Route>
+              </Routes>
+            </TooltipProvider>
+          </SSEProvider>
+        </ConnectionProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('disconnected-banner')).toBeInTheDocument();
+    expect(screen.getByText(/Disconnected from pulpod/)).toBeInTheDocument();
+  });
 });
