@@ -52,39 +52,14 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - tmux `$N` session ID rework (ghost fix, startup migration)
 - Full command capture for adopted sessions
 - Optimized `follow_logs` (reduced HTTP polling)
+- Default-to-shell spawn: `pulpo spawn my-session` with no command opens `$SHELL`
+- CLI node name resolution: `pulpo --node mac-mini spawn` resolves peer names via registry
+- Token forwarding from peer config entries
+- Fleet sessions endpoint (`GET /api/v1/fleet/sessions`) — server-side aggregation
+- Fleet dashboard: "All" tab showing sessions across all nodes in a unified table
+- Smart node selection: `pulpo spawn --auto` picks least-loaded online peer
 
 ## What's Next
-
-### Phase 1: Mobile-First Experience (mostly shipped)
-
-Make Pulpo the best way to manage agents from your phone. PWA and push notifications are shipped.
-
-**P1.3 — Default-to-shell spawn**
-- `pulpo spawn my-session` with no command → opens user's `$SHELL`
-- Session is tracked, attachable, manageable
-- Classified as `ready` (no active agent work)
-- Removes the "command is required" friction
-
-### Phase 2: Seamless Remote Spawn
-
-Make "spawn agent on another machine" as easy as spawning locally.
-
-**P2.1 — Cross-node spawn from CLI**
-- `pulpo spawn --node server fix-api -- claude -p 'fix the bug'`
-- CLI proxies the request to the target node's API
-- Auto-discovers node address from peer registry
-- Token forwarding for authenticated remote nodes
-
-**P2.2 — Fleet dashboard**
-- Single view showing all nodes and all sessions across the fleet
-- Node health cards (CPU, memory, session count)
-- Spawn-on-node from the web UI (node selector in spawn dialog)
-- Session filtering by node
-
-**P2.3 — Smart node selection**
-- `pulpo spawn --auto fix-api -- claude` → picks the least-loaded node
-- Simple heuristic: lowest memory usage + fewest active sessions
-- Opt-in, not default (explicit is better than magic)
 
 ### Phase 3: Background Agent Operations
 
