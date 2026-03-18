@@ -137,8 +137,21 @@ Pulpo doesn't require you to use `pulpo spawn`. Start tmux however you want — 
 
 This is enabled by default (`adopt_tmux = true` in watchdog config).
 
+## Backend Abstraction
+
+All session operations go through a `Backend` trait. The session lifecycle, watchdog, scheduler, and fleet dashboard work identically regardless of backend:
+
+| Backend | Use case | Backend ID format |
+|---------|----------|-------------------|
+| **tmux** (default) | Local/remote servers, zero infrastructure | `$0`, `$1`, ... |
+| **Docker** (`--sandbox`) | Isolated containers, safe for unrestricted agents | `docker:pulpo-<name>` |
+| **Kubernetes** (future) | Cluster scale, team infrastructure | — |
+
+Adding a new backend means implementing ~10 methods (`create_session`, `kill_session`, `is_alive`, `capture_output`, etc.). Everything above the backend layer — lifecycle states, watchdog, scheduler, fleet, web UI — works unchanged.
+
 ## Design Principles
 
+- **Universal agent runtime** — run agents anywhere: tmux, Docker, or future backends. Same lifecycle, same controls.
 - **Infrastructure layer, not agent intelligence** — Pulpo manages the runtime, not the prompts
 - **Command-agnostic** — same lifecycle and controls regardless of which command you run
 - **Explicit failure states** — every session is in a known, auditable state

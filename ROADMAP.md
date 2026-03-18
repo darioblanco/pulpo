@@ -4,9 +4,20 @@ Strategic direction for Pulpo as the runtime infrastructure for coding agents.
 
 ## Mission
 
-Pulpo is the place where coding agents run — across your machines, in the background, managed from your phone.
+Pulpo is the **universal agent runtime** — the place where coding agents run, regardless of where "run" means. Your laptop, your server, a Docker container, a Kubernetes cluster. Same lifecycle, same controls, same dashboard.
 
 It is not an agent framework, not a prompt tool, not an orchestration layer. It is the infrastructure that makes agents reliable, observable, and manageable when you stop watching them.
+
+## Backend Progression
+
+Each backend serves a different scale and isolation need. The session lifecycle, watchdog, scheduler, and fleet dashboard work identically across all of them.
+
+| Backend | When to use | Status |
+|---------|------------|--------|
+| **tmux** | Your laptop, your servers. Zero infrastructure. | Shipped |
+| **Docker** | Same machines but sandboxed. Safe for `--dangerously-skip-permissions`. | Shipped |
+| **Kubernetes** | Scale to a cluster. Teams with shared infrastructure. | Future |
+| **Cloud VMs** | Ephemeral machines. Spin up for a task, tear down when done. | Future |
 
 ## The Shift We're Building For
 
@@ -148,12 +159,14 @@ Revisit when demanded by real usage, not by speculation.
 - **MCP server expansion** — the existing STDIO server (12 tools, 4 resources) works. REST APIs are winning over MCP for integration. Keep as-is.
 - **Multi-user auth** — only if team adoption materializes.
 - ~~**Docker runtime backend**~~ — shipped as `--sandbox` flag.
+- **Kubernetes backend** — implement when team adoption or cluster-scale demand materializes. The Backend trait is ready.
+- **Cloud VM backend** — ephemeral machines (Hetzner, AWS, GCP). Spin up for a task, tear down when done. Requires provider-specific APIs.
 - **Node labels/scheduling constraints** — useful at fleet scale, premature now.
 - **SLO metrics / Prometheus endpoint** — observability for its own sake; dashboard shows what matters.
 
 ## Removed
 
-- Kubernetes-lite framing — too grandiose for the actual product. Pulpo is infrastructure, not a platform.
+- ~~Kubernetes-lite framing~~ — the "universal agent runtime" vision is the right framing now that we have multiple backends.
 - Voice-command surfaces
 - IDE-native UX competition
 - Event replay/export endpoint
