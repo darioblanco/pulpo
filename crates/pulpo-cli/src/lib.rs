@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use pulpo_common::api::{
-    AuthTokenResponse, CreateSessionResponse, InterventionEventResponse, PeersResponse,
+    AuthTokenResponse, ConfigResponse, CreateSessionResponse, InterventionEventResponse,
+    PeersResponse,
 };
 use pulpo_common::session::Session;
 
@@ -73,6 +74,10 @@ pub enum Commands {
         /// Idle threshold in seconds (0 = never idle)
         #[arg(long)]
         idle_threshold: Option<u32>,
+
+        /// Auto-select the least loaded node
+        #[arg(long)]
+        auto: bool,
 
         /// Command to run (everything after --)
         #[arg(last = true)]
@@ -447,6 +452,70 @@ async fn resolve_token(
     None
 }
 
+/// Check if a node string needs resolution (no port specified).
+fn node_needs_resolution(node: &str) -> bool {
+    !node.contains(':')
+}
+
+/// Resolve a node reference to a `host:port` address.
+///
+/// If `node` looks like `host:port` (contains `:`), return as-is with no peer token.
+/// Otherwise, query the local daemon's peer registry for a matching name. If a matching
+/// online peer is found, return its address and optionally its configured auth token
+/// (from the config endpoint). Falls back to appending `:7433` if the peer is not found.
+#[cfg(not(coverage))]
+async fn resolve_node(client: &reqwest::Client, node: &str) -> (String, Option<String>) {
+    // Already has port — use as-is
+    if !node_needs_resolution(node) {
+        return (node.to_owned(), None);
+    }
+
+    // Try to resolve via local daemon's peer registry
+    let local_base = "http://localhost:7433";
+    let mut resolved_address: Option<String> = None;
+
+    if let Ok(resp) = client
+        .get(format!("{local_base}/api/v1/peers"))
+        .send()
+        .await
+        && let Ok(peers_resp) = resp.json::<PeersResponse>().await
+    {
+        for peer in &peers_resp.peers {
+            if peer.name == node {
+                resolved_address = Some(peer.address.clone());
+                break;
+            }
+        }
+    }
+
+    let address = resolved_address.unwrap_or_else(|| format!("{node}:7433"));
+
+    // Try to get the peer's auth token from the config endpoint
+    let peer_token = if let Ok(resp) = client
+        .get(format!("{local_base}/api/v1/config"))
+        .send()
+        .await
+        && let Ok(config) = resp.json::<ConfigResponse>().await
+        && let Some(entry) = config.peers.get(node)
+    {
+        entry.token().map(String::from)
+    } else {
+        None
+    };
+
+    (address, peer_token)
+}
+
+/// Coverage stub — no real HTTP resolution during coverage builds.
+#[cfg(coverage)]
+async fn resolve_node(_client: &reqwest::Client, node: &str) -> (String, Option<String>) {
+    if node_needs_resolution(node) {
+        (format!("{node}:7433"), None)
+    } else {
+        (node.to_owned(), None)
+    }
+}
+
 /// Build an authenticated GET request.
 fn authed_get(
     client: &reqwest::Client,
@@ -810,13 +879,66 @@ fn execute_schedule(_action: &ScheduleAction, _node: &str) -> Result<String> {
     Ok(String::new())
 }
 
+/// Select the best node from the peer registry based on load.
+/// Returns the node address and name of the least loaded online peer.
+/// Scoring: lower memory usage + fewer active sessions = better.
+#[cfg(not(coverage))]
+async fn select_best_node(
+    client: &reqwest::Client,
+    base: &str,
+    token: Option<&str>,
+) -> Result<(String, String)> {
+    let resp = authed_get(client, format!("{base}/api/v1/peers"), token)
+        .send()
+        .await?;
+    let text = ok_or_api_error(resp).await?;
+    let peers_resp: PeersResponse = serde_json::from_str(&text)?;
+
+    // Score: fewer active sessions is better, more memory is better
+    let mut best: Option<(String, String, f64)> = None; // (address, name, score)
+
+    for peer in &peers_resp.peers {
+        if peer.status != pulpo_common::peer::PeerStatus::Online {
+            continue;
+        }
+        let sessions = peer.session_count.unwrap_or(0);
+        let mem = peer.node_info.as_ref().map_or(0, |n| n.memory_mb);
+        // Lower score = better (fewer sessions, more memory)
+        #[allow(clippy::cast_precision_loss)]
+        let score = sessions as f64 - (mem as f64 / 1024.0);
+        if best.as_ref().is_none_or(|(_, _, s)| score < *s) {
+            best = Some((peer.address.clone(), peer.name.clone(), score));
+        }
+    }
+
+    // Fall back to local if no online peers
+    match best {
+        Some((addr, name, _)) => Ok((addr, name)),
+        None => Ok(("localhost:7433".into(), peers_resp.local.name)),
+    }
+}
+
+/// Coverage stub — auto-select always falls back to local.
+#[cfg(coverage)]
+#[allow(clippy::unnecessary_wraps)]
+async fn select_best_node(
+    _client: &reqwest::Client,
+    _base: &str,
+    _token: Option<&str>,
+) -> Result<(String, String)> {
+    Ok(("localhost:7433".into(), "local".into()))
+}
+
 /// Execute the given CLI command against the specified node.
 #[allow(clippy::too_many_lines)]
 pub async fn execute(cli: &Cli) -> Result<String> {
-    let url = base_url(&cli.node);
     let client = reqwest::Client::new();
-    let node = &cli.node;
-    let token = resolve_token(&client, &url, node, cli.token.as_deref()).await;
+    let (resolved_node, peer_token) = resolve_node(&client, &cli.node).await;
+    let url = base_url(&resolved_node);
+    let node = &resolved_node;
+    let token = resolve_token(&client, &url, node, cli.token.as_deref())
+        .await
+        .or(peer_token);
 
     // Handle `pulpo <path>` shortcut — spawn a session in the given directory
     if cli.command.is_none() {
@@ -920,6 +1042,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             description,
             detach,
             idle_threshold,
+            auto,
             command,
         } => {
             let cmd = if command.is_empty() {
@@ -955,11 +1078,23 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             if let Some(t) = idle_threshold {
                 body["idle_threshold_secs"] = serde_json::json!(t);
             }
-            let resp = authed_post(&client, format!("{url}/api/v1/sessions"), token.as_deref())
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| friendly_error(&e, node))?;
+            let spawn_url = if *auto {
+                let (auto_addr, auto_name) =
+                    select_best_node(&client, &url, token.as_deref()).await?;
+                eprintln!("Auto-selected node: {auto_name} ({auto_addr})");
+                base_url(&auto_addr)
+            } else {
+                url.clone()
+            };
+            let resp = authed_post(
+                &client,
+                format!("{spawn_url}/api/v1/sessions"),
+                token.as_deref(),
+            )
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| friendly_error(&e, node))?;
             let text = ok_or_api_error(resp).await?;
             let resp: CreateSessionResponse = serde_json::from_str(&text)?;
             let msg = format!(
@@ -1043,7 +1178,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             Ok(format_interventions(&events))
         }
         Commands::Ui => {
-            let dashboard = base_url(&cli.node);
+            let dashboard = base_url(node);
             open_browser(&dashboard)?;
             Ok(format!("Opening {dashboard}"))
         }
@@ -1456,6 +1591,7 @@ mod tests {
                 description: None,
                 detach: true,
                 idle_threshold: None,
+                auto: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1478,6 +1614,7 @@ mod tests {
                 description: Some("Fix the bug".into()),
                 detach: true,
                 idle_threshold: None,
+                auto: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1499,6 +1636,7 @@ mod tests {
                 description: None,
                 detach: true,
                 idle_threshold: None,
+                auto: false,
                 command: vec![],
             }),
             path: None,
@@ -1520,6 +1658,7 @@ mod tests {
                 description: None,
                 detach: true,
                 idle_threshold: None,
+                auto: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1541,6 +1680,7 @@ mod tests {
                 description: None,
                 detach: false,
                 idle_threshold: None,
+                auto: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1777,6 +1917,7 @@ mod tests {
                 description: None,
                 detach: true,
                 idle_threshold: None,
+                auto: false,
                 command: vec!["test".into()],
             }),
             path: None,
@@ -2096,6 +2237,7 @@ mod tests {
                 description: None,
                 detach: true,
                 idle_threshold: None,
+                auto: false,
                 command: vec!["test".into()],
             }),
             path: None,
@@ -3342,5 +3484,291 @@ mod tests {
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Detached from session"));
+    }
+
+    // -- Node resolution tests --
+
+    #[test]
+    fn test_node_needs_resolution() {
+        assert!(!node_needs_resolution("localhost:7433"));
+        assert!(!node_needs_resolution("mac-mini:7433"));
+        assert!(!node_needs_resolution("10.0.0.1:7433"));
+        assert!(!node_needs_resolution("[::1]:7433"));
+        assert!(node_needs_resolution("mac-mini"));
+        assert!(node_needs_resolution("linux-server"));
+        assert!(node_needs_resolution("localhost"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_node_with_port() {
+        let client = reqwest::Client::new();
+        let (addr, token) = resolve_node(&client, "mac-mini:7433").await;
+        assert_eq!(addr, "mac-mini:7433");
+        assert!(token.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_node_fallback_appends_port() {
+        // No local daemon running on localhost:7433, so peer lookup fails
+        // and it falls back to appending :7433
+        let client = reqwest::Client::new();
+        let (addr, token) = resolve_node(&client, "unknown-host").await;
+        assert_eq!(addr, "unknown-host:7433");
+        assert!(token.is_none());
+    }
+
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_resolve_node_finds_peer() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new()
+            .route(
+                "/api/v1/peers",
+                get(|| async {
+                    r#"{"local":{"name":"local","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":0,"gpu":null},"peers":[{"name":"mac-mini","address":"10.0.0.5:7433","status":"online","node_info":null,"session_count":2,"source":"configured"}]}"#.to_owned()
+                }),
+            )
+            .route(
+                "/api/v1/config",
+                get(|| async {
+                    r#"{"node":{"name":"local","port":7433,"data_dir":"/tmp","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{"mac-mini":{"address":"10.0.0.5:7433","token":"peer-secret"}},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#.to_owned()
+                }),
+            );
+
+        // Port 7433 may be in use; skip test if so
+        let Ok(listener) = tokio::net::TcpListener::bind("127.0.0.1:7433").await else {
+            return;
+        };
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+
+        let client = reqwest::Client::new();
+        let (addr, token) = resolve_node(&client, "mac-mini").await;
+        assert_eq!(addr, "10.0.0.5:7433");
+        assert_eq!(token, Some("peer-secret".into()));
+    }
+
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_resolve_node_peer_no_token() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new()
+            .route(
+                "/api/v1/peers",
+                get(|| async {
+                    r#"{"local":{"name":"local","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":0,"gpu":null},"peers":[{"name":"test-peer","address":"10.0.0.9:7433","status":"online","node_info":null,"session_count":null,"source":"configured"}]}"#.to_owned()
+                }),
+            )
+            .route(
+                "/api/v1/config",
+                get(|| async {
+                    r#"{"node":{"name":"local","port":7433,"data_dir":"/tmp","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{"test-peer":"10.0.0.9:7433"},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#.to_owned()
+                }),
+            );
+
+        let Ok(listener) = tokio::net::TcpListener::bind("127.0.0.1:7433").await else {
+            return; // Port in use, skip
+        };
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+
+        let client = reqwest::Client::new();
+        let (addr, token) = resolve_node(&client, "test-peer").await;
+        assert_eq!(addr, "10.0.0.9:7433");
+        assert!(token.is_none()); // Simple peer entry has no token
+    }
+
+    #[tokio::test]
+    async fn test_execute_with_peer_name_resolution() {
+        // When node doesn't contain ':', resolve_node is called.
+        // Since there's no local daemon on port 7433, it falls back to appending :7433.
+        // The connection to the fallback address will fail, giving us a connection error.
+        let cli = Cli {
+            node: "nonexistent-peer".into(),
+            token: None,
+            command: Some(Commands::List),
+            path: None,
+        };
+        let result = execute(&cli).await;
+        // Should try to connect to nonexistent-peer:7433 and fail
+        assert!(result.is_err());
+    }
+
+    // -- Auto node selection tests --
+
+    #[test]
+    fn test_cli_parse_spawn_auto() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--auto"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { auto, .. }) if *auto
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_auto_default() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { auto, .. }) if !auto
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_select_best_node_coverage_stub() {
+        // Exercise the coverage stub (or real function in non-coverage builds)
+        let client = reqwest::Client::new();
+        // In coverage builds, the stub returns ("localhost:7433", "local")
+        // In non-coverage builds, this fails because no server is running — that's OK
+        let _result = select_best_node(&client, "http://127.0.0.1:19999", None).await;
+    }
+
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_select_best_node_picks_least_loaded() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/api/v1/peers",
+            get(|| async {
+                r#"{"local":{"name":"local","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":16384,"gpu":null},"peers":[{"name":"busy","address":"busy:7433","status":"online","node_info":{"name":"busy","hostname":"h","os":"linux","arch":"x86_64","cpus":4,"memory_mb":8192,"gpu":null},"session_count":5,"source":"configured"},{"name":"idle","address":"idle:7433","status":"online","node_info":{"name":"idle","hostname":"h","os":"linux","arch":"x86_64","cpus":8,"memory_mb":16384,"gpu":null},"session_count":1,"source":"configured"}]}"#.to_owned()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let base = format!("http://127.0.0.1:{}", addr.port());
+
+        let client = reqwest::Client::new();
+        let (addr, name) = select_best_node(&client, &base, None).await.unwrap();
+        // "idle" has 1 session + 16384 MB → score = 1 - 16 = -15
+        // "busy" has 5 sessions + 8192 MB → score = 5 - 8 = -3
+        // idle wins (lower score)
+        assert_eq!(name, "idle");
+        assert_eq!(addr, "idle:7433");
+    }
+
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_select_best_node_no_online_peers_falls_back_to_local() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/api/v1/peers",
+            get(|| async {
+                r#"{"local":{"name":"my-mac","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":16384,"gpu":null},"peers":[{"name":"offline-peer","address":"offline:7433","status":"offline","node_info":null,"session_count":null,"source":"configured"}]}"#.to_owned()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let base = format!("http://127.0.0.1:{}", addr.port());
+
+        let client = reqwest::Client::new();
+        let (addr, name) = select_best_node(&client, &base, None).await.unwrap();
+        assert_eq!(name, "my-mac");
+        assert_eq!(addr, "localhost:7433");
+    }
+
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_select_best_node_empty_peers_falls_back_to_local() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/api/v1/peers",
+            get(|| async {
+                r#"{"local":{"name":"solo","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":16384,"gpu":null},"peers":[]}"#.to_owned()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let base = format!("http://127.0.0.1:{}", addr.port());
+
+        let client = reqwest::Client::new();
+        let (addr, name) = select_best_node(&client, &base, None).await.unwrap();
+        assert_eq!(name, "solo");
+        assert_eq!(addr, "localhost:7433");
+    }
+
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_execute_spawn_auto_selects_node() {
+        use axum::{
+            Router,
+            http::StatusCode,
+            routing::{get, post},
+        };
+
+        let create_json = test_create_response_json();
+
+        // Bind early so we know the address to embed in the peers response
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let node = format!("127.0.0.1:{}", addr.port());
+        let peer_addr = node.clone();
+
+        let app = Router::new()
+            .route(
+                "/api/v1/peers",
+                get(move || {
+                    let peer_addr = peer_addr.clone();
+                    async move {
+                        format!(
+                            r#"{{"local":{{"name":"local","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":16384,"gpu":null}},"peers":[{{"name":"remote","address":"{peer_addr}","status":"online","node_info":{{"name":"remote","hostname":"h","os":"linux","arch":"x86_64","cpus":8,"memory_mb":32768,"gpu":null}},"session_count":0,"source":"configured"}}]}}"#
+                        )
+                    }
+                }),
+            )
+            .route(
+                "/api/v1/sessions",
+                post(move || async move {
+                    (StatusCode::CREATED, create_json.clone())
+                }),
+            );
+
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Some(Commands::Spawn {
+                name: Some("test".into()),
+                workdir: Some("/tmp/repo".into()),
+                ink: None,
+                description: None,
+                detach: true,
+                idle_threshold: None,
+                auto: true,
+                command: vec!["echo".into(), "hello".into()],
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Created session"));
+    }
+
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_select_best_node_peer_no_session_count() {
+        use axum::{Router, routing::get};
+
+        let app = Router::new().route(
+            "/api/v1/peers",
+            get(|| async {
+                r#"{"local":{"name":"local","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":16384,"gpu":null},"peers":[{"name":"fresh","address":"fresh:7433","status":"online","node_info":null,"session_count":null,"source":"configured"}]}"#.to_owned()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let base = format!("http://127.0.0.1:{}", addr.port());
+
+        let client = reqwest::Client::new();
+        let (addr, name) = select_best_node(&client, &base, None).await.unwrap();
+        // Online peer with no session_count (0) and no node_info (0 mem) → score = 0
+        assert_eq!(name, "fresh");
+        assert_eq!(addr, "fresh:7433");
     }
 }

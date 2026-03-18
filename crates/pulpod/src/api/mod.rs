@@ -2,6 +2,7 @@ pub mod auth;
 pub mod config;
 mod embed;
 pub mod events;
+pub mod fleet;
 pub mod health;
 pub mod inks;
 pub mod node;

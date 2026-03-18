@@ -255,6 +255,23 @@ pub struct InterventionEventResponse {
     pub created_at: String,
 }
 
+/// A session annotated with its source node for fleet-wide views.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FleetSession {
+    /// The node this session belongs to.
+    pub node_name: String,
+    /// The node's address (empty for local).
+    pub node_address: String,
+    #[serde(flatten)]
+    pub session: Session,
+}
+
+/// Response from the fleet sessions endpoint.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FleetSessionsResponse {
+    pub sessions: Vec<FleetSession>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct ListSessionsQuery {
     pub status: Option<String>,
@@ -1118,6 +1135,121 @@ mod tests {
         let req: WebhookEndpointUpdateRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.name, "test");
         assert_eq!(req.secret, Some("s".into()));
+    }
+
+    // -- Fleet type tests --
+
+    fn make_fleet_session() -> FleetSession {
+        use crate::session::{Session, SessionStatus};
+        use chrono::Utc;
+        use uuid::Uuid;
+        FleetSession {
+            node_name: "node-a".into(),
+            node_address: "10.0.0.1:7433".into(),
+            session: Session {
+                id: Uuid::nil(),
+                name: "my-session".into(),
+                workdir: "/tmp".into(),
+                command: "echo hi".into(),
+                description: None,
+                status: SessionStatus::Active,
+                exit_code: None,
+                backend_session_id: None,
+                output_snapshot: None,
+                metadata: None,
+                ink: None,
+                intervention_code: None,
+                intervention_reason: None,
+                intervention_at: None,
+                last_output_at: None,
+                idle_since: None,
+                idle_threshold_secs: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
+        }
+    }
+
+    #[test]
+    fn test_fleet_session_serialize() {
+        let fs = make_fleet_session();
+        let json = serde_json::to_string(&fs).unwrap();
+        assert!(json.contains("\"node_name\":\"node-a\""));
+        assert!(json.contains("\"node_address\":\"10.0.0.1:7433\""));
+        // Flattened session fields should appear at top level
+        assert!(json.contains("\"name\":\"my-session\""));
+        assert!(json.contains("\"command\":\"echo hi\""));
+    }
+
+    #[test]
+    fn test_fleet_session_deserialize() {
+        let fs = make_fleet_session();
+        let json = serde_json::to_string(&fs).unwrap();
+        let deserialized: FleetSession = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.node_name, "node-a");
+        assert_eq!(deserialized.node_address, "10.0.0.1:7433");
+        assert_eq!(deserialized.session.name, "my-session");
+    }
+
+    #[test]
+    fn test_fleet_session_debug() {
+        let fs = make_fleet_session();
+        let debug = format!("{fs:?}");
+        assert!(debug.contains("node-a"));
+    }
+
+    #[test]
+    fn test_fleet_session_clone() {
+        let fs = make_fleet_session();
+        #[allow(clippy::redundant_clone)]
+        let cloned = fs.clone();
+        assert_eq!(cloned.node_name, "node-a");
+        assert_eq!(cloned.session.name, "my-session");
+    }
+
+    #[test]
+    fn test_fleet_session_local_empty_address() {
+        let mut fs = make_fleet_session();
+        fs.node_address = String::new();
+        let json = serde_json::to_string(&fs).unwrap();
+        assert!(json.contains("\"node_address\":\"\""));
+        let deserialized: FleetSession = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.node_address.is_empty());
+    }
+
+    #[test]
+    fn test_fleet_sessions_response_serialize() {
+        let resp = FleetSessionsResponse {
+            sessions: vec![make_fleet_session()],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"sessions\""));
+        assert!(json.contains("\"node_name\":\"node-a\""));
+    }
+
+    #[test]
+    fn test_fleet_sessions_response_deserialize() {
+        let resp = FleetSessionsResponse {
+            sessions: vec![make_fleet_session()],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let deserialized: FleetSessionsResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.sessions.len(), 1);
+        assert_eq!(deserialized.sessions[0].node_name, "node-a");
+    }
+
+    #[test]
+    fn test_fleet_sessions_response_empty() {
+        let resp = FleetSessionsResponse { sessions: vec![] };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"sessions":[]}"#);
+    }
+
+    #[test]
+    fn test_fleet_sessions_response_debug() {
+        let resp = FleetSessionsResponse { sessions: vec![] };
+        let debug = format!("{resp:?}");
+        assert!(debug.contains("FleetSessionsResponse"));
     }
 
     #[test]

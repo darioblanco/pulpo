@@ -10,6 +10,7 @@ use super::AppState;
 use super::auth;
 use super::config;
 use super::events;
+use super::fleet;
 use super::health;
 use super::inks;
 use super::node;
@@ -71,6 +72,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/sessions/{id}/stream", get(ws::stream))
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
+        .route("/api/v1/fleet/sessions", get(fleet::fleet_sessions))
         .route("/api/v1/inks", get(inks::list))
         .route("/api/v1/push/vapid-key", get(push::get_vapid_key))
         .route("/api/v1/push/subscribe", post(push::subscribe_push))
