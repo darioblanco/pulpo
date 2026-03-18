@@ -104,6 +104,9 @@ pub struct Session {
     /// Per-session idle threshold override.
     /// `None` = use global, `Some(0)` = never idle, `Some(N)` = N seconds.
     pub idle_threshold_secs: Option<u32>,
+    /// Path to the git worktree created for this session, if any.
+    /// When set, the worktree is cleaned up when the session is killed or deleted.
+    pub worktree_path: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -132,6 +135,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -274,6 +278,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -318,6 +323,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -345,6 +351,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -375,6 +382,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

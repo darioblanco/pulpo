@@ -312,6 +312,18 @@ impl Store {
                 .await?;
         }
 
+        // Idempotent migration: worktree_path column
+        let has_worktree_path: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'worktree_path'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_worktree_path == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN worktree_path TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+
         // Idempotent migration: push subscriptions table for Web Push notifications
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -363,8 +375,8 @@ impl Store {
                 exit_code, backend_session_id, output_snapshot,
                 metadata, ink, command, description,
                 intervention_code, intervention_reason, intervention_at,
-                last_output_at, idle_since, idle_threshold_secs, created_at, updated_at)
-             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                last_output_at, idle_since, idle_threshold_secs, worktree_path, created_at, updated_at)
+             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
         .bind(&session.name)
@@ -387,6 +399,7 @@ impl Store {
                 .idle_threshold_secs
                 .map(|v| i32::try_from(v).unwrap_or(i32::MAX)),
         )
+        .bind(&session.worktree_path)
         .bind(session.created_at.to_rfc3339())
         .bind(session.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -781,6 +794,7 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
             let v: Option<i32> = row.try_get("idle_threshold_secs").unwrap_or(None);
             v.map(|n| u32::try_from(n).unwrap_or(0))
         },
+        worktree_path: row.try_get("worktree_path").unwrap_or(None),
         created_at: DateTime::parse_from_rfc3339(&created_str)?.with_timezone(&Utc),
         updated_at: DateTime::parse_from_rfc3339(&updated_str)?.with_timezone(&Utc),
     })
@@ -846,6 +860,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -1169,7 +1184,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
-
+            worktree_path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

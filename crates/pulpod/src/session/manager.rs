@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::Utc;
 use pulpo_common::api::CreateSessionRequest;
 use pulpo_common::event::{PulpoEvent, SessionEvent};
@@ -102,6 +102,21 @@ impl SessionManager {
         });
         validate_workdir(&workdir)?;
 
+        // Create git worktree if requested
+        let (effective_workdir, worktree_path) = if req.worktree.unwrap_or(false) {
+            #[cfg(not(coverage))]
+            {
+                let wt_path = create_worktree(&workdir, &req.name)?;
+                (wt_path.clone(), Some(wt_path))
+            }
+            #[cfg(coverage)]
+            {
+                (workdir.clone(), None)
+            }
+        } else {
+            (workdir.clone(), None)
+        };
+
         // Reject duplicate names among live sessions
         if self.store.has_active_session_by_name(&req.name).await? {
             bail!(
@@ -121,7 +136,7 @@ impl SessionManager {
         let session = Session {
             id,
             name: name.clone(),
-            workdir,
+            workdir: effective_workdir,
             command,
             description,
             status: SessionStatus::Creating,
@@ -136,6 +151,7 @@ impl SessionManager {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: req.idle_threshold_secs,
+            worktree_path,
             created_at: now,
             updated_at: now,
         };
@@ -289,6 +305,10 @@ impl SessionManager {
             .await?;
         let mut dead_session = session;
         dead_session.status = SessionStatus::Killed;
+        // Clean up worktree if this was a worktree session
+        if let Some(ref wt_path) = dead_session.worktree_path {
+            cleanup_worktree(wt_path);
+        }
         self.emit_event(&dead_session, Some(previous));
         Ok(())
     }
@@ -315,6 +335,10 @@ impl SessionManager {
         let _ = self.backend.kill_session(&backend_id);
 
         self.store.delete_session(&session.id.to_string()).await?;
+        // Clean up worktree if this was a worktree session
+        if let Some(ref wt_path) = session.worktree_path {
+            cleanup_worktree(wt_path);
+        }
         Ok(())
     }
 
@@ -467,6 +491,51 @@ fn is_shell_command(command: &str) -> bool {
 /// Wrap an agent command with env vars, exit marker, and fallback shell.
 /// Shell commands are run directly (no exit marker or fallback bash).
 ///
+/// Create a git worktree for a session.
+/// Returns the worktree path on success.
+#[cfg(not(coverage))]
+fn create_worktree(repo_dir: &str, session_name: &str) -> Result<String> {
+    let worktree_dir = format!("{repo_dir}/.pulpo/worktrees/{session_name}");
+    let branch_name = format!("pulpo/{session_name}");
+
+    // Ensure parent directory exists
+    std::fs::create_dir_all(format!("{repo_dir}/.pulpo/worktrees"))?;
+
+    let output = std::process::Command::new("git")
+        .args(["worktree", "add", "-b", &branch_name, &worktree_dir])
+        .current_dir(repo_dir)
+        .output()
+        .context("failed to run git worktree add")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git worktree add failed: {}", stderr.trim());
+    }
+
+    Ok(worktree_dir)
+}
+
+/// Remove a git worktree and prune stale entries.
+pub(crate) fn cleanup_worktree(worktree_path: &str) {
+    if !std::path::Path::new(worktree_path).exists() {
+        return;
+    }
+    // Worktree path is <repo>/.pulpo/worktrees/<session-name>
+    let repo_root = std::path::Path::new(worktree_path)
+        .parent() // .pulpo/worktrees/
+        .and_then(|p| p.parent()) // .pulpo/
+        .and_then(|p| p.parent()); // <repo>/
+
+    let _ = std::fs::remove_dir_all(worktree_path);
+
+    if let Some(root) = repo_root {
+        let _ = std::process::Command::new("git")
+            .args(["worktree", "prune"])
+            .current_dir(root)
+            .output();
+    }
+}
+
 /// Uses `bash -l -c` (login shell) so that `.bash_profile` / `.zprofile` are sourced,
 /// ensuring PATH includes Homebrew, nvm, and other tools — critical when pulpod runs
 /// as a launchd/systemd service where the environment is minimal.
@@ -634,6 +703,7 @@ mod tests {
             description: None,
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         }
     }
 
@@ -669,6 +739,7 @@ mod tests {
             description: None,
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -703,6 +774,7 @@ mod tests {
             description: None,
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -734,6 +806,7 @@ mod tests {
             description: Some("My desc".into()),
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Explicit command wins over ink command
@@ -752,6 +825,7 @@ mod tests {
             description: None,
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         let result = mgr.create_session(req).await;
         let err = result.unwrap_err().to_string();
@@ -769,6 +843,7 @@ mod tests {
             description: None,
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert!(!session.workdir.is_empty());
@@ -1385,6 +1460,7 @@ mod tests {
             description: Some("desc".into()),
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         let (cmd, desc) = mgr.resolve_ink(&req).unwrap();
         // Falls back to $SHELL or /bin/sh
@@ -1417,6 +1493,7 @@ mod tests {
             description: None, // Should fall back to ink description
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.description, Some("Ink desc".into()));
@@ -1447,6 +1524,7 @@ mod tests {
             description: None,
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         // Ink with no command falls back to $SHELL
         let session = mgr.create_session(req).await.unwrap();
@@ -1471,6 +1549,7 @@ mod tests {
             description: None,
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude");
@@ -1494,6 +1573,7 @@ mod tests {
             description: None,
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "custom-agent");
@@ -1525,6 +1605,7 @@ mod tests {
             description: None,
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -1541,6 +1622,7 @@ mod tests {
             description: None,
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -1646,6 +1728,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: Utc::now() - chrono::Duration::hours(1),
             updated_at: Utc::now(),
         };

@@ -16,6 +16,8 @@ pub struct CreateSessionRequest {
     pub description: Option<String>,
     pub metadata: Option<HashMap<String, String>>,
     pub idle_threshold_secs: Option<u32>,
+    /// Create in an isolated git worktree.
+    pub worktree: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -578,6 +580,7 @@ mod tests {
             description: None,
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("/tmp"));
@@ -1110,6 +1113,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -1207,6 +1211,7 @@ mod tests {
                 last_output_at: None,
                 idle_since: None,
                 idle_threshold_secs: None,
+                worktree_path: None,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             },

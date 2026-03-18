@@ -417,6 +417,7 @@ impl PulpoMcp {
                 description,
                 metadata,
                 idle_threshold_secs: None,
+                worktree: None,
             };
             self.session_manager.create_session(req).await
         } else {
@@ -488,6 +489,7 @@ impl PulpoMcp {
                 description: params.description,
                 metadata: None,
                 idle_threshold_secs: None,
+                worktree: None,
             };
             self.session_manager.create_session(req).await
         } else {
@@ -1699,6 +1701,7 @@ mod tests {
                 last_output_at: None,
                 idle_since: None,
                 idle_threshold_secs: None,
+                worktree_path: None,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             },
@@ -1821,6 +1824,7 @@ mod tests {
                 last_output_at: None,
                 idle_since: None,
                 idle_threshold_secs: None,
+                worktree_path: None,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             },
@@ -2036,6 +2040,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
@@ -2060,6 +2065,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }

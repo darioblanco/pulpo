@@ -119,6 +119,7 @@ async fn fire_due_schedules(
             description: schedule.description.clone(),
             metadata: None,
             idle_threshold_secs: None,
+            worktree: None,
         };
 
         match session_manager.create_session(req).await {

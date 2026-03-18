@@ -254,6 +254,10 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
                 "Failed to record intervention: {e}"
             );
         }
+        // Clean up worktree if this was a worktree session
+        if let Some(ref wt_path) = session.worktree_path {
+            crate::session::manager::cleanup_worktree(wt_path);
+        }
         let usage = snapshot.usage_percent();
         warn!(
             session_id = %session.id,
@@ -575,6 +579,10 @@ async fn handle_idle_session(
                     session.name
                 );
             }
+            // Clean up worktree if this was a worktree session
+            if let Some(ref wt_path) = session.worktree_path {
+                crate::session::manager::cleanup_worktree(wt_path);
+            }
             warn!(
                 "Idle check: killed idle session {} after {minutes} minutes",
                 session.name
@@ -741,6 +749,7 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -969,6 +978,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1434,6 +1444,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1756,6 +1767,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1807,6 +1819,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1866,6 +1879,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(100)),
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1915,6 +1929,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1984,6 +1999,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now()), // very recent
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2033,6 +2049,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(idle_time),
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2083,6 +2100,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2154,6 +2172,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now() - chrono::Duration::seconds(700),
             updated_at: chrono::Utc::now(),
         };
@@ -2227,6 +2246,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2292,6 +2312,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now()),
             idle_since: Some(chrono::Utc::now()),
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2328,6 +2349,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now()),
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2359,6 +2381,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2415,6 +2438,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2472,6 +2496,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2652,6 +2677,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2900,6 +2926,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now()),
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2948,6 +2975,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now()),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(60)),
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2995,6 +3023,7 @@ mod tests {
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
@@ -3649,6 +3678,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

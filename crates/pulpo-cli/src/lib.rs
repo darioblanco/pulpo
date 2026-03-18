@@ -79,6 +79,10 @@ pub enum Commands {
         #[arg(long)]
         auto: bool,
 
+        /// Create an isolated git worktree for the session
+        #[arg(long)]
+        worktree: bool,
+
         /// Command to run (everything after --)
         #[arg(last = true)]
         command: Vec<String>,
@@ -1000,6 +1004,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             detach,
             idle_threshold,
             auto,
+            worktree,
             command,
         } => {
             let cmd = if command.is_empty() {
@@ -1034,6 +1039,9 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             if let Some(t) = idle_threshold {
                 body["idle_threshold_secs"] = serde_json::json!(t);
+            }
+            if *worktree {
+                body["worktree"] = serde_json::json!(true);
             }
             let spawn_url = if *auto {
                 let (auto_addr, auto_name) =
@@ -1293,6 +1301,15 @@ mod tests {
         assert!(matches!(
             &cli.command,
             Some(Commands::Spawn { idle_threshold, .. }) if *idle_threshold == Some(60)
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_worktree() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--worktree"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { worktree, .. }) if *worktree
         ));
     }
 
@@ -1564,6 +1581,7 @@ mod tests {
                 detach: true,
                 idle_threshold: None,
                 auto: false,
+                worktree: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1587,6 +1605,7 @@ mod tests {
                 detach: true,
                 idle_threshold: None,
                 auto: false,
+                worktree: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1609,6 +1628,7 @@ mod tests {
                 detach: true,
                 idle_threshold: None,
                 auto: false,
+                worktree: false,
                 command: vec![],
             }),
             path: None,
@@ -1631,6 +1651,7 @@ mod tests {
                 detach: true,
                 idle_threshold: None,
                 auto: false,
+                worktree: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1653,6 +1674,7 @@ mod tests {
                 detach: false,
                 idle_threshold: None,
                 auto: false,
+                worktree: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1890,6 +1912,7 @@ mod tests {
                 detach: true,
                 idle_threshold: None,
                 auto: false,
+                worktree: false,
                 command: vec!["test".into()],
             }),
             path: None,
@@ -2076,6 +2099,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
@@ -2113,6 +2137,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
+            worktree_path: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
@@ -2210,6 +2235,7 @@ mod tests {
                 detach: true,
                 idle_threshold: None,
                 auto: false,
+                worktree: false,
                 command: vec!["test".into()],
             }),
             path: None,
@@ -3671,6 +3697,7 @@ mod tests {
                 detach: true,
                 idle_threshold: None,
                 auto: true,
+                worktree: false,
                 command: vec!["echo".into(), "hello".into()],
             }),
             path: None,

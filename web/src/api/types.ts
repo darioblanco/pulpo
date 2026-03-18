@@ -34,6 +34,7 @@ export interface Session {
   intervention_reason: string | null;
   intervention_at: string | null;
   idle_threshold_secs?: number | null;
+  worktree_path?: string | null;
   last_output_at: string | null;
   created_at: string;
 }
@@ -153,6 +154,7 @@ export interface CreateSessionRequest {
   ink?: string;
   description?: string;
   metadata?: Record<string, string>;
+  worktree?: boolean;
 }
 
 export interface CreateSessionResponse {
