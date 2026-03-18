@@ -7,6 +7,7 @@ pub mod mcp;
 pub mod notifications;
 pub mod peers;
 pub mod platform;
+pub mod scheduler;
 pub mod session;
 pub mod store;
 pub mod watchdog;
@@ -239,6 +240,23 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let peer_registry = peers::PeerRegistry::new(&config.peers);
 
     let mut shutdown_handle = ShutdownHandle::new();
+
+    // Start built-in scheduler
+    #[cfg(not(coverage))]
+    {
+        let sched_manager = manager.clone();
+        let sched_store = store.clone();
+        let sched_event_tx = Some(event_tx.clone());
+        let (sched_shutdown_tx, sched_shutdown_rx) = watch::channel(false);
+        tokio::spawn(scheduler::run_scheduler_loop(
+            sched_manager,
+            sched_store,
+            sched_event_tx,
+            sched_shutdown_rx,
+        ));
+        shutdown_handle.add_sender(sched_shutdown_tx);
+        info!("Scheduler enabled");
+    }
 
     #[cfg(not(coverage))]
     let watchdog_config_tx = {

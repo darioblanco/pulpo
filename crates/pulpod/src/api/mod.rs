@@ -11,6 +11,7 @@ pub mod peers;
 pub mod push;
 
 pub mod routes;
+pub mod schedules;
 pub mod sessions;
 pub mod static_files;
 pub mod watchdog;

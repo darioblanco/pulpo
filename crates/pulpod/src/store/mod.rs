@@ -325,6 +325,26 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
+        // Idempotent migration: schedules table
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS schedules (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                cron TEXT NOT NULL,
+                command TEXT NOT NULL DEFAULT '',
+                workdir TEXT NOT NULL,
+                target_node TEXT,
+                ink TEXT,
+                description TEXT,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                last_run_at TEXT,
+                last_session_id TEXT,
+                created_at TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -630,6 +650,78 @@ impl Store {
             })
             .collect())
     }
+
+    // -- Schedule methods --
+
+    pub async fn insert_schedule(&self, schedule: &pulpo_common::api::Schedule) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO schedules (id, name, cron, command, workdir, target_node, ink, description, enabled, last_run_at, last_session_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&schedule.id)
+        .bind(&schedule.name)
+        .bind(&schedule.cron)
+        .bind(&schedule.command)
+        .bind(&schedule.workdir)
+        .bind(&schedule.target_node)
+        .bind(&schedule.ink)
+        .bind(&schedule.description)
+        .bind(schedule.enabled)
+        .bind(&schedule.last_run_at)
+        .bind(&schedule.last_session_id)
+        .bind(&schedule.created_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_schedules(&self) -> Result<Vec<pulpo_common::api::Schedule>> {
+        let rows = sqlx::query("SELECT * FROM schedules ORDER BY name")
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter().map(row_to_schedule).collect()
+    }
+
+    pub async fn get_schedule(
+        &self,
+        id_or_name: &str,
+    ) -> Result<Option<pulpo_common::api::Schedule>> {
+        let row = sqlx::query("SELECT * FROM schedules WHERE id = ? OR name = ?")
+            .bind(id_or_name)
+            .bind(id_or_name)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(|r| row_to_schedule(&r)).transpose()
+    }
+
+    pub async fn update_schedule_enabled(&self, id: &str, enabled: bool) -> Result<()> {
+        sqlx::query("UPDATE schedules SET enabled = ? WHERE id = ?")
+            .bind(enabled)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn update_schedule_last_run(&self, id: &str, session_id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE schedules SET last_run_at = ?, last_session_id = ? WHERE id = ?")
+            .bind(&now)
+            .bind(session_id)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn delete_schedule(&self, id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM schedules WHERE id = ? OR name = ?")
+            .bind(id)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }
 
 fn row_to_session(row: &SqliteRow) -> Result<Session> {
@@ -691,6 +783,24 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
         },
         created_at: DateTime::parse_from_rfc3339(&created_str)?.with_timezone(&Utc),
         updated_at: DateTime::parse_from_rfc3339(&updated_str)?.with_timezone(&Utc),
+    })
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn row_to_schedule(row: &SqliteRow) -> Result<pulpo_common::api::Schedule> {
+    Ok(pulpo_common::api::Schedule {
+        id: row.get("id"),
+        name: row.get("name"),
+        cron: row.get("cron"),
+        command: row.get("command"),
+        workdir: row.get("workdir"),
+        target_node: row.get("target_node"),
+        ink: row.get("ink"),
+        description: row.get("description"),
+        enabled: row.get("enabled"),
+        last_run_at: row.get("last_run_at"),
+        last_session_id: row.get("last_session_id"),
+        created_at: row.get("created_at"),
     })
 }
 
@@ -2304,5 +2414,79 @@ mod tests {
             .delete_push_subscription("https://push.example.com/1")
             .await;
         assert!(result.is_err());
+    }
+
+    // -- Schedule tests --
+
+    #[tokio::test]
+    async fn test_schedule_crud() {
+        let store = test_store().await;
+        let schedule = pulpo_common::api::Schedule {
+            id: "sched-1".into(),
+            name: "nightly-review".into(),
+            cron: "0 3 * * *".into(),
+            command: "claude -p 'review'".into(),
+            workdir: "/tmp".into(),
+            target_node: None,
+            ink: None,
+            description: Some("Nightly review".into()),
+            enabled: true,
+            last_run_at: None,
+            last_session_id: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        store.insert_schedule(&schedule).await.unwrap();
+
+        let fetched = store.get_schedule("nightly-review").await.unwrap().unwrap();
+        assert_eq!(fetched.name, "nightly-review");
+        assert_eq!(fetched.cron, "0 3 * * *");
+        assert!(fetched.enabled);
+
+        let all = store.list_schedules().await.unwrap();
+        assert_eq!(all.len(), 1);
+
+        store
+            .update_schedule_enabled(&schedule.id, false)
+            .await
+            .unwrap();
+        let updated = store.get_schedule(&schedule.id).await.unwrap().unwrap();
+        assert!(!updated.enabled);
+
+        store
+            .update_schedule_last_run(&schedule.id, "session-123")
+            .await
+            .unwrap();
+        let ran = store.get_schedule(&schedule.id).await.unwrap().unwrap();
+        assert!(ran.last_run_at.is_some());
+        assert_eq!(ran.last_session_id, Some("session-123".into()));
+
+        store.delete_schedule(&schedule.id).await.unwrap();
+        assert!(store.get_schedule(&schedule.id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_schedule_unique_name() {
+        let store = test_store().await;
+        let schedule = pulpo_common::api::Schedule {
+            id: "s1".into(),
+            name: "dup".into(),
+            cron: "* * * * *".into(),
+            command: "echo".into(),
+            workdir: "/tmp".into(),
+            target_node: None,
+            ink: None,
+            description: None,
+            enabled: true,
+            last_run_at: None,
+            last_session_id: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        store.insert_schedule(&schedule).await.unwrap();
+        let dup = pulpo_common::api::Schedule {
+            id: "s2".into(),
+            name: "dup".into(),
+            ..schedule
+        };
+        assert!(store.insert_schedule(&dup).await.is_err());
     }
 }

@@ -272,6 +272,49 @@ pub struct FleetSessionsResponse {
     pub sessions: Vec<FleetSession>,
 }
 
+/// A scheduled session spawn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Schedule {
+    pub id: String,
+    pub name: String,
+    pub cron: String,
+    pub command: String,
+    pub workdir: String,
+    /// Target node: None = local, Some("auto") = least-loaded, Some("name") = specific node.
+    pub target_node: Option<String>,
+    pub ink: Option<String>,
+    pub description: Option<String>,
+    pub enabled: bool,
+    pub last_run_at: Option<String>,
+    pub last_session_id: Option<String>,
+    pub created_at: String,
+}
+
+/// Request to create or update a schedule.
+#[derive(Debug, Deserialize)]
+pub struct CreateScheduleRequest {
+    pub name: String,
+    pub cron: String,
+    pub command: Option<String>,
+    pub workdir: String,
+    /// Target node: omit = local, "auto" = least-loaded, "name" = specific node.
+    pub target_node: Option<String>,
+    pub ink: Option<String>,
+    pub description: Option<String>,
+}
+
+/// Request to update a schedule.
+#[derive(Debug, Default, Deserialize)]
+pub struct UpdateScheduleRequest {
+    pub cron: Option<String>,
+    pub command: Option<String>,
+    pub workdir: Option<String>,
+    pub target_node: Option<Option<String>>,
+    pub ink: Option<Option<String>>,
+    pub description: Option<Option<String>>,
+    pub enabled: Option<bool>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct ListSessionsQuery {
     pub status: Option<String>,
@@ -1263,5 +1306,147 @@ mod tests {
         #[allow(clippy::redundant_clone)]
         let cloned = resp.clone();
         assert_eq!(cloned.name, "test");
+    }
+
+    // -- Schedule type tests --
+
+    fn make_schedule() -> Schedule {
+        Schedule {
+            id: "sched-1".into(),
+            name: "nightly-review".into(),
+            cron: "0 3 * * *".into(),
+            command: "claude -p 'review'".into(),
+            workdir: "/tmp".into(),
+            target_node: None,
+            ink: None,
+            description: Some("Nightly review".into()),
+            enabled: true,
+            last_run_at: None,
+            last_session_id: None,
+            created_at: "2026-03-18T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn test_schedule_serialize() {
+        let schedule = make_schedule();
+        let json = serde_json::to_string(&schedule).unwrap();
+        assert!(json.contains("\"name\":\"nightly-review\""));
+        assert!(json.contains("\"cron\":\"0 3 * * *\""));
+        assert!(json.contains("\"enabled\":true"));
+    }
+
+    #[test]
+    fn test_schedule_deserialize() {
+        let json = r#"{"id":"s1","name":"test","cron":"* * * * *","command":"echo","workdir":"/tmp","target_node":null,"ink":null,"description":null,"enabled":true,"last_run_at":null,"last_session_id":null,"created_at":"2026-01-01T00:00:00Z"}"#;
+        let schedule: Schedule = serde_json::from_str(json).unwrap();
+        assert_eq!(schedule.id, "s1");
+        assert_eq!(schedule.name, "test");
+        assert!(schedule.enabled);
+    }
+
+    #[test]
+    fn test_schedule_debug() {
+        let schedule = make_schedule();
+        let debug = format!("{schedule:?}");
+        assert!(debug.contains("nightly-review"));
+    }
+
+    #[test]
+    fn test_schedule_clone() {
+        let schedule = make_schedule();
+        #[allow(clippy::redundant_clone)]
+        let cloned = schedule.clone();
+        assert_eq!(cloned.id, "sched-1");
+        assert_eq!(cloned.name, "nightly-review");
+    }
+
+    #[test]
+    fn test_schedule_roundtrip() {
+        let schedule = make_schedule();
+        let json = serde_json::to_string(&schedule).unwrap();
+        let deserialized: Schedule = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, schedule.id);
+        assert_eq!(deserialized.name, schedule.name);
+        assert_eq!(deserialized.cron, schedule.cron);
+        assert_eq!(deserialized.enabled, schedule.enabled);
+    }
+
+    #[test]
+    fn test_schedule_with_target_node() {
+        let mut schedule = make_schedule();
+        schedule.target_node = Some("auto".into());
+        let json = serde_json::to_string(&schedule).unwrap();
+        assert!(json.contains("\"target_node\":\"auto\""));
+        let deserialized: Schedule = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.target_node, Some("auto".into()));
+    }
+
+    #[test]
+    fn test_create_schedule_request_deserialize() {
+        let json = r#"{"name":"daily","cron":"0 9 * * *","workdir":"/repo","command":"echo hi","ink":"coder","description":"Daily task"}"#;
+        let req: CreateScheduleRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "daily");
+        assert_eq!(req.cron, "0 9 * * *");
+        assert_eq!(req.command, Some("echo hi".into()));
+        assert_eq!(req.ink, Some("coder".into()));
+        assert_eq!(req.description, Some("Daily task".into()));
+    }
+
+    #[test]
+    fn test_create_schedule_request_minimal() {
+        let json = r#"{"name":"min","cron":"* * * * *","workdir":"/tmp"}"#;
+        let req: CreateScheduleRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "min");
+        assert!(req.command.is_none());
+        assert!(req.target_node.is_none());
+        assert!(req.ink.is_none());
+        assert!(req.description.is_none());
+    }
+
+    #[test]
+    fn test_create_schedule_request_debug() {
+        let json = r#"{"name":"dbg","cron":"* * * * *","workdir":"/tmp"}"#;
+        let req: CreateScheduleRequest = serde_json::from_str(json).unwrap();
+        let debug = format!("{req:?}");
+        assert!(debug.contains("dbg"));
+    }
+
+    #[test]
+    fn test_update_schedule_request_default() {
+        let req = UpdateScheduleRequest::default();
+        assert!(req.cron.is_none());
+        assert!(req.command.is_none());
+        assert!(req.workdir.is_none());
+        assert!(req.enabled.is_none());
+    }
+
+    #[test]
+    fn test_update_schedule_request_deserialize() {
+        let json = r#"{"cron":"0 5 * * *","enabled":false}"#;
+        let req: UpdateScheduleRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.cron, Some("0 5 * * *".into()));
+        assert_eq!(req.enabled, Some(false));
+        assert!(req.command.is_none());
+    }
+
+    #[test]
+    fn test_update_schedule_request_debug() {
+        let req = UpdateScheduleRequest {
+            enabled: Some(true),
+            ..Default::default()
+        };
+        let debug = format!("{req:?}");
+        assert!(debug.contains("true"));
+    }
+
+    #[test]
+    fn test_update_schedule_request_nullable_fields() {
+        // serde treats `"field":null` as None for Option<Option<T>> by default
+        let json = r#"{"target_node":null,"ink":"coder","description":null}"#;
+        let req: UpdateScheduleRequest = serde_json::from_str(json).unwrap();
+        assert!(req.target_node.is_none());
+        assert_eq!(req.ink, Some(Some("coder".into())));
+        assert!(req.description.is_none());
     }
 }

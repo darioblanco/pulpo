@@ -18,6 +18,7 @@ use super::notifications;
 use super::peers;
 
 use super::push;
+use super::schedules;
 use super::sessions;
 use super::static_files;
 use super::watchdog;
@@ -78,6 +79,16 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/push/subscribe", post(push::subscribe_push))
         .route("/api/v1/push/unsubscribe", post(push::unsubscribe_push))
         .route("/api/v1/events", get(events::stream))
+        .route(
+            "/api/v1/schedules",
+            get(schedules::list).post(schedules::create),
+        )
+        .route(
+            "/api/v1/schedules/{id}",
+            get(schedules::get)
+                .put(schedules::update)
+                .delete(schedules::delete),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_auth,
