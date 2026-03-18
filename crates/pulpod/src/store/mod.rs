@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use pulpo_common::api::ListSessionsQuery;
 use pulpo_common::session::{Session, SessionStatus};
-use sqlx::{Column, Row, SqlitePool, sqlite::SqliteRow};
+use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 use uuid::Uuid;
 
 use pulpo_common::session::InterventionCode;
@@ -684,17 +684,10 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
                 .transpose()?
         },
         idle_threshold_secs: {
-            // Column may not exist in rows from legacy databases without the migration
-            let has_col = row
-                .columns()
-                .iter()
-                .any(|c| c.name() == "idle_threshold_secs");
-            if has_col {
-                let v: Option<i32> = row.get("idle_threshold_secs");
-                v.map(|n| u32::try_from(n).unwrap_or(0))
-            } else {
-                None
-            }
+            // Use try_get to handle rows where the column may not exist
+            // (e.g., SQLite prepared statement cache before ALTER TABLE runs)
+            let v: Option<i32> = row.try_get("idle_threshold_secs").unwrap_or(None);
+            v.map(|n| u32::try_from(n).unwrap_or(0))
         },
         created_at: DateTime::parse_from_rfc3339(&created_str)?.with_timezone(&Utc),
         updated_at: DateTime::parse_from_rfc3339(&updated_str)?.with_timezone(&Utc),
