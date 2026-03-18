@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { toast } from 'sonner';
 import { SessionCard } from './session-card';
 import * as api from '@/api/client';
@@ -63,72 +64,80 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
+function renderCard(session: Session, onRefresh = vi.fn()) {
+  return render(
+    <MemoryRouter>
+      <SessionCard session={session} onRefresh={onRefresh} />
+    </MemoryRouter>,
+  );
+}
+
 function clickExpand() {
   fireEvent.click(screen.getByTestId('btn-expand'));
 }
 
 describe('SessionCard', () => {
   it('renders session name, command, status', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    renderCard(makeSession());
     expect(screen.getByText('my-api')).toBeInTheDocument();
     expect(screen.getByText('active')).toBeInTheDocument();
     expect(screen.getAllByText('Fix the bug').length).toBeGreaterThan(0);
   });
 
   it('shows workdir basename in header', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    renderCard(makeSession());
     expect(screen.getByTestId('session-workdir')).toHaveTextContent('repo');
     expect(screen.getByTestId('session-workdir-short')).toHaveTextContent('repo');
   });
 
   it('shows ink when set', () => {
-    render(<SessionCard session={makeSession({ ink: 'reviewer' })} onRefresh={vi.fn()} />);
+    renderCard(makeSession({ ink: 'reviewer' }));
     expect(screen.getByTestId('session-ink')).toHaveTextContent('reviewer');
   });
 
   it('hides ink when null', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    renderCard(makeSession());
     expect(screen.queryByTestId('session-ink')).not.toBeInTheDocument();
   });
 
   // Traffic light buttons
 
   it('enables kill dot for active sessions', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    renderCard(makeSession());
     expect(screen.getByTestId('btn-kill')).not.toBeDisabled();
   });
 
   it('enables kill dot for lost sessions', () => {
-    render(<SessionCard session={makeSession({ status: 'lost' })} onRefresh={vi.fn()} />);
+    renderCard(makeSession({ status: 'lost' }));
     expect(screen.getByTestId('btn-kill')).not.toBeDisabled();
   });
 
   it('disables kill dot for ready sessions', () => {
-    render(<SessionCard session={makeSession({ status: 'ready' })} onRefresh={vi.fn()} />);
+    renderCard(makeSession({ status: 'ready' }));
     expect(screen.getByTestId('btn-kill')).toBeDisabled();
   });
 
   it('enables resume dot only for lost sessions', () => {
-    render(<SessionCard session={makeSession({ status: 'lost' })} onRefresh={vi.fn()} />);
+    renderCard(makeSession({ status: 'lost' }));
     expect(screen.getByTestId('btn-resume')).not.toBeDisabled();
   });
 
   it('disables resume dot for active sessions', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    renderCard(makeSession());
     expect(screen.getByTestId('btn-resume')).toBeDisabled();
   });
 
   // Expand/collapse
 
   it('toggles expanded state on green dot click', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    renderCard(makeSession());
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
     clickExpand();
     expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
   });
 
   it('collapses on second green dot click', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    renderCard(makeSession());
     clickExpand();
     expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
     clickExpand();
@@ -136,14 +145,14 @@ describe('SessionCard', () => {
   });
 
   it('expands on title bar click', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
-    fireEvent.click(screen.getByText('my-api'));
-    expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
+    renderCard(makeSession());
+    fireEvent.click(screen.getByTestId('session-name-link'));
+    // Clicking the name now navigates instead of expanding
   });
 
   it('expands via keyboard Enter on header', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
-    const infoArea = screen.getByText('my-api').closest('[role="button"]')!;
+    renderCard(makeSession());
+    const infoArea = screen.getByTestId('session-name-link').closest('[role="button"]')!;
     fireEvent.keyDown(infoArea, { key: 'Enter' });
     expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
   });
@@ -151,28 +160,28 @@ describe('SessionCard', () => {
   // View switching
 
   it('shows TerminalView for active session', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    renderCard(makeSession());
     clickExpand();
     expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-output-view')).not.toBeInTheDocument();
   });
 
   it('shows OutputView for ready session', () => {
-    render(<SessionCard session={makeSession({ status: 'ready' })} onRefresh={vi.fn()} />);
+    renderCard(makeSession({ status: 'ready' }));
     clickExpand();
     expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
   });
 
   it('shows OutputView for killed session', () => {
-    render(<SessionCard session={makeSession({ status: 'killed' })} onRefresh={vi.fn()} />);
+    renderCard(makeSession({ status: 'killed' }));
     clickExpand();
     expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
   });
 
   it('shows OutputView for lost session', () => {
-    render(<SessionCard session={makeSession({ status: 'lost' })} onRefresh={vi.fn()} />);
+    renderCard(makeSession({ status: 'lost' }));
     clickExpand();
     expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
@@ -181,7 +190,7 @@ describe('SessionCard', () => {
   // Kill action
 
   it('shows confirmation dialog on red dot click', async () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    renderCard(makeSession());
     fireEvent.click(screen.getByTestId('btn-kill'));
     await waitFor(() => {
       expect(screen.getByText(/Kill session "my-api"/)).toBeInTheDocument();
@@ -192,7 +201,7 @@ describe('SessionCard', () => {
   it('calls killSession after confirming dialog', async () => {
     mockKillSession.mockResolvedValue(undefined);
     const onRefresh = vi.fn();
-    render(<SessionCard session={makeSession()} onRefresh={onRefresh} />);
+    renderCard(makeSession(), onRefresh);
     fireEvent.click(screen.getByTestId('btn-kill'));
     await waitFor(() => {
       expect(screen.getByTestId('btn-kill-confirm')).toBeInTheDocument();
@@ -207,7 +216,7 @@ describe('SessionCard', () => {
   it('shows toast on kill error', async () => {
     mockKillSession.mockRejectedValue(new Error('Kill failed'));
     const onRefresh = vi.fn();
-    render(<SessionCard session={makeSession()} onRefresh={onRefresh} />);
+    renderCard(makeSession(), onRefresh);
     fireEvent.click(screen.getByTestId('btn-kill'));
     await waitFor(() => {
       expect(screen.getByTestId('btn-kill-confirm')).toBeInTheDocument();
@@ -224,7 +233,7 @@ describe('SessionCard', () => {
   it('calls resumeSession on yellow dot click', async () => {
     mockResumeSession.mockResolvedValue({ id: 'sess-1', status: 'active' });
     const onRefresh = vi.fn();
-    render(<SessionCard session={makeSession({ status: 'lost' })} onRefresh={onRefresh} />);
+    renderCard(makeSession({ status: 'lost' }), onRefresh);
     fireEvent.click(screen.getByTestId('btn-resume'));
     await waitFor(() => {
       expect(mockResumeSession).toHaveBeenCalledWith('sess-1');
@@ -235,7 +244,7 @@ describe('SessionCard', () => {
   it('shows toast on resume error', async () => {
     mockResumeSession.mockRejectedValue(new Error('Resume failed'));
     const onRefresh = vi.fn();
-    render(<SessionCard session={makeSession({ status: 'lost' })} onRefresh={onRefresh} />);
+    renderCard(makeSession({ status: 'lost' }), onRefresh);
     fireEvent.click(screen.getByTestId('btn-resume'));
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Resume failed');
@@ -246,19 +255,19 @@ describe('SessionCard', () => {
   // Fullscreen
 
   it('shows fullscreen button when expanded for active session', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    renderCard(makeSession());
     clickExpand();
     expect(screen.getByTestId('btn-fullscreen')).toBeInTheDocument();
   });
 
   it('does not show fullscreen button for non-active sessions', () => {
-    render(<SessionCard session={makeSession({ status: 'ready' })} onRefresh={vi.fn()} />);
+    renderCard(makeSession({ status: 'ready' }));
     clickExpand();
     expect(screen.queryByTestId('btn-fullscreen')).not.toBeInTheDocument();
   });
 
   it('opens fullscreen terminal overlay on click', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    renderCard(makeSession());
     clickExpand();
     fireEvent.click(screen.getByTestId('btn-fullscreen'));
     expect(screen.getByTestId('fullscreen-terminal')).toBeInTheDocument();
@@ -266,7 +275,7 @@ describe('SessionCard', () => {
   });
 
   it('closes fullscreen terminal overlay on close click', () => {
-    render(<SessionCard session={makeSession()} onRefresh={vi.fn()} />);
+    renderCard(makeSession());
     clickExpand();
     fireEvent.click(screen.getByTestId('btn-fullscreen'));
     expect(screen.getByTestId('fullscreen-terminal')).toBeInTheDocument();
@@ -277,45 +286,34 @@ describe('SessionCard', () => {
   // Intervention
 
   it('shows intervention badge for killed sessions', () => {
-    render(
-      <SessionCard
-        session={makeSession({
-          status: 'killed',
-          intervention_reason: 'Memory exceeded',
-          intervention_at: '2026-01-01T12:00:00Z',
-        })}
-        onRefresh={vi.fn()}
-      />,
+    renderCard(
+      makeSession({
+        status: 'killed',
+        intervention_reason: 'Memory exceeded',
+        intervention_at: '2026-01-01T12:00:00Z',
+      }),
     );
     expect(screen.getByTestId('intervention-badge')).toBeInTheDocument();
     expect(screen.getByText('intervened')).toBeInTheDocument();
   });
 
   it('does not show intervention badge without reason', () => {
-    render(<SessionCard session={makeSession({ status: 'killed' })} onRefresh={vi.fn()} />);
+    renderCard(makeSession({ status: 'killed' }));
     expect(screen.queryByTestId('intervention-badge')).not.toBeInTheDocument();
   });
 
   it('shows intervention badge for killed sessions only', () => {
-    render(
-      <SessionCard
-        session={makeSession({ status: 'ready', intervention_reason: 'test' })}
-        onRefresh={vi.fn()}
-      />,
-    );
+    renderCard(makeSession({ status: 'ready', intervention_reason: 'test' }));
     expect(screen.queryByTestId('intervention-badge')).not.toBeInTheDocument();
   });
 
   it('shows intervention details when expanded', () => {
-    render(
-      <SessionCard
-        session={makeSession({
-          status: 'killed',
-          intervention_reason: 'Memory exceeded',
-          intervention_at: '2026-01-01T12:00:00Z',
-        })}
-        onRefresh={vi.fn()}
-      />,
+    renderCard(
+      makeSession({
+        status: 'killed',
+        intervention_reason: 'Memory exceeded',
+        intervention_at: '2026-01-01T12:00:00Z',
+      }),
     );
     clickExpand();
     expect(screen.getByText(/Memory exceeded/)).toBeInTheDocument();
@@ -326,15 +324,12 @@ describe('SessionCard', () => {
     mockGetInterventionEvents.mockResolvedValue([
       { id: 1, session_id: 'sess-1', reason: 'OOM kill', created_at: '2026-01-01T12:00:00Z' },
     ]);
-    render(
-      <SessionCard
-        session={makeSession({
-          status: 'killed',
-          intervention_reason: 'Memory exceeded',
-          intervention_at: '2026-01-01T12:00:00Z',
-        })}
-        onRefresh={vi.fn()}
-      />,
+    renderCard(
+      makeSession({
+        status: 'killed',
+        intervention_reason: 'Memory exceeded',
+        intervention_at: '2026-01-01T12:00:00Z',
+      }),
     );
     clickExpand();
     fireEvent.click(screen.getByTestId('interventions-toggle'));

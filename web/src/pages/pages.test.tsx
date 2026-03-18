@@ -44,13 +44,15 @@ beforeEach(() => {
 
 function wrapWithProviders(ui: React.ReactElement) {
   return render(
-    <ConnectionProvider>
-      <SSEProvider>
-        <TooltipProvider>
-          <SidebarProvider>{ui}</SidebarProvider>
-        </TooltipProvider>
-      </SSEProvider>
-    </ConnectionProvider>,
+    <MemoryRouter>
+      <ConnectionProvider>
+        <SSEProvider>
+          <TooltipProvider>
+            <SidebarProvider>{ui}</SidebarProvider>
+          </TooltipProvider>
+        </SSEProvider>
+      </ConnectionProvider>
+    </MemoryRouter>,
   );
 }
 

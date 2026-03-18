@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useNavigate } from 'react-router';
 import type { OctopusEntity } from './engine/world';
 import { formatDuration } from '@/lib/utils';
 
@@ -56,6 +57,7 @@ export function ProfileCard({
   onKill,
   onDelete,
 }: ProfileCardProps) {
+  const navigate = useNavigate();
   const color = STATUS_COLORS[octopus.status] ?? '#94a3b8';
   const isEnded = ENDED_STATUSES.includes(octopus.status);
 
@@ -145,7 +147,15 @@ export function ProfileCard({
           </div>
 
           {/* Actions */}
-          <div className="mt-4 flex gap-2">
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              onClick={() => navigate(`/sessions/${octopus.sessionId}`)}
+              className="min-h-[44px] min-w-[44px] rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+              style={{ backgroundColor: '#475569' }}
+              data-testid="view-details-button"
+            >
+              View Details
+            </button>
             {onAttach && LIVE_STATUSES.includes(octopus.status) && (
               <button
                 onClick={() => onAttach(octopus.name)}

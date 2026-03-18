@@ -9,6 +9,7 @@ import { HistoryPage } from '@/pages/history';
 import { SettingsPage } from '@/pages/settings';
 import { OceanPage } from '@/pages/ocean';
 import { ConnectPage } from '@/pages/connect';
+import { SessionDetailPage } from '@/pages/session-detail';
 
 export function App() {
   return (
@@ -20,6 +21,7 @@ export function App() {
               <Route element={<AppLayout />}>
                 <Route index element={<OceanPage />} />
                 <Route path="sessions" element={<DashboardPage />} />
+                <Route path="sessions/:id" element={<SessionDetailPage />} />
                 <Route path="history" element={<HistoryPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>

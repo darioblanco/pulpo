@@ -1,17 +1,10 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { deleteSession, downloadSessionOutput } from '@/api/client';
 import type { Session } from '@/api/types';
-
-const statusColors: Record<string, string> = {
-  ready: 'bg-status-ready',
-  killed: 'bg-status-killed',
-  active: 'bg-status-active',
-  lost: 'bg-status-lost',
-  creating: 'bg-status-creating',
-  idle: 'bg-status-idle',
-};
+import { statusColors } from '@/lib/utils';
 
 interface SessionListProps {
   sessions: Session[];
@@ -19,6 +12,7 @@ interface SessionListProps {
 }
 
 export function SessionList({ sessions, onRefresh }: SessionListProps) {
+  const navigate = useNavigate();
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   function toggleExpand(id: string) {
@@ -66,7 +60,16 @@ export function SessionList({ sessions, onRefresh }: SessionListProps) {
               className={`h-2 w-2 shrink-0 rounded-full ${statusColors[session.status] ?? 'bg-muted'}`}
             />
             <div className="min-w-0 flex-1">
-              <strong>{session.name}</strong>
+              <strong
+                className="cursor-pointer hover:underline"
+                data-testid={`session-name-link-${session.id}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/sessions/${session.id}`);
+                }}
+              >
+                {session.name}
+              </strong>
               <p className="truncate text-sm text-muted-foreground">
                 {(session.description || session.command).length > 80
                   ? (session.description || session.command).slice(0, 80) + '...'

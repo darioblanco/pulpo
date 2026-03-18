@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { cn, formatDuration } from './utils';
+import { cn, formatDuration, formatRelativeTime, statusColors } from './utils';
 
 describe('cn', () => {
   it('merges class names', () => {
@@ -37,5 +37,70 @@ describe('formatDuration', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2025-01-01T02:30:00Z'));
     expect(formatDuration('2025-01-01T00:00:00Z')).toBe('2h 30m');
+  });
+});
+
+describe('formatRelativeTime', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('returns just now for recent times', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T00:00:05Z'));
+    expect(formatRelativeTime('2025-01-01T00:00:00Z')).toBe('just now');
+  });
+
+  it('returns seconds ago', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T00:00:30Z'));
+    expect(formatRelativeTime('2025-01-01T00:00:00Z')).toBe('30 seconds ago');
+  });
+
+  it('returns minutes ago (singular)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T00:01:00Z'));
+    expect(formatRelativeTime('2025-01-01T00:00:00Z')).toBe('1 minute ago');
+  });
+
+  it('returns minutes ago (plural)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T00:05:00Z'));
+    expect(formatRelativeTime('2025-01-01T00:00:00Z')).toBe('5 minutes ago');
+  });
+
+  it('returns hours ago (singular)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T01:00:00Z'));
+    expect(formatRelativeTime('2025-01-01T00:00:00Z')).toBe('1 hour ago');
+  });
+
+  it('returns hours ago (plural)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-01T03:00:00Z'));
+    expect(formatRelativeTime('2025-01-01T00:00:00Z')).toBe('3 hours ago');
+  });
+
+  it('returns days ago (singular)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-02T00:00:00Z'));
+    expect(formatRelativeTime('2025-01-01T00:00:00Z')).toBe('1 day ago');
+  });
+
+  it('returns days ago (plural)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-01-04T00:00:00Z'));
+    expect(formatRelativeTime('2025-01-01T00:00:00Z')).toBe('3 days ago');
+  });
+});
+
+describe('statusColors', () => {
+  it('has entries for all statuses', () => {
+    expect(statusColors.active).toBe('bg-status-active');
+    expect(statusColors.ready).toBe('bg-status-ready');
+    expect(statusColors.killed).toBe('bg-status-killed');
+    expect(statusColors.lost).toBe('bg-status-lost');
+    expect(statusColors.creating).toBe('bg-status-creating');
+    expect(statusColors.idle).toBe('bg-status-idle');
   });
 });

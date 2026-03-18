@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ConnectionProvider } from '@/hooks/use-connection';
@@ -49,13 +50,15 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 
 function renderHistory() {
   return render(
-    <ConnectionProvider>
-      <TooltipProvider>
-        <SidebarProvider>
-          <HistoryPage />
-        </SidebarProvider>
-      </TooltipProvider>
-    </ConnectionProvider>,
+    <MemoryRouter>
+      <ConnectionProvider>
+        <TooltipProvider>
+          <SidebarProvider>
+            <HistoryPage />
+          </SidebarProvider>
+        </TooltipProvider>
+      </ConnectionProvider>
+    </MemoryRouter>,
   );
 }
 

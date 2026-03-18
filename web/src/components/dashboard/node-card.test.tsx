@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { NodeCard } from './node-card';
 import type { NodeInfo, Session } from '@/api/types';
 
@@ -52,79 +53,67 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
+function renderNodeCard(props: {
+  name: string;
+  nodeInfo: NodeInfo | null;
+  status: 'online' | 'offline' | 'unknown';
+  sessions: Session[];
+  isLocal?: boolean;
+  onRefresh?: () => void;
+}) {
+  return render(
+    <MemoryRouter>
+      <NodeCard
+        name={props.name}
+        nodeInfo={props.nodeInfo}
+        status={props.status}
+        sessions={props.sessions}
+        isLocal={props.isLocal}
+        onRefresh={props.onRefresh ?? vi.fn()}
+      />
+    </MemoryRouter>,
+  );
+}
+
 describe('NodeCard', () => {
   it('renders node name and info', () => {
-    render(
-      <NodeCard
-        name="mac-studio"
-        nodeInfo={nodeInfo}
-        status="online"
-        sessions={[]}
-        onRefresh={vi.fn()}
-      />,
-    );
+    renderNodeCard({ name: 'mac-studio', nodeInfo, status: 'online', sessions: [] });
     expect(screen.getByText('mac-studio')).toBeInTheDocument();
     expect(screen.getByText(/macOS · arm64 · 12 cores/)).toBeInTheDocument();
   });
 
   it('shows local badge', () => {
-    render(
-      <NodeCard
-        name="my-node"
-        nodeInfo={nodeInfo}
-        status="online"
-        sessions={[]}
-        isLocal
-        onRefresh={vi.fn()}
-      />,
-    );
+    renderNodeCard({ name: 'my-node', nodeInfo, status: 'online', sessions: [], isLocal: true });
     expect(screen.getByText('local')).toBeInTheDocument();
   });
 
   it('shows empty message when no sessions', () => {
-    render(
-      <NodeCard
-        name="node"
-        nodeInfo={nodeInfo}
-        status="online"
-        sessions={[]}
-        onRefresh={vi.fn()}
-      />,
-    );
+    renderNodeCard({ name: 'node', nodeInfo, status: 'online', sessions: [] });
     expect(screen.getByText('No active sessions on this node.')).toBeInTheDocument();
   });
 
   it('shows offline message', () => {
-    render(
-      <NodeCard name="node" nodeInfo={null} status="offline" sessions={[]} onRefresh={vi.fn()} />,
-    );
+    renderNodeCard({ name: 'node', nodeInfo: null, status: 'offline', sessions: [] });
     expect(screen.getByText(/Node is offline/)).toBeInTheDocument();
   });
 
   it('shows unknown status message', () => {
-    render(
-      <NodeCard name="node" nodeInfo={null} status="unknown" sessions={[]} onRefresh={vi.fn()} />,
-    );
+    renderNodeCard({ name: 'node', nodeInfo: null, status: 'unknown', sessions: [] });
     expect(screen.getByText(/Node is unknown/)).toBeInTheDocument();
   });
 
   it('renders session cards for online node with sessions', () => {
-    render(
-      <NodeCard
-        name="node"
-        nodeInfo={nodeInfo}
-        status="online"
-        sessions={[makeSession()]}
-        onRefresh={vi.fn()}
-      />,
-    );
+    renderNodeCard({
+      name: 'node',
+      nodeInfo,
+      status: 'online',
+      sessions: [makeSession()],
+    });
     expect(screen.getByText('my-api')).toBeInTheDocument();
   });
 
   it('applies opacity class for offline nodes', () => {
-    render(
-      <NodeCard name="node" nodeInfo={null} status="offline" sessions={[]} onRefresh={vi.fn()} />,
-    );
+    renderNodeCard({ name: 'node', nodeInfo: null, status: 'offline', sessions: [] });
     expect(screen.getByTestId('node-card').className).toContain('opacity-50');
   });
 });

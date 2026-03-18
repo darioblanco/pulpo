@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { SessionList } from './session-list';
 import * as api from '@/api/client';
 import type { Session } from '@/api/types';
@@ -39,40 +40,48 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   };
 }
 
+function renderList(sessions: Session[], onRefresh = vi.fn()) {
+  return render(
+    <MemoryRouter>
+      <SessionList sessions={sessions} onRefresh={onRefresh} />
+    </MemoryRouter>,
+  );
+}
+
 describe('SessionList', () => {
   it('shows empty message when no sessions', () => {
-    render(<SessionList sessions={[]} onRefresh={vi.fn()} />);
+    renderList([]);
     expect(screen.getByTestId('empty-message')).toBeInTheDocument();
     expect(screen.getByText('No sessions found.')).toBeInTheDocument();
   });
 
   it('renders session items', () => {
     const sessions = [makeSession(), makeSession({ id: 'sess-2', name: 'other-task' })];
-    render(<SessionList sessions={sessions} onRefresh={vi.fn()} />);
+    renderList(sessions);
     expect(screen.getByText('my-api')).toBeInTheDocument();
     expect(screen.getByText('other-task')).toBeInTheDocument();
   });
 
   it('truncates long commands', () => {
     const longCommand = 'A'.repeat(100);
-    render(<SessionList sessions={[makeSession({ command: longCommand })]} onRefresh={vi.fn()} />);
+    renderList([makeSession({ command: longCommand })]);
     expect(screen.getByText('A'.repeat(80) + '...')).toBeInTheDocument();
   });
 
   it('does not truncate short commands', () => {
-    render(<SessionList sessions={[makeSession({ command: 'Short' })]} onRefresh={vi.fn()} />);
+    renderList([makeSession({ command: 'Short' })]);
     expect(screen.getByText('Short')).toBeInTheDocument();
   });
 
   it('expands session details on click', () => {
-    render(<SessionList sessions={[makeSession()]} onRefresh={vi.fn()} />);
+    renderList([makeSession()]);
     expect(screen.queryByTestId('history-detail-sess-1')).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId('history-item-sess-1'));
     expect(screen.getByTestId('history-detail-sess-1')).toBeInTheDocument();
   });
 
   it('collapses on second click', () => {
-    render(<SessionList sessions={[makeSession()]} onRefresh={vi.fn()} />);
+    renderList([makeSession()]);
     fireEvent.click(screen.getByTestId('history-item-sess-1'));
     expect(screen.getByTestId('history-detail-sess-1')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('history-item-sess-1'));
@@ -80,7 +89,7 @@ describe('SessionList', () => {
   });
 
   it('expands via keyboard Enter', () => {
-    render(<SessionList sessions={[makeSession()]} onRefresh={vi.fn()} />);
+    renderList([makeSession()]);
     fireEvent.keyDown(screen.getByTestId('history-item-sess-1'), { key: 'Enter' });
     expect(screen.getByTestId('history-detail-sess-1')).toBeInTheDocument();
   });
@@ -91,7 +100,7 @@ describe('SessionList', () => {
     const revokeUrl = vi.fn();
     vi.stubGlobal('URL', { createObjectURL: () => 'blob://url', revokeObjectURL: revokeUrl });
 
-    render(<SessionList sessions={[makeSession()]} onRefresh={vi.fn()} />);
+    renderList([makeSession()]);
     fireEvent.click(screen.getByTestId('history-item-sess-1'));
     fireEvent.click(screen.getByTestId('download-sess-1'));
 
@@ -104,7 +113,7 @@ describe('SessionList', () => {
   it('deletes session and refreshes', async () => {
     mockDeleteSession.mockResolvedValue(undefined);
     const onRefresh = vi.fn();
-    render(<SessionList sessions={[makeSession()]} onRefresh={onRefresh} />);
+    renderList([makeSession()], onRefresh);
     fireEvent.click(screen.getByTestId('history-item-sess-1'));
     fireEvent.click(screen.getByTestId('delete-sess-1'));
 

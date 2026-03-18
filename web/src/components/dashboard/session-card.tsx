@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -28,6 +29,7 @@ function truncateCommand(command: string, maxLen = 40): string {
 }
 
 export function SessionCard({ session, onRefresh }: SessionCardProps) {
+  const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [interventionEvents, setInterventionEvents] = useState<InterventionEvent[]>([]);
@@ -138,7 +140,16 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
           }}
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-x-2 overflow-hidden"
         >
-          <strong className="shrink-0 font-mono text-xs text-[#c0d0e0]">{session.name}</strong>
+          <strong
+            className="shrink-0 cursor-pointer font-mono text-xs text-[#c0d0e0] hover:underline"
+            data-testid="session-name-link"
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/sessions/${session.id}`);
+            }}
+          >
+            {session.name}
+          </strong>
           <span className="truncate max-w-[120px] sm:max-w-[200px] lg:max-w-none text-[0.6rem] uppercase text-[#5a7a9a]">
             {truncateCommand(session.command)}
           </span>

@@ -16,3 +16,24 @@ export function formatDuration(startIso: string, endIso?: string | null): string
   const minutes = Math.floor((seconds % 3600) / 60);
   return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
 }
+
+export function formatRelativeTime(dateString: string): string {
+  const seconds = Math.floor((Date.now() - new Date(dateString).getTime()) / 1000);
+  if (seconds < 10) return 'just now';
+  if (seconds < 60) return `${seconds} seconds ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} day${days !== 1 ? 's' : ''} ago`;
+}
+
+export const statusColors: Record<string, string> = {
+  ready: 'bg-status-ready',
+  killed: 'bg-status-killed',
+  active: 'bg-status-active',
+  lost: 'bg-status-lost',
+  creating: 'bg-status-creating',
+  idle: 'bg-status-idle',
+};

@@ -1,0 +1,374 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router';
+import { SidebarProvider } from '@/components/ui/sidebar';
+import { TooltipProvider } from '@/components/ui/tooltip';
+import { ConnectionProvider } from '@/hooks/use-connection';
+import { SSEProvider } from '@/hooks/use-sse';
+import { SessionDetailPage } from './session-detail';
+import * as api from '@/api/client';
+import type { Session, InterventionEvent } from '@/api/types';
+
+vi.mock('@/api/client', () => ({
+  getSession: vi.fn(),
+  getInterventionEvents: vi.fn(),
+  killSession: vi.fn(),
+  resumeSession: vi.fn(),
+  deleteSession: vi.fn(),
+  downloadSessionOutput: vi.fn(),
+  resolveBaseUrl: vi.fn().mockReturnValue(''),
+  resolveWsUrl: vi.fn().mockReturnValue('ws://localhost/test'),
+  authHeaders: vi.fn().mockReturnValue({}),
+  setApiConfig: vi.fn(),
+}));
+
+vi.mock('@/components/session/terminal-view', () => ({
+  TerminalView: ({ sessionId }: { sessionId: string }) => (
+    <div data-testid="terminal-view">Terminal: {sessionId}</div>
+  ),
+}));
+
+vi.mock('@/components/session/output-view', () => ({
+  OutputView: ({ sessionId, sessionStatus }: { sessionId: string; sessionStatus: string }) => (
+    <div data-testid="output-view">
+      Output: {sessionId} ({sessionStatus})
+    </div>
+  ),
+}));
+
+vi.stubGlobal('localStorage', {
+  getItem: () => null,
+  setItem: () => {},
+  removeItem: () => {},
+});
+
+class MockEventSource {
+  url: string;
+  onopen: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  listeners: Record<string, ((e: { data: string }) => void)[]> = {};
+
+  constructor(url: string) {
+    this.url = url;
+  }
+
+  addEventListener(type: string, handler: (e: { data: string }) => void) {
+    if (!this.listeners[type]) this.listeners[type] = [];
+    this.listeners[type].push(handler);
+  }
+
+  close() {}
+}
+
+vi.stubGlobal('EventSource', MockEventSource);
+
+const mockGetSession = vi.mocked(api.getSession);
+const mockGetInterventions = vi.mocked(api.getInterventionEvents);
+const mockKillSession = vi.mocked(api.killSession);
+const mockResumeSession = vi.mocked(api.resumeSession);
+const mockDeleteSession = vi.mocked(api.deleteSession);
+
+function makeSession(overrides: Partial<Session> = {}): Session {
+  return {
+    id: 'sess-123',
+    name: 'my-session',
+    status: 'active',
+    command: 'claude -p "fix bug"',
+    description: null,
+    workdir: '/home/user/project',
+    metadata: null,
+    ink: null,
+    intervention_reason: null,
+    intervention_at: null,
+    last_output_at: null,
+    created_at: '2025-01-01T00:00:00Z',
+    ...overrides,
+  };
+}
+
+function makeIntervention(overrides: Partial<InterventionEvent> = {}): InterventionEvent {
+  return {
+    id: 1,
+    session_id: 'sess-123',
+    reason: 'Memory threshold exceeded',
+    created_at: '2025-01-01T01:00:00Z',
+    ...overrides,
+  };
+}
+
+const mockNavigate = vi.fn();
+vi.mock('react-router', async () => {
+  const actual = await vi.importActual('react-router');
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  };
+});
+
+beforeEach(() => {
+  mockGetSession.mockReset();
+  mockGetInterventions.mockReset();
+  mockKillSession.mockReset();
+  mockResumeSession.mockReset();
+  mockDeleteSession.mockReset();
+  mockNavigate.mockReset();
+  mockGetInterventions.mockResolvedValue([]);
+});
+
+function renderDetail(sessionId = 'sess-123') {
+  return render(
+    <MemoryRouter initialEntries={[`/sessions/${sessionId}`]}>
+      <ConnectionProvider>
+        <SSEProvider>
+          <TooltipProvider>
+            <SidebarProvider>
+              <Routes>
+                <Route path="/sessions/:id" element={<SessionDetailPage />} />
+              </Routes>
+            </SidebarProvider>
+          </TooltipProvider>
+        </SSEProvider>
+      </ConnectionProvider>
+    </MemoryRouter>,
+  );
+}
+
+describe('SessionDetailPage', () => {
+  it('shows loading skeleton initially', () => {
+    mockGetSession.mockResolvedValue(makeSession());
+    renderDetail();
+    expect(screen.getByTestId('loading-skeleton')).toBeInTheDocument();
+  });
+
+  it('renders session info after loading', async () => {
+    mockGetSession.mockResolvedValue(
+      makeSession({ description: 'Fix the login bug', ink: 'claude-code' }),
+    );
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session-name')).toHaveTextContent('my-session');
+    });
+    expect(screen.getByTestId('session-status')).toHaveTextContent('active');
+    expect(screen.getByTestId('session-command')).toHaveTextContent('claude -p "fix bug"');
+    expect(screen.getByTestId('session-workdir')).toHaveTextContent('/home/user/project');
+    expect(screen.getByTestId('session-ink')).toHaveTextContent('claude-code');
+    expect(screen.getByTestId('session-description')).toHaveTextContent('Fix the login bug');
+    expect(screen.getByTestId('session-id')).toHaveTextContent('sess-123');
+  });
+
+  it('shows terminal for active sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'active' }));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('terminal-section')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('terminal-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('output-section')).not.toBeInTheDocument();
+  });
+
+  it('shows terminal for idle sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'idle' }));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('terminal-section')).toBeInTheDocument();
+    });
+  });
+
+  it('shows output view for ready sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'ready' }));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('output-section')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('output-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('terminal-section')).not.toBeInTheDocument();
+  });
+
+  it('shows output view for killed sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'killed' }));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('output-section')).toBeInTheDocument();
+    });
+  });
+
+  it('shows output view for lost sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'lost' }));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('output-section')).toBeInTheDocument();
+    });
+  });
+
+  it('shows intervention history when present', async () => {
+    mockGetSession.mockResolvedValue(
+      makeSession({
+        status: 'killed',
+        intervention_reason: 'Memory threshold exceeded',
+        intervention_at: '2025-01-01T01:00:00Z',
+      }),
+    );
+    mockGetInterventions.mockResolvedValue([
+      makeIntervention({ id: 1, reason: 'Memory breach #1' }),
+      makeIntervention({ id: 2, reason: 'Memory breach #2' }),
+    ]);
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('latest-intervention')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('intervention-list')).toBeInTheDocument();
+    expect(screen.getByText('Memory breach #1')).toBeInTheDocument();
+    expect(screen.getByText('Memory breach #2')).toBeInTheDocument();
+  });
+
+  it('shows no interventions message when empty', async () => {
+    mockGetSession.mockResolvedValue(makeSession());
+    mockGetInterventions.mockResolvedValue([]);
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('no-interventions')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('no-interventions')).toHaveTextContent('No interventions');
+  });
+
+  it('kill button calls killSession', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'active' }));
+    mockKillSession.mockResolvedValue(undefined);
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-kill')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('btn-kill'));
+    await waitFor(() => {
+      expect(mockKillSession).toHaveBeenCalledWith('sess-123');
+    });
+  });
+
+  it('resume button calls resumeSession', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'lost' }));
+    mockResumeSession.mockResolvedValue({ id: 'sess-123', status: 'active' });
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-resume')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('btn-resume'));
+    await waitFor(() => {
+      expect(mockResumeSession).toHaveBeenCalledWith('sess-123');
+    });
+  });
+
+  it('delete button calls deleteSession and navigates', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'killed' }));
+    mockDeleteSession.mockResolvedValue(undefined);
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-delete')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('btn-delete'));
+    await waitFor(() => {
+      expect(mockDeleteSession).toHaveBeenCalledWith('sess-123');
+    });
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('/sessions');
+    });
+  });
+
+  it('back button navigates back', async () => {
+    mockGetSession.mockResolvedValue(makeSession());
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-back')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('btn-back'));
+    expect(mockNavigate).toHaveBeenCalledWith(-1);
+  });
+
+  it('shows error when fetch fails', async () => {
+    mockGetSession.mockRejectedValue(new Error('Network error'));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load session')).toBeInTheDocument();
+    });
+  });
+
+  it('does not show kill button for ready sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'ready' }));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session-name')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('btn-kill')).not.toBeInTheDocument();
+  });
+
+  it('does not show resume button for active sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'active' }));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session-name')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('btn-resume')).not.toBeInTheDocument();
+  });
+
+  it('shows resume button for ready sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'ready' }));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-resume')).toBeInTheDocument();
+    });
+  });
+
+  it('shows delete button for lost sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'lost' }));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('btn-delete')).toBeInTheDocument();
+    });
+  });
+
+  it('does not show ink or description when not set', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ ink: null, description: null }));
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session-name')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('session-ink')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('session-description')).not.toBeInTheDocument();
+  });
+
+  it('shows latest intervention info on the session', async () => {
+    mockGetSession.mockResolvedValue(
+      makeSession({
+        intervention_reason: 'Idle timeout',
+        intervention_at: '2025-01-01T02:00:00Z',
+      }),
+    );
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('latest-intervention')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Idle timeout')).toBeInTheDocument();
+  });
+});
