@@ -50,10 +50,56 @@ pulpo schedule remove <ID>                    Remove a job
 ## Global Options
 
 ```text
---host <HOST>     pulpod host (default: localhost)
---port <PORT>     pulpod port (default: 7433)
---token <TOKEN>   Auth token (for remote nodes)
---json            Output as JSON
+--node <HOST:PORT>   Target node (default: localhost:7433). Accepts peer names too.
+--token <TOKEN>      Auth token (for remote nodes)
+```
+
+`--node` accepts either `host:port` or a peer name from your config (e.g., `--node mac-mini` resolves via the local daemon's peer registry).
+
+## Spawn on Remote Nodes
+
+```bash
+# By address
+pulpo --node mac-mini:7433 spawn my-task -- claude -p "fix bug"
+
+# By peer name (resolved via peer registry)
+pulpo --node mac-mini spawn my-task -- claude -p "fix bug"
+
+# Auto-select least loaded node
+pulpo spawn my-task --auto -- claude -p "fix bug"
+```
+
+## Scripting Recipes
+
+### Approve all idle sessions
+
+```bash
+pulpo list | grep idle | awk '{print $1}' | xargs -I{} pulpo input {} "y"
+```
+
+### Kill all active sessions
+
+```bash
+pulpo list | grep active | awk '{print $1}' | xargs -I{} pulpo kill {}
+```
+
+### Spawn agents across multiple repos
+
+```bash
+for repo in my-api my-frontend my-infra; do
+  pulpo spawn "${repo}-review" --workdir ~/repos/${repo} -d -- claude -p "review code"
+done
+```
+
+### Follow all sessions in parallel (tmux panes)
+
+```bash
+tmux new-session -d -s monitor
+for name in $(pulpo list | awk 'NR>1 {print $1}'); do
+  tmux split-window -t monitor "pulpo logs ${name} --follow"
+  tmux select-layout -t monitor tiled
+done
+tmux attach -t monitor
 ```
 
 For full options on any command:
