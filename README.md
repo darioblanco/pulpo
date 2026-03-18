@@ -4,7 +4,8 @@
 <h1 align="center">Pulpo</h1>
 
 <p align="center">
-  <strong>Self-hosted control plane for coding agents across your machines.</strong>
+  <strong>Distributed tmux orchestrator for coding agents.</strong><br />
+  Durable sessions, watchdog supervision, multi-node operations — managed from your phone.
 </p>
 
 <p align="center">
@@ -20,25 +21,68 @@
 
 > **Experimental** — Pulpo is in early development. APIs, config format, and behavior may change between releases.
 
-Coding agents are powerful, but running them across multiple machines is operationally painful. Pulpo is infrastructure that makes agent execution **reliable**, **observable**, and **controllable** — without replacing the agents themselves.
+## The Problem
 
-- **Session lifecycle** — explicit states (`active`, `idle`, `ready`, `killed`, `lost`) with resume semantics for crash recovery.
-- **Cross-node operations** — manage agents on multiple machines from a single API/CLI/web surface, with Tailscale, mDNS, or seed-based discovery.
-- **Watchdog interventions** — memory pressure detection, idle handling, and configurable kill policies with audit trails.
-- **Provider-agnostic** — Claude Code, Codex, Gemini CLI, OpenCode, or bare shell. Same lifecycle, same controls.
-- **Self-hosted and open source** — your machines, your data, your control.
+You have agents — Claude Code, Codex, Aider, Gemini CLI — and you want them to run on your servers while you go to dinner. Today that means SSH into a machine, start tmux, launch the agent, and hope nothing crashes. If it does, you lose the session. If you want to check from your phone, you can't. If you want multiple agents on the same repo, they step on each other.
+
+## What Pulpo Does
+
+Pulpo is a **distributed tmux orchestrator** — it adds lifecycle management, crash recovery, and watchdog supervision on top of tmux. Designed for coding agents, flexible enough for any terminal work.
+
+```bash
+# Spawn an agent on a remote machine by name
+pulpo --node mac-mini spawn auth-fix --workdir ~/repos/api -- claude -p "fix auth tests"
+
+# Spawn two agents on the same repo without conflicts
+pulpo spawn frontend --workdir ~/repo --worktree -- claude -p "redesign UI"
+pulpo spawn backend  --workdir ~/repo --worktree -- codex "optimize queries"
+
+# Schedule nightly reviews on the beefy server
+pulpo schedule add nightly "0 3 * * *" --node gpu-box -- claude -p "review code"
+
+# Auto-select the least loaded machine
+pulpo spawn review --auto -- claude -p "security audit"
+
+# Check from your phone
+open http://localhost:7433  # PWA with push notifications
+```
+
+### Key Features
+
+- **Session lifecycle** — explicit states (`active`, `idle`, `ready`, `killed`, `lost`) with resume semantics. Agents survive reboots.
+- **Multi-node fleet** — spawn and manage sessions across machines. Tailscale, mDNS, or seed discovery. Fleet dashboard shows all sessions across all nodes.
+- **Watchdog supervision** — memory pressure kills, idle detection (31 built-in patterns for Claude Code, Codex, Gemini, Aider, Amazon Q), configurable per-session thresholds.
+- **Git worktrees** — `--worktree` isolates each agent in its own worktree. Multiple agents work on the same repo without conflicts. Works with any agent.
+- **Built-in scheduler** — cron-based schedules with multi-node targeting. Run nightly reviews on the beefy server, auto-select least loaded node.
+- **Adopts existing tmux** — start tmux however you want, pulpo discovers it and brings it under management. No migration needed.
+- **Command-agnostic** — Claude Code, Codex, Gemini CLI, Aider, shell scripts, anything. Same lifecycle, same controls.
+- **6 control surfaces** — CLI, web UI (PWA + push notifications), REST API, SSE events, MCP server, Discord bot.
+- **Self-hosted** — your machines, your data. MIT/Apache-2.0 licensed.
+
+### How It's Different
+
+| | Pulpo | tmuxinator | cmux | agent-deck | NTM |
+|---|---|---|---|---|---|
+| Multi-node | Fleet with discovery | No | No | No | No |
+| Session lifecycle | 6 states + resume | No | No | TUI only | Status only |
+| Watchdog | Memory + idle + patterns | No | No | No | No |
+| Worktrees | Any agent | No | Claude only | Yes | No |
+| Scheduling | Built-in cron + node targeting | No | No | No | No |
+| Adopts external tmux | Yes | No | No | No | No |
+| Command-agnostic | Any command | N/A | Claude only | Generic | 3 agents |
+| Web UI + mobile | PWA + push | No | No | TUI + Web | Dashboard |
 
 ## Get Started
 
 ```bash
-# Install (macOS)
+# Install (macOS/Linux)
 brew install darioblanco/tap/pulpo
 
 # Start daemon
 pulpod
 
 # Spawn a session
-pulpo spawn my-api --workdir ~/repos/my-api "Fix failing auth tests"
+pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests"
 
 # Watch progress
 pulpo logs my-api --follow
@@ -47,12 +91,16 @@ pulpo logs my-api --follow
 open http://localhost:7433
 ```
 
+No agent is required — `pulpo spawn my-shell` opens a managed shell session.
+
 <h3 align="center">
   <a href="https://pulpo.darioblanco.com/getting-started/install">Install</a>
   <span> · </span>
   <a href="https://pulpo.darioblanco.com/getting-started/quickstart">Quickstart</a>
   <span> · </span>
   <a href="https://pulpo.darioblanco.com">Documentation</a>
+  <span> · </span>
+  <a href="https://github.com/darioblanco/pulpo/tree/main/examples">Examples</a>
   <span> · </span>
   <a href="CONTRIBUTING.md">Contributing</a>
 </h3>

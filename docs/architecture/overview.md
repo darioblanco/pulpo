@@ -56,6 +56,28 @@ pulpo spawn review -- gemini "review this code"
 
 Inks provide reusable command templates (see [Configuration Guide](/guides/configuration)).
 
+## Git Worktrees
+
+`--worktree` creates an isolated git worktree for each session, so multiple agents can work on the same repo without conflicts:
+
+```bash
+pulpo spawn auth-fix --workdir ~/repo --worktree -- claude -p "fix auth"
+pulpo spawn perf-fix --workdir ~/repo --worktree -- codex "optimize queries"
+```
+
+Each session gets `<repo>/.pulpo/worktrees/<session-name>/` on branch `pulpo/<session-name>`. Worktrees are cleaned up when sessions are killed or deleted.
+
+## Built-in Scheduler
+
+Cron-based schedules run inside `pulpod` (no crontab manipulation). Schedules support multi-node targeting:
+
+```bash
+pulpo schedule add nightly "0 3 * * *" --node gpu-box -- claude -p "review"
+pulpo schedule add scan "0 0 * * 0" --node auto -- claude -p "security audit"
+```
+
+`--node auto` picks the least-loaded online peer at fire time. Schedules are visible in the web UI dashboard at `/schedules`.
+
 ## Multi-Node Architecture
 
 Pulpo nodes discover each other and present a unified view:

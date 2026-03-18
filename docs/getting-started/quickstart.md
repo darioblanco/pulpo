@@ -1,25 +1,14 @@
 # Quickstart
 
-## 1. Install any agent CLI (optional)
-
-Claude Code example:
-
-```bash
-npm install -g @anthropic-ai/claude-code
-claude login
-```
-
-You can run any shell command as a session — Claude Code, Codex, Gemini CLI, or your own scripts.
-
-## 2. Start daemon
+## 1. Start daemon
 
 ```bash
 pulpod
 ```
 
-The web UI is available at [http://localhost:7433](http://localhost:7433).
+The web UI is available at [http://localhost:7433](http://localhost:7433) (installable as a PWA).
 
-## 3. Spawn a session
+## 2. Spawn a session
 
 ```bash
 pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests"
@@ -27,23 +16,50 @@ pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests
 
 This auto-attaches to the tmux session. Detach with `Ctrl-b d` to return to your shell. Use `--detach` / `-d` to skip auto-attach.
 
-## 4. Watch progress
+No agent is required — `pulpo spawn my-shell` opens a managed shell session. Everything after `--` is the command to run.
+
+## 3. Watch progress
 
 ```bash
 pulpo list
 pulpo logs my-api --follow
 ```
 
-## 5. Open UI and events stream
+## 4. Parallel agents with worktrees
+
+Multiple agents on the same repo, no conflicts:
 
 ```bash
-open http://localhost:7433
-curl -N http://localhost:7433/api/v1/events
+pulpo spawn frontend --workdir ~/repo --worktree -- claude -p "redesign sidebar"
+pulpo spawn backend  --workdir ~/repo --worktree -- codex "optimize queries"
 ```
 
-## 6. Resume after a crash
+Each agent gets an isolated git worktree at `<repo>/.pulpo/worktrees/<name>/`.
 
-If the daemon restarts or your machine reboots, sessions become **lost**. Resume them:
+## 5. Schedule recurring runs
+
+```bash
+pulpo schedule add nightly-review "0 3 * * *" --workdir ~/repo -- claude -p "review code"
+pulpo schedule list
+```
+
+## 6. Remote nodes
+
+Spawn on another machine by name:
+
+```bash
+pulpo --node mac-mini spawn gpu-task -- python train.py
+```
+
+Or auto-select the least loaded node:
+
+```bash
+pulpo spawn review --auto -- claude -p "security audit"
+```
+
+## 7. Resume after a crash
+
+Sessions survive daemon restarts. If a machine reboots:
 
 ```bash
 pulpo list
@@ -52,9 +68,17 @@ pulpo list
 pulpo resume my-api
 ```
 
+## 8. Open dashboard
+
+```bash
+open http://localhost:7433
+curl -N http://localhost:7433/api/v1/events  # SSE stream
+```
+
 ## Next steps
 
+- [Examples](https://github.com/darioblanco/pulpo/tree/main/examples) — 10 runnable CLI workflows
 - [Configuration Guide](/guides/configuration) — inks, watchdog, notifications, peers
 - [Discovery Guide](/guides/discovery) — multi-node setup with Tailscale, mDNS, or seed
-- [CLI Reference](/reference/cli) — all commands and flags
+- [CLI Reference](/reference/cli) — all commands, flags, and scripting recipes
 - [Session Lifecycle](/operations/session-lifecycle) — state machine, transitions, detection
