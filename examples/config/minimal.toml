@@ -1,7 +1,4 @@
+# Minimal config — pulpod runs with zero config, but you can set a node name.
 [node]
-name = "pulpo-local"
-# local = bind to 127.0.0.1 (default)
-bind = "local"
-
-[guards]
-unrestricted = false
+name = "my-mac"
+# bind = "local" is the default: binds to 127.0.0.1, no auth needed

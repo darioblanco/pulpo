@@ -1,28 +1,25 @@
+# Ink presets — reusable command templates for common agent workflows.
+# Use with: pulpo spawn my-task --ink reviewer
+
 [node]
-name = "pulpo-inks"
-
-[auth]
-bind = "local"
-
-[guards]
-unrestricted = false
+name = "my-mac"
 
 [inks.reviewer]
-provider = "claude"
-mode = "interactive"
-unrestricted = false
-instructions = "You are a code reviewer. Prioritize correctness and security."
-description = "Read-only code reviewer with restricted guards"
+description = "Code reviewer focused on correctness and security"
+command = "claude -p 'Review this code for correctness, security, and performance issues.'"
 
 [inks.coder]
-provider = "claude"
-mode = "autonomous"
-unrestricted = false
-instructions = "Implement the task with tests and clear commit messages."
-description = "Full-access coding agent with restricted guards"
+description = "Coding agent with full access"
+command = "claude -p 'Implement the requested changes with tests.'"
 
 [inks.quick-fix]
-mode = "autonomous"
-unrestricted = false
-instructions = "Fix the reported bug with minimal changes. Run tests to verify."
-description = "Fast bug fixes — any provider"
+description = "Fast bug fixes with Codex"
+command = "codex --quiet 'Fix the issue with minimal changes and verify with tests.'"
+
+[inks.gemini-review]
+description = "Gemini CLI code review"
+command = "gemini 'Review this codebase and suggest improvements.'"
+
+[inks.shell]
+description = "Interactive shell (no agent)"
+command = "bash"

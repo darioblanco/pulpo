@@ -1,0 +1,11 @@
+# Multi-node setup with Tailscale — zero-config peer discovery.
+# All nodes on the same Tailnet discover each other automatically.
+
+[node]
+name = "mac-mini"
+bind = "tailscale"               # Binds to Tailscale IP, auto-serves HTTPS
+tag = "pulpo"                    # Optional: filter peers by ACL tag
+discovery_interval_secs = 30     # How often to refresh peer list
+
+# No auth section needed — Tailscale's WireGuard handles authentication.
+# No peers section needed — discovered automatically via Tailscale API.

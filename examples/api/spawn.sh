@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
+# Spawn a session via the REST API.
 set -euo pipefail
 
 PULPOD_URL="${PULPOD_URL:-http://localhost:7433}"
 PULPOD_TOKEN="${PULPOD_TOKEN:-}"
 WORKDIR="${WORKDIR:-$HOME}"
-PROMPT="${PROMPT:-Summarize this repository and propose 3 improvements.}"
+COMMAND="${COMMAND:-echo 'Hello from pulpo'}"
 
 AUTH_ARGS=()
 if [[ -n "${PULPOD_TOKEN}" ]]; then
@@ -16,9 +17,9 @@ curl -fsS "${PULPOD_URL}/api/v1/sessions" \
   "${AUTH_ARGS[@]}" \
   -H "Content-Type: application/json" \
   -d "{
+    \"name\": \"api-example\",
     \"workdir\": \"${WORKDIR}\",
-    \"prompt\": \"${PROMPT}\",
-    \"provider\": \"claude\",
-    \"mode\": \"autonomous\"
+    \"command\": \"${COMMAND}\",
+    \"description\": \"Session created via API example\"
   }"
 echo

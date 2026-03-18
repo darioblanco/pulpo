@@ -1,0 +1,32 @@
+# Watchdog tuning — idle detection, memory pressure, waiting patterns.
+
+[node]
+name = "my-mac"
+
+[watchdog]
+enabled = true
+check_interval_secs = 10        # How often to check sessions (default: 10)
+
+# Memory pressure
+memory_threshold = 90            # Kill sessions when memory usage exceeds 90%
+breach_count = 3                 # Require 3 consecutive breaches before killing
+
+# Idle detection
+idle_threshold_secs = 60         # Seconds of unchanged output before Active→Idle (default: 60)
+                                 # Increase to 120+ for agents that think for long periods
+idle_timeout_secs = 600          # Seconds idle before action triggers (default: 600)
+idle_action = "alert"            # "alert" (mark idle) or "kill" (terminate session)
+
+# Ready session cleanup
+ready_ttl_secs = 3600            # Kill tmux shell 1 hour after agent exits (0 = disabled)
+
+# Auto-adopt external tmux sessions
+adopt_tmux = true                # Discover and manage tmux sessions not created by pulpo
+
+# Extra waiting-for-input patterns (appended to 31 built-in patterns)
+# Built-in patterns cover: Claude Code, Codex, Gemini CLI, Aider, Amazon Q, SSH, sudo
+waiting_patterns = [
+    "custom-tool>",              # Your custom tool's prompt
+    "Enter API key:",            # API key prompts
+    "Select an option:",         # Menu prompts
+]

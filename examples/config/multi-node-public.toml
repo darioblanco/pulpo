@@ -1,0 +1,17 @@
+# Multi-node setup with public bind — auth token + mDNS or seed discovery.
+
+[node]
+name = "linux-server"
+bind = "public"                  # Binds to 0.0.0.0, requires auth
+# seed = "10.0.0.5:7433"        # Uncomment for seed-based discovery instead of mDNS
+
+[auth]
+token = "replace-with-a-long-random-token"
+
+# Manual peers (supplement automatic discovery)
+[peers]
+mac-mini = "10.0.0.1:7433"
+
+[peers.gpu-box]
+address = "10.0.0.3:7433"
+token = "that-nodes-auth-token"

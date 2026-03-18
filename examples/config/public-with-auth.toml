@@ -1,12 +1,10 @@
+# Public bind with auth — expose pulpod on the network with token authentication.
+
 [node]
-name = "pulpo-public"
+name = "my-server"
 port = 7433
-# public = bind to 0.0.0.0 so other devices can reach pulpod (requires auth token)
-bind = "public"
+bind = "public"   # Binds to 0.0.0.0 so other devices can reach pulpod
 
 [auth]
-# Generate a strong token and keep it secret
+# Auto-generated on first run if empty. Replace with a strong token.
 token = "replace-with-long-random-token"
-
-[guards]
-unrestricted = false
