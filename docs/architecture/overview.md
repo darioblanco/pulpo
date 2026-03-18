@@ -1,5 +1,9 @@
 # Architecture Overview
 
+Pulpo is a distributed tmux session orchestrator — it adds lifecycle management, crash recovery, watchdog supervision, and multi-node operations on top of tmux. Designed for coding agents but flexible enough for any long-running terminal work.
+
+**What makes it unique**: No other tool combines multi-node tmux orchestration with agent-aware lifecycle management. tmuxinator manages layouts, overmind runs Procfiles, cmux wraps Claude — Pulpo is the infrastructure layer that makes any terminal session durable, observable, and manageable across machines.
+
 ## Components
 
 ```
@@ -77,11 +81,23 @@ Session spawn → resolve_ink → build_command → tmux create
   SSE events → web UI / Discord / webhooks
 ```
 
+## tmux Session Adoption
+
+Pulpo doesn't require you to use `pulpo spawn`. Start tmux however you want — `tmux new-session`, scripts, other tools — and the watchdog discovers and adopts those sessions automatically:
+
+- Classifies running agents (claude, codex, gemini) as **Active**, shells as **Ready**
+- Captures the full command line (not just process name) for accurate resume
+- Uses tmux's internal `$N` session IDs, so killing and re-creating sessions with the same name works correctly
+- Tags adopted sessions with `PULPO_SESSION_ID` and `PULPO_SESSION_NAME` env vars
+
+This is enabled by default (`adopt_tmux = true` in watchdog config).
+
 ## Design Principles
 
 - **Infrastructure layer, not agent intelligence** — Pulpo manages the runtime, not the prompts
 - **Command-agnostic** — same lifecycle and controls regardless of which command you run
 - **Explicit failure states** — every session is in a known, auditable state
+- **Adopts existing work** — start tmux however you want, pulpo manages it
 - **Zero-config local start** — `pulpod` runs out of the box, progressive operational depth
 - **No unsafe code** — `forbid(unsafe_code)` workspace-wide
 

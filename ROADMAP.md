@@ -45,25 +45,19 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - Crontab-based scheduling
 - Ocean gamification UI with canvas rendering
 - Homebrew distribution (`brew install darioblanco/tap/pulpo`)
+- PWA: installable app with service worker, offline shell caching
+- Web Push notifications for session events (ready, killed, intervention)
+- Configurable idle threshold (default 60s) + per-session `--idle-threshold`
+- Expanded waiting patterns (31 built-in for Claude Code, Codex, Gemini, Aider, Amazon Q, SSH, sudo) + user-configurable extras
+- tmux `$N` session ID rework (ghost fix, startup migration)
+- Full command capture for adopted sessions
+- Optimized `follow_logs` (reduced HTTP polling)
 
 ## What's Next
 
-### Phase 1: Mobile-First Experience
+### Phase 1: Mobile-First Experience (mostly shipped)
 
-Make Pulpo the best way to manage agents from your phone. This is the strongest differentiator — no competitor has it.
-
-**P1.1 — PWA**
-- Web app manifest + service worker (via `vite-plugin-pwa`)
-- App icons generated from logo.png (192x192, 512x512, apple-touch-icon)
-- Install prompt UI ("Add to Home Screen")
-- Cache app shell for instant load, network-first for API calls
-- Standalone display mode (no browser chrome)
-
-**P1.2 — Push notifications**
-- Service worker Push API integration
-- Notify on: session ready, session killed, watchdog intervention
-- Replace browser-only Notification API with SW-based push
-- Settings toggle for notification preferences
+Make Pulpo the best way to manage agents from your phone. PWA and push notifications are shipped.
 
 **P1.3 — Default-to-shell spawn**
 - `pulpo spawn my-session` with no command → opens user's `$SHELL`

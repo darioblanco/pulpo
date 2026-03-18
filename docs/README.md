@@ -3,7 +3,7 @@ home: true
 title: Pulpo Documentation
 heroText: Pulpo
 heroImage: https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.png
-tagline: Self-hosted control plane for coding agents. Durable sessions, multi-node operations.
+tagline: Distributed tmux orchestrator for coding agents. Durable sessions, watchdog supervision, multi-node operations — managed from your phone.
 actions:
   - text: Install
     link: /getting-started/install
@@ -12,22 +12,25 @@ actions:
     link: /getting-started/quickstart
     type: secondary
 features:
-  - title: Session Lifecycle
-    details: Explicit states (active, idle, ready, killed, lost) with resume semantics and crash recovery.
-  - title: Multi-Node Operations
-    details: Manage agents across machines from a single API/CLI/web surface. Tailscale, mDNS, and seed discovery.
+  - title: Distributed tmux Orchestration
+    details: Spawn and manage tmux sessions across your machine fleet — Mac, Linux, cloud — from a single CLI, web UI, or API call. Tailscale, mDNS, and seed discovery built in.
+  - title: Agent-Aware Lifecycle
+    details: Explicit states (active, idle, ready, killed, lost) with resume semantics, crash recovery, and watchdog supervision. Detects waiting-for-input prompts across 31 patterns for Claude Code, Codex, Gemini CLI, Aider, and more.
   - title: Command Agnostic
-    details: Run any shell command — Claude Code, Codex, Gemini CLI, or your own scripts. Same lifecycle, same controls.
-  - title: Watchdog & Monitoring
-    details: Memory pressure detection, idle handling, configurable kill policies, and intervention audit trails.
-  - title: API First
-    details: REST, SSE, MCP, CLI, web UI, and Discord bot — integrate with anything.
+    details: Run any shell command — Claude Code, Codex, Gemini CLI, or your own scripts. Same lifecycle, same controls. Not an agent framework — the infrastructure layer beneath any agent.
+  - title: Adopts Existing tmux Sessions
+    details: Start tmux however you want — pulpo discovers external sessions, captures their full command line, and brings them under management automatically. No migration needed.
+  - title: Watchdog Supervision
+    details: Memory pressure detection, configurable idle thresholds (global and per-session), kill policies, and intervention audit trails. Agents run overnight without burning your API budget.
+  - title: 6 Control Surfaces
+    details: CLI, web UI (PWA with push notifications), REST API, SSE event stream, MCP server, and Discord bot. Manage agents from your phone while away from your desk.
 ---
 
 ## Quick Links
 
 - [Install](/getting-started/install)
 - [Quickstart](/getting-started/quickstart)
+- [Examples](https://github.com/darioblanco/pulpo/tree/main/examples)
 - [Configuration Guide](/guides/configuration)
 - [Discovery Guide](/guides/discovery)
 - [Recovery Guide](/guides/recovery)
