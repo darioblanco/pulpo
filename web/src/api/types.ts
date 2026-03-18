@@ -33,6 +33,7 @@ export interface Session {
   ink: string | null;
   intervention_reason: string | null;
   intervention_at: string | null;
+  idle_threshold_secs?: number | null;
   last_output_at: string | null;
   created_at: string;
 }
@@ -160,6 +161,15 @@ export interface CreateSessionResponse {
 
 export interface VapidPublicKeyResponse {
   public_key: string;
+}
+
+export interface FleetSession extends Session {
+  node_name: string;
+  node_address: string;
+}
+
+export interface FleetSessionsResponse {
+  sessions: FleetSession[];
 }
 
 export interface PushSubscriptionRequest {

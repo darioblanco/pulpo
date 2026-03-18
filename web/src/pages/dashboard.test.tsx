@@ -162,6 +162,9 @@ describe('DashboardPage', () => {
             }),
         };
       }
+      if (url.includes('/fleet/sessions')) {
+        return { ok: true, json: () => Promise.resolve({ sessions: [] }) };
+      }
       return { ok: true, json: () => Promise.resolve([]) };
     });
 
@@ -181,6 +184,7 @@ describe('DashboardPage', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('node-tabs')).toBeInTheDocument();
+      expect(screen.getByTestId('tab-all')).toBeInTheDocument();
       expect(screen.getByTestId('tab-local')).toBeInTheDocument();
       expect(screen.getByTestId('tab-remote-node')).toBeInTheDocument();
     });
@@ -220,6 +224,9 @@ describe('DashboardPage', () => {
               ],
             }),
         };
+      }
+      if (url.includes('/fleet/sessions')) {
+        return { ok: true, json: () => Promise.resolve({ sessions: [] }) };
       }
       // getRemoteSessions for the peer will fail
       throw new Error('Connection refused');
@@ -415,6 +422,227 @@ describe('DashboardPage', () => {
     await waitFor(() => {
       expect(screen.getByTestId('count-ready').textContent).toBe('1');
     });
+  });
+
+  it('shows fleet sessions in the All tab when peers are present', async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/fleet/sessions')) {
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              sessions: [
+                {
+                  node_name: 'mac-studio',
+                  node_address: '',
+                  id: 'fleet-1',
+                  name: 'local-task',
+                  status: 'active',
+                  command: 'claude code',
+                  description: null,
+                  workdir: '/repo',
+                  metadata: null,
+                  ink: null,
+                  idle_threshold_secs: null,
+                  intervention_reason: null,
+                  intervention_at: null,
+                  last_output_at: null,
+                  created_at: '2025-01-01T00:00:00Z',
+                },
+                {
+                  node_name: 'remote-node',
+                  node_address: 'remote:7433',
+                  id: 'fleet-2',
+                  name: 'remote-task',
+                  status: 'idle',
+                  command: 'npm test',
+                  description: null,
+                  workdir: '/app',
+                  metadata: null,
+                  ink: null,
+                  idle_threshold_secs: null,
+                  intervention_reason: null,
+                  intervention_at: null,
+                  last_output_at: null,
+                  created_at: '2025-01-01T00:00:00Z',
+                },
+              ],
+            }),
+        };
+      }
+      if (url.includes('/peers')) {
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              local: {
+                name: 'mac-studio',
+                hostname: 'mac-studio.local',
+                os: 'macOS',
+                arch: 'arm64',
+                cpus: 12,
+                memory_mb: 65536,
+                gpu: null,
+              },
+              peers: [
+                {
+                  name: 'remote-node',
+                  address: 'remote:7433',
+                  status: 'online',
+                  node_info: null,
+                  session_count: null,
+                },
+              ],
+            }),
+        };
+      }
+      return { ok: true, json: () => Promise.resolve([]) };
+    });
+
+    render(
+      <MemoryRouter>
+        <ConnectionProvider>
+          <SSEProvider>
+            <TooltipProvider>
+              <SidebarProvider>
+                <DashboardPage />
+              </SidebarProvider>
+            </TooltipProvider>
+          </SSEProvider>
+        </ConnectionProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('fleet-table')).toBeInTheDocument();
+    });
+
+    // Both fleet sessions should be visible with node names
+    expect(screen.getByText('local-task')).toBeInTheDocument();
+    expect(screen.getByText('remote-task')).toBeInTheDocument();
+    // mac-studio appears in both the tab trigger and the fleet table
+    expect(screen.getAllByText('mac-studio').length).toBeGreaterThanOrEqual(2);
+    // remote-node appears in both the tab trigger and the fleet table
+    expect(screen.getAllByText('remote-node').length).toBeGreaterThanOrEqual(2);
+
+    // The All tab should show the count
+    const allTab = screen.getByTestId('tab-all');
+    expect(allTab).toHaveTextContent('All');
+    expect(allTab).toHaveTextContent('(2)');
+  });
+
+  it('shows empty fleet message when no active fleet sessions', async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/fleet/sessions')) {
+        return {
+          ok: true,
+          json: () => Promise.resolve({ sessions: [] }),
+        };
+      }
+      if (url.includes('/peers')) {
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              local: {
+                name: 'mac-studio',
+                hostname: 'mac-studio.local',
+                os: 'macOS',
+                arch: 'arm64',
+                cpus: 12,
+                memory_mb: 65536,
+                gpu: null,
+              },
+              peers: [
+                {
+                  name: 'remote-node',
+                  address: 'remote:7433',
+                  status: 'online',
+                  node_info: null,
+                  session_count: null,
+                },
+              ],
+            }),
+        };
+      }
+      return { ok: true, json: () => Promise.resolve([]) };
+    });
+
+    render(
+      <MemoryRouter>
+        <ConnectionProvider>
+          <SSEProvider>
+            <TooltipProvider>
+              <SidebarProvider>
+                <DashboardPage />
+              </SidebarProvider>
+            </TooltipProvider>
+          </SSEProvider>
+        </ConnectionProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('No active sessions across the fleet.')).toBeInTheDocument();
+    });
+  });
+
+  it('handles fleet session fetch failure gracefully', async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/fleet/sessions')) {
+        throw new Error('Fleet endpoint unavailable');
+      }
+      if (url.includes('/peers')) {
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              local: {
+                name: 'mac-studio',
+                hostname: 'mac-studio.local',
+                os: 'macOS',
+                arch: 'arm64',
+                cpus: 12,
+                memory_mb: 65536,
+                gpu: null,
+              },
+              peers: [
+                {
+                  name: 'remote-node',
+                  address: 'remote:7433',
+                  status: 'online',
+                  node_info: null,
+                  session_count: null,
+                },
+              ],
+            }),
+        };
+      }
+      return { ok: true, json: () => Promise.resolve([]) };
+    });
+
+    render(
+      <MemoryRouter>
+        <ConnectionProvider>
+          <SSEProvider>
+            <TooltipProvider>
+              <SidebarProvider>
+                <DashboardPage />
+              </SidebarProvider>
+            </TooltipProvider>
+          </SSEProvider>
+        </ConnectionProvider>
+      </MemoryRouter>,
+    );
+
+    // Should still render the tabs without crashing
+    await waitFor(() => {
+      expect(screen.getByTestId('node-tabs')).toBeInTheDocument();
+      expect(screen.getByTestId('tab-all')).toBeInTheDocument();
+    });
+
+    // Empty fleet = shows empty message
+    expect(screen.getByText('No active sessions across the fleet.')).toBeInTheDocument();
   });
 
   it('shows error when fetch fails and connected', async () => {
