@@ -102,11 +102,6 @@ impl SessionManager {
         });
         validate_workdir(&workdir)?;
 
-        // Validate: command must be non-empty
-        if command.is_empty() {
-            bail!("command is required — provide a command directly or via an ink");
-        }
-
         // Reject duplicate names among live sessions
         if self.store.has_active_session_by_name(&req.name).await? {
             bail!(
@@ -200,7 +195,10 @@ impl SessionManager {
             let command = ink.command.clone().unwrap_or_default();
             // Ink description as fallback for session description
             let description = req.description.clone().or_else(|| ink.description.clone());
-            return Ok((command, description));
+            if !command.is_empty() {
+                return Ok((command, description));
+            }
+            // Ink has no command — fall through to default_command / $SHELL
         }
 
         // No command and no ink — fall back to default_command from config
@@ -457,7 +455,26 @@ fn validate_workdir(workdir: &str) -> Result<()> {
 /// Wrap a command for tmux: escape single quotes, wrap in bash -c with agent exit marker.
 /// Prepends `PULPO_SESSION_ID` and `PULPO_SESSION_NAME` env vars so tools inside
 /// sessions can identify their pulpo context.
+/// Known shell binaries — when the command is a bare shell, skip the agent exit wrapper.
+const SHELL_COMMANDS: &[&str] = &["bash", "zsh", "sh", "fish", "nu"];
+
+/// Check if a command is a bare shell (no agent work to wrap).
+fn is_shell_command(command: &str) -> bool {
+    let basename = command.rsplit('/').next().unwrap_or(command).trim();
+    SHELL_COMMANDS.contains(&basename)
+}
+
+/// Wrap an agent command with env vars, exit marker, and fallback shell.
+/// Shell commands are run directly (no exit marker or fallback bash).
 fn wrap_command(command: &str, session_id: &uuid::Uuid, session_name: &str) -> String {
+    if is_shell_command(command) {
+        // Shell session: set env vars and exec the shell directly.
+        // No exit marker, no fallback bash — exiting the shell kills the tmux session.
+        let escaped = command.replace('\'', "'\\''");
+        return format!(
+            "bash -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
+        );
+    }
     let escaped = command.replace('\'', "'\\''");
     format!(
         "bash -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\'''; exec bash'"
@@ -1244,6 +1261,41 @@ mod tests {
         assert!(cmd.contains("Run: pulpo resume my-task"));
     }
 
+    #[test]
+    fn test_is_shell_command() {
+        assert!(is_shell_command("bash"));
+        assert!(is_shell_command("zsh"));
+        assert!(is_shell_command("sh"));
+        assert!(is_shell_command("fish"));
+        assert!(is_shell_command("nu"));
+        assert!(is_shell_command("/bin/bash"));
+        assert!(is_shell_command("/usr/bin/zsh"));
+        assert!(!is_shell_command("claude"));
+        assert!(!is_shell_command("claude -p 'fix'"));
+        assert!(!is_shell_command("npm run lint"));
+        assert!(!is_shell_command("bash -c 'echo hello'"));
+    }
+
+    #[test]
+    fn test_wrap_command_shell_no_exit_marker() {
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("bash", &id, "my-shell");
+        assert!(cmd.contains("exec bash"));
+        assert!(cmd.contains(&format!("PULPO_SESSION_ID={id}")));
+        assert!(cmd.contains("PULPO_SESSION_NAME=my-shell"));
+        // Shell sessions should NOT have exit marker or fallback bash
+        assert!(!cmd.contains("[pulpo] Agent exited"));
+        assert!(!cmd.contains("Run: pulpo resume"));
+    }
+
+    #[test]
+    fn test_wrap_command_shell_with_path() {
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("/usr/bin/zsh", &id, "zsh-session");
+        assert!(cmd.contains("exec /usr/bin/zsh"));
+        assert!(!cmd.contains("[pulpo] Agent exited"));
+    }
+
     #[tokio::test]
     async fn test_create_session_emits_event() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
@@ -1362,7 +1414,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ink_with_no_command() {
+    async fn test_ink_with_no_command_falls_back_to_shell() {
         let mut inks = HashMap::new();
         inks.insert(
             "empty-ink".into(),
@@ -1387,9 +1439,9 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
         };
-        let result = mgr.create_session(req).await;
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("command is required"), "got: {err}");
+        // Ink with no command falls back to $SHELL
+        let session = mgr.create_session(req).await.unwrap();
+        assert!(!session.command.is_empty());
     }
 
     #[tokio::test]
