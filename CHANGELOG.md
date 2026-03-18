@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.0.25](https://github.com/darioblanco/pulpo/compare/v0.0.24...v0.0.25) (2026-03-18)
+
+
+### Features
+
+* add PWA support — installable app with service worker ([9491d56](https://github.com/darioblanco/pulpo/commit/9491d566a58e09ca3b3efafedc6ca0d5a460e7cc))
+* add session detail page with intervention history ([e5fe2c3](https://github.com/darioblanco/pulpo/commit/e5fe2c3f7d5b5e42f28409af184b6ec7fb18e12b))
+* add Web Push notifications for session events ([e021946](https://github.com/darioblanco/pulpo/commit/e0219460723727d7ee0a9ae3ca17d9d7035ed3f4))
+* deep UX & architecture improvements ([cf91f81](https://github.com/darioblanco/pulpo/commit/cf91f8146389c281c2e250633305a8cc157e9e02))
+* default-to-shell spawn (P1.3) ([40c58db](https://github.com/darioblanco/pulpo/commit/40c58db21af42048caad26aab0e129dfd3273278))
+* fleet dashboard — unified "All" tab showing sessions across nodes ([9d46fa5](https://github.com/darioblanco/pulpo/commit/9d46fa5028bc25a916b710fd66665e033261089c))
+* mobile UX polish — touch targets, info visibility, fullscreen terminal ([8435933](https://github.com/darioblanco/pulpo/commit/84359337e774f2db355b7351afbcdc7d24c0a03f))
+* Phase 2 — seamless remote spawn ([d408ae5](https://github.com/darioblanco/pulpo/commit/d408ae5061395f78bf0a78edcf438e72cf20ce10))
+* show node hardware info in dashboard tabs and session lists ([e391eaa](https://github.com/darioblanco/pulpo/commit/e391eaaef4aaca27a3304b19797dc12786417fbf))
+
+
+### Bug Fixes
+
+* use try_get for idle_threshold_secs to avoid SQLite column cache panic ([62711eb](https://github.com/darioblanco/pulpo/commit/62711eb5360155003ad93a5feab45775df8fb582))
+
 ## [0.0.24](https://github.com/darioblanco/pulpo/compare/v0.0.23...v0.0.24) (2026-03-17)
 
 
