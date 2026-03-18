@@ -63,6 +63,7 @@ describe('AppSidebar', () => {
     expect(screen.getByText('Ocean')).toBeInTheDocument();
     expect(screen.getByText('Sessions')).toBeInTheDocument();
     expect(screen.getByText('History')).toBeInTheDocument();
+    expect(screen.getByText('Schedules')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 

@@ -138,7 +138,7 @@ pub enum Commands {
     /// Open the web dashboard in your browser
     Ui,
 
-    /// Manage scheduled agent runs via crontab
+    /// Manage scheduled agent runs
     #[command(visible_alias = "sched")]
     Schedule {
         #[command(subcommand)]
@@ -148,36 +148,46 @@ pub enum Commands {
 
 #[derive(Subcommand, Debug)]
 pub enum ScheduleAction {
-    /// Install a cron schedule that spawns a session
-    Install {
+    /// Add a new schedule
+    #[command(alias = "install")]
+    Add {
         /// Schedule name
         name: String,
         /// Cron expression (e.g. "0 3 * * *")
         cron: String,
         /// Working directory
         #[arg(long)]
-        workdir: String,
+        workdir: Option<String>,
+        /// Target node (omit = local, "auto" = least-loaded)
+        #[arg(long)]
+        node: Option<String>,
+        /// Ink preset
+        #[arg(long)]
+        ink: Option<String>,
+        /// Description
+        #[arg(long)]
+        description: Option<String>,
         /// Command to run (everything after --)
         #[arg(last = true)]
         command: Vec<String>,
     },
-    /// List installed pulpo cron schedules
+    /// List all schedules
     #[command(alias = "ls")]
     List,
-    /// Remove a cron schedule
+    /// Remove a schedule
     #[command(alias = "rm")]
     Remove {
-        /// Schedule name
+        /// Schedule name or ID
         name: String,
     },
-    /// Pause a cron schedule (comments out the line)
+    /// Pause a schedule
     Pause {
-        /// Schedule name
+        /// Schedule name or ID
         name: String,
     },
-    /// Resume a paused cron schedule (uncomments the line)
+    /// Resume a paused schedule
     Resume {
-        /// Schedule name
+        /// Schedule name or ID
         name: String,
     },
 }
@@ -558,6 +568,21 @@ fn authed_delete(
     }
 }
 
+/// Build an authenticated PUT request.
+#[cfg_attr(coverage, allow(dead_code))]
+fn authed_put(
+    client: &reqwest::Client,
+    url: String,
+    token: Option<&str>,
+) -> reqwest::RequestBuilder {
+    let req = client.put(url);
+    if let Some(t) = token {
+        req.bearer_auth(t)
+    } else {
+        req
+    }
+}
+
 /// Fetch session output from the API.
 async fn fetch_output(
     client: &reqwest::Client,
@@ -683,200 +708,132 @@ async fn follow_logs(
     Ok(())
 }
 
-// --- Crontab wrapper ---
+// --- Schedule API ---
 
-#[cfg_attr(coverage, allow(dead_code))]
-const CRONTAB_TAG: &str = "#pulpo:";
-
-/// Read the current crontab. Returns empty string if no crontab exists.
+/// Execute a schedule subcommand via the scheduler API.
 #[cfg(not(coverage))]
-fn read_crontab() -> Result<String> {
-    let output = std::process::Command::new("crontab").arg("-l").output()?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        Ok(String::new())
-    }
-}
-
-/// Write the given content as the user's crontab.
-#[cfg(not(coverage))]
-fn write_crontab(content: &str) -> Result<()> {
-    use std::io::Write;
-    let mut child = std::process::Command::new("crontab")
-        .arg("-")
-        .stdin(std::process::Stdio::piped())
-        .spawn()?;
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(content.as_bytes())?;
-    let status = child.wait()?;
-    if !status.success() {
-        anyhow::bail!("crontab write failed");
-    }
-    Ok(())
-}
-
-/// Build the crontab line for a pulpo schedule.
-#[cfg_attr(coverage, allow(dead_code))]
-fn build_crontab_line(name: &str, cron: &str, workdir: &str, command: &str, node: &str) -> String {
-    format!(
-        "{cron} pulpo --node {node} spawn {name} --workdir {workdir} -- {command} {CRONTAB_TAG}{name}\n"
-    )
-}
-
-/// Install a cron schedule into a crontab string. Returns the updated crontab.
-#[cfg_attr(coverage, allow(dead_code))]
-fn crontab_install(crontab: &str, name: &str, line: &str) -> Result<String> {
-    let tag = format!("{CRONTAB_TAG}{name}");
-    if crontab.contains(&tag) {
-        anyhow::bail!("schedule \"{name}\" already exists — remove it first");
-    }
-    let mut result = crontab.to_owned();
-    result.push_str(line);
-    Ok(result)
-}
-
-/// Format pulpo crontab entries for display.
-#[cfg_attr(coverage, allow(dead_code))]
-fn crontab_list(crontab: &str) -> String {
-    let entries: Vec<&str> = crontab
-        .lines()
-        .filter(|l| l.contains(CRONTAB_TAG))
-        .collect();
-    if entries.is_empty() {
-        return "No pulpo schedules.".into();
-    }
-    let mut lines = vec![format!("{:<20} {:<15} {}", "NAME", "CRON", "PAUSED")];
-    for entry in entries {
-        let paused = entry.starts_with('#');
-        let raw = entry.trim_start_matches('#').trim();
-        let name = raw.rsplit_once(CRONTAB_TAG).map_or("?", |(_, n)| n);
-        let parts: Vec<&str> = raw.splitn(6, ' ').collect();
-        let cron_expr = if parts.len() >= 5 {
-            parts[..5].join(" ")
-        } else {
-            "?".into()
-        };
-        lines.push(format!(
-            "{:<20} {:<15} {}",
-            name,
-            cron_expr,
-            if paused { "yes" } else { "no" }
-        ));
-    }
-    lines.join("\n")
-}
-
-/// Remove a schedule from a crontab string. Returns the updated crontab.
-#[cfg_attr(coverage, allow(dead_code))]
-fn crontab_remove(crontab: &str, name: &str) -> Result<String> {
-    use std::fmt::Write;
-    let tag = format!("{CRONTAB_TAG}{name}");
-    let filtered =
-        crontab
-            .lines()
-            .filter(|l| !l.contains(&tag))
-            .fold(String::new(), |mut acc, l| {
-                writeln!(acc, "{l}").unwrap();
-                acc
-            });
-    if filtered.len() == crontab.len() {
-        anyhow::bail!("schedule \"{name}\" not found");
-    }
-    Ok(filtered)
-}
-
-/// Pause (comment out) a schedule in a crontab string.
-#[cfg_attr(coverage, allow(dead_code))]
-fn crontab_pause(crontab: &str, name: &str) -> Result<String> {
-    use std::fmt::Write;
-    let tag = format!("{CRONTAB_TAG}{name}");
-    let mut found = false;
-    let updated = crontab.lines().fold(String::new(), |mut acc, l| {
-        if l.contains(&tag) && !l.starts_with('#') {
-            found = true;
-            writeln!(acc, "#{l}").unwrap();
-        } else {
-            writeln!(acc, "{l}").unwrap();
-        }
-        acc
-    });
-    if !found {
-        anyhow::bail!("schedule \"{name}\" not found or already paused");
-    }
-    Ok(updated)
-}
-
-/// Resume (uncomment) a schedule in a crontab string.
-#[cfg_attr(coverage, allow(dead_code))]
-fn crontab_resume(crontab: &str, name: &str) -> Result<String> {
-    use std::fmt::Write;
-    let tag = format!("{CRONTAB_TAG}{name}");
-    let mut found = false;
-    let updated = crontab.lines().fold(String::new(), |mut acc, l| {
-        if l.contains(&tag) && l.starts_with('#') {
-            found = true;
-            writeln!(acc, "{}", l.trim_start_matches('#')).unwrap();
-        } else {
-            writeln!(acc, "{l}").unwrap();
-        }
-        acc
-    });
-    if !found {
-        anyhow::bail!("schedule \"{name}\" not found or not paused");
-    }
-    Ok(updated)
-}
-
-/// Execute a schedule subcommand using the crontab wrapper.
-#[cfg(not(coverage))]
-fn execute_schedule(action: &ScheduleAction, node: &str) -> Result<String> {
+async fn execute_schedule(
+    client: &reqwest::Client,
+    action: &ScheduleAction,
+    base: &str,
+    token: Option<&str>,
+) -> Result<String> {
     match action {
-        ScheduleAction::Install {
+        ScheduleAction::Add {
             name,
             cron,
             workdir,
+            node,
+            ink,
+            description,
             command,
         } => {
-            let crontab = read_crontab()?;
-            let joined_command = command.join(" ");
-            let line = build_crontab_line(name, cron, workdir, &joined_command, node);
-            let updated = crontab_install(&crontab, name, &line)?;
-            write_crontab(&updated)?;
-            Ok(format!("Installed schedule \"{name}\""))
+            let cmd = if command.is_empty() {
+                None
+            } else {
+                Some(command.join(" "))
+            };
+            let resolved_workdir = workdir.clone().unwrap_or_else(|| {
+                std::env::current_dir()
+                    .map_or_else(|_| ".".into(), |p| p.to_string_lossy().into_owned())
+            });
+            let mut body = serde_json::json!({
+                "name": name,
+                "cron": cron,
+                "workdir": resolved_workdir,
+            });
+            if let Some(c) = &cmd {
+                body["command"] = serde_json::json!(c);
+            }
+            if let Some(n) = node {
+                body["target_node"] = serde_json::json!(n);
+            }
+            if let Some(i) = ink {
+                body["ink"] = serde_json::json!(i);
+            }
+            if let Some(d) = description {
+                body["description"] = serde_json::json!(d);
+            }
+            let resp = authed_post(client, format!("{base}/api/v1/schedules"), token)
+                .json(&body)
+                .send()
+                .await?;
+            ok_or_api_error(resp).await?;
+            Ok(format!("Created schedule \"{name}\""))
         }
         ScheduleAction::List => {
-            let crontab = read_crontab()?;
-            Ok(crontab_list(&crontab))
+            let resp = authed_get(client, format!("{base}/api/v1/schedules"), token)
+                .send()
+                .await?;
+            let text = ok_or_api_error(resp).await?;
+            let schedules: Vec<serde_json::Value> = serde_json::from_str(&text)?;
+            Ok(format_schedules(&schedules))
         }
         ScheduleAction::Remove { name } => {
-            let crontab = read_crontab()?;
-            let updated = crontab_remove(&crontab, name)?;
-            write_crontab(&updated)?;
+            let resp = authed_delete(client, format!("{base}/api/v1/schedules/{name}"), token)
+                .send()
+                .await?;
+            ok_or_api_error(resp).await?;
             Ok(format!("Removed schedule \"{name}\""))
         }
         ScheduleAction::Pause { name } => {
-            let crontab = read_crontab()?;
-            let updated = crontab_pause(&crontab, name)?;
-            write_crontab(&updated)?;
+            let body = serde_json::json!({ "enabled": false });
+            let resp = authed_put(client, format!("{base}/api/v1/schedules/{name}"), token)
+                .json(&body)
+                .send()
+                .await?;
+            ok_or_api_error(resp).await?;
             Ok(format!("Paused schedule \"{name}\""))
         }
         ScheduleAction::Resume { name } => {
-            let crontab = read_crontab()?;
-            let updated = crontab_resume(&crontab, name)?;
-            write_crontab(&updated)?;
+            let body = serde_json::json!({ "enabled": true });
+            let resp = authed_put(client, format!("{base}/api/v1/schedules/{name}"), token)
+                .json(&body)
+                .send()
+                .await?;
+            ok_or_api_error(resp).await?;
             Ok(format!("Resumed schedule \"{name}\""))
         }
     }
 }
 
-/// Stub for coverage builds — crontab is real I/O.
+/// Coverage stub for schedule execution.
 #[cfg(coverage)]
-fn execute_schedule(_action: &ScheduleAction, _node: &str) -> Result<String> {
+#[allow(clippy::unnecessary_wraps)]
+async fn execute_schedule(
+    _client: &reqwest::Client,
+    _action: &ScheduleAction,
+    _base: &str,
+    _token: Option<&str>,
+) -> Result<String> {
     Ok(String::new())
+}
+
+/// Format a list of schedules as a table.
+#[cfg_attr(coverage, allow(dead_code))]
+fn format_schedules(schedules: &[serde_json::Value]) -> String {
+    if schedules.is_empty() {
+        return "No schedules.".into();
+    }
+    let mut lines = vec![format!(
+        "{:<20} {:<18} {:<8} {:<12} {}",
+        "NAME", "CRON", "ENABLED", "LAST RUN", "NODE"
+    )];
+    for s in schedules {
+        let name = s["name"].as_str().unwrap_or("?");
+        let cron = s["cron"].as_str().unwrap_or("?");
+        let enabled = if s["enabled"].as_bool().unwrap_or(true) {
+            "yes"
+        } else {
+            "no"
+        };
+        let last_run = s["last_run_at"].as_str().map_or("-", |t| &t[..16]);
+        let node = s["target_node"].as_str().unwrap_or("local");
+        lines.push(format!(
+            "{name:<20} {cron:<18} {enabled:<8} {last_run:<12} {node}"
+        ));
+    }
+    lines.join("\n")
 }
 
 /// Select the best node from the peer registry based on load.
@@ -1201,7 +1158,12 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             attach_session(backend_id)?;
             Ok(format!("Detached from session \"{}\".", session.name))
         }
-        Commands::Schedule { action } => execute_schedule(action, node),
+        Commands::Schedule { action } => execute_schedule(&client, action, &url, token.as_deref())
+            .await
+            .map_err(|e| match e.downcast::<reqwest::Error>() {
+                Ok(re) => friendly_error(&re, node),
+                Err(other) => other,
+            }),
     }
 }
 
@@ -1542,6 +1504,16 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}/input",
                 post(|| async { StatusCode::NO_CONTENT }),
+            )
+            .route(
+                "/api/v1/schedules",
+                get(|| async { Json::<Vec<()>>(vec![]) })
+                    .post(|| async { StatusCode::CREATED }),
+            )
+            .route(
+                "/api/v1/schedules/{id}",
+                axum::routing::put(|| async { StatusCode::OK })
+                    .delete(|| async { StatusCode::NO_CONTENT }),
             );
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -3139,163 +3111,122 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // -- Crontab wrapper tests --
+    // -- Schedule tests --
 
     #[test]
-    fn test_build_crontab_line() {
-        let line = build_crontab_line(
-            "nightly-review",
-            "0 3 * * *",
-            "/home/me/repo",
-            "claude -p 'Review PRs'",
-            "localhost:7433",
-        );
-        assert_eq!(
-            line,
-            "0 3 * * * pulpo --node localhost:7433 spawn nightly-review --workdir /home/me/repo -- claude -p 'Review PRs' #pulpo:nightly-review\n"
-        );
+    fn test_format_schedules_empty() {
+        assert_eq!(format_schedules(&[]), "No schedules.");
     }
 
     #[test]
-    fn test_crontab_install_success() {
-        let crontab = "# existing cron\n0 * * * * echo hi\n";
-        let line = "0 3 * * * pulpo --node n spawn my-job --workdir /tmp -- claude -p task #pulpo:my-job\n";
-        let result = crontab_install(crontab, "my-job", line).unwrap();
-        assert!(result.starts_with("# existing cron\n"));
-        assert!(result.ends_with("#pulpo:my-job\n"));
-        assert!(result.contains("echo hi"));
-    }
-
-    #[test]
-    fn test_crontab_install_duplicate_error() {
-        let crontab = "0 3 * * * pulpo spawn task #pulpo:my-job\n";
-        let line = "0 4 * * * pulpo spawn other #pulpo:my-job\n";
-        let err = crontab_install(crontab, "my-job", line).unwrap_err();
-        assert!(err.to_string().contains("already exists"));
-    }
-
-    #[test]
-    fn test_crontab_list_empty() {
-        assert_eq!(crontab_list(""), "No pulpo schedules.");
-    }
-
-    #[test]
-    fn test_crontab_list_no_pulpo_entries() {
-        assert_eq!(crontab_list("0 * * * * echo hi\n"), "No pulpo schedules.");
-    }
-
-    #[test]
-    fn test_crontab_list_with_entries() {
-        let crontab = "0 3 * * * pulpo --node n spawn nightly --workdir /tmp -- claude -p task #pulpo:nightly\n";
-        let output = crontab_list(crontab);
-        assert!(output.contains("NAME"));
-        assert!(output.contains("CRON"));
-        assert!(output.contains("PAUSED"));
+    fn test_format_schedules_with_entries() {
+        let schedules = vec![serde_json::json!({
+            "name": "nightly",
+            "cron": "0 3 * * *",
+            "enabled": true,
+            "last_run_at": null,
+            "target_node": null
+        })];
+        let output = format_schedules(&schedules);
         assert!(output.contains("nightly"));
         assert!(output.contains("0 3 * * *"));
-        assert!(output.contains("no"));
-    }
-
-    #[test]
-    fn test_crontab_list_paused_entry() {
-        let crontab = "#0 3 * * * pulpo spawn task #pulpo:paused-job\n";
-        let output = crontab_list(crontab);
-        assert!(output.contains("paused-job"));
+        assert!(output.contains("local"));
         assert!(output.contains("yes"));
+        assert!(output.contains('-'));
     }
 
     #[test]
-    fn test_crontab_list_short_line() {
-        // A line with fewer than 5 space-separated parts but still tagged
-        let crontab = "badcron #pulpo:broken\n";
-        let output = crontab_list(crontab);
-        assert!(output.contains("broken"));
-        assert!(output.contains('?'));
+    fn test_format_schedules_disabled_entry() {
+        let schedules = vec![serde_json::json!({
+            "name": "weekly",
+            "cron": "0 0 * * 0",
+            "enabled": false,
+            "last_run_at": "2026-03-18T03:00:00Z",
+            "target_node": "gpu-box"
+        })];
+        let output = format_schedules(&schedules);
+        assert!(output.contains("weekly"));
+        assert!(output.contains("no"));
+        assert!(output.contains("gpu-box"));
+        assert!(output.contains("2026-03-18T03:00"));
     }
 
     #[test]
-    fn test_crontab_remove_success() {
-        let crontab = "0 * * * * echo hi\n0 3 * * * pulpo spawn task #pulpo:my-job\n";
-        let result = crontab_remove(crontab, "my-job").unwrap();
-        assert!(result.contains("echo hi"));
-        assert!(!result.contains("my-job"));
-    }
-
-    #[test]
-    fn test_crontab_remove_not_found() {
-        let crontab = "0 * * * * echo hi\n";
-        let err = crontab_remove(crontab, "ghost").unwrap_err();
-        assert!(err.to_string().contains("not found"));
-    }
-
-    #[test]
-    fn test_crontab_pause_success() {
-        let crontab = "0 3 * * * pulpo spawn task #pulpo:my-job\n";
-        let result = crontab_pause(crontab, "my-job").unwrap();
-        assert!(result.starts_with('#'));
-        assert!(result.contains("#pulpo:my-job"));
-    }
-
-    #[test]
-    fn test_crontab_pause_not_found() {
-        let crontab = "0 * * * * echo hi\n";
-        let err = crontab_pause(crontab, "ghost").unwrap_err();
-        assert!(err.to_string().contains("not found or already paused"));
-    }
-
-    #[test]
-    fn test_crontab_pause_already_paused() {
-        let crontab = "#0 3 * * * pulpo spawn task #pulpo:my-job\n";
-        let err = crontab_pause(crontab, "my-job").unwrap_err();
-        assert!(err.to_string().contains("already paused"));
-    }
-
-    #[test]
-    fn test_crontab_resume_success() {
-        let crontab = "#0 3 * * * pulpo spawn task #pulpo:my-job\n";
-        let result = crontab_resume(crontab, "my-job").unwrap();
-        assert!(!result.starts_with('#'));
-        assert!(result.contains("#pulpo:my-job"));
-    }
-
-    #[test]
-    fn test_crontab_resume_not_found() {
-        let crontab = "0 * * * * echo hi\n";
-        let err = crontab_resume(crontab, "ghost").unwrap_err();
-        assert!(err.to_string().contains("not found or not paused"));
-    }
-
-    #[test]
-    fn test_crontab_resume_not_paused() {
-        let crontab = "0 3 * * * pulpo spawn task #pulpo:my-job\n";
-        let err = crontab_resume(crontab, "my-job").unwrap_err();
-        assert!(err.to_string().contains("not paused"));
+    fn test_format_schedules_header() {
+        let schedules = vec![serde_json::json!({
+            "name": "test",
+            "cron": "* * * * *",
+            "enabled": true,
+            "last_run_at": null,
+            "target_node": null
+        })];
+        let output = format_schedules(&schedules);
+        assert!(output.contains("NAME"));
+        assert!(output.contains("CRON"));
+        assert!(output.contains("ENABLED"));
+        assert!(output.contains("LAST RUN"));
+        assert!(output.contains("NODE"));
     }
 
     // -- Schedule CLI parse tests --
 
     #[test]
-    fn test_cli_parse_schedule_install() {
+    fn test_cli_parse_schedule_add() {
         let cli = Cli::try_parse_from([
             "pulpo",
             "schedule",
-            "install",
+            "add",
             "nightly",
             "0 3 * * *",
             "--workdir",
-            "/tmp/repo",
+            "/repo",
             "--",
             "claude",
             "-p",
-            "Review PRs",
+            "review",
         ])
         .unwrap();
         assert!(matches!(
             &cli.command,
             Some(Commands::Schedule {
-                action: ScheduleAction::Install { name, cron, workdir, command }
-            }) if name == "nightly" && cron == "0 3 * * *" && workdir == "/tmp/repo"
-              && command == &["claude", "-p", "Review PRs"]
+                action: ScheduleAction::Add { name, cron, .. }
+            }) if name == "nightly" && cron == "0 3 * * *"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_add_with_node() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "schedule",
+            "add",
+            "nightly",
+            "0 3 * * *",
+            "--workdir",
+            "/repo",
+            "--node",
+            "gpu-box",
+            "--",
+            "claude",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Schedule {
+                action: ScheduleAction::Add { node, .. }
+            }) if node.as_deref() == Some("gpu-box")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_add_install_alias() {
+        let cli =
+            Cli::try_parse_from(["pulpo", "schedule", "install", "nightly", "0 3 * * *"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Schedule {
+                action: ScheduleAction::Add { name, .. }
+            }) if name == "nightly"
         ));
     }
 
@@ -3376,9 +3307,9 @@ mod tests {
         ));
     }
 
+    #[cfg(not(coverage))]
     #[tokio::test]
-    async fn test_execute_schedule_via_execute() {
-        // Under coverage builds, execute_schedule is a stub returning Ok("")
+    async fn test_execute_schedule_list_via_execute() {
         let node = start_test_server().await;
         let cli = Cli {
             node,
@@ -3388,9 +3319,8 @@ mod tests {
             }),
             path: None,
         };
-        let result = execute(&cli).await;
-        // Under coverage: succeeds with empty string; under non-coverage: may fail (no crontab)
-        assert!(result.is_ok() || result.is_err());
+        let result = execute(&cli).await.unwrap();
+        assert_eq!(result, "No schedules.");
     }
 
     #[test]

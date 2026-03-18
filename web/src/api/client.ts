@@ -13,6 +13,8 @@ import type {
   CreateSessionResponse,
   FleetSessionsResponse,
   VapidPublicKeyResponse,
+  ScheduleInfo,
+  CreateScheduleRequest,
 } from './types';
 
 let getBaseUrl: () => string = () => '';
@@ -265,4 +267,48 @@ export async function unsubscribePush(endpoint: string): Promise<void> {
     body: JSON.stringify({ endpoint }),
   });
   if (!res.ok) throw new Error('Failed to unsubscribe');
+}
+
+export async function getSchedules(): Promise<ScheduleInfo[]> {
+  const res = await authFetch(`${resolveBaseUrl()}/schedules`);
+  return res.json();
+}
+
+export async function createSchedule(data: CreateScheduleRequest): Promise<ScheduleInfo> {
+  const res = await authFetch(`${resolveBaseUrl()}/schedules`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to create schedule');
+  }
+  return res.json();
+}
+
+export async function updateSchedule(
+  id: string,
+  data: Record<string, unknown>,
+): Promise<ScheduleInfo> {
+  const res = await authFetch(`${resolveBaseUrl()}/schedules/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to update schedule');
+  }
+  return res.json();
+}
+
+export async function deleteSchedule(id: string): Promise<void> {
+  const res = await authFetch(`${resolveBaseUrl()}/schedules/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to delete schedule');
+  }
 }

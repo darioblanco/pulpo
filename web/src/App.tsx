@@ -10,6 +10,7 @@ import { SettingsPage } from '@/pages/settings';
 import { OceanPage } from '@/pages/ocean';
 import { ConnectPage } from '@/pages/connect';
 import { SessionDetailPage } from '@/pages/session-detail';
+import { SchedulesPage } from '@/pages/schedules';
 
 export function App() {
   return (
@@ -23,6 +24,7 @@ export function App() {
                 <Route path="sessions" element={<DashboardPage />} />
                 <Route path="sessions/:id" element={<SessionDetailPage />} />
                 <Route path="history" element={<HistoryPage />} />
+                <Route path="schedules" element={<SchedulesPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>
               <Route path="connect" element={<ConnectPage />} />

@@ -179,3 +179,28 @@ export interface PushSubscriptionRequest {
     auth: string;
   };
 }
+
+export interface ScheduleInfo {
+  id: string;
+  name: string;
+  cron: string;
+  command: string;
+  workdir: string;
+  target_node: string | null;
+  ink: string | null;
+  description: string | null;
+  enabled: boolean;
+  last_run_at: string | null;
+  last_session_id: string | null;
+  created_at: string;
+}
+
+export interface CreateScheduleRequest {
+  name: string;
+  cron: string;
+  command?: string;
+  workdir: string;
+  target_node?: string;
+  ink?: string;
+  description?: string;
+}
