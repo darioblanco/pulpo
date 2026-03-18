@@ -43,7 +43,22 @@ pulpo schedule add nightly-review "0 3 * * *" --workdir ~/repo -- claude -p "rev
 pulpo schedule list
 ```
 
-## 6. Remote nodes
+## 6. Docker sandbox
+
+Run agents in isolated containers — safe for unrestricted permissions:
+
+```bash
+pulpo spawn risky-task --sandbox -- claude --dangerously-skip-permissions -p "refactor everything"
+```
+
+The agent runs in a Docker container with only the workdir mounted. Configure the image in `~/.pulpo/config.toml`:
+
+```toml
+[sandbox]
+image = "my-agents-image:latest"
+```
+
+## 7. Remote nodes
 
 Spawn on another machine by name:
 
@@ -57,7 +72,7 @@ Or auto-select the least loaded node:
 pulpo spawn review --auto -- claude -p "security audit"
 ```
 
-## 7. Resume after a crash
+## 8. Resume after a crash
 
 Sessions survive daemon restarts. If a machine reboots:
 
@@ -68,7 +83,7 @@ pulpo list
 pulpo resume my-api
 ```
 
-## 8. Open dashboard
+## 9. Open dashboard
 
 ```bash
 open http://localhost:7433

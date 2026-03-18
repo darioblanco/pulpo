@@ -1,0 +1,16 @@
+# Docker sandbox configuration — run agents in isolated containers.
+# Use with: pulpo spawn my-task --sandbox -- claude -p "review"
+
+[node]
+name = "my-mac"
+
+[sandbox]
+# Docker image for sandbox containers.
+# Must have the agent tools installed (claude, codex, etc.)
+image = "ubuntu:latest"
+
+# Example: custom image with Claude Code pre-installed
+# image = "my-agents:latest"
+
+# Example: GPU-enabled image for ML workloads
+# image = "nvidia/cuda:12.0-devel-ubuntu22.04"

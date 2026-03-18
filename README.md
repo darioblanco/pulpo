@@ -4,8 +4,8 @@
 <h1 align="center">Pulpo</h1>
 
 <p align="center">
-  <strong>Distributed tmux orchestrator for coding agents.</strong><br />
-  Durable sessions, watchdog supervision, multi-node operations — managed from your phone.
+  <strong>Agent session runtime. Durable sessions across your machines.</strong><br />
+  tmux or Docker sandbox, multi-node fleet, watchdog supervision — managed from your phone.
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@ You have agents — Claude Code, Codex, Aider, Gemini CLI — and you want them 
 
 ## What Pulpo Does
 
-Pulpo is a **distributed tmux orchestrator** — it adds lifecycle management, crash recovery, and watchdog supervision on top of tmux. Designed for coding agents, flexible enough for any terminal work.
+Pulpo is an **agent session runtime** — it runs coding agents in tmux sessions or Docker containers, with lifecycle management, crash recovery, and watchdog supervision. Designed for coding agents, flexible enough for any terminal work.
 
 ```bash
 # Spawn an agent on a remote machine by name
@@ -72,6 +72,7 @@ open http://localhost:7433  # PWA with push notifications
 | Watchdog | Memory + idle + patterns | No | No | No | No |
 | Worktrees | Any agent | No | Claude only | Yes | No |
 | Scheduling | Built-in cron + node targeting | No | No | No | No |
+| Docker sandbox | Yes | No | No | Yes | No |
 | Adopts external tmux | Yes | No | No | No | No |
 | Command-agnostic | Any command | N/A | Claude only | Generic | 3 agents |
 | Web UI + mobile | PWA + push | No | No | TUI + Web | Dashboard |

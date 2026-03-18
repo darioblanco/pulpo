@@ -4,7 +4,7 @@ Runnable examples for common Pulpo workflows.
 
 ## What is Pulpo?
 
-Pulpo is a **distributed tmux session orchestrator**. It adds lifecycle management, crash recovery, multi-node operations, and a watchdog supervisor on top of tmux — designed for coding agents but flexible enough for any long-running terminal work.
+Pulpo is an **agent session runtime**. It runs coding agents in tmux sessions or Docker containers, with lifecycle management, crash recovery, multi-node operations, and watchdog supervision — designed for coding agents but flexible enough for any terminal work.
 
 **The problem**: You have machines (Mac Mini, Linux server, cloud VM) connected via Tailscale. You want to spawn agents, check on them from your phone, and not lose work when machines reboot. Today that means SSH → tmux attach → navigate windows — too many layers, no visibility, no recovery.
 
@@ -57,6 +57,7 @@ Most scripts use these environment variables:
 | `cli/08-multi-node.sh` | Spawn and manage sessions across machines |
 | `cli/09-scheduled-sessions.sh` | Cron-based recurring agent runs |
 | `cli/10-batch-spawn.sh` | Spawn multiple sessions in parallel |
+| `cli/11-docker-sandbox.sh` | Run agents in isolated Docker containers |
 
 ### API Examples
 
@@ -75,3 +76,4 @@ Most scripts use these environment variables:
 | `config/watchdog.toml` | Watchdog tuning (idle, memory, patterns) |
 | `config/multi-node-tailscale.toml` | Multi-node with Tailscale discovery |
 | `config/multi-node-public.toml` | Multi-node with auth + mDNS |
+| `config/sandbox.toml` | Docker sandbox for isolated agent execution |

@@ -1,8 +1,8 @@
 # Architecture Overview
 
-Pulpo is a distributed tmux session orchestrator — it adds lifecycle management, crash recovery, watchdog supervision, and multi-node operations on top of tmux. Designed for coding agents but flexible enough for any long-running terminal work.
+Pulpo is an agent session runtime — it runs coding agents in tmux sessions or Docker containers, with lifecycle management, crash recovery, watchdog supervision, and multi-node operations. Designed for coding agents but flexible enough for any long-running terminal work.
 
-**What makes it unique**: No other tool combines multi-node tmux orchestration with agent-aware lifecycle management. tmuxinator manages layouts, overmind runs Procfiles, cmux wraps Claude — Pulpo is the infrastructure layer that makes any terminal session durable, observable, and manageable across machines.
+**What makes it unique**: No other tool combines multi-node session orchestration with agent-aware lifecycle management and dual backends (tmux + Docker sandbox). tmuxinator manages layouts, overmind runs Procfiles, cmux wraps Claude — Pulpo is the infrastructure layer that makes any session durable, observable, and manageable across machines.
 
 ## Components
 
@@ -102,6 +102,29 @@ Session spawn → resolve_ink → build_command → tmux create
        ↓
   SSE events → web UI / Discord / webhooks
 ```
+
+## Docker Sandbox
+
+`--sandbox` runs sessions in Docker containers instead of tmux. The workdir is mounted at `/workspace` — the agent can read and write code but can't touch the host system.
+
+```bash
+# Safe for unrestricted agent execution
+pulpo spawn risky-task --sandbox -- claude --dangerously-skip-permissions -p "refactor"
+```
+
+The `DockerBackend` implements the same `Backend` trait as tmux, using `docker` CLI commands:
+- `create_session` → `docker run -d --name pulpo-<name> -v <workdir>:/workspace ...`
+- `capture_output` → `docker logs --tail N`
+- `is_alive` → `docker inspect --format '{{.State.Running}}'`
+- `kill_session` → `docker stop + docker rm`
+
+Configure the sandbox image in `config.toml`:
+```toml
+[sandbox]
+image = "my-agents-image:latest"  # must have agent tools installed
+```
+
+Sessions are identified by `backend_session_id` prefix: `$N` for tmux, `docker:pulpo-<name>` for Docker. The session manager dispatches to the correct backend automatically.
 
 ## tmux Session Adoption
 

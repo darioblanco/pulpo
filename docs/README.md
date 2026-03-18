@@ -3,7 +3,7 @@ home: true
 title: Pulpo Documentation
 heroText: Pulpo
 heroImage: https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.png
-tagline: Distributed tmux orchestrator for coding agents. Durable sessions, watchdog supervision, multi-node operations — managed from your phone.
+tagline: Agent session runtime. Run coding agents in tmux or Docker across your machines — with lifecycle management, crash recovery, and watchdog supervision.
 actions:
   - text: Install
     link: /getting-started/install
@@ -12,8 +12,10 @@ actions:
     link: /getting-started/quickstart
     type: secondary
 features:
-  - title: Distributed tmux Orchestration
-    details: Spawn and manage tmux sessions across your machine fleet — Mac, Linux, cloud — from a single CLI, web UI, or API call. Tailscale, mDNS, and seed discovery built in.
+  - title: Multi-Node Fleet
+    details: Spawn and manage sessions across your machine fleet — Mac, Linux, cloud — from a single CLI, web UI, or API call. Tailscale, mDNS, and seed discovery built in.
+  - title: Docker Sandbox
+    details: Run agents in isolated Docker containers with --sandbox. Safe for --dangerously-skip-permissions — the agent can't touch your host. Configurable sandbox image.
   - title: Agent-Aware Lifecycle
     details: Explicit states (active, idle, ready, killed, lost) with resume semantics, crash recovery, and watchdog supervision. Detects waiting-for-input prompts across 31 patterns for Claude Code, Codex, Gemini CLI, Aider, and more.
   - title: Command Agnostic
