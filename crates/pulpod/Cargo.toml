@@ -19,7 +19,7 @@ name = "pulpod"
 path = "src/main.rs"
 
 [dependencies]
-pulpo-common = { path = "../pulpo-common", version = "0.0.25" }
+pulpo-common = { path = "../pulpo-common", version = "0.0.26" }
 tokio.workspace = true
 axum.workspace = true
 tower.workspace = true

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.0.26](https://github.com/darioblanco/pulpo/compare/v0.0.25...v0.0.26) (2026-03-18)
+
+
+### Features
+
+* built-in scheduler engine (Phase 3) ([8f6ef8c](https://github.com/darioblanco/pulpo/commit/8f6ef8c2b4b9ce3c1545e20a507b97264f14b9a8))
+* Docker sandbox backend — run sessions in isolated containers ([7576dd2](https://github.com/darioblanco/pulpo/commit/7576dd203c6d3a85d35c0d3be90dd85d5b1f7b7f))
+* git worktree support for isolated parallel sessions (Phase 4) ([48fbb40](https://github.com/darioblanco/pulpo/commit/48fbb4042c7493e8411e75f202d5110708b175c2))
+* schedule CLI migration + dashboard UI (Phase 3) ([575ca4c](https://github.com/darioblanco/pulpo/commit/575ca4c5dfc5f451fe0efff470c8ed0b22f2857f))
+
+
+### Bug Fixes
+
+* fallback shell respects $SHELL, skip Claude teammate sessions ([ae682a7](https://github.com/darioblanco/pulpo/commit/ae682a72155b7faea7ed28fda259376f04db0c11))
+* update brew caveats — agents are recommended, not required ([028dfaa](https://github.com/darioblanco/pulpo/commit/028dfaa69451d5d0ee36535869096a5d66c1218d))
+* use login shell (bash -l -c) for tmux sessions ([7b5ba00](https://github.com/darioblanco/pulpo/commit/7b5ba0050d51128cc1968a77c137663cbd066cfe))
+
 ## [0.0.25](https://github.com/darioblanco/pulpo/compare/v0.0.24...v0.0.25) (2026-03-18)
 
 
