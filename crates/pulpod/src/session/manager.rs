@@ -114,7 +114,7 @@ impl SessionManager {
         let name = req.name.clone();
         let backend_id = self.backend.session_id(&name);
 
-        // Wrap command: bash -c "<escaped>; echo '[pulpo] Agent exited'; exec bash"
+        // Wrap command: bash -l -c "<escaped>; echo '[pulpo] Agent exited'; exec bash"
         let wrapped = wrap_command(&command, &id, &name);
 
         let now = Utc::now();
@@ -452,7 +452,7 @@ fn validate_workdir(workdir: &str) -> Result<()> {
     Ok(())
 }
 
-/// Wrap a command for tmux: escape single quotes, wrap in bash -c with agent exit marker.
+/// Wrap a command for tmux: escape single quotes, wrap in bash -l -c with agent exit marker.
 /// Prepends `PULPO_SESSION_ID` and `PULPO_SESSION_NAME` env vars so tools inside
 /// sessions can identify their pulpo context.
 /// Known shell binaries — when the command is a bare shell, skip the agent exit wrapper.
@@ -466,18 +466,22 @@ fn is_shell_command(command: &str) -> bool {
 
 /// Wrap an agent command with env vars, exit marker, and fallback shell.
 /// Shell commands are run directly (no exit marker or fallback bash).
+///
+/// Uses `bash -l -c` (login shell) so that `.bash_profile` / `.zprofile` are sourced,
+/// ensuring PATH includes Homebrew, nvm, and other tools — critical when pulpod runs
+/// as a launchd/systemd service where the environment is minimal.
 fn wrap_command(command: &str, session_id: &uuid::Uuid, session_name: &str) -> String {
     if is_shell_command(command) {
         // Shell session: set env vars and exec the shell directly.
         // No exit marker, no fallback bash — exiting the shell kills the tmux session.
         let escaped = command.replace('\'', "'\\''");
         return format!(
-            "bash -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
+            "bash -l -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
         );
     }
     let escaped = command.replace('\'', "'\\''");
     format!(
-        "bash -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\'''; exec bash'"
+        "bash -l -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\'''; exec bash'"
     )
 }
 
@@ -644,8 +648,8 @@ mod tests {
         assert_eq!(session.backend_session_id, Some("$11".into()));
 
         let calls = backend.calls.lock().unwrap();
-        // All commands wrapped in bash -c for session survival
-        assert!(calls[0].contains("create:fix-the-bug:/tmp:bash -c"));
+        // All commands wrapped in bash -l -c for session survival
+        assert!(calls[0].contains("create:fix-the-bug:/tmp:bash -l -c"));
         assert!(calls[0].contains("echo hello"));
         assert!(calls[1].starts_with("setup_logging:fix-the-bug:"));
         assert_eq!(calls.len(), 2);
@@ -668,7 +672,7 @@ mod tests {
         // Should fall back to $SHELL or /bin/sh
         assert!(!session.command.is_empty());
         let calls = backend.calls.lock().unwrap();
-        assert!(calls[0].contains("create:test:/tmp:bash -c"));
+        assert!(calls[0].contains("create:test:/tmp:bash -l -c"));
         drop(calls);
     }
 
@@ -1238,7 +1242,7 @@ mod tests {
     fn test_wrap_command_basic() {
         let id = uuid::Uuid::new_v4();
         let cmd = wrap_command("echo hello", &id, "test-session");
-        assert!(cmd.contains("bash -c"));
+        assert!(cmd.contains("bash -l -c"));
         assert!(cmd.contains("echo hello"));
         assert!(cmd.contains("[pulpo] Agent exited (session: test-session)"));
         assert!(cmd.contains("Run: pulpo resume test-session"));
@@ -1251,7 +1255,7 @@ mod tests {
     fn test_wrap_command_single_quotes() {
         let id = uuid::Uuid::new_v4();
         let cmd = wrap_command("claude -p 'Fix the bug'", &id, "my-task");
-        assert!(cmd.contains("bash -c"));
+        assert!(cmd.contains("bash -l -c"));
         // Single quotes should be properly escaped
         assert!(cmd.contains("claude -p"));
         assert!(cmd.contains("Fix the bug"));
@@ -1537,7 +1541,7 @@ mod tests {
         // Should fall back to $SHELL or /bin/sh
         assert!(!session.command.is_empty());
         let calls = backend.calls.lock().unwrap();
-        assert!(calls[0].contains("create:no-fallback:/tmp:bash -c"));
+        assert!(calls[0].contains("create:no-fallback:/tmp:bash -l -c"));
         drop(calls);
     }
 
