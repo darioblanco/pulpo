@@ -480,8 +480,10 @@ fn wrap_command(command: &str, session_id: &uuid::Uuid, session_name: &str) -> S
         );
     }
     let escaped = command.replace('\'', "'\\''");
+    // Use $SHELL for the fallback shell so the user gets their preferred shell (zsh, fish, etc.)
+    // after the agent exits. Falls back to bash if $SHELL is unset.
     format!(
-        "bash -l -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\'''; exec bash'"
+        "bash -l -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\'''; exec ${{SHELL:-bash}} -l'"
     )
 }
 
@@ -1246,7 +1248,10 @@ mod tests {
         assert!(cmd.contains("echo hello"));
         assert!(cmd.contains("[pulpo] Agent exited (session: test-session)"));
         assert!(cmd.contains("Run: pulpo resume test-session"));
-        assert!(cmd.contains("exec bash"));
+        // Fallback shell uses $SHELL with bash as default, run as login shell
+        #[allow(clippy::literal_string_with_formatting_args)]
+        let expected_fallback = "exec ${SHELL:-bash} -l";
+        assert!(cmd.contains(expected_fallback));
         assert!(cmd.contains(&format!("PULPO_SESSION_ID={id}")));
         assert!(cmd.contains("PULPO_SESSION_NAME=test-session"));
     }

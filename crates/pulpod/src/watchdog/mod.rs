@@ -700,6 +700,13 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
             continue;
         }
 
+        // Skip sessions that look like Claude Code's internal teammate-mode sessions
+        // (named "claude-<hex>") to avoid adopting sub-agents managed by Claude itself.
+        if tmux_name.starts_with("claude-") && tmux_name.len() > 10 {
+            debug!("Adopt: skipping Claude teammate session {tmux_name}");
+            continue;
+        }
+
         // Get pane info for classification
         let (process, workdir) = match backend.pane_info(tmux_name) {
             Ok(info) => info,
@@ -3513,6 +3520,51 @@ mod tests {
         // Should not have adopted (pane_info failed)
         let sessions = store.list_sessions().await.unwrap();
         assert!(sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_adopt_skips_claude_teammate_sessions() {
+        let mut backend = MockBackend::new();
+        // Claude teammate sessions have names like "claude-<hex>" (long names)
+        backend.tmux_sessions = vec![
+            ("$0".into(), "claude-abc123def456".into()),
+            ("$1".into(), "my-session".into()),
+        ];
+        backend
+            .pane_infos
+            .insert("my-session".into(), ("claude".into(), "/repo".into()));
+        // No pane_info for claude-abc123def456 — it should be skipped before pane_info is called
+        let backend = Arc::new(backend);
+        let store = test_store().await;
+
+        let ctx = test_ready_ctx();
+        let dyn_backend: Arc<dyn Backend> = backend;
+        adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
+
+        // Only my-session should be adopted, not the claude teammate session
+        let sessions = store.list_sessions().await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].name, "my-session");
+    }
+
+    #[tokio::test]
+    async fn test_adopt_allows_short_claude_names() {
+        // Short names like "claude" or "claude-pr" should NOT be skipped
+        let mut backend = MockBackend::new();
+        backend.tmux_sessions = vec![("$0".into(), "claude-pr".into())];
+        backend
+            .pane_infos
+            .insert("claude-pr".into(), ("claude".into(), "/repo".into()));
+        let backend = Arc::new(backend);
+        let store = test_store().await;
+
+        let ctx = test_ready_ctx();
+        let dyn_backend: Arc<dyn Backend> = backend;
+        adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
+
+        let sessions = store.list_sessions().await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].name, "claude-pr");
     }
 
     #[tokio::test]
