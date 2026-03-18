@@ -55,9 +55,22 @@ pub trait Backend: Send + Sync {
         anyhow::bail!("spawn_attach not supported by this backend")
     }
 
-    /// List all session names known to the backend runtime.
+    /// Query the backend-specific internal session ID from a human-friendly name.
+    /// For tmux, returns the `$N` session ID. Default returns `name.to_owned()`.
+    fn query_backend_id(&self, name: &str) -> Result<String> {
+        Ok(name.to_owned())
+    }
+
+    /// Get the full command line of the process running in the session's pane.
+    /// Default returns an error — only real backends (tmux) override this.
+    fn pane_command_line(&self, _backend_id: &str) -> Result<String> {
+        anyhow::bail!("pane_command_line not supported by this backend")
+    }
+
+    /// List all sessions known to the backend runtime.
+    /// Returns `(backend_id, name)` pairs.
     /// Default returns empty — only real backends (tmux) override this.
-    fn list_sessions(&self) -> Result<Vec<String>> {
+    fn list_sessions(&self) -> Result<Vec<(String, String)>> {
         Ok(Vec::new())
     }
 
@@ -66,6 +79,12 @@ pub trait Backend: Send + Sync {
     /// Default returns an error — only real backends (tmux) override this.
     fn pane_info(&self, _backend_id: &str) -> Result<(String, String)> {
         anyhow::bail!("pane_info not supported by this backend")
+    }
+
+    /// Set an environment variable in a backend session.
+    /// Default is a no-op — only real backends (tmux) override this.
+    fn set_env(&self, _backend_id: &str, _key: &str, _value: &str) -> Result<()> {
+        Ok(())
     }
 }
 
@@ -122,6 +141,19 @@ mod tests {
     }
 
     #[test]
+    fn test_default_query_backend_id() {
+        let b = MinimalBackend;
+        assert_eq!(b.query_backend_id("my-session").unwrap(), "my-session");
+    }
+
+    #[test]
+    fn test_default_pane_command_line() {
+        let b = MinimalBackend;
+        let err = b.pane_command_line("x").unwrap_err();
+        assert!(err.to_string().contains("pane_command_line not supported"));
+    }
+
+    #[test]
     fn test_default_list_sessions() {
         let b = MinimalBackend;
         assert!(b.list_sessions().unwrap().is_empty());
@@ -132,6 +164,12 @@ mod tests {
         let b = MinimalBackend;
         let err = b.pane_info("x").unwrap_err();
         assert!(err.to_string().contains("pane_info not supported"));
+    }
+
+    #[test]
+    fn test_default_set_env() {
+        let b = MinimalBackend;
+        assert!(b.set_env("s", "KEY", "VALUE").is_ok());
     }
 
     #[test]

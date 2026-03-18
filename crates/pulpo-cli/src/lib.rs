@@ -9,7 +9,8 @@ use pulpo_common::session::Session;
 #[command(
     name = "pulpo",
     about = "Manage agent sessions across your machines",
-    version = env!("PULPO_VERSION")
+    version = env!("PULPO_VERSION"),
+    args_conflicts_with_subcommands = true
 )]
 pub struct Cli {
     /// Target node (default: localhost)
@@ -21,7 +22,11 @@ pub struct Cli {
     pub token: Option<String>,
 
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
+
+    /// Quick spawn: `pulpo <path>` spawns a session in that directory
+    #[arg(value_name = "PATH")]
+    pub path: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -35,7 +40,7 @@ pub enum Commands {
     },
 
     /// Send input to a session
-    #[command(visible_alias = "i")]
+    #[command(visible_alias = "i", visible_alias = "send")]
     Input {
         /// Session name or ID
         name: String,
@@ -46,8 +51,8 @@ pub enum Commands {
     /// Spawn a new agent session
     #[command(visible_alias = "s")]
     Spawn {
-        /// Session name
-        name: String,
+        /// Session name (auto-generated from workdir if omitted)
+        name: Option<String>,
 
         /// Working directory (defaults to current directory)
         #[arg(long)]
@@ -64,6 +69,10 @@ pub enum Commands {
         /// Don't attach to the session after spawning
         #[arg(short, long)]
         detach: bool,
+
+        /// Idle threshold in seconds (0 = never idle)
+        #[arg(long)]
+        idle_threshold: Option<u32>,
 
         /// Command to run (everything after --)
         #[arg(last = true)]
@@ -166,6 +175,85 @@ pub enum ScheduleAction {
         /// Schedule name
         name: String,
     },
+}
+
+/// The marker emitted by the agent wrapper when the agent process exits.
+const AGENT_EXIT_MARKER: &str = "[pulpo] Agent exited";
+
+/// Resolve a path to an absolute path string.
+fn resolve_path(path: &str) -> String {
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir().map_or_else(
+            |_| path.to_owned(),
+            |cwd| cwd.join(p).to_string_lossy().into_owned(),
+        )
+    }
+}
+
+/// Derive a session name from a directory path (basename, kebab-cased).
+fn derive_session_name(path: &str) -> String {
+    let basename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("session");
+    // Convert to kebab-case: lowercase, replace non-alphanumeric with hyphens, collapse
+    let kebab: String = basename
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    // Collapse consecutive hyphens and trim leading/trailing hyphens
+    let mut result = String::new();
+    for c in kebab.chars() {
+        if c == '-' && result.ends_with('-') {
+            continue;
+        }
+        result.push(c);
+    }
+    let result = result.trim_matches('-').to_owned();
+    if result.is_empty() {
+        "session".to_owned()
+    } else {
+        result
+    }
+}
+
+/// Deduplicate a session name by appending `-2`, `-3`, etc. if the base name is active.
+async fn deduplicate_session_name(
+    client: &reqwest::Client,
+    base: &str,
+    name: &str,
+    token: Option<&str>,
+) -> String {
+    // Check if the name is already taken by fetching the session
+    let resp = authed_get(client, format!("{base}/api/v1/sessions/{name}"), token)
+        .send()
+        .await;
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            // Session exists — try suffixed names
+            for i in 2..=99 {
+                let candidate = format!("{name}-{i}");
+                let resp = authed_get(client, format!("{base}/api/v1/sessions/{candidate}"), token)
+                    .send()
+                    .await;
+                match resp {
+                    Ok(r) if r.status().is_success() => {}
+                    _ => return candidate,
+                }
+            }
+            format!("{name}-100")
+        }
+        _ => name.to_owned(),
+    }
 }
 
 /// Format the base URL from the node address.
@@ -491,24 +579,36 @@ async fn follow_logs(
     let mut prev_output = fetch_output(client, base, name, lines, token).await?;
     write!(writer, "{prev_output}")?;
 
+    let mut unchanged_ticks: u32 = 0;
+
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-
-        // Check session status
-        let status = fetch_session_status(client, base, name, token).await?;
-        let is_terminal = status == "ready" || status == "killed" || status == "lost";
 
         // Fetch latest output
         let new_output = fetch_output(client, base, name, lines, token).await?;
 
         let diff = diff_output(&prev_output, &new_output);
-        if !diff.is_empty() {
+        if diff.is_empty() {
+            unchanged_ticks += 1;
+        } else {
             write!(writer, "{diff}")?;
+            unchanged_ticks = 0;
         }
+
+        // Check for agent exit marker in output
+        if new_output.contains(AGENT_EXIT_MARKER) {
+            break;
+        }
+
         prev_output = new_output;
 
-        if is_terminal {
-            break;
+        // Only check session status when output has been unchanged for 3+ ticks
+        if unchanged_ticks >= 3 {
+            let status = fetch_session_status(client, base, name, token).await?;
+            let is_terminal = status == "ready" || status == "killed" || status == "lost";
+            if is_terminal {
+                break;
+            }
         }
     }
     Ok(())
@@ -718,7 +818,38 @@ pub async fn execute(cli: &Cli) -> Result<String> {
     let node = &cli.node;
     let token = resolve_token(&client, &url, node, cli.token.as_deref()).await;
 
-    match &cli.command {
+    // Handle `pulpo <path>` shortcut — spawn a session in the given directory
+    if cli.command.is_none() {
+        let path = cli.path.as_deref().unwrap_or(".");
+        let resolved_workdir = resolve_path(path);
+        let base_name = derive_session_name(&resolved_workdir);
+        let name = deduplicate_session_name(&client, &url, &base_name, token.as_deref()).await;
+        let body = serde_json::json!({
+            "name": name,
+            "workdir": resolved_workdir,
+        });
+        let resp = authed_post(&client, format!("{url}/api/v1/sessions"), token.as_deref())
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| friendly_error(&e, node))?;
+        let text = ok_or_api_error(resp).await?;
+        let resp: CreateSessionResponse = serde_json::from_str(&text)?;
+        let msg = format!(
+            "Created session \"{}\" ({})",
+            resp.session.name, resp.session.id
+        );
+        let backend_id = resp
+            .session
+            .backend_session_id
+            .as_deref()
+            .unwrap_or(&resp.session.name);
+        eprintln!("{msg}");
+        attach_session(backend_id)?;
+        return Ok(format!("Detached from session \"{}\".", resp.session.name));
+    }
+
+    match cli.command.as_ref().unwrap() {
         Commands::Attach { name } => {
             // Fetch session to get status and backend_session_id
             let resp = authed_get(
@@ -788,6 +919,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             ink,
             description,
             detach,
+            idle_threshold,
             command,
         } => {
             let cmd = if command.is_empty() {
@@ -800,8 +932,15 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 std::env::current_dir()
                     .map_or_else(|_| ".".into(), |p| p.to_string_lossy().into_owned())
             });
+            // Resolve name: explicit > derived from workdir (with dedup)
+            let resolved_name = if let Some(n) = name {
+                n.clone()
+            } else {
+                let base_name = derive_session_name(&resolved_workdir);
+                deduplicate_session_name(&client, &url, &base_name, token.as_deref()).await
+            };
             let mut body = serde_json::json!({
-                "name": name,
+                "name": resolved_name,
                 "workdir": resolved_workdir,
             });
             if let Some(c) = &cmd {
@@ -812,6 +951,9 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             if let Some(d) = description {
                 body["description"] = serde_json::json!(d);
+            }
+            if let Some(t) = idle_threshold {
+                body["idle_threshold_secs"] = serde_json::json!(t);
             }
             let resp = authed_post(&client, format!("{url}/api/v1/sessions"), token.as_deref())
                 .json(&body)
@@ -942,26 +1084,27 @@ mod tests {
     fn test_cli_parse_list() {
         let cli = Cli::try_parse_from(["pulpo", "list"]).unwrap();
         assert_eq!(cli.node, "localhost:7433");
-        assert!(matches!(cli.command, Commands::List));
+        assert!(matches!(cli.command, Some(Commands::List)));
     }
 
     #[test]
     fn test_cli_parse_nodes() {
         let cli = Cli::try_parse_from(["pulpo", "nodes"]).unwrap();
-        assert!(matches!(cli.command, Commands::Nodes));
+        assert!(matches!(cli.command, Some(Commands::Nodes)));
     }
 
     #[test]
     fn test_cli_parse_ui() {
         let cli = Cli::try_parse_from(["pulpo", "ui"]).unwrap();
-        assert!(matches!(cli.command, Commands::Ui));
+        assert!(matches!(cli.command, Some(Commands::Ui)));
     }
 
     #[test]
     fn test_cli_parse_ui_custom_node() {
         let cli = Cli::try_parse_from(["pulpo", "--node", "mac-mini:7433", "ui"]).unwrap();
-        assert!(matches!(cli.command, Commands::Ui));
+        // With args_conflicts_with_subcommands, "ui" is parsed as path when --node is explicit
         assert_eq!(cli.node, "mac-mini:7433");
+        assert_eq!(cli.path.as_deref(), Some("ui"));
     }
 
     #[test]
@@ -991,8 +1134,8 @@ mod tests {
         .unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { name, workdir, command, .. }
-                if name == "my-task" && workdir.as_deref() == Some("/tmp/repo")
+            Some(Commands::Spawn { name, workdir, command, .. })
+                if name.as_deref() == Some("my-task") && workdir.as_deref() == Some("/tmp/repo")
                 && command == &["claude", "-p", "Fix the bug"]
         ));
     }
@@ -1002,7 +1145,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--ink", "coder"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { ink, .. } if ink.as_deref() == Some("coder")
+            Some(Commands::Spawn { ink, .. }) if ink.as_deref() == Some("coder")
         ));
     }
 
@@ -1013,7 +1156,7 @@ mod tests {
                 .unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { description, .. } if description.as_deref() == Some("Fix the bug")
+            Some(Commands::Spawn { description, .. }) if description.as_deref() == Some("Fix the bug")
         ));
     }
 
@@ -1022,8 +1165,8 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "spawn", "portal", "--", "echo", "hello"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { name, command, .. }
-                if name == "portal" && command == &["echo", "hello"]
+            Some(Commands::Spawn { name, command, .. })
+                if name.as_deref() == Some("portal") && command == &["echo", "hello"]
         ));
     }
 
@@ -1032,7 +1175,27 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { command, .. } if command.is_empty()
+            Some(Commands::Spawn { command, .. }) if command.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_idle_threshold() {
+        let cli =
+            Cli::try_parse_from(["pulpo", "spawn", "my-task", "--idle-threshold", "0"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { idle_threshold, .. }) if *idle_threshold == Some(0)
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_idle_threshold_60() {
+        let cli =
+            Cli::try_parse_from(["pulpo", "spawn", "my-task", "--idle-threshold", "60"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { idle_threshold, .. }) if *idle_threshold == Some(60)
         ));
     }
 
@@ -1041,7 +1204,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--detach"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { detach, .. } if *detach
+            Some(Commands::Spawn { detach, .. }) if *detach
         ));
     }
 
@@ -1050,7 +1213,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "-d"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { detach, .. } if *detach
+            Some(Commands::Spawn { detach, .. }) if *detach
         ));
     }
 
@@ -1059,7 +1222,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Spawn { detach, .. } if !detach
+            Some(Commands::Spawn { detach, .. }) if !detach
         ));
     }
 
@@ -1068,7 +1231,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "logs", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Logs { name, lines, follow } if name == "my-session" && *lines == 100 && !follow
+            Some(Commands::Logs { name, lines, follow }) if name == "my-session" && *lines == 100 && !follow
         ));
     }
 
@@ -1077,7 +1240,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "logs", "my-session", "--lines", "50"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Logs { name, lines, follow } if name == "my-session" && *lines == 50 && !follow
+            Some(Commands::Logs { name, lines, follow }) if name == "my-session" && *lines == 50 && !follow
         ));
     }
 
@@ -1086,7 +1249,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "logs", "my-session", "--follow"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Logs { name, follow, .. } if name == "my-session" && *follow
+            Some(Commands::Logs { name, follow, .. }) if name == "my-session" && *follow
         ));
     }
 
@@ -1095,7 +1258,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "logs", "my-session", "-f"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Logs { name, follow, .. } if name == "my-session" && *follow
+            Some(Commands::Logs { name, follow, .. }) if name == "my-session" && *follow
         ));
     }
 
@@ -1104,7 +1267,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "kill", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Kill { name } if name == "my-session"
+            Some(Commands::Kill { name }) if name == "my-session"
         ));
     }
 
@@ -1113,7 +1276,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "delete", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Delete { name } if name == "my-session"
+            Some(Commands::Delete { name }) if name == "my-session"
         ));
     }
 
@@ -1122,7 +1285,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "resume", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Resume { name } if name == "my-session"
+            Some(Commands::Resume { name }) if name == "my-session"
         ));
     }
 
@@ -1131,7 +1294,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "input", "my-session", "yes"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Input { name, text } if name == "my-session" && text.as_deref() == Some("yes")
+            Some(Commands::Input { name, text }) if name == "my-session" && text.as_deref() == Some("yes")
         ));
     }
 
@@ -1140,7 +1303,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "input", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Input { name, text } if name == "my-session" && text.is_none()
+            Some(Commands::Input { name, text }) if name == "my-session" && text.is_none()
         ));
     }
 
@@ -1149,7 +1312,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "i", "my-session", "y"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Input { name, text } if name == "my-session" && text.as_deref() == Some("y")
+            Some(Commands::Input { name, text }) if name == "my-session" && text.as_deref() == Some("y")
         ));
     }
 
@@ -1157,6 +1320,8 @@ mod tests {
     fn test_cli_parse_custom_node() {
         let cli = Cli::try_parse_from(["pulpo", "--node", "win-pc:8080", "list"]).unwrap();
         assert_eq!(cli.node, "win-pc:8080");
+        // With args_conflicts_with_subcommands, "list" is parsed as path when --node is explicit
+        assert_eq!(cli.path.as_deref(), Some("list"));
     }
 
     #[test]
@@ -1168,9 +1333,10 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_no_subcommand_fails() {
-        let result = Cli::try_parse_from(["pulpo"]);
-        assert!(result.is_err());
+    fn test_cli_parse_no_subcommand_succeeds() {
+        let cli = Cli::try_parse_from(["pulpo"]).unwrap();
+        assert!(cli.command.is_none());
+        assert!(cli.path.is_none());
     }
 
     #[test]
@@ -1187,7 +1353,7 @@ mod tests {
     }
 
     /// A valid Session JSON for test responses.
-    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","command":"claude -p 'Fix bug'","description":null,"status":"active","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+    const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","command":"claude -p 'Fix bug'","description":null,"status":"active","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
 
     /// A valid `CreateSessionResponse` JSON wrapping the session.
     fn test_create_response_json() -> String {
@@ -1255,7 +1421,8 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::List,
+            command: Some(Commands::List),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert_eq!(result, "No sessions.");
@@ -1267,7 +1434,8 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Nodes,
+            command: Some(Commands::Nodes),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("test"));
@@ -1281,14 +1449,16 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Spawn {
-                name: "test".into(),
+            command: Some(Commands::Spawn {
+                name: Some("test".into()),
                 workdir: Some("/tmp/repo".into()),
                 ink: None,
                 description: None,
                 detach: true,
+                idle_threshold: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Created session"));
@@ -1301,14 +1471,16 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Spawn {
-                name: "test".into(),
+            command: Some(Commands::Spawn {
+                name: Some("test".into()),
                 workdir: Some("/tmp/repo".into()),
                 ink: Some("coder".into()),
                 description: Some("Fix the bug".into()),
                 detach: true,
+                idle_threshold: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Created session"));
@@ -1320,14 +1492,16 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Spawn {
-                name: "test".into(),
+            command: Some(Commands::Spawn {
+                name: Some("test".into()),
                 workdir: Some("/tmp/repo".into()),
                 ink: None,
                 description: None,
                 detach: true,
+                idle_threshold: None,
                 command: vec![],
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Created session"));
@@ -1339,14 +1513,16 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Spawn {
-                name: "my-task".into(),
+            command: Some(Commands::Spawn {
+                name: Some("my-task".into()),
                 workdir: Some("/tmp/repo".into()),
                 ink: None,
                 description: None,
                 detach: true,
+                idle_threshold: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Created session"));
@@ -1358,14 +1534,16 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Spawn {
-                name: "test".into(),
+            command: Some(Commands::Spawn {
+                name: Some("test".into()),
                 workdir: Some("/tmp/repo".into()),
                 ink: None,
                 description: None,
                 detach: false,
+                idle_threshold: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         // When not detached, spawn prints creation to stderr and returns detach message
@@ -1378,9 +1556,10 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Kill {
+            command: Some(Commands::Kill {
                 name: "test-session".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("killed"));
@@ -1392,9 +1571,10 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Delete {
+            command: Some(Commands::Delete {
                 name: "test-session".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("deleted"));
@@ -1406,11 +1586,12 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Logs {
+            command: Some(Commands::Logs {
                 name: "test-session".into(),
                 lines: 50,
                 follow: false,
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("test output"));
@@ -1421,7 +1602,8 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Commands::List,
+            command: Some(Commands::List),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -1437,7 +1619,8 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Commands::Nodes,
+            command: Some(Commands::Nodes),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -1465,9 +1648,10 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Kill {
+            command: Some(Commands::Kill {
                 name: "test-session".into(),
-            },
+            }),
+            path: None,
         };
         let err = execute(&cli).await.unwrap_err();
         assert_eq!(err.to_string(), "session not found: test-session");
@@ -1494,9 +1678,10 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Delete {
+            command: Some(Commands::Delete {
                 name: "test-session".into(),
-            },
+            }),
+            path: None,
         };
         let err = execute(&cli).await.unwrap_err();
         assert_eq!(err.to_string(), "cannot delete session in 'running' state");
@@ -1523,11 +1708,12 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Logs {
+            command: Some(Commands::Logs {
                 name: "ghost".into(),
                 lines: 50,
                 follow: false,
-            },
+            }),
+            path: None,
         };
         let err = execute(&cli).await.unwrap_err();
         assert_eq!(err.to_string(), "session not found: ghost");
@@ -1554,9 +1740,10 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Resume {
+            command: Some(Commands::Resume {
                 name: "test-session".into(),
-            },
+            }),
+            path: None,
         };
         let err = execute(&cli).await.unwrap_err();
         assert_eq!(err.to_string(), "session is not lost (status: active)");
@@ -1583,14 +1770,16 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Spawn {
-                name: "test".into(),
+            command: Some(Commands::Spawn {
+                name: Some("test".into()),
                 workdir: Some("/tmp/repo".into()),
                 ink: None,
                 description: None,
                 detach: true,
+                idle_threshold: None,
                 command: vec!["test".into()],
-            },
+            }),
+            path: None,
         };
         let err = execute(&cli).await.unwrap_err();
         assert_eq!(err.to_string(), "failed to spawn session");
@@ -1617,9 +1806,10 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Interventions {
+            command: Some(Commands::Interventions {
                 name: "ghost".into(),
-            },
+            }),
+            path: None,
         };
         let err = execute(&cli).await.unwrap_err();
         assert_eq!(err.to_string(), "session not found: ghost");
@@ -1631,9 +1821,10 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Resume {
+            command: Some(Commands::Resume {
                 name: "test-session".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Detached from session"));
@@ -1645,10 +1836,11 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Input {
+            command: Some(Commands::Input {
                 name: "test-session".into(),
                 text: Some("yes".into()),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Sent input to session test-session"));
@@ -1660,10 +1852,11 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Input {
+            command: Some(Commands::Input {
                 name: "test-session".into(),
                 text: None,
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Sent input to session test-session"));
@@ -1674,10 +1867,11 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Commands::Input {
+            command: Some(Commands::Input {
                 name: "test".into(),
                 text: Some("y".into()),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -1705,10 +1899,11 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Input {
+            command: Some(Commands::Input {
                 name: "ghost".into(),
                 text: Some("y".into()),
-            },
+            }),
+            path: None,
         };
         let err = execute(&cli).await.unwrap_err();
         assert_eq!(err.to_string(), "session not found: ghost");
@@ -1719,7 +1914,8 @@ mod tests {
         let cli = Cli {
             node: "localhost:7433".into(),
             token: None,
-            command: Commands::Ui,
+            command: Some(Commands::Ui),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Opening"));
@@ -1731,7 +1927,8 @@ mod tests {
         let cli = Cli {
             node: "mac-mini:7433".into(),
             token: None,
-            command: Commands::Ui,
+            command: Some(Commands::Ui),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("http://mac-mini:7433"));
@@ -1765,6 +1962,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
@@ -1801,6 +1999,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
@@ -1875,9 +2074,10 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Commands::Resume {
+            command: Some(Commands::Resume {
                 name: "test".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -1889,14 +2089,16 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Commands::Spawn {
-                name: "test".into(),
+            command: Some(Commands::Spawn {
+                name: Some("test".into()),
                 workdir: Some("/tmp".into()),
                 ink: None,
                 description: None,
                 detach: true,
+                idle_threshold: None,
                 command: vec!["test".into()],
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -1908,9 +2110,10 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Commands::Kill {
+            command: Some(Commands::Kill {
                 name: "test".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -1922,9 +2125,10 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Commands::Delete {
+            command: Some(Commands::Delete {
                 name: "test".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -1936,11 +2140,12 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Commands::Logs {
+            command: Some(Commands::Logs {
                 name: "test".into(),
                 lines: 50,
                 follow: false,
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -2166,7 +2371,8 @@ mod tests {
         let cli = Cli {
             node,
             token: Some("test-token".into()),
-            command: Commands::List,
+            command: Some(Commands::List),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert_eq!(result, "No sessions.");
@@ -2179,7 +2385,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "interventions", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Interventions { name } if name == "my-session"
+            Some(Commands::Interventions { name }) if name == "my-session"
         ));
     }
 
@@ -2221,9 +2427,10 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Interventions {
+            command: Some(Commands::Interventions {
                 name: "my-session".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert_eq!(result, "No intervention events.");
@@ -2248,9 +2455,10 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Interventions {
+            command: Some(Commands::Interventions {
                 name: "test".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("OOM"));
@@ -2262,9 +2470,10 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Commands::Interventions {
+            command: Some(Commands::Interventions {
                 name: "test".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -2286,7 +2495,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "attach", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Attach { name } if name == "my-session"
+            Some(Commands::Attach { name }) if name == "my-session"
         ));
     }
 
@@ -2295,7 +2504,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "a", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Attach { name } if name == "my-session"
+            Some(Commands::Attach { name }) if name == "my-session"
         ));
     }
 
@@ -2305,9 +2514,10 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Attach {
+            command: Some(Commands::Attach {
                 name: "test-session".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Detached from session test-session"));
@@ -2316,7 +2526,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_with_backend_session_id() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"my-session","workdir":"/tmp","command":"echo test","description":null,"status":"active","exit_code":null,"backend_session_id":"my-session","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000002","name":"my-session","workdir":"/tmp","command":"echo test","description":null,"status":"active","exit_code":null,"backend_session_id":"my-session","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -2328,9 +2538,10 @@ mod tests {
         let cli = Cli {
             node: format!("127.0.0.1:{}", addr.port()),
             token: None,
-            command: Commands::Attach {
+            command: Some(Commands::Attach {
                 name: "my-session".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Detached from session my-session"));
@@ -2341,9 +2552,10 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Commands::Attach {
+            command: Some(Commands::Attach {
                 name: "test-session".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -2369,9 +2581,10 @@ mod tests {
         let cli = Cli {
             node: format!("127.0.0.1:{}", addr.port()),
             token: None,
-            command: Commands::Attach {
+            command: Some(Commands::Attach {
                 name: "nonexistent".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -2381,7 +2594,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_stale_session() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"stale-sess","workdir":"/tmp","command":"echo test","description":null,"status":"lost","exit_code":null,"backend_session_id":"stale-sess","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"stale-sess","workdir":"/tmp","command":"echo test","description":null,"status":"lost","exit_code":null,"backend_session_id":"stale-sess","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -2393,9 +2606,10 @@ mod tests {
         let cli = Cli {
             node: format!("127.0.0.1:{}", addr.port()),
             token: None,
-            command: Commands::Attach {
+            command: Some(Commands::Attach {
                 name: "stale-sess".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -2406,7 +2620,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_dead_session() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","command":"echo test","description":null,"status":"killed","exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","command":"echo test","description":null,"status":"killed","exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -2418,9 +2632,10 @@ mod tests {
         let cli = Cli {
             node: format!("127.0.0.1:{}", addr.port()),
             token: None,
-            command: Commands::Attach {
+            command: Some(Commands::Attach {
                 name: "dead-sess".into(),
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -2433,13 +2648,13 @@ mod tests {
     #[test]
     fn test_cli_parse_alias_spawn() {
         let cli = Cli::try_parse_from(["pulpo", "s", "my-task", "--", "echo", "hello"]).unwrap();
-        assert!(matches!(&cli.command, Commands::Spawn { .. }));
+        assert!(matches!(&cli.command, Some(Commands::Spawn { .. })));
     }
 
     #[test]
     fn test_cli_parse_alias_list() {
         let cli = Cli::try_parse_from(["pulpo", "ls"]).unwrap();
-        assert!(matches!(cli.command, Commands::List));
+        assert!(matches!(&cli.command, Some(Commands::List)));
     }
 
     #[test]
@@ -2447,7 +2662,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "l", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Logs { name, .. } if name == "my-session"
+            Some(Commands::Logs { name, .. }) if name == "my-session"
         ));
     }
 
@@ -2456,7 +2671,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "k", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Kill { name } if name == "my-session"
+            Some(Commands::Kill { name }) if name == "my-session"
         ));
     }
 
@@ -2465,7 +2680,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "rm", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Delete { name } if name == "my-session"
+            Some(Commands::Delete { name }) if name == "my-session"
         ));
     }
 
@@ -2474,14 +2689,14 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "r", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Resume { name } if name == "my-session"
+            Some(Commands::Resume { name }) if name == "my-session"
         ));
     }
 
     #[test]
     fn test_cli_parse_alias_nodes() {
         let cli = Cli::try_parse_from(["pulpo", "n"]).unwrap();
-        assert!(matches!(cli.command, Commands::Nodes));
+        assert!(matches!(&cli.command, Some(Commands::Nodes)));
     }
 
     #[test]
@@ -2489,7 +2704,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "iv", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Interventions { name } if name == "my-session"
+            Some(Commands::Interventions { name }) if name == "my-session"
         ));
     }
 
@@ -2558,6 +2773,7 @@ mod tests {
     // -- follow_logs tests --
 
     /// Start a test server that simulates evolving output and session status transitions.
+    /// Start a test server that simulates evolving output with agent exit marker.
     async fn start_follow_test_server() -> String {
         use axum::{Router, extract::Path, extract::Query, routing::get};
         use std::sync::Arc;
@@ -2565,8 +2781,6 @@ mod tests {
 
         let call_count = Arc::new(AtomicUsize::new(0));
         let output_count = call_count.clone();
-        let status_count = Arc::new(AtomicUsize::new(0));
-        let status_count_inner = status_count.clone();
 
         let app = Router::new()
             .route(
@@ -2580,7 +2794,7 @@ mod tests {
                             let output = match n {
                                 0 => "line1\nline2".to_owned(),
                                 1 => "line1\nline2\nline3".to_owned(),
-                                _ => "line2\nline3\nline4".to_owned(),
+                                _ => "line2\nline3\nline4\n[pulpo] Agent exited (session: test). Run: pulpo resume test".to_owned(),
                             };
                             format!(r#"{{"output":{}}}"#, serde_json::json!(output))
                         }
@@ -2589,15 +2803,8 @@ mod tests {
             )
             .route(
                 "/api/v1/sessions/{id}",
-                get(move |_path: Path<String>| {
-                    let count = status_count_inner.clone();
-                    async move {
-                        let n = count.fetch_add(1, Ordering::SeqCst);
-                        let status = if n < 2 { "active" } else { "ready" };
-                        format!(
-                            r#"{{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"{status}","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}}"#
-                        )
-                    }
+                get(|_path: Path<String>| async {
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"active","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 
@@ -2608,7 +2815,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_follow_logs_polls_and_exits_on_completed() {
+    async fn test_follow_logs_polls_and_exits_on_agent_exit_marker() {
         let base = start_follow_test_server().await;
         let client = reqwest::Client::new();
         let mut buf = Vec::new();
@@ -2618,11 +2825,12 @@ mod tests {
             .unwrap();
 
         let output = String::from_utf8(buf).unwrap();
-        // Should contain initial output + new lines
+        // Should contain initial output + new lines + agent exit marker
         assert!(output.contains("line1"));
         assert!(output.contains("line2"));
         assert!(output.contains("line3"));
         assert!(output.contains("line4"));
+        assert!(output.contains("[pulpo] Agent exited"));
     }
 
     #[tokio::test]
@@ -2634,11 +2842,12 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Logs {
+            command: Some(Commands::Logs {
                 name: "test".into(),
                 lines: 100,
                 follow: true,
-            },
+            }),
+            path: None,
         };
         // execute() with follow writes to stdout and returns empty string
         let result = execute(&cli).await.unwrap();
@@ -2650,11 +2859,12 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Commands::Logs {
+            command: Some(Commands::Logs {
                 name: "test".into(),
                 lines: 50,
                 follow: true,
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
@@ -2681,7 +2891,7 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"killed","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"killed","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 
@@ -2717,7 +2927,7 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"lost","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"lost","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 
@@ -2764,11 +2974,12 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Logs {
+            command: Some(Commands::Logs {
                 name: "test".into(),
                 lines: 100,
                 follow: true,
-            },
+            }),
+            path: None,
         };
         let err = execute(&cli).await.unwrap_err();
         // serde_json error, not a reqwest error — hits the Err(other) branch
@@ -2939,9 +3150,9 @@ mod tests {
         .unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Schedule {
+            Some(Commands::Schedule {
                 action: ScheduleAction::Install { name, cron, workdir, command }
-            } if name == "nightly" && cron == "0 3 * * *" && workdir == "/tmp/repo"
+            }) if name == "nightly" && cron == "0 3 * * *" && workdir == "/tmp/repo"
               && command == &["claude", "-p", "Review PRs"]
         ));
     }
@@ -2951,9 +3162,9 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "schedule", "list"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Schedule {
+            Some(Commands::Schedule {
                 action: ScheduleAction::List
-            }
+            })
         ));
     }
 
@@ -2962,9 +3173,9 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "schedule", "remove", "nightly"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Schedule {
+            Some(Commands::Schedule {
                 action: ScheduleAction::Remove { name }
-            } if name == "nightly"
+            }) if name == "nightly"
         ));
     }
 
@@ -2973,9 +3184,9 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "schedule", "pause", "nightly"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Schedule {
+            Some(Commands::Schedule {
                 action: ScheduleAction::Pause { name }
-            } if name == "nightly"
+            }) if name == "nightly"
         ));
     }
 
@@ -2984,9 +3195,9 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "schedule", "resume", "nightly"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Schedule {
+            Some(Commands::Schedule {
                 action: ScheduleAction::Resume { name }
-            } if name == "nightly"
+            }) if name == "nightly"
         ));
     }
 
@@ -2995,9 +3206,9 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "sched", "list"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Schedule {
+            Some(Commands::Schedule {
                 action: ScheduleAction::List
-            }
+            })
         ));
     }
 
@@ -3006,9 +3217,9 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "schedule", "ls"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Schedule {
+            Some(Commands::Schedule {
                 action: ScheduleAction::List
-            }
+            })
         ));
     }
 
@@ -3017,9 +3228,9 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "schedule", "rm", "nightly"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Commands::Schedule {
+            Some(Commands::Schedule {
                 action: ScheduleAction::Remove { name }
-            } if name == "nightly"
+            }) if name == "nightly"
         ));
     }
 
@@ -3030,9 +3241,10 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Commands::Schedule {
+            command: Some(Commands::Schedule {
                 action: ScheduleAction::List,
-            },
+            }),
+            path: None,
         };
         let result = execute(&cli).await;
         // Under coverage: succeeds with empty string; under non-coverage: may fail (no crontab)
@@ -3043,5 +3255,92 @@ mod tests {
     fn test_schedule_action_debug() {
         let action = ScheduleAction::List;
         assert_eq!(format!("{action:?}"), "List");
+    }
+
+    #[test]
+    fn test_cli_parse_send_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "send", "my-session", "y"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Input { name, text }) if name == "my-session" && text.as_deref() == Some("y")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_no_name() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { name, command, .. }) if name.is_none() && command.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_optional_name_with_command() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "--", "echo", "hello"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { name, command, .. })
+                if name.is_none() && command == &["echo", "hello"]
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_path_shortcut() {
+        let cli = Cli::try_parse_from(["pulpo", "/tmp/my-repo"]).unwrap();
+        assert!(cli.command.is_none());
+        assert_eq!(cli.path.as_deref(), Some("/tmp/my-repo"));
+    }
+
+    #[test]
+    fn test_cli_parse_no_args() {
+        let cli = Cli::try_parse_from(["pulpo"]).unwrap();
+        assert!(cli.command.is_none());
+        assert!(cli.path.is_none());
+    }
+
+    #[test]
+    fn test_derive_session_name_simple() {
+        assert_eq!(derive_session_name("/home/user/my-repo"), "my-repo");
+    }
+
+    #[test]
+    fn test_derive_session_name_with_special_chars() {
+        assert_eq!(derive_session_name("/home/user/My Repo_v2"), "my-repo-v2");
+    }
+
+    #[test]
+    fn test_derive_session_name_root() {
+        assert_eq!(derive_session_name("/"), "session");
+    }
+
+    #[test]
+    fn test_derive_session_name_dots() {
+        assert_eq!(derive_session_name("/home/user/.hidden"), "hidden");
+    }
+
+    #[test]
+    fn test_resolve_path_absolute() {
+        assert_eq!(resolve_path("/tmp/repo"), "/tmp/repo");
+    }
+
+    #[test]
+    fn test_resolve_path_relative() {
+        let resolved = resolve_path("my-repo");
+        assert!(resolved.ends_with("my-repo"));
+        assert!(resolved.starts_with('/'));
+    }
+
+    #[tokio::test]
+    async fn test_execute_path_shortcut() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            path: Some("/tmp".into()),
+            command: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Detached from session"));
     }
 }

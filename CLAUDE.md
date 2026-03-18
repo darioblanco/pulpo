@@ -184,9 +184,10 @@ describe('api', () => {
 
 - **Error handling**: Use `anyhow::Result` for application errors, `thiserror` for library errors in `pulpo-common`.
 - **Async**: All I/O is async via `tokio`. Backend trait methods are sync (tmux commands are fast) but called from async context via `tokio::task::spawn_blocking` when needed.
-- **Naming**: Session names are kebab-case and required (first positional argument to `pulpo spawn`). tmux sessions use the session name directly.
+- **Naming**: Session names are kebab-case and required (first positional argument to `pulpo spawn`). tmux sessions use the session name directly. Internally, `backend_session_id` stores the tmux `$N` session ID (monotonically increasing, never reused while tmux server runs). At startup, name-based IDs are upgraded to `$N` IDs.
 - **Database**: SQLite via `sqlx`. Migrations are inline in `store/mod.rs` for now. Use `sqlx::query!` macro for compile-time checked queries when possible.
-- **Config**: TOML config at `~/.pulpo/config.toml`. All fields have sensible defaults — pulpod runs with zero config.
+- **Config**: TOML config at `~/.pulpo/config.toml`. All fields have sensible defaults — pulpod runs with zero config. Key watchdog config fields: `idle_threshold_secs` (seconds of unchanged output before Active→Idle, default 60), `waiting_patterns` (extra user-defined patterns appended to the 31 built-in waiting-for-input patterns).
+- **Per-session idle**: Sessions accept `idle_threshold_secs: Option<u32>` — `None` = use global, `Some(0)` = never idle, `Some(N)` = N seconds. CLI: `pulpo spawn <name> --idle-threshold <secs>`.
 - **Logging**: Use `tracing` macros (`info!`, `warn!`, `error!`, `debug!`). Set level via `RUST_LOG` env var.
 - **No `unsafe` code** — `forbid(unsafe_code)` is set workspace-wide.
 - **No `.unwrap()`** in production code — use `?` or handle the error. `.unwrap()` is fine in tests.

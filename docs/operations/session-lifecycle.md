@@ -42,10 +42,10 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 - **Trigger**: Backend reports tmux session is alive after spawn.
 
 ### Active → Idle
-- **Trigger**: Watchdog detects output unchanged — either via known waiting patterns (immediate) or sustained unchanged output (20+ seconds).
+- **Trigger**: Watchdog detects output unchanged — either via known waiting patterns (immediate) or sustained unchanged output (configurable, default 60 seconds).
 - **Detection**: The watchdog compares `output_snapshot` on each tick. Two paths to Idle:
   1. **Pattern match (immediate)**: If output is unchanged and the last 5 lines match known waiting patterns (permission prompts, "what's next?" prompts), transition happens on the first unchanged tick.
-  2. **Sustained silence (universal)**: If `last_output_at` is more than 20 seconds ago, transition happens regardless of terminal content. This catches all commands without needing command-specific patterns.
+  2. **Sustained silence (universal)**: If `last_output_at` exceeds `idle_threshold_secs` (default: 60, configurable in `[watchdog]`), transition happens regardless of terminal content. Per-session override via `idle_threshold_secs` on the session (`0` = never idle).
 
 ### Idle → Active
 - **Trigger**: Watchdog detects output changed since last tick.
@@ -80,15 +80,17 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 
 ## Waiting Patterns (Idle Detection)
 
-The watchdog inspects the last 5 lines of terminal output for these patterns (case-insensitive):
+The watchdog inspects the last 5 lines of terminal output for these patterns (case-insensitive). 31 built-in patterns cover major coding agents and common CLI prompts:
 
-- `Do you trust`
-- `Yes / No`
-- `(y/n)`, `[Y/n]`, `[yes/no]`, `(yes/no)`, `? [Y/n]`, `? (y/N)`
-- `Press Enter`
-- `approve this`
+- **General**: `Do you trust`, `Yes / No`, `(y/n)`, `[Y/n]`, `[yes/no]`, `(yes/no)`, `? [Y/n]`, `? (y/N)`, `Press Enter`, `approve this`
+- **Claude Code**: `(Y)es`, `(N)o`, `(A)lways`, `Do you want to proceed`
+- **Codex CLI**: `Confirm?`
+- **Gemini CLI**: `Allow?`, `Proceed?`
+- **Aider**: `Add these files?`, `Apply edit?`, `Run command?`
+- **Amazon Q**: `Allow this action?`, `Accept suggestion?`
+- **Generic CLI**: `Continue?`, `Are you sure`, `continue connecting (yes/no)`, `'s password:`, `[sudo] password`
 
-These cover permission prompts from various coding agents.
+Add custom patterns via `waiting_patterns` in `[watchdog]` config — they are appended to the built-in list.
 
 ## Ocean Visual Mapping
 
@@ -110,9 +112,11 @@ enabled = true
 check_interval_secs = 10     # How often to check
 idle_timeout_secs = 600       # Seconds before idle action triggers
 idle_action = "alert"         # "alert" (mark idle_since) or "kill"
+idle_threshold_secs = 60      # Seconds of unchanged output before Active→Idle (default: 60)
 ready_ttl_secs = 0            # Seconds after Ready before tmux is killed (0 = disabled)
 memory_threshold = 90         # Memory % to trigger intervention
 breach_count = 3              # Consecutive breaches before kill
+waiting_patterns = []         # Extra patterns for waiting-for-input detection
 ```
 
 ### Notification Events
@@ -127,7 +131,7 @@ events = ["ready", "killed", "lost"]
 
 ## Corner Cases
 
-- **Agent exits but `exec bash` keeps tmux alive**: This is intentional. The `[pulpo] Agent exited` marker distinguishes "agent done" from "shell still running". The Ready state reflects the agent's completion while keeping the tmux shell accessible for inspection.
+- **Agent exits but `exec bash` keeps tmux alive**: This is intentional. The `[pulpo] Agent exited (session: <name>). Run: pulpo resume <name>` marker distinguishes "agent done" from "shell still running". The Ready state reflects the agent's completion while keeping the tmux shell accessible for inspection.
 
 - **Long-running session never exits**: Some sessions cycle Active ⇄ Idle indefinitely. They become Ready only when the command exits (causing `[pulpo] Agent exited`), or Killed by user/watchdog.
 

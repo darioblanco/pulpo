@@ -183,7 +183,7 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&peers_config);
         AppState::new(
             Config {

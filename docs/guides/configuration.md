@@ -53,10 +53,14 @@ enabled = true                # Enable watchdog (default: true)
 check_interval_secs = 10      # How often to check (default: 10)
 idle_timeout_secs = 600        # Seconds idle before action (default: 600)
 idle_action = "alert"          # "alert" (mark idle) or "kill" (default: "alert")
+idle_threshold_secs = 60       # Seconds of unchanged output before Active→Idle (default: 60)
 ready_ttl_secs = 0             # Seconds after Ready before kill (0 = disabled)
 memory_threshold = 90          # Memory % to trigger intervention (default: 90)
 breach_count = 3               # Consecutive breaches before kill (default: 3)
+waiting_patterns = ["custom prompt>"]  # Extra waiting-for-input patterns (default: [])
 ```
+
+Per-session idle threshold: `pulpo spawn my-task --idle-threshold 0` (never idle) or `--idle-threshold 120` (2 minutes).
 
 See [Session Lifecycle](/operations/session-lifecycle) for how the watchdog drives state transitions.
 

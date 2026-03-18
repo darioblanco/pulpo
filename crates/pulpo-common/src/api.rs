@@ -15,6 +15,7 @@ pub struct CreateSessionRequest {
     pub ink: Option<String>,
     pub description: Option<String>,
     pub metadata: Option<HashMap<String, String>>,
+    pub idle_threshold_secs: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -104,6 +105,9 @@ pub struct WatchdogConfigResponse {
     pub ready_ttl_secs: u64,
     #[serde(default = "default_adopt_tmux")]
     pub adopt_tmux: bool,
+    pub idle_threshold_secs: u64,
+    #[serde(default)]
+    pub extra_waiting_patterns: Vec<String>,
 }
 
 const fn default_adopt_tmux() -> bool {
@@ -190,6 +194,8 @@ pub struct UpdateWatchdogRequest {
     pub idle_action: Option<String>,
     pub ready_ttl_secs: Option<u64>,
     pub adopt_tmux: Option<bool>,
+    pub idle_threshold_secs: Option<u64>,
+    pub extra_waiting_patterns: Option<Vec<String>>,
 }
 
 /// Update request for notification settings.
@@ -283,6 +289,8 @@ mod tests {
                 idle_action: "alert".into(),
                 ready_ttl_secs: 0,
                 adopt_tmux: true,
+                idle_threshold_secs: 60,
+                extra_waiting_patterns: vec![],
             },
             notifications: NotificationsConfigResponse {
                 discord: None,
@@ -302,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert"},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
@@ -509,6 +517,7 @@ mod tests {
             ink: None,
             description: None,
             metadata: None,
+            idle_threshold_secs: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("/tmp"));
@@ -1040,6 +1049,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

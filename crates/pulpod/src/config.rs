@@ -147,6 +147,13 @@ pub struct WatchdogConfig {
     /// Auto-adopt external tmux sessions into pulpo management.
     #[serde(default = "default_adopt_tmux")]
     pub adopt_tmux: bool,
+    /// Seconds of unchanged output before Active→Idle transition (default: 60).
+    #[serde(default = "default_idle_threshold_secs")]
+    pub idle_threshold_secs: u64,
+    /// Extra patterns that indicate the agent is waiting for user input.
+    /// Appended to the built-in defaults.
+    #[serde(default)]
+    pub waiting_patterns: Vec<String>,
 }
 
 impl WatchdogConfig {
@@ -162,6 +169,9 @@ impl WatchdogConfig {
         }
         if self.breach_count == 0 {
             anyhow::bail!("watchdog.breach_count must be >= 1");
+        }
+        if self.idle_threshold_secs == 0 {
+            anyhow::bail!("watchdog.idle_threshold_secs must be >= 1");
         }
         if self.idle_action != "alert" && self.idle_action != "kill" {
             anyhow::bail!(
@@ -184,6 +194,8 @@ impl Default for WatchdogConfig {
             idle_action: default_idle_action(),
             ready_ttl_secs: 0,
             adopt_tmux: default_adopt_tmux(),
+            idle_threshold_secs: default_idle_threshold_secs(),
+            waiting_patterns: Vec::new(),
         }
     }
 }
@@ -216,6 +228,10 @@ fn default_idle_action() -> String {
     String::from("alert")
 }
 
+const fn default_idle_threshold_secs() -> u64 {
+    60
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct NodeConfig {
     #[serde(default = "default_name")]
@@ -236,6 +252,9 @@ pub struct NodeConfig {
     /// Scan interval in seconds for peer discovery (tailscale/seed). Defaults to 30.
     #[serde(default = "default_discovery_interval_secs")]
     pub discovery_interval_secs: u64,
+    /// Default command used when spawning a session without an explicit command or ink.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_command: Option<String>,
 }
 
 impl Default for NodeConfig {
@@ -248,6 +267,7 @@ impl Default for NodeConfig {
             tag: None,
             seed: None,
             discovery_interval_secs: default_discovery_interval_secs(),
+            default_command: None,
         }
     }
 }
@@ -381,6 +401,7 @@ pub fn load(path: &str) -> Result<Config> {
                 tag: None,
                 seed: None,
                 discovery_interval_secs: default_discovery_interval_secs(),
+                default_command: None,
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -1173,6 +1194,8 @@ breach_count = 5
                 idle_action: "alert".into(),
                 ready_ttl_secs: 0,
                 adopt_tmux: true,
+                idle_threshold_secs: 60,
+                waiting_patterns: Vec::new(),
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
@@ -1389,6 +1412,29 @@ idle_action = "pause"
         let loaded = load(path.to_str().unwrap()).unwrap();
         assert_eq!(loaded.watchdog.idle_timeout_secs, 120);
         assert_eq!(loaded.watchdog.idle_action, "kill");
+        assert_eq!(loaded.watchdog.idle_threshold_secs, 60);
+        assert!(loaded.watchdog.waiting_patterns.is_empty());
+    }
+
+    #[test]
+    fn test_validate_idle_threshold_secs_zero() {
+        let cfg = WatchdogConfig {
+            idle_threshold_secs: 0,
+            ..WatchdogConfig::default()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn test_default_idle_threshold_secs() {
+        let cfg = WatchdogConfig::default();
+        assert_eq!(cfg.idle_threshold_secs, 60);
+    }
+
+    #[test]
+    fn test_default_waiting_patterns() {
+        let cfg = WatchdogConfig::default();
+        assert!(cfg.waiting_patterns.is_empty());
     }
 
     #[test]
@@ -1817,6 +1863,7 @@ name = "test"
             tag: None,
             seed: Some("10.0.0.1:7433".into()),
             discovery_interval_secs: 30,
+            default_command: None,
         };
         let toml_str = toml::to_string(&config).unwrap();
         assert!(toml_str.contains("seed = \"10.0.0.1:7433\""));
@@ -2128,5 +2175,86 @@ command = "codex -p 'review'"
         let config = NotificationsConfig::default();
         assert!(config.vapid.private_key.is_empty());
         assert!(config.vapid.public_key.is_empty());
+    }
+
+    #[test]
+    fn test_load_config_with_default_command() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "test"
+default_command = "claude"
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.node.default_command, Some("claude".into()));
+    }
+
+    #[test]
+    fn test_load_config_without_default_command() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "test"
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.node.default_command, None);
+    }
+
+    #[test]
+    fn test_save_config_with_default_command() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                default_command: Some("claude".into()),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig::default(),
+        };
+        save(&config, &path).unwrap();
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.node.default_command, Some("claude".into()));
+    }
+
+    #[test]
+    fn test_save_config_without_default_command_omits_field() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig::default(),
+        };
+        save(&config, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("default_command"),
+            "None should be omitted from serialized config"
+        );
     }
 }

@@ -234,7 +234,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -280,6 +280,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
         // DeadBackend's is_alive returns false, so get_session marks it Stale
@@ -336,6 +337,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -367,6 +369,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

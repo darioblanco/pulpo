@@ -29,10 +29,10 @@ It works for **lost** (tmux gone after crash/reboot) and **ready** (agent exited
 ## Recovery After Daemon Restart
 
 When `pulpod` starts, it checks all previously active sessions:
-- If the tmux session is still alive → stays **active**
-- If the tmux session is gone → marked **lost**
+- If the tmux session is still alive → stays **active** (backend ID upgraded to tmux `$N` ID)
+- If the tmux session is gone → re-created automatically, stays **active**
 
-Lost sessions appear in `pulpo list` and can be resumed.
+If auto-resume fails, sessions are marked **lost** and appear in `pulpo list` for manual resume.
 
 ## Interventions
 

@@ -101,6 +101,9 @@ pub struct Session {
     pub intervention_at: Option<DateTime<Utc>>,
     pub last_output_at: Option<DateTime<Utc>>,
     pub idle_since: Option<DateTime<Utc>>,
+    /// Per-session idle threshold override.
+    /// `None` = use global, `Some(0)` = never idle, `Some(N)` = N seconds.
+    pub idle_threshold_secs: Option<u32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -128,6 +131,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -269,6 +273,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -312,6 +317,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -338,6 +344,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -367,6 +374,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

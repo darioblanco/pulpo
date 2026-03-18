@@ -54,11 +54,12 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
   "workdir": "/path/to/repo",
   "ink": "reviewer",
   "description": "Fix auth bug in login endpoint",
-  "metadata": {}
+  "metadata": {},
+  "idle_threshold_secs": 120
 }
 ```
 
-`name` is required. All other fields are optional. If `ink` is specified, its `command` is used as the default (explicit `command` overrides it).
+`name` is required. All other fields are optional. If `ink` is specified, its `command` is used as the default (explicit `command` overrides it). `idle_threshold_secs` overrides the global idle threshold for this session (`null` = use global, `0` = never idle).
 
 ## Inks
 

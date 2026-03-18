@@ -33,6 +33,7 @@ By default, `spawn` auto-attaches to the tmux session. Use `--detach` / `-d` to 
 | `--detach` / `-d` | Don't attach to the session after spawning |
 | `--ink <NAME>` | Ink preset from config (provides a default command) |
 | `--description <TEXT>` | Human-readable description for the session |
+| `--idle-threshold <SECS>` | Per-session idle threshold (`0` = never idle) |
 
 The command is whatever you want to run — any agent CLI, script, or shell command. If `--ink` is specified and no command is given after `--`, the ink's command is used.
 

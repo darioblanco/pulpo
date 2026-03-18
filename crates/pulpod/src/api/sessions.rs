@@ -316,7 +316,7 @@ mod tests {
         let pool = store.pool().clone();
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -362,6 +362,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let _ = create(State(state.clone()), Json(req)).await.unwrap();
 
@@ -400,6 +401,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_ok());
@@ -418,6 +420,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let _ = create(State(state.clone()), Json(req())).await.unwrap();
         let result = create(State(state), Json(req())).await;
@@ -446,6 +449,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -464,6 +468,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -495,6 +500,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -598,7 +604,7 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(FailingBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -631,6 +637,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -652,6 +659,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -672,7 +680,7 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(FailCreateBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -700,6 +708,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_err());
@@ -717,6 +726,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -739,6 +749,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -760,7 +771,7 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(CaptureFailBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -792,6 +803,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -814,6 +826,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -900,6 +913,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -935,6 +949,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: now,
             updated_at: now,
         };
@@ -962,6 +977,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -994,6 +1010,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1015,6 +1032,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1034,6 +1052,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1097,6 +1116,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1151,7 +1171,7 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(StaleBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -1180,6 +1200,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1203,7 +1224,7 @@ mod tests {
         let pool = store.pool().clone();
         let backend = Arc::new(StaleBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -1232,6 +1253,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let old_id = resp.session.id.to_string();
@@ -1249,6 +1271,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let _ = create(State(state.clone()), Json(req2)).await.unwrap();
 
@@ -1317,7 +1340,7 @@ mod tests {
             created: std::sync::Mutex::new(false),
         });
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
@@ -1346,6 +1369,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1370,6 +1394,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1391,6 +1416,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;

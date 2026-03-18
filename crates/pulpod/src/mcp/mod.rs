@@ -416,6 +416,7 @@ impl PulpoMcp {
                 ink,
                 description,
                 metadata,
+                idle_threshold_secs: None,
             };
             self.session_manager.create_session(req).await
         } else {
@@ -486,6 +487,7 @@ impl PulpoMcp {
                 ink: params.ink,
                 description: params.description,
                 metadata: None,
+                idle_threshold_secs: None,
             };
             self.session_manager.create_session(req).await
         } else {
@@ -963,7 +965,7 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(backend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -978,7 +980,7 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(backend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&peers);
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -991,7 +993,7 @@ mod tests {
         let pool = store.pool().clone();
         let backend = Arc::new(backend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         (PulpoMcp::new(manager, peer_registry, test_config()), pool)
     }
@@ -1696,6 +1698,7 @@ mod tests {
                 intervention_at: None,
                 last_output_at: None,
                 idle_since: None,
+                idle_threshold_secs: None,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             },
@@ -1817,6 +1820,7 @@ mod tests {
                 intervention_at: None,
                 last_output_at: None,
                 idle_since: None,
+                idle_threshold_secs: None,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             },
@@ -1877,7 +1881,7 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(SendInputErrorBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -2031,6 +2035,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
@@ -2054,6 +2059,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
@@ -2402,7 +2408,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         PulpoMcp::new(manager, peer_registry, test_config())
     }
@@ -3036,7 +3042,7 @@ mod tests {
         store.migrate().await.unwrap();
         let pool = store.pool().clone();
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let mcp = PulpoMcp::new(manager, peer_registry, test_config());
 

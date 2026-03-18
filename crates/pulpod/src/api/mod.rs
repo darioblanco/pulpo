@@ -178,7 +178,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry, store);
         assert_eq!(state.config.read().await.node.name, "test");
@@ -207,7 +207,7 @@ mod tests {
         let config_path = tmpdir.path().join("config.toml");
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let state = AppState::with_event_tx(
@@ -255,7 +255,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let initial = crate::watchdog::WatchdogRuntimeConfig {
@@ -265,6 +265,7 @@ mod tests {
             idle: crate::watchdog::IdleConfig::default(),
             ready_ttl_secs: 0,
             adopt_tmux: true,
+            extra_waiting_patterns: Vec::new(),
         };
         let (config_tx, _config_rx) = tokio::sync::watch::channel(initial);
         let state = AppState::with_watchdog_tx(
@@ -300,7 +301,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let state = AppState::with_watchdog_tx(
@@ -336,7 +337,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry, store);
         let _router = router(state);

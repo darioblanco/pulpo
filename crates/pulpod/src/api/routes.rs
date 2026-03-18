@@ -142,7 +142,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry, store);
         let app = build(state);
@@ -196,7 +196,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store.clone(), inks).with_no_stale_grace();
+        let manager = SessionManager::new(backend, store.clone(), inks, None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry, store);
         let app = build(state);
@@ -754,7 +754,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = crate::api::AppState::new(config, manager, peer_registry, store);
         let app = build(state.clone());
@@ -789,6 +789,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
         state
@@ -873,7 +874,7 @@ mod tests {
         };
         let backend = Arc::new(FailIsAliveBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = crate::api::AppState::new(config, manager, peer_registry, store);
 
@@ -885,6 +886,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -914,6 +916,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -942,6 +945,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -980,6 +984,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1016,6 +1021,7 @@ mod tests {
             command: Some("echo test".into()),
             description: None,
             ink: None,
+            idle_threshold_secs: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1065,7 +1071,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry, store);
         let app = build(state);
@@ -1227,7 +1233,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = crate::api::AppState::new(config, manager, peer_registry, store);
         let app = build(state.clone());
@@ -1326,7 +1332,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry, store);
 
@@ -1475,7 +1481,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry, store);
         let app = build(state);

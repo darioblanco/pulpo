@@ -35,6 +35,8 @@ Not needed for `local`, `tailscale`, or `container` modes.
 | `ready_ttl_secs` | u64 | `0` | Seconds after Ready before kill (0 = disabled) |
 | `memory_threshold` | u8 | `90` | Memory usage % to trigger intervention |
 | `breach_count` | u32 | `3` | Consecutive breaches before kill |
+| `idle_threshold_secs` | u64 | `60` | Seconds of unchanged output before Active→Idle |
+| `waiting_patterns` | string[] | `[]` | Extra patterns for waiting-for-input detection (appended to 31 built-in patterns) |
 
 ## `[inks.<name>]`
 

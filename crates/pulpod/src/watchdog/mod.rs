@@ -43,6 +43,8 @@ pub struct IdleConfig {
     pub enabled: bool,
     pub timeout_secs: u64,
     pub action: IdleAction,
+    /// Seconds of unchanged output before Active→Idle transition.
+    pub threshold_secs: u64,
 }
 
 impl Default for IdleConfig {
@@ -51,6 +53,7 @@ impl Default for IdleConfig {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         }
     }
 }
@@ -66,6 +69,8 @@ pub struct WatchdogRuntimeConfig {
     pub ready_ttl_secs: u64,
     /// Auto-adopt external tmux sessions into pulpo management.
     pub adopt_tmux: bool,
+    /// Extra user-configured patterns for waiting-for-input detection.
+    pub extra_waiting_patterns: Vec<String>,
 }
 
 /// Context for handling agent-ready transitions (status update + events).
@@ -149,7 +154,7 @@ pub async fn run_watchdog_loop(
 
                 // Idle + ready detection runs on every tick, independent of memory checks
                 if cfg.idle.enabled {
-                    check_idle_sessions(&backend, &store, &cfg.idle, &ready_ctx).await;
+                    check_idle_sessions(&backend, &store, &cfg.idle, &ready_ctx, &cfg.extra_waiting_patterns).await;
                 }
 
                 // Clean up ready sessions whose tmux shell has exceeded the TTL
@@ -262,7 +267,8 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
 }
 
 /// Patterns that indicate the agent is waiting for user input.
-const WAITING_PATTERNS: &[&str] = &[
+const DEFAULT_WAITING_PATTERNS: &[&str] = &[
+    // Existing
     "Do you trust",
     "Yes / No",
     "(y/n)",
@@ -273,15 +279,43 @@ const WAITING_PATTERNS: &[&str] = &[
     "? [Y/n]",
     "? (y/N)",
     "approve this",
+    // Claude Code
+    "(Y)es",
+    "(N)o",
+    "(A)lways",
+    "Do you want to proceed",
+    // Codex CLI
+    "Confirm?",
+    // Gemini CLI
+    "Allow?",
+    "Proceed?",
+    // Aider
+    "Add these files?",
+    "Apply edit?",
+    "Run command?",
+    // Amazon Q
+    "Allow this action?",
+    "Accept suggestion?",
+    // Generic CLI
+    "Continue?",
+    "Are you sure",
+    "continue connecting (yes/no)",
+    "'s password:",
+    "[sudo] password",
 ];
 
 /// Check if the terminal output suggests the agent is waiting for user input.
-/// Inspects the last 5 lines of output for known prompt patterns.
-pub fn detect_waiting_for_input(output: &str) -> bool {
+/// Inspects the last 5 lines of output for known prompt patterns and extra user-configured patterns.
+pub fn detect_waiting_for_input(output: &str, extra_patterns: &[String]) -> bool {
     let last_lines: Vec<&str> = output.lines().rev().take(5).collect();
     for line in &last_lines {
         let lower = line.to_lowercase();
-        for pattern in WAITING_PATTERNS {
+        for pattern in DEFAULT_WAITING_PATTERNS {
+            if lower.contains(&pattern.to_lowercase()) {
+                return true;
+            }
+        }
+        for pattern in extra_patterns {
             if lower.contains(&pattern.to_lowercase()) {
                 return true;
             }
@@ -295,6 +329,7 @@ async fn check_idle_sessions(
     store: &Store,
     idle_config: &IdleConfig,
     ready_ctx: &ReadyContext,
+    extra_waiting_patterns: &[String],
 ) {
     let sessions = match store.list_sessions().await {
         Ok(s) => s,
@@ -323,6 +358,7 @@ async fn check_idle_sessions(
             now,
             timeout,
             ready_ctx,
+            extra_waiting_patterns,
         )
         .await;
     }
@@ -336,6 +372,7 @@ async fn check_session_idle(
     now: chrono::DateTime<chrono::Utc>,
     timeout: chrono::Duration,
     ready_ctx: &ReadyContext,
+    extra_waiting_patterns: &[String],
 ) {
     // Capture current output to track activity
     let bid = resolve_backend_id(session, backend.as_ref());
@@ -380,9 +417,10 @@ async fn check_session_idle(
         // unchanged ticks (last_output_at older than check interval) to avoid
         // false positives during brief pauses in output.
         if session.status == SessionStatus::Active {
-            let immediate = detect_waiting_for_input(&current_output);
+            let immediate = detect_waiting_for_input(&current_output, extra_waiting_patterns);
             let last_change = session.last_output_at.unwrap_or(session.created_at);
-            let sustained = (now - last_change).num_seconds() >= 20;
+            let sustained = (now - last_change).num_seconds()
+                >= i64::try_from(idle_config.threshold_secs).unwrap_or(i64::MAX);
             if immediate || sustained {
                 info!(
                     "Session {} idle ({}), transitioning to idle",
@@ -609,8 +647,9 @@ pub fn classify_adopted_process(process: &str) -> SessionStatus {
 }
 
 /// Auto-discover tmux sessions not tracked by pulpo and adopt them.
+#[allow(clippy::too_many_lines)]
 async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &ReadyContext) {
-    // Get all tmux session names
+    // Get all tmux sessions as (backend_id, name) pairs
     let tmux_sessions = match backend.list_sessions() {
         Ok(s) => s,
         Err(e) => {
@@ -639,8 +678,11 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
         SessionStatus::Idle,
         SessionStatus::Ready,
     ];
+    // Ghost fix: only consider backend IDs from live sessions, so killed sessions
+    // with old backend_session_ids don't block re-adoption of new tmux sessions.
     let known_ids: std::collections::HashSet<String> = pulpo_sessions
         .iter()
+        .filter(|s| live_statuses.contains(&s.status))
         .filter_map(|s| s.backend_session_id.clone())
         .collect();
     let known_names: std::collections::HashSet<&str> = pulpo_sessions
@@ -649,9 +691,12 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
         .map(|s| s.name.as_str())
         .collect();
 
-    for tmux_name in &tmux_sessions {
+    for (tmux_id, tmux_name) in &tmux_sessions {
         // Skip if already tracked by backend ID or live name
-        if known_ids.contains(tmux_name) || known_names.contains(tmux_name.as_str()) {
+        if known_ids.contains(tmux_id)
+            || known_ids.contains(tmux_name)
+            || known_names.contains(tmux_name.as_str())
+        {
             continue;
         }
 
@@ -665,11 +710,11 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
         };
 
         let status = classify_adopted_process(&process);
-        let command = if status == SessionStatus::Active {
-            process.clone()
-        } else {
-            format!("(adopted) {process}")
-        };
+
+        // Try to capture full command line for richer resume (item 4)
+        let command = backend
+            .pane_command_line(tmux_id)
+            .unwrap_or_else(|_| process.clone());
 
         let session = pulpo_common::session::Session {
             id: uuid::Uuid::new_v4(),
@@ -679,7 +724,7 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
             description: Some("Adopted from tmux".into()),
             status,
             exit_code: None,
-            backend_session_id: Some(tmux_name.clone()),
+            backend_session_id: Some(tmux_id.clone()),
             output_snapshot: None,
             metadata: None,
             ink: None,
@@ -688,6 +733,7 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -695,6 +741,14 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
         if let Err(e) = store.insert_session(&session).await {
             warn!("Adopt: failed to insert session {tmux_name}: {e}");
             continue;
+        }
+
+        // Tag the tmux session with pulpo env vars so tools inside can identify context
+        if let Err(e) = backend.set_env(tmux_name, "PULPO_SESSION_ID", &session.id.to_string()) {
+            debug!("Adopt: failed to set PULPO_SESSION_ID for {tmux_name}: {e}");
+        }
+        if let Err(e) = backend.set_env(tmux_name, "PULPO_SESSION_NAME", tmux_name) {
+            debug!("Adopt: failed to set PULPO_SESSION_NAME for {tmux_name}: {e}");
         }
 
         info!(
@@ -774,8 +828,9 @@ mod tests {
         fail_capture: bool,
         fail_kill: bool,
         fail_create: bool,
-        tmux_sessions: Vec<String>,
+        tmux_sessions: Vec<(String, String)>,
         pane_infos: HashMap<String, (String, String)>,
+        pane_command_lines: HashMap<String, String>,
     }
 
     impl MockBackend {
@@ -791,6 +846,7 @@ mod tests {
                 fail_create: false,
                 tmux_sessions: Vec::new(),
                 pane_infos: HashMap::new(),
+                pane_command_lines: HashMap::new(),
             }
         }
 
@@ -855,7 +911,7 @@ mod tests {
         fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
             Ok(())
         }
-        fn list_sessions(&self) -> Result<Vec<String>> {
+        fn list_sessions(&self) -> Result<Vec<(String, String)>> {
             Ok(self.tmux_sessions.clone())
         }
         fn pane_info(&self, backend_id: &str) -> Result<(String, String)> {
@@ -863,6 +919,12 @@ mod tests {
                 .get(backend_id)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("no pane info for {backend_id}"))
+        }
+        fn pane_command_line(&self, backend_id: &str) -> Result<String> {
+            self.pane_command_lines
+                .get(backend_id)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("no command line for {backend_id}"))
         }
     }
 
@@ -899,6 +961,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -919,6 +982,7 @@ mod tests {
             idle,
             ready_ttl_secs: 0,
             adopt_tmux: false,
+            extra_waiting_patterns: Vec::new(),
         };
         let (_, rx) = tokio::sync::watch::channel(cfg);
         rx
@@ -940,6 +1004,7 @@ mod tests {
             idle,
             ready_ttl_secs: 0,
             adopt_tmux: false,
+            extra_waiting_patterns: Vec::new(),
         };
         tokio::sync::watch::channel(cfg)
     }
@@ -1361,6 +1426,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1620,6 +1686,7 @@ mod tests {
         assert!(ic.enabled);
         assert_eq!(ic.timeout_secs, 600);
         assert_eq!(ic.action, IdleAction::Alert);
+        assert_eq!(ic.threshold_secs, 60);
     }
 
     #[test]
@@ -1628,6 +1695,7 @@ mod tests {
             enabled: true,
             timeout_secs: 300,
             action: IdleAction::Kill,
+            threshold_secs: 60,
         };
         let debug = format!("{ic:?}");
         assert!(debug.contains("Kill"));
@@ -1680,6 +1748,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1691,10 +1760,11 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         // Session should have transitioned from Active to Idle (output unchanged > 20s)
         let fetched = store
@@ -1729,6 +1799,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1738,11 +1809,12 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Kill,
+            threshold_secs: 60,
         };
 
         let backend_clone = backend.clone();
         let dyn_backend: Arc<dyn Backend> = backend_clone;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         // Session should be dead with intervention reason
         let fetched = store
@@ -1786,6 +1858,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(100)),
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1795,10 +1868,11 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         // idle_since should be cleared (output changed from "old output" to "test output")
         let fetched = store
@@ -1833,6 +1907,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1842,10 +1917,11 @@ mod tests {
             enabled: true,
             timeout_secs: 1,
             action: IdleAction::Kill,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         // Session should remain completed
         let fetched = store
@@ -1866,10 +1942,11 @@ mod tests {
             enabled: true,
             timeout_secs: 1,
             action: IdleAction::Kill,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         // Session should remain running — capture failed so idle check skipped
         let sessions = store.list_sessions().await.unwrap();
@@ -1899,6 +1976,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now()), // very recent
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1908,10 +1986,11 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         // Should NOT be marked idle (not enough time elapsed)
         let fetched = store
@@ -1946,6 +2025,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(idle_time),
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1955,10 +2035,11 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         // idle_since should still be set and status stays Idle
         let fetched = store
@@ -1994,6 +2075,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2003,10 +2085,11 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Kill,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         // Session should remain Idle since kill failed
         let fetched = store
@@ -2032,11 +2115,12 @@ mod tests {
             enabled: true,
             timeout_secs: 1,
             action: IdleAction::Kill,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
         // Should not panic
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
     }
 
     #[tokio::test]
@@ -2062,6 +2146,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now() - chrono::Duration::seconds(700),
             updated_at: chrono::Utc::now(),
         };
@@ -2071,10 +2156,11 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         // Should transition to Idle (created_at used as fallback for last_output_at)
         let fetched = store
@@ -2101,11 +2187,12 @@ mod tests {
             enabled: true,
             timeout_secs: 1,
             action: IdleAction::Kill,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
         // Should not panic
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
     }
 
     #[tokio::test]
@@ -2132,6 +2219,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2146,6 +2234,7 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
@@ -2195,6 +2284,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now()),
             idle_since: Some(chrono::Utc::now()),
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2230,6 +2320,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now()),
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2260,6 +2351,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2274,6 +2366,7 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
         let now = chrono::Utc::now();
         let timeout = chrono::Duration::seconds(600);
@@ -2314,6 +2407,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2328,6 +2422,7 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Kill,
+            threshold_secs: 60,
         };
         let now = chrono::Utc::now();
         let timeout = chrono::Duration::seconds(600);
@@ -2369,6 +2464,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2378,6 +2474,7 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
         let now = chrono::Utc::now();
         let timeout = chrono::Duration::seconds(600);
@@ -2392,6 +2489,7 @@ mod tests {
             now,
             timeout,
             &test_ready_ctx(),
+            &[],
         )
         .await;
 
@@ -2400,7 +2498,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        // Active session with unchanged output > 20s transitions to Idle
+        // Active session with unchanged output > threshold_secs transitions to Idle
         assert_eq!(fetched.status, SessionStatus::Idle);
     }
 
@@ -2546,6 +2644,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2556,6 +2655,7 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Kill,
+            threshold_secs: 60,
         };
         let now = chrono::Utc::now();
         let timeout = chrono::Duration::seconds(600);
@@ -2636,6 +2736,7 @@ mod tests {
                 },
                 ready_ttl_secs: 0,
                 adopt_tmux: false,
+                extra_waiting_patterns: Vec::new(),
             })
             .unwrap();
 
@@ -2665,6 +2766,7 @@ mod tests {
             idle: IdleConfig::default(),
             ready_ttl_secs: 0,
             adopt_tmux: false,
+            extra_waiting_patterns: Vec::new(),
         };
         let debug = format!("{cfg:?}");
         assert!(debug.contains("90"));
@@ -2681,9 +2783,11 @@ mod tests {
                 enabled: true,
                 timeout_secs: 300,
                 action: IdleAction::Kill,
+                threshold_secs: 60,
             },
             ready_ttl_secs: 0,
             adopt_tmux: false,
+            extra_waiting_patterns: Vec::new(),
         };
         #[allow(clippy::redundant_clone)]
         let cloned = cfg.clone();
@@ -2699,33 +2803,67 @@ mod tests {
     fn test_detect_waiting_for_input_basic() {
         // Returns true for "Do you trust this file?"
         assert!(detect_waiting_for_input(
-            "Some output\nDo you trust this file?"
+            "Some output\nDo you trust this file?",
+            &[],
         ));
 
         // Returns true for "[Y/n]"
-        assert!(detect_waiting_for_input("Continue? [Y/n]"));
+        assert!(detect_waiting_for_input("Continue? [Y/n]", &[]));
 
         // Returns false for regular output
         assert!(!detect_waiting_for_input(
-            "Building project...\nCompilation succeeded."
+            "Building project...\nCompilation succeeded.",
+            &[],
         ));
 
         // Only checks last 5 lines — pattern on line 1 of 7 is out of range
         let output = "Do you trust this file?\nline2\nline3\nline4\nline5\nline6\nline7";
-        assert!(!detect_waiting_for_input(output));
+        assert!(!detect_waiting_for_input(output, &[]));
 
         // Pattern within last 5 lines should still match
         let output = "line1\nline2\nline3\nDo you trust this file?\nline5";
-        assert!(detect_waiting_for_input(output));
+        assert!(detect_waiting_for_input(output, &[]));
     }
 
     #[test]
     fn test_detect_waiting_for_input_case_insensitive() {
-        assert!(detect_waiting_for_input("DO YOU TRUST THIS FILE?"));
-        assert!(detect_waiting_for_input("do you trust this file?"));
-        assert!(detect_waiting_for_input("press enter to continue"));
-        assert!(detect_waiting_for_input("PRESS ENTER"));
-        assert!(detect_waiting_for_input("Approve This action"));
+        assert!(detect_waiting_for_input("DO YOU TRUST THIS FILE?", &[]));
+        assert!(detect_waiting_for_input("do you trust this file?", &[]));
+        assert!(detect_waiting_for_input("press enter to continue", &[]));
+        assert!(detect_waiting_for_input("PRESS ENTER", &[]));
+        assert!(detect_waiting_for_input("Approve This action", &[]));
+    }
+
+    #[test]
+    fn test_detect_waiting_claude_code() {
+        assert!(detect_waiting_for_input("Some output\n(Y)es / (N)o\n", &[]));
+        assert!(detect_waiting_for_input("(A)lways allow\n", &[]));
+        assert!(detect_waiting_for_input("Do you want to proceed?\n", &[]));
+    }
+
+    #[test]
+    fn test_detect_waiting_extra_patterns() {
+        let extras = vec!["custom prompt>".to_string()];
+        assert!(detect_waiting_for_input(
+            "custom prompt> waiting\n",
+            &extras
+        ));
+        assert!(!detect_waiting_for_input("normal output\n", &extras));
+    }
+
+    #[test]
+    fn test_detect_waiting_aider_patterns() {
+        assert!(detect_waiting_for_input("Add these files?\n", &[]));
+        assert!(detect_waiting_for_input("Apply edit?\n", &[]));
+        assert!(detect_waiting_for_input("Run command?\n", &[]));
+    }
+
+    #[test]
+    fn test_detect_waiting_generic_patterns() {
+        assert!(detect_waiting_for_input("Continue?\n", &[]));
+        assert!(detect_waiting_for_input("Are you sure (y/n)?\n", &[]));
+        assert!(detect_waiting_for_input("user@host's password:\n", &[]));
+        assert!(detect_waiting_for_input("[sudo] password for user:\n", &[]));
     }
 
     #[tokio::test]
@@ -2754,6 +2892,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now()),
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2763,10 +2902,11 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         let fetched = store
             .get_session(&session.id.to_string())
@@ -2800,6 +2940,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now()),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(60)),
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2809,10 +2950,11 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         let fetched = store
             .get_session(&session.id.to_string())
@@ -2845,6 +2987,7 @@ mod tests {
             intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since,
+            idle_threshold_secs: None,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
@@ -2868,10 +3011,11 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend.clone();
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         // Both Active and Idle sessions should have been processed
         let capture_count = backend.capture_calls.lock().unwrap().len();
@@ -2940,10 +3084,11 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         // Session should now be Ready
         let fetched = store
@@ -2970,10 +3115,11 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &ctx).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &ctx, &[]).await;
 
         // Should have received a Ready event
         let event = event_rx.try_recv().unwrap();
@@ -3003,10 +3149,11 @@ mod tests {
             enabled: true,
             timeout_secs: 1, // very short, would trigger idle action
             action: IdleAction::Kill,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx()).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
         // Should be Ready, NOT Killed
         let fetched = store
@@ -3041,10 +3188,11 @@ mod tests {
             enabled: true,
             timeout_secs: 600,
             action: IdleAction::Alert,
+            threshold_secs: 60,
         };
 
         let dyn_backend: Arc<dyn Backend> = backend;
-        check_idle_sessions(&dyn_backend, &store, &idle_config, &ctx).await;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &ctx, &[]).await;
 
         let fetched = store
             .get_session(&session.id.to_string())
@@ -3258,7 +3406,7 @@ mod tests {
     #[tokio::test]
     async fn test_adopt_skips_known_sessions() {
         let mut backend = MockBackend::new();
-        backend.tmux_sessions = vec!["existing".into()];
+        backend.tmux_sessions = vec![("$0".into(), "existing".into())];
         backend
             .pane_infos
             .insert("existing".into(), ("bash".into(), "/tmp".into()));
@@ -3279,7 +3427,7 @@ mod tests {
     #[tokio::test]
     async fn test_adopt_agent_session_as_active() {
         let mut backend = MockBackend::new();
-        backend.tmux_sessions = vec!["my-claude".into()];
+        backend.tmux_sessions = vec![("$0".into(), "my-claude".into())];
         backend
             .pane_infos
             .insert("my-claude".into(), ("claude".into(), "/home/user".into()));
@@ -3297,13 +3445,13 @@ mod tests {
         assert_eq!(sessions[0].command, "claude");
         assert_eq!(sessions[0].workdir, "/home/user");
         assert_eq!(sessions[0].description, Some("Adopted from tmux".into()));
-        assert_eq!(sessions[0].backend_session_id, Some("my-claude".into()));
+        assert_eq!(sessions[0].backend_session_id, Some("$0".into()));
     }
 
     #[tokio::test]
     async fn test_adopt_shell_session_as_ready() {
         let mut backend = MockBackend::new();
-        backend.tmux_sessions = vec!["bare-shell".into()];
+        backend.tmux_sessions = vec![("$0".into(), "bare-shell".into())];
         backend
             .pane_infos
             .insert("bare-shell".into(), ("bash".into(), "/tmp".into()));
@@ -3317,13 +3465,13 @@ mod tests {
         let sessions = store.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].status, SessionStatus::Ready);
-        assert_eq!(sessions[0].command, "(adopted) bash");
+        assert_eq!(sessions[0].command, "bash");
     }
 
     #[tokio::test]
     async fn test_adopt_emits_sse_event() {
         let mut backend = MockBackend::new();
-        backend.tmux_sessions = vec!["event-session".into()];
+        backend.tmux_sessions = vec![("$0".into(), "event-session".into())];
         backend
             .pane_infos
             .insert("event-session".into(), ("codex".into(), "/repo".into()));
@@ -3353,7 +3501,7 @@ mod tests {
     #[tokio::test]
     async fn test_adopt_skips_pane_info_failure() {
         let mut backend = MockBackend::new();
-        backend.tmux_sessions = vec!["no-info".into()];
+        backend.tmux_sessions = vec![("$0".into(), "no-info".into())];
         // No pane_info entry → pane_info will return error
         let backend = Arc::new(backend);
         let store = test_store().await;
@@ -3370,7 +3518,10 @@ mod tests {
     #[tokio::test]
     async fn test_adopt_multiple_sessions() {
         let mut backend = MockBackend::new();
-        backend.tmux_sessions = vec!["agent-1".into(), "shell-1".into()];
+        backend.tmux_sessions = vec![
+            ("$0".into(), "agent-1".into()),
+            ("$1".into(), "shell-1".into()),
+        ];
         backend
             .pane_infos
             .insert("agent-1".into(), ("claude".into(), "/code".into()));
@@ -3392,7 +3543,7 @@ mod tests {
     async fn test_adopt_skips_by_live_name() {
         // Ready session with same name should prevent adoption
         let mut backend = MockBackend::new();
-        backend.tmux_sessions = vec!["my-session".into()];
+        backend.tmux_sessions = vec![("$0".into(), "my-session".into())];
         backend
             .pane_infos
             .insert("my-session".into(), ("bash".into(), "/tmp".into()));
@@ -3413,5 +3564,82 @@ mod tests {
         // Should still be just 1 session
         let sessions = store.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_adopt_ghost_fix_killed_session_does_not_block() {
+        // A killed session with old backend_session_id should NOT block adoption
+        // of a new tmux session with the same name.
+        let mut backend = MockBackend::new();
+        backend.tmux_sessions = vec![("$5".into(), "reused-name".into())];
+        backend
+            .pane_infos
+            .insert("reused-name".into(), ("claude".into(), "/repo".into()));
+        let backend = Arc::new(backend);
+        let store = test_store().await;
+
+        // Create a killed session with the same name and old backend_session_id
+        let killed_session = Session {
+            id: uuid::Uuid::new_v4(),
+            name: "reused-name".into(),
+            workdir: "/old".into(),
+            command: "old-command".into(),
+            description: None,
+            status: SessionStatus::Killed,
+            exit_code: None,
+            backend_session_id: Some("reused-name".into()),
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        };
+        store.insert_session(&killed_session).await.unwrap();
+
+        let ctx = test_ready_ctx();
+        let dyn_backend: Arc<dyn Backend> = backend;
+        adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
+
+        // Should have 2 sessions: the old killed one + the newly adopted one
+        let sessions = store.list_sessions().await.unwrap();
+        assert_eq!(sessions.len(), 2);
+        let adopted = sessions.iter().find(|s| s.status == SessionStatus::Active);
+        assert!(adopted.is_some(), "new session should be adopted");
+        let adopted = adopted.unwrap();
+        assert_eq!(adopted.name, "reused-name");
+        assert_eq!(adopted.backend_session_id, Some("$5".into()));
+    }
+
+    #[tokio::test]
+    async fn test_adopt_uses_full_command_line() {
+        // When pane_command_line returns a result, adoption uses it as the command
+        let mut backend = MockBackend::new();
+        backend.tmux_sessions = vec![("$0".into(), "full-cmd".into())];
+        backend
+            .pane_infos
+            .insert("full-cmd".into(), ("claude".into(), "/repo".into()));
+        backend.pane_command_lines.insert(
+            "$0".into(),
+            "claude -p 'review code' --workdir /repo".into(),
+        );
+        let backend = Arc::new(backend);
+        let store = test_store().await;
+
+        let ctx = test_ready_ctx();
+        let dyn_backend: Arc<dyn Backend> = backend;
+        adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
+
+        let sessions = store.list_sessions().await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].command,
+            "claude -p 'review code' --workdir /repo"
+        );
     }
 }

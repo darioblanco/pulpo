@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use pulpo_common::api::ListSessionsQuery;
 use pulpo_common::session::{Session, SessionStatus};
-use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
+use sqlx::{Column, Row, SqlitePool, sqlite::SqliteRow};
 use uuid::Uuid;
 
 use pulpo_common::session::InterventionCode;
@@ -300,6 +300,18 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
+        // Idempotent migration: idle_threshold_secs column
+        let has_idle_threshold = sqlx::query_scalar::<_, i32>(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'idle_threshold_secs'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_idle_threshold == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN idle_threshold_secs INTEGER")
+                .execute(&self.pool)
+                .await?;
+        }
+
         // Idempotent migration: push subscriptions table for Web Push notifications
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -331,8 +343,8 @@ impl Store {
                 exit_code, backend_session_id, output_snapshot,
                 metadata, ink, command, description,
                 intervention_code, intervention_reason, intervention_at,
-                last_output_at, idle_since, created_at, updated_at)
-             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                last_output_at, idle_since, idle_threshold_secs, created_at, updated_at)
+             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
         .bind(&session.name)
@@ -350,6 +362,11 @@ impl Store {
         .bind(&intervention_at_str)
         .bind(&last_output_at_str)
         .bind(&idle_since_str)
+        .bind(
+            session
+                .idle_threshold_secs
+                .map(|v| i32::try_from(v).unwrap_or(i32::MAX)),
+        )
         .bind(session.created_at.to_rfc3339())
         .bind(session.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -547,6 +564,20 @@ impl Store {
         Ok(())
     }
 
+    pub async fn update_backend_session_id(
+        &self,
+        session_id: &str,
+        backend_id: &str,
+    ) -> Result<()> {
+        sqlx::query("UPDATE sessions SET backend_session_id = ?, updated_at = ? WHERE id = ?")
+            .bind(backend_id)
+            .bind(Utc::now().to_rfc3339())
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn clear_session_idle_since(&self, id: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query("UPDATE sessions SET idle_since = NULL, updated_at = ? WHERE id = ?")
@@ -652,6 +683,19 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
             s.map(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)))
                 .transpose()?
         },
+        idle_threshold_secs: {
+            // Column may not exist in rows from legacy databases without the migration
+            let has_col = row
+                .columns()
+                .iter()
+                .any(|c| c.name() == "idle_threshold_secs");
+            if has_col {
+                let v: Option<i32> = row.get("idle_threshold_secs");
+                v.map(|n| u32::try_from(n).unwrap_or(0))
+            } else {
+                None
+            }
+        },
         created_at: DateTime::parse_from_rfc3339(&created_str)?.with_timezone(&Utc),
         updated_at: DateTime::parse_from_rfc3339(&updated_str)?.with_timezone(&Utc),
     })
@@ -698,6 +742,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -1020,6 +1065,7 @@ mod tests {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: None,
 
             created_at: Utc::now(),
             updated_at: Utc::now(),

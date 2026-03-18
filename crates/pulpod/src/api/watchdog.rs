@@ -36,6 +36,8 @@ pub async fn get_watchdog(
         idle_action: config.watchdog.idle_action.clone(),
         ready_ttl_secs: config.watchdog.ready_ttl_secs,
         adopt_tmux: config.watchdog.adopt_tmux,
+        idle_threshold_secs: config.watchdog.idle_threshold_secs,
+        extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
     };
     drop(config);
     Ok(Json(resp))
@@ -71,6 +73,12 @@ pub async fn update_watchdog(
     if let Some(adopt) = req.adopt_tmux {
         config.watchdog.adopt_tmux = adopt;
     }
+    if let Some(threshold) = req.idle_threshold_secs {
+        config.watchdog.idle_threshold_secs = threshold;
+    }
+    if let Some(patterns) = req.extra_waiting_patterns {
+        config.watchdog.waiting_patterns = patterns;
+    }
 
     // Validate the updated config
     config
@@ -98,9 +106,11 @@ pub async fn update_watchdog(
                 } else {
                     crate::watchdog::IdleAction::Alert
                 },
+                threshold_secs: config.watchdog.idle_threshold_secs,
             },
             ready_ttl_secs: config.watchdog.ready_ttl_secs,
             adopt_tmux: config.watchdog.adopt_tmux,
+            extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
         };
         // Ignore send error — watchdog may have shut down
         let _ = tx.send(runtime_cfg);
@@ -115,6 +125,8 @@ pub async fn update_watchdog(
         idle_action: config.watchdog.idle_action.clone(),
         ready_ttl_secs: config.watchdog.ready_ttl_secs,
         adopt_tmux: config.watchdog.adopt_tmux,
+        idle_threshold_secs: config.watchdog.idle_threshold_secs,
+        extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
     };
     drop(config);
     Ok(Json(resp))
@@ -163,7 +175,7 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -192,7 +204,7 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let config_path = tmpdir.path().join("config.toml");
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
@@ -253,6 +265,8 @@ mod tests {
             idle_action: Some("kill".into()),
             ready_ttl_secs: None,
             adopt_tmux: None,
+            idle_threshold_secs: None,
+            extra_waiting_patterns: None,
         };
         let Json(resp) = update_watchdog(State(state.clone()), Json(req))
             .await
@@ -385,7 +399,7 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
         let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let initial = crate::watchdog::WatchdogRuntimeConfig {
             threshold: 90,
@@ -394,6 +408,7 @@ mod tests {
             idle: crate::watchdog::IdleConfig::default(),
             ready_ttl_secs: 0,
             adopt_tmux: true,
+            extra_waiting_patterns: Vec::new(),
         };
         let (config_tx, config_rx) = tokio::sync::watch::channel(initial);
         let (event_tx, _) = tokio::sync::broadcast::channel(16);

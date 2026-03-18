@@ -51,7 +51,7 @@ impl backend::Backend for CoverageBackend {
     fn setup_logging(&self, _: &str, _: &str) -> anyhow::Result<()> {
         Ok(())
     }
-    fn list_sessions(&self) -> anyhow::Result<Vec<String>> {
+    fn list_sessions(&self) -> anyhow::Result<Vec<(String, String)>> {
         Ok(Vec::new())
     }
     fn pane_info(&self, _: &str) -> anyhow::Result<(String, String)> {
@@ -136,6 +136,39 @@ pub fn init_tracing() -> Result<()> {
     Ok(())
 }
 
+/// Upgrade name-based backend session IDs to tmux `$N` IDs for live sessions.
+/// Best-effort: skips sessions whose tmux session is dead or already upgraded.
+#[cfg(not(coverage))]
+async fn upgrade_backend_ids(manager: &SessionManager, store: &store::Store) {
+    let upgrade_backend = manager.backend();
+    let Ok(sessions) = store.list_sessions().await else {
+        return;
+    };
+    for session in sessions {
+        let is_live = matches!(
+            session.status,
+            pulpo_common::session::SessionStatus::Active
+                | pulpo_common::session::SessionStatus::Idle
+                | pulpo_common::session::SessionStatus::Ready
+        );
+        if !is_live {
+            continue;
+        }
+        if session
+            .backend_session_id
+            .as_ref()
+            .is_some_and(|id| id.starts_with('$'))
+        {
+            continue;
+        }
+        if let Ok(tmux_id) = upgrade_backend.query_backend_id(&session.name) {
+            let _ = store
+                .update_backend_session_id(&session.id.to_string(), &tmux_id)
+                .await;
+        }
+    }
+}
+
 /// Build the application from config — returns the router, listener address, and shutdown handle.
 #[allow(clippy::too_many_lines)]
 pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandle)> {
@@ -184,8 +217,24 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let node_name = config.node.name.clone();
     let (event_tx, _) = broadcast::channel::<PulpoEvent>(256);
 
-    let manager = SessionManager::new(backend, store.clone(), config.inks.clone())
-        .with_event_tx(event_tx.clone(), node_name.clone());
+    let manager = SessionManager::new(
+        backend,
+        store.clone(),
+        config.inks.clone(),
+        config.node.default_command.clone(),
+    )
+    .with_event_tx(event_tx.clone(), node_name.clone());
+
+    // Auto-resume sessions that were active before a restart
+    match manager.resume_lost_sessions().await {
+        Ok(0) => {}
+        Ok(n) => info!("Auto-resumed {n} session(s) from previous run"),
+        Err(e) => tracing::warn!("Failed to auto-resume sessions: {e}"),
+    }
+
+    // Upgrade name-based backend_session_ids to tmux $N IDs (best-effort)
+    #[cfg(not(coverage))]
+    upgrade_backend_ids(&manager, &store).await;
 
     let peer_registry = peers::PeerRegistry::new(&config.peers);
 
@@ -207,9 +256,11 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                     } else {
                         watchdog::IdleAction::Alert
                     },
+                    threshold_secs: config.watchdog.idle_threshold_secs,
                 },
                 ready_ttl_secs: config.watchdog.ready_ttl_secs,
                 adopt_tmux: config.watchdog.adopt_tmux,
+                extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
             };
             let (wd_config_tx, wd_config_rx) = watch::channel(wd_runtime.clone());
             let (wd_shutdown_tx, wd_shutdown_rx) = watch::channel(false);
@@ -532,8 +583,12 @@ pub async fn build_mcp_server(cli: &Cli) -> Result<mcp::PulpoMcp> {
     #[cfg(coverage)]
     let backend: Arc<dyn backend::Backend> = Arc::new(CoverageBackend);
 
-    let manager =
-        session::manager::SessionManager::new(backend, store.clone(), config.inks.clone());
+    let manager = session::manager::SessionManager::new(
+        backend,
+        store.clone(),
+        config.inks.clone(),
+        config.node.default_command.clone(),
+    );
     let peer_registry = peers::PeerRegistry::new(&config.peers);
 
     Ok(mcp::PulpoMcp::new(manager, peer_registry, config))

@@ -18,6 +18,7 @@ pub struct SessionManager {
     backend: Arc<dyn Backend>,
     store: Store,
     inks: HashMap<String, InkConfig>,
+    default_command: Option<String>,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
     node_name: String,
     /// Grace period (seconds) after session creation before staleness checks apply.
@@ -26,11 +27,17 @@ pub struct SessionManager {
 }
 
 impl SessionManager {
-    pub fn new(backend: Arc<dyn Backend>, store: Store, inks: HashMap<String, InkConfig>) -> Self {
+    pub fn new(
+        backend: Arc<dyn Backend>,
+        store: Store,
+        inks: HashMap<String, InkConfig>,
+        default_command: Option<String>,
+    ) -> Self {
         Self {
             backend,
             store,
             inks,
+            default_command,
             event_tx: None,
             node_name: String::new(),
             stale_grace_secs: 5,
@@ -113,7 +120,7 @@ impl SessionManager {
         let backend_id = self.backend.session_id(&name);
 
         // Wrap command: bash -c "<escaped>; echo '[pulpo] Agent exited'; exec bash"
-        let wrapped = wrap_command(&command);
+        let wrapped = wrap_command(&command, &id, &name);
 
         let now = Utc::now();
         let session = Session {
@@ -133,6 +140,7 @@ impl SessionManager {
             intervention_at: None,
             last_output_at: None,
             idle_since: None,
+            idle_threshold_secs: req.idle_threshold_secs,
             created_at: now,
             updated_at: now,
         };
@@ -149,6 +157,16 @@ impl SessionManager {
             return Err(e);
         }
 
+        // Query the tmux $N session ID and update if available
+        let mut session = session;
+        if let Ok(tmux_id) = self.backend.query_backend_id(&name) {
+            let _ = self
+                .store
+                .update_backend_session_id(&id.to_string(), &tmux_id)
+                .await;
+            session.backend_session_id = Some(tmux_id);
+        }
+
         self.store
             .update_session_status(&id.to_string(), SessionStatus::Active)
             .await?;
@@ -160,7 +178,6 @@ impl SessionManager {
         let _ = self.backend.setup_logging(&backend_id, &log_path);
 
         // Return the session with updated status (avoids unnecessary re-fetch)
-        let mut session = session;
         session.status = SessionStatus::Active;
         session.updated_at = Utc::now();
         self.emit_event(&session, Some(SessionStatus::Creating));
@@ -186,8 +203,14 @@ impl SessionManager {
             return Ok((command, description));
         }
 
-        // No command and no ink — return empty (will be caught by validation)
-        Ok((String::new(), req.description.clone()))
+        // No command and no ink — fall back to default_command from config
+        if let Some(ref default_cmd) = self.default_command {
+            return Ok((default_cmd.clone(), req.description.clone()));
+        }
+
+        // No fallback available — fall back to $SHELL (or /bin/sh)
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_owned());
+        Ok((shell, req.description.clone()))
     }
 
     pub async fn get_session(&self, id: &str) -> Result<Option<Session>> {
@@ -340,9 +363,17 @@ impl SessionManager {
         let backend_id = self.resolve_backend_id(&session);
         let alive = self.backend.is_alive(&backend_id)?;
         if !alive {
-            let wrapped = wrap_command(&session.command);
+            let wrapped = wrap_command(&session.command, &session.id, &session.name);
             self.backend
                 .create_session(&backend_id, &session.workdir, &wrapped)?;
+
+            // Query the new tmux $N session ID
+            if let Ok(tmux_id) = self.backend.query_backend_id(&session.name) {
+                let _ = self
+                    .store
+                    .update_backend_session_id(&session.id.to_string(), &tmux_id)
+                    .await;
+            }
         }
 
         let session_id = session.id.to_string();
@@ -355,6 +386,56 @@ impl SessionManager {
         session.updated_at = Utc::now();
         self.emit_event(&session, Some(previous_status));
         Ok(session)
+    }
+
+    /// Resume all sessions that were Active or Idle but have dead backends.
+    /// Called on startup to recover sessions lost during a reboot.
+    /// Returns the number of sessions successfully resumed.
+    pub async fn resume_lost_sessions(&self) -> Result<usize> {
+        let sessions = self.store.list_sessions().await?;
+        let mut resumed = 0;
+        for session in sessions {
+            if session.status != SessionStatus::Active && session.status != SessionStatus::Idle {
+                continue;
+            }
+            let backend_id = self.resolve_backend_id(&session);
+            let alive = self.backend.is_alive(&backend_id).unwrap_or(false);
+            if alive {
+                continue;
+            }
+            // Backend is dead — resume the session
+            let wrapped = wrap_command(&session.command, &session.id, &session.name);
+            if let Err(e) = self
+                .backend
+                .create_session(&backend_id, &session.workdir, &wrapped)
+            {
+                tracing::warn!(
+                    session = %session.name,
+                    error = %e,
+                    "Failed to auto-resume session on startup"
+                );
+                self.store
+                    .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+                    .await?;
+                continue;
+            }
+
+            // Query the new tmux $N session ID
+            if let Ok(tmux_id) = self.backend.query_backend_id(&session.name) {
+                let _ = self
+                    .store
+                    .update_backend_session_id(&session.id.to_string(), &tmux_id)
+                    .await;
+            }
+
+            // Re-mark as Active
+            self.store
+                .update_session_status(&session.id.to_string(), SessionStatus::Active)
+                .await?;
+            tracing::info!(session = %session.name, "Auto-resumed session after restart");
+            resumed += 1;
+        }
+        Ok(resumed)
     }
 
     pub const fn store(&self) -> &Store {
@@ -374,9 +455,13 @@ fn validate_workdir(workdir: &str) -> Result<()> {
 }
 
 /// Wrap a command for tmux: escape single quotes, wrap in bash -c with agent exit marker.
-fn wrap_command(command: &str) -> String {
+/// Prepends `PULPO_SESSION_ID` and `PULPO_SESSION_NAME` env vars so tools inside
+/// sessions can identify their pulpo context.
+fn wrap_command(command: &str, session_id: &uuid::Uuid, session_name: &str) -> String {
     let escaped = command.replace('\'', "'\\''");
-    format!("bash -c '{escaped}; echo '\\''[pulpo] Agent exited'\\''; exec bash'")
+    format!(
+        "bash -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\'''; exec bash'"
+    )
 }
 
 #[cfg(test)]
@@ -471,6 +556,14 @@ mod tests {
                 .push(format!("setup_logging:{name}:{log_path}"));
             Ok(())
         }
+
+        fn query_backend_id(&self, name: &str) -> anyhow::Result<String> {
+            Ok(format!("${}", name.len()))
+        }
+
+        fn list_sessions(&self) -> anyhow::Result<Vec<(String, String)>> {
+            Ok(Vec::new())
+        }
     }
 
     struct FailCapture;
@@ -505,7 +598,7 @@ mod tests {
         let pool = store.pool().clone();
         let backend = Arc::new(backend);
         let manager =
-            SessionManager::new(backend.clone(), store, HashMap::new()).with_no_stale_grace();
+            SessionManager::new(backend.clone(), store, HashMap::new(), None).with_no_stale_grace();
         (manager, backend, pool)
     }
 
@@ -517,6 +610,7 @@ mod tests {
             ink: None,
             description: None,
             metadata: None,
+            idle_threshold_secs: None,
         }
     }
 
@@ -529,8 +623,8 @@ mod tests {
         assert_eq!(session.command, "echo hello");
         assert_eq!(session.status, SessionStatus::Active);
         assert_eq!(session.workdir, "/tmp");
-        // MockBackend.session_id() returns just the name
-        assert_eq!(session.backend_session_id, Some(session.name.clone()));
+        // MockBackend.query_backend_id() returns $N where N is the name length
+        assert_eq!(session.backend_session_id, Some("$11".into()));
 
         let calls = backend.calls.lock().unwrap();
         // All commands wrapped in bash -c for session survival
@@ -542,8 +636,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_session_no_command_fails() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+    async fn test_create_session_no_command_falls_back_to_shell() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
             name: "test".into(),
             workdir: Some("/tmp".into()),
@@ -551,10 +645,14 @@ mod tests {
             ink: None,
             description: None,
             metadata: None,
+            idle_threshold_secs: None,
         };
-        let result = mgr.create_session(req).await;
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("command is required"), "got: {err}");
+        let session = mgr.create_session(req).await.unwrap();
+        // Should fall back to $SHELL or /bin/sh
+        assert!(!session.command.is_empty());
+        let calls = backend.calls.lock().unwrap();
+        assert!(calls[0].contains("create:test:/tmp:bash -c"));
+        drop(calls);
     }
 
     #[tokio::test]
@@ -572,7 +670,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend, store, inks).with_no_stale_grace();
+        let mgr = SessionManager::new(backend, store, inks, None).with_no_stale_grace();
 
         let req = CreateSessionRequest {
             name: "ink-test".into(),
@@ -581,6 +679,7 @@ mod tests {
             ink: Some("coder".into()),
             description: None,
             metadata: None,
+            idle_threshold_secs: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -602,7 +701,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend, store, inks).with_no_stale_grace();
+        let mgr = SessionManager::new(backend, store, inks, None).with_no_stale_grace();
 
         let req = CreateSessionRequest {
             name: "override-test".into(),
@@ -611,6 +710,7 @@ mod tests {
             ink: Some("coder".into()),
             description: Some("My desc".into()),
             metadata: None,
+            idle_threshold_secs: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Explicit command wins over ink command
@@ -628,6 +728,7 @@ mod tests {
             ink: Some("nonexistent".into()),
             description: None,
             metadata: None,
+            idle_threshold_secs: None,
         };
         let result = mgr.create_session(req).await;
         let err = result.unwrap_err().to_string();
@@ -644,6 +745,7 @@ mod tests {
             ink: None,
             description: None,
             metadata: None,
+            idle_threshold_secs: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert!(!session.workdir.is_empty());
@@ -902,7 +1004,7 @@ mod tests {
         assert!(fc.send_input("n", "t").is_ok());
         assert!(fc.setup_logging("n", "p").is_ok());
 
-        let mgr = SessionManager::new(Arc::new(FailCapture), store, HashMap::new());
+        let mgr = SessionManager::new(Arc::new(FailCapture), store, HashMap::new(), None);
         let output = mgr.capture_output("test-id", "whatever", 3);
         assert_eq!(output, "line 3\nline 4\nline 5");
     }
@@ -917,6 +1019,7 @@ mod tests {
             Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store,
             HashMap::new(),
+            None,
         );
         // read_log_tail for nonexistent file returns empty string
         let output = mgr.read_log_tail("nonexistent", 10);
@@ -1116,20 +1219,29 @@ mod tests {
 
     #[test]
     fn test_wrap_command_basic() {
-        let cmd = wrap_command("echo hello");
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("echo hello", &id, "test-session");
         assert!(cmd.contains("bash -c"));
         assert!(cmd.contains("echo hello"));
-        assert!(cmd.contains("[pulpo] Agent exited"));
+        assert!(cmd.contains("[pulpo] Agent exited (session: test-session)"));
+        assert!(cmd.contains("Run: pulpo resume test-session"));
         assert!(cmd.contains("exec bash"));
+        assert!(cmd.contains(&format!("PULPO_SESSION_ID={id}")));
+        assert!(cmd.contains("PULPO_SESSION_NAME=test-session"));
     }
 
     #[test]
     fn test_wrap_command_single_quotes() {
-        let cmd = wrap_command("claude -p 'Fix the bug'");
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("claude -p 'Fix the bug'", &id, "my-task");
         assert!(cmd.contains("bash -c"));
         // Single quotes should be properly escaped
         assert!(cmd.contains("claude -p"));
         assert!(cmd.contains("Fix the bug"));
+        assert!(cmd.contains("PULPO_SESSION_ID="));
+        assert!(cmd.contains("PULPO_SESSION_NAME=my-task"));
+        assert!(cmd.contains("(session: my-task)"));
+        assert!(cmd.contains("Run: pulpo resume my-task"));
     }
 
     #[tokio::test]
@@ -1197,12 +1309,12 @@ mod tests {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let session = mgr.create_session(make_req("test")).await.unwrap();
         let backend_id = mgr.resolve_backend_id(&session);
-        // MockBackend returns name as session_id
-        assert_eq!(backend_id, "test");
+        // MockBackend.query_backend_id returns $N where N is name length
+        assert_eq!(backend_id, "$4");
     }
 
     #[tokio::test]
-    async fn test_resolve_ink_no_command_no_ink() {
+    async fn test_resolve_ink_no_command_no_ink_falls_back_to_shell() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
             name: "test".into(),
@@ -1211,9 +1323,11 @@ mod tests {
             ink: None,
             description: Some("desc".into()),
             metadata: None,
+            idle_threshold_secs: None,
         };
         let (cmd, desc) = mgr.resolve_ink(&req).unwrap();
-        assert!(cmd.is_empty());
+        // Falls back to $SHELL or /bin/sh
+        assert!(!cmd.is_empty());
         assert_eq!(desc, Some("desc".into()));
     }
 
@@ -1232,7 +1346,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend, store, inks).with_no_stale_grace();
+        let mgr = SessionManager::new(backend, store, inks, None).with_no_stale_grace();
 
         let req = CreateSessionRequest {
             name: "fallback-test".into(),
@@ -1241,6 +1355,7 @@ mod tests {
             ink: Some("test-ink".into()),
             description: None, // Should fall back to ink description
             metadata: None,
+            idle_threshold_secs: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.description, Some("Ink desc".into()));
@@ -1261,7 +1376,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend, store, inks).with_no_stale_grace();
+        let mgr = SessionManager::new(backend, store, inks, None).with_no_stale_grace();
 
         let req = CreateSessionRequest {
             name: "empty-test".into(),
@@ -1270,9 +1385,227 @@ mod tests {
             ink: Some("empty-ink".into()),
             description: None,
             metadata: None,
+            idle_threshold_secs: None,
         };
         let result = mgr.create_session(req).await;
         let err = result.unwrap_err().to_string();
         assert!(err.contains("command is required"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_create_session_uses_default_command() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let backend = Arc::new(MockBackend::new());
+        let mgr = SessionManager::new(backend, store, HashMap::new(), Some("claude".into()))
+            .with_no_stale_grace();
+
+        let req = CreateSessionRequest {
+            name: "default-cmd-test".into(),
+            workdir: Some("/tmp".into()),
+            command: None,
+            ink: None,
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+        };
+        let session = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.command, "claude");
+    }
+
+    #[tokio::test]
+    async fn test_create_session_explicit_command_overrides_default() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let backend = Arc::new(MockBackend::new());
+        let mgr = SessionManager::new(backend, store, HashMap::new(), Some("claude".into()))
+            .with_no_stale_grace();
+
+        let req = CreateSessionRequest {
+            name: "explicit-cmd-test".into(),
+            workdir: Some("/tmp".into()),
+            command: Some("custom-agent".into()),
+            ink: None,
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+        };
+        let session = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.command, "custom-agent");
+    }
+
+    #[tokio::test]
+    async fn test_create_session_ink_overrides_default_command() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "coder".into(),
+            InkConfig {
+                description: Some("Coder ink".into()),
+                command: Some("claude -p 'implement'".into()),
+            },
+        );
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let backend = Arc::new(MockBackend::new());
+        let mgr = SessionManager::new(backend, store, inks, Some("default-agent".into()))
+            .with_no_stale_grace();
+
+        let req = CreateSessionRequest {
+            name: "ink-over-default".into(),
+            workdir: Some("/tmp".into()),
+            command: None,
+            ink: Some("coder".into()),
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+        };
+        let session = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.command, "claude -p 'implement'");
+    }
+
+    #[tokio::test]
+    async fn test_create_session_no_command_no_default_falls_back_to_shell() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let req = CreateSessionRequest {
+            name: "no-fallback".into(),
+            workdir: Some("/tmp".into()),
+            command: None,
+            ink: None,
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+        };
+        let session = mgr.create_session(req).await.unwrap();
+        // Should fall back to $SHELL or /bin/sh
+        assert!(!session.command.is_empty());
+        let calls = backend.calls.lock().unwrap();
+        assert!(calls[0].contains("create:no-fallback:/tmp:bash -c"));
+        drop(calls);
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_resumes_active_with_dead_backend() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        // Create a session (backend is alive)
+        mgr.create_session(make_req("sess-a")).await.unwrap();
+
+        // Now simulate reboot: backend reports dead
+        *backend.alive.lock().unwrap() = false;
+
+        // Build a new manager that uses the same store but with dead backend
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 1);
+
+        // Backend should have received a create call for the resumed session
+        // 2 create calls: one from original create_session, one from resume
+        let resume_creates = backend
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.starts_with("create:"))
+            .count();
+        assert_eq!(resume_creates, 2);
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_skips_killed_sessions() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        mgr.create_session(make_req("killed-sess")).await.unwrap();
+        mgr.kill_session("killed-sess").await.unwrap();
+
+        *backend.alive.lock().unwrap() = false;
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_skips_alive_sessions() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        mgr.create_session(make_req("alive-sess")).await.unwrap();
+
+        // Backend is alive — should not resume
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_resumes_idle_sessions() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = mgr.create_session(make_req("idle-sess")).await.unwrap();
+
+        // Manually set to Idle (simulates watchdog marking it idle before reboot)
+        mgr.store()
+            .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+            .await
+            .unwrap();
+
+        *backend.alive.lock().unwrap() = false;
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 1);
+
+        // Simulate the resumed session being alive now
+        *backend.alive.lock().unwrap() = true;
+
+        // Session should be Active again
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_marks_lost_on_backend_failure() {
+        let (mgr, _, _pool) =
+            test_manager(MockBackend::new().with_alive(false).with_create_error()).await;
+        // Force-insert a session that looks active but backend will fail on resume
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "fail-resume".into(),
+            workdir: "/tmp".into(),
+            command: "echo hello".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: Some("fail-resume".into()),
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            created_at: Utc::now() - chrono::Duration::hours(1),
+            updated_at: Utc::now(),
+        };
+        mgr.store().insert_session(&session).await.unwrap();
+
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 0);
+
+        // Session should be marked Lost (not Active)
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Lost);
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_returns_zero_when_empty() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 0);
     }
 }
