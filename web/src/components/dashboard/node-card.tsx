@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import type { NodeInfo, Session } from '@/api/types';
 import { SessionCard } from './session-card';
+import { formatMemory } from '@/lib/utils';
 
 const statusDotColors: Record<string, string> = {
   online: 'bg-status-ready',
@@ -14,6 +15,7 @@ interface NodeCardProps {
   status: 'online' | 'offline' | 'unknown';
   sessions: Session[];
   isLocal?: boolean;
+  address?: string;
   onRefresh: () => void;
 }
 
@@ -23,6 +25,7 @@ export function NodeCard({
   status,
   sessions,
   isLocal = false,
+  address,
   onRefresh,
 }: NodeCardProps) {
   return (
@@ -35,12 +38,23 @@ export function NodeCard({
             local
           </Badge>
         )}
-        {nodeInfo && (
-          <span className="text-xs text-muted-foreground">
-            {nodeInfo.os} · {nodeInfo.arch} · {nodeInfo.cpus} cores
-          </span>
-        )}
       </div>
+
+      {nodeInfo && (
+        <div
+          data-testid="node-info-bar"
+          className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground"
+        >
+          <span>{nodeInfo.hostname}</span>
+          <span>
+            {nodeInfo.os} {nodeInfo.arch}
+          </span>
+          <span>{nodeInfo.cpus} CPU</span>
+          <span>{formatMemory(nodeInfo.memory_mb)}</span>
+          {nodeInfo.gpu && <span>{nodeInfo.gpu}</span>}
+          {address && <span>{address}</span>}
+        </div>
+      )}
 
       {status === 'online' ? (
         sessions.length === 0 ? (

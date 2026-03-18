@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { cn, formatDuration, formatRelativeTime, statusColors } from './utils';
+import { cn, formatDuration, formatMemory, formatRelativeTime, statusColors } from './utils';
 
 describe('cn', () => {
   it('merges class names', () => {
@@ -91,6 +91,28 @@ describe('formatRelativeTime', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2025-01-04T00:00:00Z'));
     expect(formatRelativeTime('2025-01-01T00:00:00Z')).toBe('3 days ago');
+  });
+});
+
+describe('formatMemory', () => {
+  it('formats megabytes below 1 GB', () => {
+    expect(formatMemory(512)).toBe('512 MB');
+  });
+
+  it('formats exactly 1 GB', () => {
+    expect(formatMemory(1024)).toBe('1 GB');
+  });
+
+  it('formats 16 GB', () => {
+    expect(formatMemory(16384)).toBe('16 GB');
+  });
+
+  it('formats 64 GB', () => {
+    expect(formatMemory(65536)).toBe('64 GB');
+  });
+
+  it('rounds to nearest GB', () => {
+    expect(formatMemory(4000)).toBe('4 GB');
   });
 });
 

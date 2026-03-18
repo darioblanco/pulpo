@@ -29,6 +29,14 @@ export function formatRelativeTime(dateString: string): string {
   return `${days} day${days !== 1 ? 's' : ''} ago`;
 }
 
+export function formatMemory(mb: number): string {
+  if (mb >= 1024) {
+    const gb = Math.round(mb / 1024);
+    return `${gb} GB`;
+  }
+  return `${mb} MB`;
+}
+
 export const statusColors: Record<string, string> = {
   ready: 'bg-status-ready',
   killed: 'bg-status-killed',

@@ -184,6 +184,13 @@ describe('DashboardPage', () => {
       expect(screen.getByTestId('tab-local')).toBeInTheDocument();
       expect(screen.getByTestId('tab-remote-node')).toBeInTheDocument();
     });
+
+    // Verify hardware subtitles on tabs
+    const localSubtitle = screen.getByTestId('tab-local-subtitle');
+    expect(localSubtitle).toHaveTextContent('macOS · 12 CPU · 64 GB');
+
+    const peerSubtitle = screen.getByTestId('tab-remote-node-subtitle');
+    expect(peerSubtitle).toHaveTextContent('Linux · 8 CPU · 32 GB');
   });
 
   it('handles remote session fetch failure gracefully', async () => {

@@ -59,6 +59,7 @@ function renderNodeCard(props: {
   status: 'online' | 'offline' | 'unknown';
   sessions: Session[];
   isLocal?: boolean;
+  address?: string;
   onRefresh?: () => void;
 }) {
   return render(
@@ -69,6 +70,7 @@ function renderNodeCard(props: {
         status={props.status}
         sessions={props.sessions}
         isLocal={props.isLocal}
+        address={props.address}
         onRefresh={props.onRefresh ?? vi.fn()}
       />
     </MemoryRouter>,
@@ -76,10 +78,51 @@ function renderNodeCard(props: {
 }
 
 describe('NodeCard', () => {
-  it('renders node name and info', () => {
+  it('renders node name', () => {
     renderNodeCard({ name: 'mac-studio', nodeInfo, status: 'online', sessions: [] });
     expect(screen.getByText('mac-studio')).toBeInTheDocument();
-    expect(screen.getByText(/macOS · arm64 · 12 cores/)).toBeInTheDocument();
+  });
+
+  it('renders node info bar with hardware details', () => {
+    renderNodeCard({ name: 'mac-studio', nodeInfo, status: 'online', sessions: [] });
+    const infoBar = screen.getByTestId('node-info-bar');
+    expect(infoBar).toBeInTheDocument();
+    expect(infoBar).toHaveTextContent('mac-studio.local');
+    expect(infoBar).toHaveTextContent('macOS arm64');
+    expect(infoBar).toHaveTextContent('12 CPU');
+    expect(infoBar).toHaveTextContent('64 GB');
+  });
+
+  it('shows GPU when present', () => {
+    const withGpu: NodeInfo = { ...nodeInfo, gpu: 'NVIDIA RTX 4090' };
+    renderNodeCard({ name: 'gpu-node', nodeInfo: withGpu, status: 'online', sessions: [] });
+    expect(screen.getByText('NVIDIA RTX 4090')).toBeInTheDocument();
+  });
+
+  it('hides GPU when null', () => {
+    renderNodeCard({ name: 'mac-studio', nodeInfo, status: 'online', sessions: [] });
+    expect(screen.queryByText('NVIDIA')).not.toBeInTheDocument();
+  });
+
+  it('shows address when provided', () => {
+    renderNodeCard({
+      name: 'mac-studio',
+      nodeInfo,
+      status: 'online',
+      sessions: [],
+      address: '100.64.0.1:7433',
+    });
+    expect(screen.getByText('100.64.0.1:7433')).toBeInTheDocument();
+  });
+
+  it('hides address when not provided', () => {
+    renderNodeCard({ name: 'mac-studio', nodeInfo, status: 'online', sessions: [] });
+    expect(screen.queryByText(/:\d{4}$/)).not.toBeInTheDocument();
+  });
+
+  it('does not render info bar when nodeInfo is null', () => {
+    renderNodeCard({ name: 'node', nodeInfo: null, status: 'offline', sessions: [] });
+    expect(screen.queryByTestId('node-info-bar')).not.toBeInTheDocument();
   });
 
   it('shows local badge', () => {
@@ -115,5 +158,11 @@ describe('NodeCard', () => {
   it('applies opacity class for offline nodes', () => {
     renderNodeCard({ name: 'node', nodeInfo: null, status: 'offline', sessions: [] });
     expect(screen.getByTestId('node-card').className).toContain('opacity-50');
+  });
+
+  it('formats memory in MB for small values', () => {
+    const smallMem: NodeInfo = { ...nodeInfo, memory_mb: 512 };
+    renderNodeCard({ name: 'node', nodeInfo: smallMem, status: 'online', sessions: [] });
+    expect(screen.getByTestId('node-info-bar')).toHaveTextContent('512 MB');
   });
 });

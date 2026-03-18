@@ -10,6 +10,7 @@ import { getPeers, getRemoteSessions } from '@/api/client';
 import { useSSE } from '@/hooks/use-sse';
 import { useConnection } from '@/hooks/use-connection';
 import { detectStatusChanges, showDesktopNotification } from '@/lib/notifications';
+import { formatMemory } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { NodeInfo, PeerInfo, Session } from '@/api/types';
 
@@ -112,27 +113,53 @@ export function DashboardPage() {
               <Tabs defaultValue="local" data-testid="node-tabs">
                 <TabsList>
                   <TabsTrigger value="local" data-testid="tab-local">
-                    <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-status-ready" />
-                    {localNode?.name ?? 'local'}
-                    <span className="ml-1.5 text-xs text-muted-foreground">
-                      ({activeSessions.length})
-                    </span>
+                    <div className="flex flex-col items-start leading-tight">
+                      <div className="flex items-center">
+                        <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-status-ready" />
+                        {localNode?.name ?? 'local'}
+                        <span className="ml-1.5 text-xs text-muted-foreground">
+                          ({activeSessions.length})
+                        </span>
+                      </div>
+                      {localNode && (
+                        <span
+                          className="ml-3.5 text-[0.625rem] text-muted-foreground"
+                          data-testid="tab-local-subtitle"
+                        >
+                          {localNode.os} · {localNode.cpus} CPU ·{' '}
+                          {formatMemory(localNode.memory_mb)}
+                        </span>
+                      )}
+                    </div>
                   </TabsTrigger>
                   {peers.map((peer) => (
                     <TabsTrigger key={peer.name} value={peer.name} data-testid={`tab-${peer.name}`}>
-                      <span
-                        className={`mr-1.5 inline-block h-2 w-2 rounded-full ${
-                          peer.status === 'online'
-                            ? 'bg-status-ready'
-                            : peer.status === 'offline'
-                              ? 'bg-status-killed'
-                              : 'bg-muted-foreground'
-                        }`}
-                      />
-                      {peer.name}
-                      <span className="ml-1.5 text-xs text-muted-foreground">
-                        ({(peerSessions[peer.name] ?? []).length})
-                      </span>
+                      <div className="flex flex-col items-start leading-tight">
+                        <div className="flex items-center">
+                          <span
+                            className={`mr-1.5 inline-block h-2 w-2 rounded-full ${
+                              peer.status === 'online'
+                                ? 'bg-status-ready'
+                                : peer.status === 'offline'
+                                  ? 'bg-status-killed'
+                                  : 'bg-muted-foreground'
+                            }`}
+                          />
+                          {peer.name}
+                          <span className="ml-1.5 text-xs text-muted-foreground">
+                            ({(peerSessions[peer.name] ?? []).length})
+                          </span>
+                        </div>
+                        {peer.node_info && (
+                          <span
+                            className="ml-3.5 text-[0.625rem] text-muted-foreground"
+                            data-testid={`tab-${peer.name}-subtitle`}
+                          >
+                            {peer.node_info.os} · {peer.node_info.cpus} CPU ·{' '}
+                            {formatMemory(peer.node_info.memory_mb)}
+                          </span>
+                        )}
+                      </div>
                     </TabsTrigger>
                   ))}
                 </TabsList>
@@ -157,6 +184,7 @@ export function DashboardPage() {
                       nodeInfo={peer.node_info}
                       status={peer.status}
                       sessions={peerSessions[peer.name] ?? []}
+                      address={peer.address}
                       onRefresh={fetchPeers}
                     />
                   </TabsContent>
