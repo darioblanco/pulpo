@@ -61,41 +61,81 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 
 ## What's Next
 
-### Phase 3: Background Agent Operations
+### Phase 3: Built-in Scheduler
+
+Replace the crontab wrapper with a first-class scheduler inside `pulpod`. Schedules are DB-backed, visible in the dashboard, and support multi-node targeting.
+
+**P3.1 — Scheduler engine**
+- `schedules` SQLite table: name, cron, command, workdir, target_node, ink, enabled, last_run_at, last_session_id
+- Scheduler loop (like watchdog): ticks every 60s, checks which schedules are due, calls `session_manager.create_session()`
+- Migrate existing crontab wrapper: `pulpo schedule` CRUD talks to the DB, not crontab
+- Run history: link spawned sessions back to their schedule
+
+**P3.2 — Multi-node scheduling**
+- `target_node` field: `NULL` = local, `"mac-mini"` = specific node, `"auto"` = least-loaded peer
+- Local schedules fire via `session_manager.create_session()` directly
+- Remote schedules fire via HTTP POST to the target node's `/api/v1/sessions`
+- Auto schedules use `select_best_node` logic at fire time
+
+**P3.3 — Schedule API + CLI**
+- REST CRUD: `POST/GET/PUT/DELETE /api/v1/schedules`, `GET /api/v1/schedules/:id/runs`
+- CLI: `pulpo schedule add nightly-review "0 3 * * *" --node gpu-box -- claude -p "review"`
+- CLI: `pulpo schedule list`, `pulpo schedule pause <name>`, `pulpo schedule remove <name>`
+- SSE events for schedule fires and failures
+
+**P3.4 — Schedule dashboard**
+- Schedule list: name, cron, next run, last run, target node, enabled toggle
+- Create/edit schedule dialog with cron builder
+- Run history per schedule (links to spawned sessions)
+- Schedule notifications: fire, success, failure
+
+### Phase 4: Worktree Support
+
+Spawn agents in isolated git worktrees so multiple agents can work on the same repo without conflicts. Infrastructure-level feature — works with any agent, not just Claude Code.
+
+**P4.1 — Worktree lifecycle**
+- `pulpo spawn my-task --workdir ~/repos/my-api --worktree -- claude -p "fix auth"`
+- Creates a git worktree at `<repo>/.pulpo/worktrees/<session-name>/`
+- Session's workdir is set to the worktree path
+- Worktree is cleaned up when session is killed or deleted
+- Branch name defaults to session name (e.g., `pulpo/my-task`)
+
+**P4.2 — Worktree in dashboard**
+- Worktree badge on session cards
+- Branch name visible in session detail
+- "Merge" action: merge worktree branch back to main (or create PR)
+
+### Phase 5: Background Agent Operations
 
 Make agents reliable when nobody is watching.
 
-**P3.1 — Session cost tracking**
-- Track wall-clock time per session
-- Configurable cost-per-hour estimate (user sets their API cost rate)
+**P5.1 — Session cost tracking**
+- Track wall-clock time per session (already have created_at/updated_at)
+- Configurable cost-per-hour estimate (user sets API cost rate)
 - Dashboard shows cumulative cost per session, per day, per node
 - Budget alerts via notifications
+- Stretch: parse Claude Code transcript JSONL for real token costs
 
-**P3.2 — Enhanced scheduling**
-- `pulpo schedule` with node targeting: run nightly jobs on the beefy server
-- Schedule status in dashboard (next run, last run, last result)
-- Retry on failure with configurable backoff
-
-**P3.3 — Output-based completion detection**
+**P5.2 — Output-based completion detection**
 - Detect PR URLs in agent output → link in dashboard
 - Detect error patterns → auto-alert
 - Configurable output matchers (regex → action)
 
-### Phase 4: Team Readiness
+### Phase 6: Team Readiness
 
 When it's not just you anymore.
 
-**P4.1 — Session ownership and audit**
+**P6.1 — Session ownership and audit**
 - Track who spawned each session (user identity from token)
 - Audit log: who did what, when, on which node
 - Read-only dashboard access for observers
 
-**P4.2 — Resource policies**
+**P6.2 — Resource policies**
 - Per-node session limits (max 5 concurrent agents)
 - Memory reservation per session
 - Auto-kill sessions exceeding time limits
 
-**P4.3 — Shared ink library**
+**P6.3 — Shared ink library**
 - Sync inks across nodes automatically
 - Ink versioning (so a team agrees on standard workflows)
 
@@ -127,6 +167,7 @@ Pulpo is succeeding if:
 - Watchdog catches runaway agents before they burn through your API budget
 - Sessions survive machine reboots and you resume them without losing context
 - Multiple agents run overnight and you wake up to PRs, not crashed terminals
+- Nightly code reviews and security scans run themselves, you just check results in the morning
 
 ## Architectural Principles
 
