@@ -18,6 +18,8 @@ pub struct CreateSessionRequest {
     pub idle_threshold_secs: Option<u32>,
     /// Create in an isolated git worktree.
     pub worktree: Option<bool>,
+    /// Run in a Docker sandbox container.
+    pub sandbox: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -581,6 +583,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("/tmp"));
@@ -1114,6 +1117,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            sandbox: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -1212,6 +1216,7 @@ mod tests {
                 idle_since: None,
                 idle_threshold_secs: None,
                 worktree_path: None,
+                sandbox: false,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             },

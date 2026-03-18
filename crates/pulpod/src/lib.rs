@@ -158,7 +158,7 @@ async fn upgrade_backend_ids(manager: &SessionManager, store: &store::Store) {
         if session
             .backend_session_id
             .as_ref()
-            .is_some_and(|id| id.starts_with('$'))
+            .is_some_and(|id| id.starts_with('$') || id.starts_with("docker:"))
         {
             continue;
         }
@@ -218,13 +218,31 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let node_name = config.node.name.clone();
     let (event_tx, _) = broadcast::channel::<PulpoEvent>(256);
 
-    let manager = SessionManager::new(
+    let sandbox_backend: Option<Arc<dyn backend::Backend>> = if config.sandbox.image.is_empty() {
+        None
+    } else {
+        #[cfg(not(coverage))]
+        {
+            Some(Arc::new(backend::docker::DockerBackend::new(
+                &config.sandbox.image,
+            )))
+        }
+        #[cfg(coverage)]
+        {
+            None
+        }
+    };
+
+    let mut manager = SessionManager::new(
         backend,
         store.clone(),
         config.inks.clone(),
         config.node.default_command.clone(),
     )
     .with_event_tx(event_tx.clone(), node_name.clone());
+    if let Some(ref sb) = sandbox_backend {
+        manager = manager.with_sandbox_backend(sb.clone());
+    }
 
     // Auto-resume sessions that were active before a restart
     match manager.resume_lost_sessions().await {

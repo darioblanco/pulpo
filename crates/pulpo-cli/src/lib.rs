@@ -83,6 +83,10 @@ pub enum Commands {
         #[arg(long)]
         worktree: bool,
 
+        /// Run in a Docker sandbox container
+        #[arg(long)]
+        sandbox: bool,
+
         /// Command to run (everything after --)
         #[arg(last = true)]
         command: Vec<String>,
@@ -1005,6 +1009,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             idle_threshold,
             auto,
             worktree,
+            sandbox,
             command,
         } => {
             let cmd = if command.is_empty() {
@@ -1042,6 +1047,9 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             if *worktree {
                 body["worktree"] = serde_json::json!(true);
+            }
+            if *sandbox {
+                body["sandbox"] = serde_json::json!(true);
             }
             let spawn_url = if *auto {
                 let (auto_addr, auto_name) =
@@ -1582,6 +1590,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                sandbox: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1606,6 +1615,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                sandbox: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1629,6 +1639,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                sandbox: false,
                 command: vec![],
             }),
             path: None,
@@ -1652,6 +1663,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                sandbox: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1675,6 +1687,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                sandbox: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1913,6 +1926,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                sandbox: false,
                 command: vec!["test".into()],
             }),
             path: None,
@@ -2100,6 +2114,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            sandbox: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
@@ -2138,6 +2153,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            sandbox: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
@@ -2236,6 +2252,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                sandbox: false,
                 command: vec!["test".into()],
             }),
             path: None,
@@ -3698,6 +3715,7 @@ mod tests {
                 idle_threshold: None,
                 auto: true,
                 worktree: false,
+                sandbox: false,
                 command: vec!["echo".into(), "hello".into()],
             }),
             path: None,

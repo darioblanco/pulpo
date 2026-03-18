@@ -53,6 +53,7 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - Full command capture for adopted sessions
 - Optimized `follow_logs` (reduced HTTP polling)
 - Default-to-shell spawn: `pulpo spawn my-session` with no command opens `$SHELL`
+- Docker sandbox: `pulpo spawn --sandbox` runs sessions in isolated Docker containers
 - CLI node name resolution: `pulpo --node mac-mini spawn` resolves peer names via registry
 - Token forwarding from peer config entries
 - Fleet sessions endpoint (`GET /api/v1/fleet/sessions`) — server-side aggregation
@@ -146,7 +147,7 @@ Revisit when demanded by real usage, not by speculation.
 - **Agent-to-agent communication** — orchestration frameworks (Gas Town) handle this better. Pulpo is infrastructure, not workflow.
 - **MCP server expansion** — the existing STDIO server (12 tools, 4 resources) works. REST APIs are winning over MCP for integration. Keep as-is.
 - **Multi-user auth** — only if team adoption materializes.
-- **Docker runtime backend** — only if container-based agent execution shows demand.
+- ~~**Docker runtime backend**~~ — shipped as `--sandbox` flag.
 - **Node labels/scheduling constraints** — useful at fleet scale, premature now.
 - **SLO metrics / Prometheus endpoint** — observability for its own sake; dashboard shows what matters.
 

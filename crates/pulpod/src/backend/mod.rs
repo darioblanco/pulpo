@@ -1,3 +1,4 @@
+pub mod docker;
 pub mod tmux;
 
 use anyhow::Result;

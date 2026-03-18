@@ -16,6 +16,7 @@ use crate::store::Store;
 #[derive(Clone)]
 pub struct SessionManager {
     backend: Arc<dyn Backend>,
+    sandbox_backend: Option<Arc<dyn Backend>>,
     store: Store,
     inks: HashMap<String, InkConfig>,
     default_command: Option<String>,
@@ -35,12 +36,28 @@ impl SessionManager {
     ) -> Self {
         Self {
             backend,
+            sandbox_backend: None,
             store,
             inks,
             default_command,
             event_tx: None,
             node_name: String::new(),
             stale_grace_secs: 5,
+        }
+    }
+
+    #[must_use]
+    pub fn with_sandbox_backend(mut self, backend: Arc<dyn Backend>) -> Self {
+        self.sandbox_backend = Some(backend);
+        self
+    }
+
+    /// Get the right backend for a session based on its `backend_session_id`.
+    fn backend_for_id(&self, backend_id: &str) -> &Arc<dyn Backend> {
+        if crate::backend::docker::is_docker_session(backend_id) {
+            self.sandbox_backend.as_ref().unwrap_or(&self.backend)
+        } else {
+            &self.backend
         }
     }
 
@@ -127,10 +144,22 @@ impl SessionManager {
 
         let id = Uuid::new_v4();
         let name = req.name.clone();
-        let backend_id = self.backend.session_id(&name);
+        let is_sandbox = req.sandbox.unwrap_or(false);
+        let backend_id = if is_sandbox {
+            if self.sandbox_backend.is_none() {
+                bail!("sandbox not configured — set [sandbox] image in config.toml");
+            }
+            format!("docker:pulpo-{}", req.name)
+        } else {
+            self.backend.session_id(&name)
+        };
 
-        // Wrap command: bash -l -c "<escaped>; echo '[pulpo] Agent exited'; exec bash"
-        let wrapped = wrap_command(&command, &id, &name);
+        // Sandbox sessions run the command directly; tmux sessions get the wrapper
+        let final_command = if is_sandbox {
+            command.clone()
+        } else {
+            wrap_command(&command, &id, &name)
+        };
 
         let now = Utc::now();
         let session = Session {
@@ -152,15 +181,15 @@ impl SessionManager {
             idle_since: None,
             idle_threshold_secs: req.idle_threshold_secs,
             worktree_path,
+            sandbox: is_sandbox,
             created_at: now,
             updated_at: now,
         };
 
         self.store.insert_session(&session).await?;
 
-        if let Err(e) = self
-            .backend
-            .create_session(&backend_id, &session.workdir, &wrapped)
+        let active_backend = self.backend_for_id(&backend_id);
+        if let Err(e) = active_backend.create_session(&backend_id, &session.workdir, &final_command)
         {
             self.store
                 .update_session_status(&id.to_string(), SessionStatus::Killed)
@@ -168,9 +197,9 @@ impl SessionManager {
             return Err(e);
         }
 
-        // Query the tmux $N session ID and update if available
+        // Query the tmux $N session ID and update if available (tmux only)
         let mut session = session;
-        if let Ok(tmux_id) = self.backend.query_backend_id(&name) {
+        if !is_sandbox && let Ok(tmux_id) = self.backend.query_backend_id(&name) {
             let _ = self
                 .store
                 .update_backend_session_id(&id.to_string(), &tmux_id)
@@ -186,7 +215,7 @@ impl SessionManager {
         let log_dir = format!("{}/logs", self.store.data_dir());
         let _ = std::fs::create_dir_all(&log_dir);
         let log_path = format!("{log_dir}/{id}.log");
-        let _ = self.backend.setup_logging(&backend_id, &log_path);
+        let _ = active_backend.setup_logging(&backend_id, &log_path);
 
         // Return the session with updated status (avoids unnecessary re-fetch)
         session.status = SessionStatus::Active;
@@ -275,7 +304,7 @@ impl SessionManager {
             return Ok(false);
         }
         let backend_id = self.resolve_backend_id(session);
-        let alive = self.backend.is_alive(&backend_id)?;
+        let alive = self.backend_for_id(&backend_id).is_alive(&backend_id)?;
         if alive {
             return Ok(false);
         }
@@ -294,7 +323,8 @@ impl SessionManager {
             .ok_or_else(|| anyhow!("session not found: {id}"))?;
 
         let backend_id = self.resolve_backend_id(&session);
-        if let Err(e) = self.backend.kill_session(&backend_id) {
+        let backend = self.backend_for_id(&backend_id);
+        if let Err(e) = backend.kill_session(&backend_id) {
             bail!("failed to kill session: {e}");
         }
 
@@ -332,7 +362,7 @@ impl SessionManager {
 
         // Best-effort cleanup of any lingering backend session
         let backend_id = self.resolve_backend_id(&session);
-        let _ = self.backend.kill_session(&backend_id);
+        let _ = self.backend_for_id(&backend_id).kill_session(&backend_id);
 
         self.store.delete_session(&session.id.to_string()).await?;
         // Clean up worktree if this was a worktree session
@@ -383,14 +413,20 @@ impl SessionManager {
         // If the backend session is still alive, just re-mark it as running.
         // Only recreate the session if the backend process is gone.
         let backend_id = self.resolve_backend_id(&session);
-        let alive = self.backend.is_alive(&backend_id)?;
+        let active_backend = self.backend_for_id(&backend_id);
+        let alive = active_backend.is_alive(&backend_id)?;
         if !alive {
-            let wrapped = wrap_command(&session.command, &session.id, &session.name);
-            self.backend
-                .create_session(&backend_id, &session.workdir, &wrapped)?;
+            let final_command = if session.sandbox {
+                session.command.clone()
+            } else {
+                wrap_command(&session.command, &session.id, &session.name)
+            };
+            active_backend.create_session(&backend_id, &session.workdir, &final_command)?;
 
-            // Query the new tmux $N session ID
-            if let Ok(tmux_id) = self.backend.query_backend_id(&session.name) {
+            // Query the new tmux $N session ID (tmux only)
+            if !session.sandbox
+                && let Ok(tmux_id) = self.backend.query_backend_id(&session.name)
+            {
                 let _ = self
                     .store
                     .update_backend_session_id(&session.id.to_string(), &tmux_id)
@@ -421,15 +457,19 @@ impl SessionManager {
                 continue;
             }
             let backend_id = self.resolve_backend_id(&session);
-            let alive = self.backend.is_alive(&backend_id).unwrap_or(false);
+            let active_backend = self.backend_for_id(&backend_id);
+            let alive = active_backend.is_alive(&backend_id).unwrap_or(false);
             if alive {
                 continue;
             }
             // Backend is dead — resume the session
-            let wrapped = wrap_command(&session.command, &session.id, &session.name);
-            if let Err(e) = self
-                .backend
-                .create_session(&backend_id, &session.workdir, &wrapped)
+            let final_command = if session.sandbox {
+                session.command.clone()
+            } else {
+                wrap_command(&session.command, &session.id, &session.name)
+            };
+            if let Err(e) =
+                active_backend.create_session(&backend_id, &session.workdir, &final_command)
             {
                 tracing::warn!(
                     session = %session.name,
@@ -442,8 +482,10 @@ impl SessionManager {
                 continue;
             }
 
-            // Query the new tmux $N session ID
-            if let Ok(tmux_id) = self.backend.query_backend_id(&session.name) {
+            // Query the new tmux $N session ID (tmux only)
+            if !session.sandbox
+                && let Ok(tmux_id) = self.backend.query_backend_id(&session.name)
+            {
                 let _ = self
                     .store
                     .update_backend_session_id(&session.id.to_string(), &tmux_id)
@@ -704,6 +746,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         }
     }
 
@@ -740,6 +783,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -775,6 +819,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -807,6 +852,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Explicit command wins over ink command
@@ -826,6 +872,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let result = mgr.create_session(req).await;
         let err = result.unwrap_err().to_string();
@@ -844,6 +891,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert!(!session.workdir.is_empty());
@@ -1461,6 +1509,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (cmd, desc) = mgr.resolve_ink(&req).unwrap();
         // Falls back to $SHELL or /bin/sh
@@ -1494,6 +1543,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.description, Some("Ink desc".into()));
@@ -1525,6 +1575,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         // Ink with no command falls back to $SHELL
         let session = mgr.create_session(req).await.unwrap();
@@ -1550,6 +1601,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude");
@@ -1574,6 +1626,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "custom-agent");
@@ -1606,6 +1659,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -1623,6 +1677,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -1729,6 +1784,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            sandbox: false,
             created_at: Utc::now() - chrono::Duration::hours(1),
             updated_at: Utc::now(),
         };

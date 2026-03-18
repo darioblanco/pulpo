@@ -331,6 +331,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                sandbox: crate::config::SandboxConfig::default(),
             },
             manager,
             peer_registry,
@@ -364,6 +365,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let _ = create(State(state.clone()), Json(req)).await.unwrap();
 
@@ -404,6 +406,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_ok());
@@ -424,6 +427,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let _ = create(State(state.clone()), Json(req())).await.unwrap();
         let result = create(State(state), Json(req())).await;
@@ -454,6 +458,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -474,6 +479,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -507,6 +513,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -625,6 +632,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                sandbox: crate::config::SandboxConfig::default(),
             },
             manager,
             peer_registry,
@@ -645,6 +653,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -668,6 +677,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -703,6 +713,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                sandbox: crate::config::SandboxConfig::default(),
             },
             manager,
             peer_registry,
@@ -718,6 +729,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_err());
@@ -737,6 +749,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -761,6 +774,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -797,6 +811,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                sandbox: crate::config::SandboxConfig::default(),
             },
             manager,
             peer_registry,
@@ -816,6 +831,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -840,6 +856,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -928,6 +945,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -965,6 +983,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            sandbox: false,
             created_at: now,
             updated_at: now,
         };
@@ -994,6 +1013,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1028,6 +1048,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1051,6 +1072,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1072,6 +1094,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1137,6 +1160,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1206,6 +1230,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                sandbox: crate::config::SandboxConfig::default(),
             },
             manager,
             peer_registry,
@@ -1222,6 +1247,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1260,6 +1286,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                sandbox: crate::config::SandboxConfig::default(),
             },
             manager,
             peer_registry,
@@ -1276,6 +1303,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let old_id = resp.session.id.to_string();
@@ -1295,6 +1323,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let _ = create(State(state.clone()), Json(req2)).await.unwrap();
 
@@ -1378,6 +1407,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                sandbox: crate::config::SandboxConfig::default(),
             },
             manager,
             peer_registry,
@@ -1394,6 +1424,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1420,6 +1451,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1443,6 +1475,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;

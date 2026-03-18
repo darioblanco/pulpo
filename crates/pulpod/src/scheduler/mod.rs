@@ -120,6 +120,7 @@ async fn fire_due_schedules(
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            sandbox: None,
         };
 
         match session_manager.create_session(req).await {

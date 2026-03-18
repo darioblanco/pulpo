@@ -418,6 +418,7 @@ impl PulpoMcp {
                 metadata,
                 idle_threshold_secs: None,
                 worktree: None,
+                sandbox: None,
             };
             self.session_manager.create_session(req).await
         } else {
@@ -490,6 +491,7 @@ impl PulpoMcp {
                 metadata: None,
                 idle_threshold_secs: None,
                 worktree: None,
+                sandbox: None,
             };
             self.session_manager.create_session(req).await
         } else {
@@ -957,6 +959,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            sandbox: crate::config::SandboxConfig::default(),
         }
     }
 
@@ -1702,6 +1705,7 @@ mod tests {
                 idle_since: None,
                 idle_threshold_secs: None,
                 worktree_path: None,
+                sandbox: false,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             },
@@ -1825,6 +1829,7 @@ mod tests {
                 idle_since: None,
                 idle_threshold_secs: None,
                 worktree_path: None,
+                sandbox: false,
                 created_at: chrono::Utc::now(),
                 updated_at: chrono::Utc::now(),
             },
@@ -2041,6 +2046,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            sandbox: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
@@ -2066,6 +2072,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            sandbox: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }

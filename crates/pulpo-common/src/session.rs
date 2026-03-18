@@ -107,6 +107,9 @@ pub struct Session {
     /// Path to the git worktree created for this session, if any.
     /// When set, the worktree is cleaned up when the session is killed or deleted.
     pub worktree_path: Option<String>,
+    /// Whether this session runs in a Docker sandbox.
+    #[serde(default)]
+    pub sandbox: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -136,6 +139,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            sandbox: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -279,6 +283,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            sandbox: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -324,6 +329,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            sandbox: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -352,6 +358,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            sandbox: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -383,6 +390,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            sandbox: false,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

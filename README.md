@@ -43,6 +43,9 @@ pulpo schedule add nightly "0 3 * * *" --node gpu-box -- claude -p "review code"
 # Auto-select the least loaded machine
 pulpo spawn review --auto -- claude -p "security audit"
 
+# Run in a Docker sandbox (safe for --dangerously-skip-permissions)
+pulpo spawn risky-task --sandbox -- claude --dangerously-skip-permissions -p "refactor everything"
+
 # Check from your phone
 open http://localhost:7433  # PWA with push notifications
 ```
@@ -54,6 +57,7 @@ open http://localhost:7433  # PWA with push notifications
 - **Watchdog supervision** — memory pressure kills, idle detection (31 built-in patterns for Claude Code, Codex, Gemini, Aider, Amazon Q), configurable per-session thresholds.
 - **Git worktrees** — `--worktree` isolates each agent in its own worktree. Multiple agents work on the same repo without conflicts. Works with any agent.
 - **Built-in scheduler** — cron-based schedules with multi-node targeting. Run nightly reviews on the beefy server, auto-select least loaded node.
+- **Docker sandbox** — `--sandbox` runs sessions in Docker containers. Safe for `--dangerously-skip-permissions` — the agent can't touch your host. Configure the image in `[sandbox]` config.
 - **Adopts existing tmux** — start tmux however you want, pulpo discovers it and brings it under management. No migration needed.
 - **Command-agnostic** — Claude Code, Codex, Gemini CLI, Aider, shell scripts, anything. Same lifecycle, same controls.
 - **6 control surfaces** — CLI, web UI (PWA + push notifications), REST API, SSE events, MCP server, Discord bot.
