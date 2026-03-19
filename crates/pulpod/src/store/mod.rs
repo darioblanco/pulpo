@@ -307,11 +307,22 @@ impl Store {
     }
 
     pub async fn get_session(&self, id_or_name: &str) -> Result<Option<Session>> {
-        let row = sqlx::query("SELECT * FROM sessions WHERE id = ? OR name = ?")
-            .bind(id_or_name)
-            .bind(id_or_name)
-            .fetch_optional(&self.pool)
-            .await?;
+        // Prefer live sessions over terminal ones when multiple share a name.
+        // UUID matches are always exact (one result), but name matches may
+        // return duplicates (e.g., a "ready" and a "lost" session both named "backbone").
+        let row = sqlx::query(
+            "SELECT * FROM sessions WHERE id = ? OR name = ? \
+             ORDER BY CASE status \
+               WHEN 'active' THEN 0 WHEN 'idle' THEN 1 \
+               WHEN 'creating' THEN 2 WHEN 'ready' THEN 3 \
+               WHEN 'lost' THEN 4 WHEN 'killed' THEN 5 \
+               ELSE 6 END \
+             LIMIT 1",
+        )
+        .bind(id_or_name)
+        .bind(id_or_name)
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(|r| row_to_session(&r)).transpose()
     }
 
@@ -857,6 +868,32 @@ mod tests {
 
         let result = store.get_session("nonexistent-name").await.unwrap();
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_session_prefers_live_over_terminal() {
+        let store = test_store().await;
+
+        // Insert a killed session with name "dup"
+        let mut killed = make_session("dup");
+        killed.id = uuid::Uuid::new_v4();
+        killed.status = SessionStatus::Killed;
+        // Remove from unique index by marking killed before insert
+        store.insert_session(&killed).await.unwrap();
+
+        // Insert a ready session with the same name "dup"
+        let mut ready = make_session("dup-ready");
+        ready.id = uuid::Uuid::new_v4();
+        ready.name = "dup".into();
+        ready.status = SessionStatus::Ready;
+        // The unique index only covers creating/active/idle/ready,
+        // and killed is excluded, so this insert should work
+        store.insert_session(&ready).await.unwrap();
+
+        // get_session by name should return the ready one, not the killed one
+        let fetched = store.get_session("dup").await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Ready);
+        assert_eq!(fetched.id, ready.id);
     }
 
     #[tokio::test]
