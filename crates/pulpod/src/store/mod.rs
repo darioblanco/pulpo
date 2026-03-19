@@ -67,18 +67,6 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
-        // Idempotent migration: add guard_config column if missing
-        let has_guard = sqlx::query_scalar::<_, i32>(
-            "SELECT count(*) FROM pragma_table_info('sessions') WHERE name = 'guard_config'",
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        if has_guard == 0 {
-            sqlx::query("ALTER TABLE sessions ADD COLUMN guard_config TEXT")
-                .execute(&self.pool)
-                .await?;
-        }
-
         // Idempotent migration: add intervention columns if missing
         let has_intervention = sqlx::query_scalar::<_, i32>(
             "SELECT count(*) FROM pragma_table_info('sessions') WHERE name = 'intervention_reason'",
@@ -118,48 +106,6 @@ impl Store {
                 .await?;
         }
 
-        // Idempotent migration: model column
-        let has_model: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'model'",
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        if has_model == 0 {
-            sqlx::query("ALTER TABLE sessions ADD COLUMN model TEXT")
-                .execute(&self.pool)
-                .await?;
-            sqlx::query("ALTER TABLE sessions ADD COLUMN allowed_tools TEXT")
-                .execute(&self.pool)
-                .await?;
-            sqlx::query("ALTER TABLE sessions ADD COLUMN system_prompt TEXT")
-                .execute(&self.pool)
-                .await?;
-            sqlx::query("ALTER TABLE sessions ADD COLUMN metadata TEXT")
-                .execute(&self.pool)
-                .await?;
-            sqlx::query("ALTER TABLE sessions ADD COLUMN ink TEXT")
-                .execute(&self.pool)
-                .await?;
-        }
-
-        // Idempotent migration: max_turns, max_budget_usd, output_format columns
-        let has_max_turns: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'max_turns'",
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        if has_max_turns == 0 {
-            sqlx::query("ALTER TABLE sessions ADD COLUMN max_turns INTEGER")
-                .execute(&self.pool)
-                .await?;
-            sqlx::query("ALTER TABLE sessions ADD COLUMN max_budget_usd REAL")
-                .execute(&self.pool)
-                .await?;
-            sqlx::query("ALTER TABLE sessions ADD COLUMN output_format TEXT")
-                .execute(&self.pool)
-                .await?;
-        }
-
         // Idempotent migration: append-only intervention events table
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS intervention_events (
@@ -171,18 +117,6 @@ impl Store {
         )
         .execute(&self.pool)
         .await?;
-
-        // Idempotent migration: rename repo_path → workdir
-        let has_repo_path: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'repo_path'",
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        if has_repo_path > 0 {
-            sqlx::query("ALTER TABLE sessions RENAME COLUMN repo_path TO workdir")
-                .execute(&self.pool)
-                .await?;
-        }
 
         // Idempotent migration: add intervention_code column to sessions
         let has_intervention_code: i32 = sqlx::query_scalar(
@@ -208,61 +142,34 @@ impl Store {
                 .await?;
         }
 
-        // Idempotent migration: rename persona → ink
-        let has_persona: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'persona'",
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        if has_persona > 0 {
-            sqlx::query("ALTER TABLE sessions RENAME COLUMN persona TO ink")
-                .execute(&self.pool)
-                .await?;
-        }
-
-        // Idempotent migration: rename tmux_session → backend_session_id
-        let has_tmux_session: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'tmux_session'",
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        if has_tmux_session > 0 {
-            sqlx::query("ALTER TABLE sessions RENAME COLUMN tmux_session TO backend_session_id")
-                .execute(&self.pool)
-                .await?;
-        }
-
-        // Idempotent migration: rename session status values
-        // running→active, completed→ready, dead→killed, stale→lost
-        let has_old_statuses: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sessions WHERE status IN ('running', 'completed', 'dead', 'stale')",
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        if has_old_statuses > 0 {
-            sqlx::query("UPDATE sessions SET status = 'active' WHERE status = 'running'")
-                .execute(&self.pool)
-                .await?;
-            sqlx::query("UPDATE sessions SET status = 'ready' WHERE status = 'completed'")
-                .execute(&self.pool)
-                .await?;
-            sqlx::query("UPDATE sessions SET status = 'killed' WHERE status = 'dead'")
-                .execute(&self.pool)
-                .await?;
-            sqlx::query("UPDATE sessions SET status = 'lost' WHERE status = 'stale'")
-                .execute(&self.pool)
-                .await?;
-        }
-
         // Partial unique index: prevent two live sessions with the same name.
         // SQLite enforces this at insert/update time, closing the race window
         // between the application-level check and the actual insert.
+        // Drop first to ensure the index definition stays up-to-date.
+        sqlx::query("DROP INDEX IF EXISTS idx_sessions_live_name")
+            .execute(&self.pool)
+            .await?;
         sqlx::query(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_live_name \
-             ON sessions(name) WHERE status IN ('creating', 'active', 'idle')",
+             ON sessions(name) WHERE status IN ('creating', 'active', 'idle', 'ready')",
         )
         .execute(&self.pool)
         .await?;
+
+        // Idempotent migration: metadata + ink columns
+        let has_metadata: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'metadata'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_metadata == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN metadata TEXT")
+                .execute(&self.pool)
+                .await?;
+            sqlx::query("ALTER TABLE sessions ADD COLUMN ink TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
 
         // Idempotent migration: command + description columns
         let has_command: i32 = sqlx::query_scalar(
@@ -278,27 +185,6 @@ impl Store {
                 .execute(&self.pool)
                 .await?;
         }
-
-        // Idempotent migration: rename finished → exited
-        sqlx::query("UPDATE sessions SET status = 'exited' WHERE status = 'finished'")
-            .execute(&self.pool)
-            .await?;
-
-        // Idempotent migration: rename exited → ready
-        sqlx::query("UPDATE sessions SET status = 'ready' WHERE status = 'exited'")
-            .execute(&self.pool)
-            .await?;
-
-        // Update partial unique index to include 'ready' status
-        sqlx::query("DROP INDEX IF EXISTS idx_sessions_live_name")
-            .execute(&self.pool)
-            .await?;
-        sqlx::query(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_live_name \
-             ON sessions(name) WHERE status IN ('creating', 'active', 'idle', 'ready')",
-        )
-        .execute(&self.pool)
-        .await?;
 
         // Idempotent migration: idle_threshold_secs column
         let has_idle_threshold = sqlx::query_scalar::<_, i32>(
@@ -488,20 +374,6 @@ impl Store {
     pub async fn update_session_status(&self, id: &str, status: SessionStatus) -> Result<()> {
         sqlx::query("UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?")
             .bind(status.to_string())
-            .bind(Utc::now().to_rfc3339())
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    pub async fn update_session_conversation_id(
-        &self,
-        id: &str,
-        conversation_id: &str,
-    ) -> Result<()> {
-        sqlx::query("UPDATE sessions SET conversation_id = ?, updated_at = ? WHERE id = ?")
-            .bind(conversation_id)
             .bind(Utc::now().to_rfc3339())
             .bind(id)
             .execute(&self.pool)
@@ -1136,37 +1008,6 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(fetched.status, SessionStatus::Ready);
-    }
-
-    #[tokio::test]
-    async fn test_update_session_conversation_id() {
-        let store = test_store().await;
-        let session = make_session("conv-test");
-        store.insert_session(&session).await.unwrap();
-
-        store
-            .update_session_conversation_id(&session.id.to_string(), "conv-xyz")
-            .await
-            .unwrap();
-
-        let _fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_update_session_conversation_id_after_table_dropped() {
-        let store = test_store().await;
-        sqlx::query("DROP TABLE sessions")
-            .execute(store.pool())
-            .await
-            .unwrap();
-        let result = store
-            .update_session_conversation_id("test-id", "conv-abc")
-            .await;
-        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -2043,110 +1884,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_migrate_renames_repo_path_to_workdir() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-
-        // Create legacy schema with repo_path column
-        sqlx::query(
-            "CREATE TABLE sessions (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                repo_path TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                prompt TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'creating',
-                mode TEXT NOT NULL DEFAULT 'interactive',
-                conversation_id TEXT,
-                exit_code INTEGER,
-                backend_session_id TEXT,
-                output_snapshot TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )",
-        )
-        .execute(store.pool())
-        .await
-        .unwrap();
-
-        // Insert a row using the old column name
-        sqlx::query(
-            "INSERT INTO sessions (id, name, repo_path, provider, prompt, status, mode, created_at, updated_at)
-             VALUES ('test-id', 'test', '/old/path', 'claude', 'test', 'active', 'interactive',
-                     '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
-        )
-        .execute(store.pool())
-        .await
-        .unwrap();
-
-        // Run migration — should rename column
-        store.migrate().await.unwrap();
-
-        // Verify we can query the new column name
-        let workdir: String =
-            sqlx::query_scalar("SELECT workdir FROM sessions WHERE id = 'test-id'")
-                .fetch_one(store.pool())
-                .await
-                .unwrap();
-        assert_eq!(workdir, "/old/path");
-
-        // Running migration again should be idempotent
-        store.migrate().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_migrate_renames_tmux_session_to_backend_session_id() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-
-        // Create legacy schema with tmux_session column (old name)
-        sqlx::query(
-            "CREATE TABLE sessions (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                workdir TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                prompt TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'creating',
-                mode TEXT NOT NULL DEFAULT 'interactive',
-                conversation_id TEXT,
-                exit_code INTEGER,
-                tmux_session TEXT,
-                output_snapshot TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )",
-        )
-        .execute(store.pool())
-        .await
-        .unwrap();
-
-        // Insert a row using the old column name
-        sqlx::query(
-            "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode, tmux_session, created_at, updated_at)
-             VALUES ('test-id', 'test', '/tmp', 'claude', 'test', 'active', 'interactive', 'pulpo-test',
-                     '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
-        )
-        .execute(store.pool())
-        .await
-        .unwrap();
-
-        // Run migration — should rename column
-        store.migrate().await.unwrap();
-
-        // Verify we can query the new column name
-        let backend_id: String =
-            sqlx::query_scalar("SELECT backend_session_id FROM sessions WHERE id = 'test-id'")
-                .fetch_one(store.pool())
-                .await
-                .unwrap();
-        assert_eq!(backend_id, "pulpo-test");
-
-        // Running migration again should be idempotent
-        store.migrate().await.unwrap();
-    }
-
-    #[tokio::test]
     async fn test_migrate_closed_pool_error() {
         let store = test_store().await;
         store.pool().close().await;
@@ -2244,50 +1981,6 @@ mod tests {
 
         let events = store.list_intervention_events(&sid).await.unwrap();
         assert_eq!(events[0].code, Some(InterventionCode::UserKill));
-    }
-
-    #[tokio::test]
-    async fn test_migrate_renames_old_status_values() {
-        let store = test_store().await;
-
-        // Insert sessions with old status values directly via SQL
-        let id_a = uuid::Uuid::new_v4().to_string();
-        let id_b = uuid::Uuid::new_v4().to_string();
-        let id_c = uuid::Uuid::new_v4().to_string();
-        let id_d = uuid::Uuid::new_v4().to_string();
-        let ts = "2026-01-01T00:00:00Z";
-        for (id, name, status) in [
-            (&id_a, "old-running", "running"),
-            (&id_b, "old-completed", "completed"),
-            (&id_c, "old-dead", "dead"),
-            (&id_d, "old-stale", "stale"),
-        ] {
-            sqlx::query(
-                "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode, created_at, updated_at)
-                 VALUES (?, ?, '/tmp', 'claude', 'p', ?, 'interactive', ?, ?)",
-            )
-            .bind(id)
-            .bind(name)
-            .bind(status)
-            .bind(ts)
-            .bind(ts)
-            .execute(&store.pool)
-            .await
-            .unwrap();
-        }
-
-        // Re-run migration
-        store.migrate().await.unwrap();
-
-        // Verify all statuses were renamed
-        let a = store.get_session(&id_a).await.unwrap().unwrap();
-        assert_eq!(a.status, SessionStatus::Active);
-        let b = store.get_session(&id_b).await.unwrap().unwrap();
-        assert_eq!(b.status, SessionStatus::Ready);
-        let c = store.get_session(&id_c).await.unwrap().unwrap();
-        assert_eq!(c.status, SessionStatus::Killed);
-        let d = store.get_session(&id_d).await.unwrap().unwrap();
-        assert_eq!(d.status, SessionStatus::Lost);
     }
 
     #[tokio::test]
