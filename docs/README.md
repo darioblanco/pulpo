@@ -28,6 +28,8 @@ features:
     details: Cron-based schedules with multi-node targeting. Run nightly reviews on the beefy server, auto-select least loaded node. Dashboard shows schedule status, last run, and run history.
   - title: Watchdog Supervision
     details: Memory pressure detection, configurable idle thresholds (global and per-session), kill policies, and intervention audit trails. Agents run overnight without burning your API budget.
+  - title: Windows Support
+    details: Pulpo runs on Windows using Docker containers — the only agent runtime that supports Windows. Download from GitHub Releases, no tmux required.
   - title: 6 Control Surfaces
     details: CLI, web UI (PWA with push notifications), REST API, SSE event stream, MCP server, and Discord bot. Manage agents from your phone while away from your desk.
 ---

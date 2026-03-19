@@ -63,7 +63,7 @@ async fn handle_stream(
     session_id: &str,
     backend: &Arc<dyn crate::backend::Backend>,
 ) {
-    #[cfg(not(coverage))]
+    #[cfg(all(unix, not(coverage)))]
     {
         use crate::session::pty_bridge;
         use tracing::{debug, warn};
@@ -148,9 +148,10 @@ async fn handle_stream(
         let _ = child.kill().await;
     }
 
-    #[cfg(coverage)]
+    // Fallback for coverage builds and non-Unix platforms (Windows):
+    // echo input back for testing / return unsupported message.
+    #[cfg(any(coverage, not(unix)))]
     {
-        // In coverage builds, echo input back for testing
         let (mut ws_sender, mut ws_receiver) = socket.split();
         use axum::extract::ws::Message;
         use futures::SinkExt;

@@ -75,25 +75,33 @@ open http://localhost:7433  # PWA with push notifications
 | Docker sandbox | Yes | No | No | Yes | No |
 | Adopts external tmux | Yes | No | No | No | No |
 | Command-agnostic | Any command | N/A | Claude only | Generic | 3 agents |
+| Windows support | Yes (Docker) | No | No | No | No |
 | Web UI + mobile | PWA + push | No | No | TUI + Web | Dashboard |
 
 ## Get Started
 
+### macOS / Linux
+
 ```bash
-# Install (macOS/Linux)
 brew install darioblanco/tap/pulpo
-
-# Start daemon
 pulpod
-
-# Spawn a session
 pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests"
+```
 
-# Watch progress
-pulpo logs my-api --follow
+### Windows
 
-# Open web UI
-open http://localhost:7433
+Download `pulpod.exe` and `pulpo.exe` from [GitHub Releases](https://github.com/darioblanco/pulpo/releases). Windows uses Docker containers (no tmux required):
+
+```powershell
+pulpod
+pulpo spawn my-task --sandbox -- claude -p "Fix failing auth tests"
+pulpo logs my-task --follow
+```
+
+### Dashboard
+
+```bash
+open http://localhost:7433  # PWA — installable on phone
 ```
 
 No agent is required — `pulpo spawn my-shell` opens a managed shell session.
