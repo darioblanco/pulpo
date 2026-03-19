@@ -1,13 +1,21 @@
+#[cfg(not(coverage))]
 use std::time::Duration;
 
 use chrono::Utc;
 use cron::Schedule as CronSchedule;
-use pulpo_common::api::{CreateSessionRequest, Schedule};
+#[cfg(not(coverage))]
+use pulpo_common::api::CreateSessionRequest;
+use pulpo_common::api::Schedule;
+#[cfg(not(coverage))]
 use pulpo_common::event::PulpoEvent;
+#[cfg(not(coverage))]
 use tokio::sync::{broadcast, watch};
+#[cfg(not(coverage))]
 use tracing::{debug, info, warn};
 
+#[cfg(not(coverage))]
 use crate::session::manager::SessionManager;
+#[cfg(not(coverage))]
 use crate::store::Store;
 
 /// Normalize a cron expression to the 7-field format expected by the `cron` crate.
@@ -33,6 +41,7 @@ pub fn validate_cron(expr: &str) -> Result<(), String> {
 
 /// Check if a schedule is due to fire now.
 /// A schedule is due if its next fire time (after `last_run_at` or `created_at`) is in the past.
+#[cfg_attr(coverage, allow(dead_code))]
 fn is_due(schedule: &Schedule) -> bool {
     let Ok(cron) = normalize_cron(&schedule.cron).parse::<CronSchedule>() else {
         return false;

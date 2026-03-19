@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+#[cfg_attr(coverage, allow(unused_imports))]
 use pulpo_common::api::{
     AuthTokenResponse, ConfigResponse, CreateSessionResponse, InterventionEventResponse,
     PeersResponse,

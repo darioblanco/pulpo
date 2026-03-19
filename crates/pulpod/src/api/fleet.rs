@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use axum::{Json, extract::State};
 use pulpo_common::api::{ErrorResponse, FleetSession, FleetSessionsResponse};
+#[cfg_attr(coverage, allow(unused_imports))]
 use pulpo_common::peer::PeerStatus;
+#[cfg_attr(coverage, allow(unused_imports))]
 use pulpo_common::session::Session;
 
 use super::AppState;

@@ -1,10 +1,12 @@
 use pulpo_common::event::{PulpoEvent, SessionEvent};
+#[cfg_attr(coverage, allow(unused_imports))]
 use tracing::{error, info};
 
 use crate::store::Store;
 
 /// Builds and sends Web Push notifications for session events.
 pub struct WebPushNotifier {
+    #[cfg_attr(coverage, allow(dead_code))]
     store: Store,
     #[cfg_attr(coverage, allow(dead_code))]
     vapid_private_key: String,
