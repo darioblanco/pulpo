@@ -291,4 +291,4 @@ PULPO_NODE_NAME=pulpo-worker-2 TS_HOSTNAME=pulpo-worker-2 \
 
 - `pulpo-agents` build currently installs `@anthropic-ai/claude-code` and `@openai/codex` via npm.
 - For production, prefer Docker secrets or secret managers over plain env vars.
-- Use dedicated worker nodes/VMs for stronger sandboxing boundaries.
+- Use dedicated worker nodes/VMs for stronger isolation boundaries.

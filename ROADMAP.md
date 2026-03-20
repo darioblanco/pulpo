@@ -15,7 +15,7 @@ Each backend serves a different scale and isolation need. The session lifecycle,
 | Backend | When to use | Status |
 |---------|------------|--------|
 | **tmux** | Your laptop, your servers. Zero infrastructure. | Shipped |
-| **Docker** | Same machines but sandboxed. Safe for `--dangerously-skip-permissions`. | Shipped |
+| **Docker** | Same machines but isolated. Safe for `--dangerously-skip-permissions`. | Shipped |
 | **Kubernetes** | Scale to a cluster. Teams with shared infrastructure. | Future |
 | **Cloud VMs** | Ephemeral machines. Spin up for a task, tear down when done. | Future |
 
@@ -64,7 +64,7 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - Full command capture for adopted sessions
 - Optimized `follow_logs` (reduced HTTP polling)
 - Default-to-shell spawn: `pulpo spawn my-session` with no command opens `$SHELL`
-- Docker sandbox: `pulpo spawn --sandbox` runs sessions in isolated Docker containers
+- Docker runtime: `pulpo spawn --runtime docker` runs sessions in isolated Docker containers
 - CLI node name resolution: `pulpo --node mac-mini spawn` resolves peer names via registry
 - Token forwarding from peer config entries
 - Fleet sessions endpoint (`GET /api/v1/fleet/sessions`) — server-side aggregation
@@ -158,7 +158,7 @@ Revisit when demanded by real usage, not by speculation.
 - **Agent-to-agent communication** — orchestration frameworks (Gas Town) handle this better. Pulpo is infrastructure, not workflow.
 - **MCP server expansion** — the existing STDIO server (12 tools, 4 resources) works. REST APIs are winning over MCP for integration. Keep as-is.
 - **Multi-user auth** — only if team adoption materializes.
-- ~~**Docker runtime backend**~~ — shipped as `--sandbox` flag.
+- ~~**Docker runtime backend**~~ — shipped as `--runtime docker` flag.
 - **Kubernetes backend** — implement when team adoption or cluster-scale demand materializes. The Backend trait is ready.
 - **Cloud VM backend** — ephemeral machines (Hetzner, AWS, GCP). Spin up for a task, tear down when done. Requires provider-specific APIs.
 - **Node labels/scheduling constraints** — useful at fleet scale, premature now.

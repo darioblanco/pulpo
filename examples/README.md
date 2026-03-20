@@ -57,7 +57,7 @@ Most scripts use these environment variables:
 | `cli/08-multi-node.sh` | Spawn and manage sessions across machines |
 | `cli/09-scheduled-sessions.sh` | Cron-based recurring agent runs |
 | `cli/10-batch-spawn.sh` | Spawn multiple sessions in parallel |
-| `cli/11-docker-sandbox.sh` | Run agents in isolated Docker containers |
+| `cli/11-docker-runtime.sh` | Run agents in isolated Docker containers |
 
 ### API Examples
 
@@ -76,4 +76,4 @@ Most scripts use these environment variables:
 | `config/watchdog.toml` | Watchdog tuning (idle, memory, patterns) |
 | `config/multi-node-tailscale.toml` | Multi-node with Tailscale discovery |
 | `config/multi-node-public.toml` | Multi-node with auth + mDNS |
-| `config/sandbox.toml` | Docker runtime for isolated agent execution |
+| `config/docker.toml` | Docker runtime for isolated agent execution |

@@ -19,7 +19,7 @@ set -euo pipefail
 NODE="${NODE:-localhost:7433}"
 
 echo "=== Basic Docker runtime session ==="
-echo "pulpo spawn sandbox-task --runtime docker --workdir ~/repos/my-api -- claude --dangerously-skip-permissions -p 'refactor the auth module'"
+echo "pulpo spawn docker-task --runtime docker --workdir ~/repos/my-api -- claude --dangerously-skip-permissions -p 'refactor the auth module'"
 echo ""
 
 echo "=== Docker runtime + worktree (maximum isolation) ==="
@@ -36,14 +36,14 @@ echo ""
 
 echo "=== Check Docker runtime sessions ==="
 echo "pulpo list"
-echo "# Sandbox sessions show 'docker:pulpo-<name>' as backend ID"
+echo "# Docker runtime sessions show 'docker:pulpo-<name>' as backend ID"
 echo ""
 
 echo "=== View Docker runtime output ==="
-echo "pulpo logs sandbox-task --follow"
+echo "pulpo logs docker-task --follow"
 echo "# Output comes from 'docker logs' instead of 'tmux capture-pane'"
 echo ""
 
 echo "=== Kill Docker runtime session (removes the container) ==="
-echo "pulpo kill sandbox-task"
+echo "pulpo kill docker-task"
 echo "# Runs 'docker stop' + 'docker rm' under the hood"
