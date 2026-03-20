@@ -38,6 +38,7 @@ export interface Session {
   runtime?: 'tmux' | 'docker';
   last_output_at: string | null;
   created_at: string;
+  updated_at?: string;
 }
 
 export interface InterventionEvent {

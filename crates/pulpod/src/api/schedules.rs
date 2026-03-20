@@ -6,6 +6,7 @@ use axum::{
     http::StatusCode,
 };
 use pulpo_common::api::{CreateScheduleRequest, ErrorResponse, Schedule, UpdateScheduleRequest};
+use pulpo_common::session::Session;
 use uuid::Uuid;
 
 use super::AppState;
@@ -16,6 +17,15 @@ type ApiError = (StatusCode, Json<ErrorResponse>);
 fn bad_request(msg: &str) -> ApiError {
     (
         StatusCode::BAD_REQUEST,
+        Json(ErrorResponse {
+            error: msg.to_owned(),
+        }),
+    )
+}
+
+fn not_found_error(msg: &str) -> ApiError {
+    (
+        StatusCode::NOT_FOUND,
         Json(ErrorResponse {
             error: msg.to_owned(),
         }),
@@ -182,6 +192,24 @@ pub async fn delete(
         .await
         .map_err(|e| internal_error(&e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn list_runs(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<Json<Vec<Session>>, ApiError> {
+    let schedule = state
+        .store
+        .get_schedule(&id)
+        .await
+        .map_err(|e| internal_error(&e.to_string()))?
+        .ok_or_else(|| not_found_error(&format!("schedule not found: {id}")))?;
+    let sessions = state
+        .store
+        .list_schedule_runs(&schedule.name, 20)
+        .await
+        .map_err(|e| internal_error(&e.to_string()))?;
+    Ok(Json(sessions))
 }
 
 #[cfg(test)]
@@ -480,6 +508,90 @@ mod tests {
         assert_eq!(body["target_node"], "raven");
         assert_eq!(body["ink"], "reviewer");
         assert_eq!(body["description"], "Updated desc");
+    }
+
+    #[tokio::test]
+    async fn test_list_runs_empty() {
+        let server = test_server().await;
+        let create_resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "runs-empty",
+                "cron": "0 3 * * *",
+                "command": "echo",
+                "workdir": "/tmp"
+            }))
+            .await;
+        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
+        let id = created["id"].as_str().unwrap();
+
+        let resp = server.get(&format!("/api/v1/schedules/{id}/runs")).await;
+        resp.assert_status_ok();
+        assert_eq!(resp.text(), "[]");
+    }
+
+    #[tokio::test]
+    async fn test_list_runs_returns_matching_sessions() {
+        let server = test_server().await;
+        // Create schedule
+        let create_resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "nightly",
+                "cron": "0 3 * * *",
+                "command": "echo",
+                "workdir": "/tmp"
+            }))
+            .await;
+        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
+        let id = created["id"].as_str().unwrap();
+
+        // Create sessions with matching prefix "nightly-"
+        server
+            .post("/api/v1/sessions")
+            .json(&serde_json::json!({
+                "name": "nightly-001",
+                "workdir": "/tmp",
+                "command": "echo hello"
+            }))
+            .await;
+        server
+            .post("/api/v1/sessions")
+            .json(&serde_json::json!({
+                "name": "nightly-002",
+                "workdir": "/tmp",
+                "command": "echo world"
+            }))
+            .await;
+        // Create a non-matching session
+        server
+            .post("/api/v1/sessions")
+            .json(&serde_json::json!({
+                "name": "other-task",
+                "workdir": "/tmp",
+                "command": "echo other"
+            }))
+            .await;
+
+        let resp = server.get(&format!("/api/v1/schedules/{id}/runs")).await;
+        resp.assert_status_ok();
+        let body: Vec<serde_json::Value> = serde_json::from_str(&resp.text()).unwrap();
+        assert_eq!(body.len(), 2);
+        // Verify only matching sessions
+        for session in &body {
+            let name = session["name"].as_str().unwrap();
+            assert!(
+                name.starts_with("nightly-"),
+                "expected nightly- prefix: {name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_list_runs_schedule_not_found() {
+        let server = test_server().await;
+        let resp = server.get("/api/v1/schedules/nonexistent/runs").await;
+        resp.assert_status(StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

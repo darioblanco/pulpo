@@ -303,6 +303,15 @@ export async function updateSchedule(
   return res.json();
 }
 
+export async function getScheduleRuns(id: string): Promise<Session[]> {
+  const res = await authFetch(`${resolveBaseUrl()}/schedules/${encodeURIComponent(id)}/runs`);
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to fetch schedule runs');
+  }
+  return res.json();
+}
+
 export async function deleteSchedule(id: string): Promise<void> {
   const res = await authFetch(`${resolveBaseUrl()}/schedules/${encodeURIComponent(id)}`, {
     method: 'DELETE',

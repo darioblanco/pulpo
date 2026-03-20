@@ -661,6 +661,23 @@ impl Store {
         Ok(())
     }
 
+    pub async fn list_schedule_runs(
+        &self,
+        schedule_name: &str,
+        limit: usize,
+    ) -> Result<Vec<Session>> {
+        let prefix = format!("{schedule_name}-%");
+        let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
+        let rows = sqlx::query(
+            "SELECT * FROM sessions WHERE name LIKE ? ORDER BY created_at DESC LIMIT ?",
+        )
+        .bind(&prefix)
+        .bind(limit_i64)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_session).collect()
+    }
+
     pub async fn delete_schedule(&self, id: &str) -> Result<()> {
         sqlx::query("DELETE FROM schedules WHERE id = ? OR name = ?")
             .bind(id)
@@ -2303,6 +2320,35 @@ mod tests {
 
         store.delete_schedule(&schedule.id).await.unwrap();
         assert!(store.get_schedule(&schedule.id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_schedule_runs() {
+        let store = test_store().await;
+
+        // Insert matching sessions (name starts with "nightly-")
+        let s1 = make_session("nightly-001");
+        let s2 = make_session("nightly-002");
+        // Insert non-matching session
+        let s3 = make_session("other-task");
+
+        store.insert_session(&s1).await.unwrap();
+        store.insert_session(&s2).await.unwrap();
+        store.insert_session(&s3).await.unwrap();
+
+        let runs = store.list_schedule_runs("nightly", 20).await.unwrap();
+        assert_eq!(runs.len(), 2);
+        for run in &runs {
+            assert!(run.name.starts_with("nightly-"));
+        }
+
+        // Test limit
+        let runs = store.list_schedule_runs("nightly", 1).await.unwrap();
+        assert_eq!(runs.len(), 1);
+
+        // Test no matches
+        let runs = store.list_schedule_runs("nonexistent", 20).await.unwrap();
+        assert!(runs.is_empty());
     }
 
     #[tokio::test]

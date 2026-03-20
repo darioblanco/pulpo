@@ -89,6 +89,7 @@ pub fn build(state: Arc<AppState>) -> Router {
                 .put(schedules::update)
                 .delete(schedules::delete),
         )
+        .route("/api/v1/schedules/{id}/runs", get(schedules::list_runs))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_auth,

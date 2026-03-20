@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Link } from 'react-router';
 import { AppHeader } from '@/components/layout/app-header';
 import { ScheduleDialog } from '@/components/schedules/schedule-dialog';
 import { Badge } from '@/components/ui/badge';
@@ -16,14 +17,108 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { getSchedules, updateSchedule, deleteSchedule } from '@/api/client';
+import { getSchedules, getScheduleRuns, updateSchedule, deleteSchedule } from '@/api/client';
 import { describeCron, getNextRun } from '@/lib/cron';
-import { formatRelativeTime } from '@/lib/utils';
+import { formatRelativeTime, formatDuration, statusColors } from '@/lib/utils';
 import { toast } from 'sonner';
-import { Plus, Search, Pencil, Pause, Play, Trash2 } from 'lucide-react';
-import type { ScheduleInfo } from '@/api/types';
+import { Plus, Search, Pencil, Pause, Play, Trash2, ChevronRight, ChevronDown } from 'lucide-react';
+import type { ScheduleInfo, Session } from '@/api/types';
 
 type StatusFilter = 'all' | 'active' | 'paused';
+
+function isTerminal(status: string): boolean {
+  return status === 'killed' || status === 'ready' || status === 'lost';
+}
+
+function RunHistoryPanel({ scheduleId, expanded }: { scheduleId: string; expanded: boolean }) {
+  const [runs, setRuns] = useState<Session[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [fetched, setFetched] = useState(false);
+
+  useEffect(() => {
+    if (!expanded || fetched) return;
+    setLoading(true);
+    getScheduleRuns(scheduleId)
+      .then((data) => {
+        setRuns(data);
+        setFetched(true);
+      })
+      .catch(() => {
+        toast.error('Failed to load run history');
+      })
+      .finally(() => setLoading(false));
+  }, [expanded, fetched, scheduleId]);
+
+  if (!expanded) return null;
+
+  if (loading) {
+    return (
+      <tr data-testid={`runs-loading-${scheduleId}`}>
+        <td colSpan={7} className="px-6 py-3">
+          <div className="space-y-1">
+            <Skeleton className="h-6 w-full" />
+            <Skeleton className="h-6 w-full" />
+          </div>
+        </td>
+      </tr>
+    );
+  }
+
+  if (runs.length === 0) {
+    return (
+      <tr data-testid={`runs-empty-${scheduleId}`}>
+        <td colSpan={7} className="px-6 py-3 text-center text-sm text-muted-foreground">
+          No runs yet
+        </td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr data-testid={`runs-panel-${scheduleId}`}>
+      <td colSpan={7} className="bg-muted/30 px-3 py-2">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-muted-foreground">
+              <th className="px-2 py-1 font-medium">Session</th>
+              <th className="px-2 py-1 font-medium">Status</th>
+              <th className="px-2 py-1 font-medium">Created</th>
+              <th className="px-2 py-1 font-medium">Duration</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((run) => (
+              <tr key={run.id} className="border-t border-border/50" data-testid={`run-${run.id}`}>
+                <td className="px-2 py-1">
+                  <Link
+                    to={`/sessions/${run.id}`}
+                    className="font-medium text-foreground hover:underline"
+                  >
+                    {run.name}
+                  </Link>
+                </td>
+                <td className="px-2 py-1">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span
+                      className={`inline-block h-2 w-2 rounded-full ${statusColors[run.status] ?? 'bg-muted-foreground'}`}
+                    />
+                    <span className="capitalize">{run.status}</span>
+                  </span>
+                </td>
+                <td className="px-2 py-1">{formatRelativeTime(run.created_at)}</td>
+                <td className="px-2 py-1">
+                  {isTerminal(run.status) && run.updated_at
+                    ? formatDuration(run.created_at, run.updated_at)
+                    : formatDuration(run.created_at)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </td>
+    </tr>
+  );
+}
 
 export function SchedulesPage() {
   const [schedules, setSchedules] = useState<ScheduleInfo[]>([]);
@@ -33,6 +128,19 @@ export function SchedulesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingSchedule, setEditingSchedule] = useState<ScheduleInfo | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScheduleInfo | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   const fetchSchedules = useCallback(async () => {
     try {
@@ -191,148 +299,173 @@ export function SchedulesPage() {
                   {filteredSchedules.map((s) => {
                     const nextRun = s.enabled ? formatNextRun(s.cron) : null;
                     const cronDesc = describeCron(s.cron);
+                    const isExpanded = expandedIds.has(s.id);
 
                     return (
-                      <tr
-                        key={s.id}
-                        className={`border-b last:border-0 ${!s.enabled ? 'opacity-50' : ''}`}
-                        data-testid={`schedule-row-${s.name}`}
-                      >
-                        {/* Name + command */}
-                        <td className="px-3 py-2">
-                          <div>
-                            <span className="font-medium">{s.name}</span>
-                            {s.description && (
-                              <span className="ml-2 text-xs text-muted-foreground">
-                                {s.description}
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-0.5 max-w-xs truncate text-xs text-muted-foreground">
-                            {s.command || (s.ink ? `ink: ${s.ink}` : '(default)')}
-                          </div>
-                        </td>
+                      <>
+                        <tr
+                          key={s.id}
+                          className={`cursor-pointer border-b last:border-0 ${!s.enabled ? 'opacity-50' : ''}`}
+                          data-testid={`schedule-row-${s.name}`}
+                          onClick={() => toggleExpanded(s.id)}
+                        >
+                          {/* Name + command */}
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-1.5">
+                              {isExpanded ? (
+                                <ChevronDown
+                                  className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                                  data-testid={`chevron-down-${s.name}`}
+                                />
+                              ) : (
+                                <ChevronRight
+                                  className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                                  data-testid={`chevron-right-${s.name}`}
+                                />
+                              )}
+                              <div>
+                                <span className="font-medium">{s.name}</span>
+                                {s.description && (
+                                  <span className="ml-2 text-xs text-muted-foreground">
+                                    {s.description}
+                                  </span>
+                                )}
+                                <div className="mt-0.5 max-w-xs truncate text-xs text-muted-foreground">
+                                  {s.command || (s.ink ? `ink: ${s.ink}` : '(default)')}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
 
-                        {/* Cron with tooltip */}
-                        <td className="px-3 py-2">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span
-                                className="cursor-default font-mono text-xs"
-                                data-testid={`cron-${s.name}`}
-                              >
-                                {s.cron}
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>{cronDesc}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </td>
-
-                        {/* Next Run */}
-                        <td className="hidden px-3 py-2 md:table-cell">
-                          {nextRun ? (
-                            <span className="text-xs">{nextRun}</span>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">
-                              {s.enabled ? '--' : 'paused'}
-                            </span>
-                          )}
-                        </td>
-
-                        {/* Last Run */}
-                        <td className="hidden px-3 py-2 sm:table-cell">
-                          {s.last_run_at ? (
+                          {/* Cron with tooltip */}
+                          <td className="px-3 py-2">
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <span className="cursor-default text-xs">
-                                  {formatRelativeTime(s.last_run_at)}
+                                <span
+                                  className="cursor-default font-mono text-xs"
+                                  data-testid={`cron-${s.name}`}
+                                >
+                                  {s.cron}
                                 </span>
                               </TooltipTrigger>
                               <TooltipContent>
-                                <p>{new Date(s.last_run_at).toLocaleString()}</p>
+                                <p>{cronDesc}</p>
                               </TooltipContent>
                             </Tooltip>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">never</span>
-                          )}
-                        </td>
+                          </td>
 
-                        {/* Target Node */}
-                        <td className="hidden px-3 py-2 lg:table-cell">
-                          <span className="text-xs">{s.target_node ?? 'local'}</span>
-                        </td>
+                          {/* Next Run */}
+                          <td className="hidden px-3 py-2 md:table-cell">
+                            {nextRun ? (
+                              <span className="text-xs">{nextRun}</span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                {s.enabled ? '--' : 'paused'}
+                              </span>
+                            )}
+                          </td>
 
-                        {/* Status badge */}
-                        <td className="px-3 py-2">
-                          {s.enabled ? (
-                            <Badge
-                              variant="outline"
-                              className="border-status-ready/30 bg-status-ready/10 text-status-ready"
-                              data-testid={`status-${s.name}`}
+                          {/* Last Run */}
+                          <td className="hidden px-3 py-2 sm:table-cell">
+                            {s.last_run_at ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="cursor-default text-xs">
+                                    {formatRelativeTime(s.last_run_at)}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>{new Date(s.last_run_at).toLocaleString()}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">never</span>
+                            )}
+                          </td>
+
+                          {/* Target Node */}
+                          <td className="hidden px-3 py-2 lg:table-cell">
+                            <span className="text-xs">{s.target_node ?? 'local'}</span>
+                          </td>
+
+                          {/* Status badge */}
+                          <td className="px-3 py-2">
+                            {s.enabled ? (
+                              <Badge
+                                variant="outline"
+                                className="border-status-ready/30 bg-status-ready/10 text-status-ready"
+                                data-testid={`status-${s.name}`}
+                              >
+                                Active
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" data-testid={`status-${s.name}`}>
+                                Paused
+                              </Badge>
+                            )}
+                          </td>
+
+                          {/* Actions */}
+                          <td className="px-3 py-2">
+                            <div
+                              className="flex justify-end gap-1"
+                              onClick={(e) => e.stopPropagation()}
                             >
-                              Active
-                            </Badge>
-                          ) : (
-                            <Badge variant="secondary" data-testid={`status-${s.name}`}>
-                              Paused
-                            </Badge>
-                          )}
-                        </td>
-
-                        {/* Actions */}
-                        <td className="px-3 py-2">
-                          <div className="flex justify-end gap-1">
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleEdit(s)}
-                                  data-testid={`edit-${s.name}`}
-                                  className="h-8 w-8 p-0"
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>Edit</TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleToggle(s)}
-                                  data-testid={`toggle-${s.name}`}
-                                  className="h-8 w-8 p-0"
-                                >
-                                  {s.enabled ? (
-                                    <Pause className="h-3.5 w-3.5" />
-                                  ) : (
-                                    <Play className="h-3.5 w-3.5" />
-                                  )}
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>{s.enabled ? 'Pause' : 'Resume'}</TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => setDeleteTarget(s)}
-                                  data-testid={`delete-${s.name}`}
-                                  className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>Delete</TooltipContent>
-                            </Tooltip>
-                          </div>
-                        </td>
-                      </tr>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleEdit(s)}
+                                    data-testid={`edit-${s.name}`}
+                                    className="h-8 w-8 p-0"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Edit</TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleToggle(s)}
+                                    data-testid={`toggle-${s.name}`}
+                                    className="h-8 w-8 p-0"
+                                  >
+                                    {s.enabled ? (
+                                      <Pause className="h-3.5 w-3.5" />
+                                    ) : (
+                                      <Play className="h-3.5 w-3.5" />
+                                    )}
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>{s.enabled ? 'Pause' : 'Resume'}</TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setDeleteTarget(s)}
+                                    data-testid={`delete-${s.name}`}
+                                    className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Delete</TooltipContent>
+                              </Tooltip>
+                            </div>
+                          </td>
+                        </tr>
+                        <RunHistoryPanel
+                          key={`runs-${s.id}`}
+                          scheduleId={s.id}
+                          expanded={isExpanded}
+                        />
+                      </>
                     );
                   })}
                 </tbody>
