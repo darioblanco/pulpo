@@ -8,6 +8,38 @@ use uuid::Uuid;
 
 use std::collections::HashMap;
 
+/// The runtime environment for a session.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Runtime {
+    /// Native tmux session (default).
+    #[default]
+    Tmux,
+    /// Docker container session.
+    Docker,
+}
+
+impl fmt::Display for Runtime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Tmux => write!(f, "tmux"),
+            Self::Docker => write!(f, "docker"),
+        }
+    }
+}
+
+impl FromStr for Runtime {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "tmux" => Ok(Self::Tmux),
+            "docker" => Ok(Self::Docker),
+            other => Err(format!("unknown runtime: {other}")),
+        }
+    }
+}
+
 /// Machine-readable intervention reason codes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -107,9 +139,9 @@ pub struct Session {
     /// Path to the git worktree created for this session, if any.
     /// When set, the worktree is cleaned up when the session is killed or deleted.
     pub worktree_path: Option<String>,
-    /// Whether this session runs in a Docker sandbox.
+    /// The runtime environment for this session (tmux or docker).
     #[serde(default)]
-    pub sandbox: bool,
+    pub runtime: Runtime,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -139,7 +171,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -283,7 +315,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -329,7 +361,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -358,7 +390,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -390,7 +422,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -511,5 +543,90 @@ mod tests {
             deserialized.intervention_code,
             Some(InterventionCode::MemoryPressure)
         );
+    }
+
+    // -- Runtime enum tests --
+
+    #[test]
+    fn test_runtime_default() {
+        assert_eq!(Runtime::default(), Runtime::Tmux);
+    }
+
+    #[test]
+    fn test_runtime_display() {
+        assert_eq!(Runtime::Tmux.to_string(), "tmux");
+        assert_eq!(Runtime::Docker.to_string(), "docker");
+    }
+
+    #[test]
+    fn test_runtime_from_str() {
+        assert_eq!("tmux".parse::<Runtime>().unwrap(), Runtime::Tmux);
+        assert_eq!("docker".parse::<Runtime>().unwrap(), Runtime::Docker);
+    }
+
+    #[test]
+    fn test_runtime_from_str_invalid() {
+        let err = "invalid".parse::<Runtime>().unwrap_err();
+        assert!(err.contains("unknown runtime"));
+    }
+
+    #[test]
+    fn test_runtime_serialize() {
+        assert_eq!(serde_json::to_string(&Runtime::Tmux).unwrap(), "\"tmux\"");
+        assert_eq!(
+            serde_json::to_string(&Runtime::Docker).unwrap(),
+            "\"docker\""
+        );
+    }
+
+    #[test]
+    fn test_runtime_deserialize() {
+        assert_eq!(
+            serde_json::from_str::<Runtime>("\"tmux\"").unwrap(),
+            Runtime::Tmux
+        );
+        assert_eq!(
+            serde_json::from_str::<Runtime>("\"docker\"").unwrap(),
+            Runtime::Docker
+        );
+    }
+
+    #[test]
+    fn test_runtime_invalid_deserialize() {
+        assert!(serde_json::from_str::<Runtime>("\"invalid\"").is_err());
+    }
+
+    #[test]
+    fn test_runtime_clone_and_copy() {
+        let r = Runtime::Tmux;
+        let r2 = r;
+        #[allow(clippy::clone_on_copy)]
+        let r3 = r.clone();
+        assert_eq!(r, r2);
+        assert_eq!(r, r3);
+    }
+
+    #[test]
+    fn test_runtime_debug() {
+        assert_eq!(format!("{:?}", Runtime::Tmux), "Tmux");
+        assert_eq!(format!("{:?}", Runtime::Docker), "Docker");
+    }
+
+    #[test]
+    fn test_session_with_docker_runtime() {
+        let mut session = make_session();
+        session.runtime = Runtime::Docker;
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(json.contains("\"runtime\":\"docker\""));
+        let deserialized: Session = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.runtime, Runtime::Docker);
+    }
+
+    #[test]
+    fn test_session_runtime_default_on_deserialize() {
+        // When runtime field is missing, it should default to Tmux
+        let json = r#"{"id":"00000000-0000-0000-0000-000000000000","name":"test","workdir":"/tmp","command":"echo","status":"active","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session: Session = serde_json::from_str(json).unwrap();
+        assert_eq!(session.runtime, Runtime::Tmux);
     }
 }

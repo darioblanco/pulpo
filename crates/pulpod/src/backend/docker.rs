@@ -3,10 +3,10 @@ use std::process::Command;
 #[cfg(not(coverage))]
 use anyhow::{Context, Result, bail};
 
-/// Docker container backend for sandboxed sessions.
+/// Docker container backend for Docker runtime sessions.
 #[allow(dead_code)]
 pub struct DockerBackend {
-    /// Docker image to use for sandbox containers.
+    /// Docker image to use for container sessions.
     image: String,
 }
 
@@ -169,7 +169,7 @@ impl super::Backend for DockerBackend {
 
     fn send_input(&self, _backend_id: &str, _text: &str) -> Result<()> {
         // Sandboxed sessions don't support interactive input
-        anyhow::bail!("send_input not supported for sandboxed (Docker) sessions")
+        anyhow::bail!("send_input not supported for Docker sessions")
     }
 
     fn setup_logging(&self, _backend_id: &str, _log_path: &str) -> Result<()> {

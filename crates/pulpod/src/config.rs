@@ -20,27 +20,27 @@ pub struct Config {
     pub inks: HashMap<String, InkConfig>,
     #[serde(default)]
     pub notifications: NotificationsConfig,
-    #[serde(default)]
-    pub sandbox: SandboxConfig,
+    #[serde(default, alias = "sandbox")]
+    pub docker: DockerConfig,
 }
 
-/// Sandbox (Docker) configuration.
+/// Docker runtime configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct SandboxConfig {
-    /// Docker image for sandbox containers.
-    #[serde(default = "default_sandbox_image")]
+pub struct DockerConfig {
+    /// Docker image for container sessions.
+    #[serde(default = "default_docker_image")]
     pub image: String,
 }
 
-impl Default for SandboxConfig {
+impl Default for DockerConfig {
     fn default() -> Self {
         Self {
-            image: default_sandbox_image(),
+            image: default_docker_image(),
         }
     }
 }
 
-fn default_sandbox_image() -> String {
+fn default_docker_image() -> String {
     "ubuntu:latest".into()
 }
 
@@ -430,7 +430,7 @@ pub fn load(path: &str) -> Result<Config> {
             watchdog: WatchdogConfig::default(),
             inks: built_in_inks(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         })
     }
 }
@@ -517,7 +517,7 @@ data_dir = "/tmp/pulpo-test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         let expanded = config.data_dir();
         assert!(
@@ -542,7 +542,7 @@ data_dir = "/tmp/pulpo-test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         assert_eq!(config.data_dir(), "/absolute/path");
     }
@@ -675,7 +675,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         let debug = format!("{config:?}");
         assert!(debug.contains("node-a"));
@@ -698,7 +698,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -726,7 +726,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -755,7 +755,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -778,7 +778,7 @@ name = "test"
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                sandbox: SandboxConfig::default(),
+                docker: DockerConfig::default(),
             },
             Path::new("/dev/null/impossible/config.toml"),
         );
@@ -803,7 +803,7 @@ name = "test"
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                sandbox: SandboxConfig::default(),
+                docker: DockerConfig::default(),
             },
             Path::new(""),
         );
@@ -832,7 +832,7 @@ name = "test"
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                sandbox: SandboxConfig::default(),
+                docker: DockerConfig::default(),
             },
             &dir_target,
         );
@@ -856,7 +856,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         #[allow(clippy::redundant_clone)]
         let cloned = config.clone();
@@ -891,7 +891,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("ser"));
@@ -962,7 +962,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         assert!(config.auth.token.is_empty());
         let generated = ensure_auth_token(&mut config);
@@ -988,7 +988,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         let generated = ensure_auth_token(&mut config);
         assert!(!generated);
@@ -1056,7 +1056,7 @@ token = "my-secret-token"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1125,7 +1125,7 @@ token = "peer-secret"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1237,7 +1237,7 @@ breach_count = 5
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1446,7 +1446,7 @@ idle_action = "pause"
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1563,7 +1563,7 @@ command = "codex -p 'Do it'"
             watchdog: WatchdogConfig::default(),
             inks,
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1679,7 +1679,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
                 webhooks: vec![],
                 ..Default::default()
             },
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1787,7 +1787,7 @@ url = "https://example.com"
                 }],
                 ..Default::default()
             },
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1889,7 +1889,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2079,7 +2079,7 @@ command = "codex -p 'review'"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         assert!(config.notifications.vapid.private_key.is_empty());
         assert!(config.notifications.vapid.public_key.is_empty());
@@ -2104,7 +2104,7 @@ command = "codex -p 'review'"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         ensure_vapid_keys(&mut config);
 
@@ -2128,7 +2128,7 @@ command = "codex -p 'review'"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         ensure_vapid_keys(&mut config);
 
@@ -2164,7 +2164,7 @@ command = "codex -p 'review'"
                 },
                 ..Default::default()
             },
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         let generated = ensure_vapid_keys(&mut config);
         assert!(!generated);
@@ -2181,7 +2181,7 @@ command = "codex -p 'review'"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         let mut config2 = config1.clone();
         ensure_vapid_keys(&mut config1);
@@ -2208,7 +2208,7 @@ command = "codex -p 'review'"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         ensure_vapid_keys(&mut config);
         let private_key = config.notifications.vapid.private_key.clone();
@@ -2277,7 +2277,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2300,7 +2300,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            sandbox: SandboxConfig::default(),
+            docker: DockerConfig::default(),
         };
         save(&config, &path).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -2311,14 +2311,14 @@ name = "test"
     }
 
     #[test]
-    fn test_sandbox_config_default() {
-        let config = SandboxConfig::default();
+    fn test_docker_config_default() {
+        let config = DockerConfig::default();
         assert_eq!(config.image, "ubuntu:latest");
     }
 
     #[test]
-    fn test_sandbox_config_debug_clone() {
-        let config = SandboxConfig::default();
+    fn test_docker_config_debug_clone() {
+        let config = DockerConfig::default();
         let debug = format!("{config:?}");
         assert!(debug.contains("ubuntu:latest"));
         #[allow(clippy::redundant_clone)]
@@ -2327,7 +2327,27 @@ name = "test"
     }
 
     #[test]
-    fn test_load_config_with_sandbox() {
+    fn test_load_config_with_docker() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[docker]
+image = "my-custom-image:v1"
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(config.docker.image, "my-custom-image:v1");
+    }
+
+    #[test]
+    fn test_load_config_with_sandbox_alias() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(
@@ -2338,16 +2358,16 @@ name = "test"
 port = 7433
 
 [sandbox]
-image = "my-custom-image:v1"
+image = "legacy-image:v1"
 "#,
         )
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.sandbox.image, "my-custom-image:v1");
+        assert_eq!(config.docker.image, "legacy-image:v1");
     }
 
     #[test]
-    fn test_load_config_without_sandbox_defaults() {
+    fn test_load_config_without_docker_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(
@@ -2360,11 +2380,11 @@ port = 7433
         )
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.sandbox.image, "ubuntu:latest");
+        assert_eq!(config.docker.image, "ubuntu:latest");
     }
 
     #[test]
-    fn test_default_sandbox_image_fn() {
-        assert_eq!(default_sandbox_image(), "ubuntu:latest");
+    fn test_default_docker_image_fn() {
+        assert_eq!(default_docker_image(), "ubuntu:latest");
     }
 }

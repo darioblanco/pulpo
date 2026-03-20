@@ -203,6 +203,7 @@ impl<P: PeerProber> CachedProber<P> {
 mod tests {
     use super::*;
     use pulpo_common::peer::PeerEntry;
+    use pulpo_common::session::Runtime;
 
     struct MockProber {
         results: HashMap<String, Result<ProbeResult, String>>,
@@ -464,7 +465,7 @@ mod tests {
                 idle_since: None,
                 idle_threshold_secs: None,
                 worktree_path: None,
-                sandbox: false,
+                runtime: Runtime::Tmux,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             },
@@ -488,7 +489,7 @@ mod tests {
                 idle_since: None,
                 idle_threshold_secs: None,
                 worktree_path: None,
-                sandbox: false,
+                runtime: Runtime::Tmux,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             },

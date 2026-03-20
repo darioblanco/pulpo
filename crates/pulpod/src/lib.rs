@@ -61,14 +61,14 @@ impl backend::Backend for CoverageBackend {
 }
 
 /// Stub backend for platforms where tmux is not available (Windows).
-/// Sessions require --sandbox (Docker) on these platforms.
+/// Sessions require --runtime docker on these platforms.
 #[cfg(target_os = "windows")]
 struct WindowsStubBackend;
 
 #[cfg(target_os = "windows")]
 impl backend::Backend for WindowsStubBackend {
     fn create_session(&self, _: &str, _: &str, _: &str) -> anyhow::Result<()> {
-        anyhow::bail!("tmux is not available on Windows — use --sandbox for Docker sessions")
+        anyhow::bail!("tmux is not available on Windows — use --runtime docker for Docker sessions")
     }
     fn kill_session(&self, _: &str) -> anyhow::Result<()> {
         Ok(())
@@ -248,13 +248,13 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let node_name = config.node.name.clone();
     let (event_tx, _) = broadcast::channel::<PulpoEvent>(256);
 
-    let sandbox_backend: Option<Arc<dyn backend::Backend>> = if config.sandbox.image.is_empty() {
+    let docker_backend: Option<Arc<dyn backend::Backend>> = if config.docker.image.is_empty() {
         None
     } else {
         #[cfg(not(coverage))]
         {
             Some(Arc::new(backend::docker::DockerBackend::new(
-                &config.sandbox.image,
+                &config.docker.image,
             )))
         }
         #[cfg(coverage)]
@@ -270,8 +270,8 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         config.node.default_command.clone(),
     )
     .with_event_tx(event_tx.clone(), node_name.clone());
-    if let Some(ref sb) = sandbox_backend {
-        manager = manager.with_sandbox_backend(sb.clone());
+    if let Some(ref db) = docker_backend {
+        manager = manager.with_docker_backend(db.clone());
     }
 
     // Auto-resume sessions that were active before a restart

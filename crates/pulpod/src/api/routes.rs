@@ -152,7 +152,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            sandbox: crate::config::SandboxConfig::default(),
+            docker: crate::config::DockerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -208,7 +208,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: inks.clone(),
             notifications: crate::config::NotificationsConfig::default(),
-            sandbox: crate::config::SandboxConfig::default(),
+            docker: crate::config::DockerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), inks, None).with_no_stale_grace();
@@ -766,7 +766,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            sandbox: crate::config::SandboxConfig::default(),
+            docker: crate::config::DockerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -807,7 +807,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
         state
@@ -889,7 +889,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            sandbox: crate::config::SandboxConfig::default(),
+            docker: crate::config::DockerConfig::default(),
         };
         let backend = Arc::new(FailIsAliveBackend);
         let manager =
@@ -907,7 +907,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -939,7 +939,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -970,7 +970,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1011,7 +1011,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1050,7 +1050,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1097,7 +1097,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            sandbox: crate::config::SandboxConfig::default(),
+            docker: crate::config::DockerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1260,7 +1260,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            sandbox: crate::config::SandboxConfig::default(),
+            docker: crate::config::DockerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1360,7 +1360,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            sandbox: crate::config::SandboxConfig::default(),
+            docker: crate::config::DockerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1510,7 +1510,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            sandbox: crate::config::SandboxConfig::default(),
+            docker: crate::config::DockerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =

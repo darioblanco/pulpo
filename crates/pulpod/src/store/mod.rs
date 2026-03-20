@@ -210,7 +210,7 @@ impl Store {
                 .await?;
         }
 
-        // Idempotent migration: sandbox column
+        // Idempotent migration: sandbox column (legacy name, kept for backward compat)
         let has_sandbox: i32 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'sandbox'",
         )
@@ -218,6 +218,22 @@ impl Store {
         .await?;
         if has_sandbox == 0 {
             sqlx::query("ALTER TABLE sessions ADD COLUMN sandbox INTEGER DEFAULT 0")
+                .execute(&self.pool)
+                .await?;
+        }
+
+        // Idempotent migration: runtime column (replaces sandbox boolean)
+        let has_runtime: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'runtime'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_runtime == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN runtime TEXT NOT NULL DEFAULT 'tmux'")
+                .execute(&self.pool)
+                .await?;
+            // Migrate existing data: sandbox=1 → runtime='docker'
+            sqlx::query("UPDATE sessions SET runtime = 'docker' WHERE sandbox = 1")
                 .execute(&self.pool)
                 .await?;
         }
@@ -273,7 +289,7 @@ impl Store {
                 exit_code, backend_session_id, output_snapshot,
                 metadata, ink, command, description,
                 intervention_code, intervention_reason, intervention_at,
-                last_output_at, idle_since, idle_threshold_secs, worktree_path, sandbox, created_at, updated_at)
+                last_output_at, idle_since, idle_threshold_secs, worktree_path, runtime, created_at, updated_at)
              VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
@@ -298,7 +314,7 @@ impl Store {
                 .map(|v| i32::try_from(v).unwrap_or(i32::MAX)),
         )
         .bind(&session.worktree_path)
-        .bind(i32::from(session.sandbox))
+        .bind(session.runtime.to_string())
         .bind(session.created_at.to_rfc3339())
         .bind(session.updated_at.to_rfc3339())
         .execute(&self.pool)
@@ -713,9 +729,9 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
             v.map(|n| u32::try_from(n).unwrap_or(0))
         },
         worktree_path: row.try_get("worktree_path").unwrap_or(None),
-        sandbox: {
-            let v: Option<i32> = row.try_get("sandbox").unwrap_or(None);
-            v.is_some_and(|v| v != 0)
+        runtime: {
+            let s: Option<String> = row.try_get("runtime").unwrap_or(None);
+            s.and_then(|s| s.parse().ok()).unwrap_or_default()
         },
         created_at: DateTime::parse_from_rfc3339(&created_str)?.with_timezone(&Utc),
         updated_at: DateTime::parse_from_rfc3339(&updated_str)?.with_timezone(&Utc),
@@ -762,6 +778,7 @@ fn row_to_intervention_event(row: &SqliteRow) -> Result<InterventionEvent> {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use pulpo_common::session::Runtime;
 
     fn make_session(name: &str) -> Session {
         Session {
@@ -783,7 +800,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }
@@ -1141,7 +1158,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };

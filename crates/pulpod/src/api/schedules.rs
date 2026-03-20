@@ -213,7 +213,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            sandbox: crate::config::SandboxConfig::default(),
+            docker: crate::config::DockerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =

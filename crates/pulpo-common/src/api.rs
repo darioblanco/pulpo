@@ -18,8 +18,8 @@ pub struct CreateSessionRequest {
     pub idle_threshold_secs: Option<u32>,
     /// Create in an isolated git worktree.
     pub worktree: Option<bool>,
-    /// Run in a Docker sandbox container.
-    pub sandbox: Option<bool>,
+    /// Runtime environment (tmux or docker). Defaults to tmux.
+    pub runtime: Option<crate::session::Runtime>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -583,7 +583,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("/tmp"));
@@ -1095,7 +1095,7 @@ mod tests {
 
     #[test]
     fn test_create_session_response_serialize() {
-        use crate::session::{Session, SessionStatus};
+        use crate::session::{Runtime, Session, SessionStatus};
         use chrono::Utc;
         use uuid::Uuid;
         let session = Session {
@@ -1117,7 +1117,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -1191,7 +1191,7 @@ mod tests {
     // -- Fleet type tests --
 
     fn make_fleet_session() -> FleetSession {
-        use crate::session::{Session, SessionStatus};
+        use crate::session::{Runtime, Session, SessionStatus};
         use chrono::Utc;
         use uuid::Uuid;
         FleetSession {
@@ -1216,7 +1216,7 @@ mod tests {
                 idle_since: None,
                 idle_threshold_secs: None,
                 worktree_path: None,
-                sandbox: false,
+                runtime: Runtime::Tmux,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
             },

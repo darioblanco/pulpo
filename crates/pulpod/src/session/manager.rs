@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow, bail};
 use chrono::Utc;
 use pulpo_common::api::CreateSessionRequest;
 use pulpo_common::event::{PulpoEvent, SessionEvent};
-use pulpo_common::session::{Session, SessionStatus};
+use pulpo_common::session::{Runtime, Session, SessionStatus};
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -18,7 +18,7 @@ use crate::store::Store;
 #[derive(Clone)]
 pub struct SessionManager {
     backend: Arc<dyn Backend>,
-    sandbox_backend: Option<Arc<dyn Backend>>,
+    docker_backend: Option<Arc<dyn Backend>>,
     store: Store,
     inks: HashMap<String, InkConfig>,
     default_command: Option<String>,
@@ -38,7 +38,7 @@ impl SessionManager {
     ) -> Self {
         Self {
             backend,
-            sandbox_backend: None,
+            docker_backend: None,
             store,
             inks,
             default_command,
@@ -49,15 +49,15 @@ impl SessionManager {
     }
 
     #[must_use]
-    pub fn with_sandbox_backend(mut self, backend: Arc<dyn Backend>) -> Self {
-        self.sandbox_backend = Some(backend);
+    pub fn with_docker_backend(mut self, backend: Arc<dyn Backend>) -> Self {
+        self.docker_backend = Some(backend);
         self
     }
 
     /// Get the right backend for a session based on its `backend_session_id`.
     fn backend_for_id(&self, backend_id: &str) -> &Arc<dyn Backend> {
         if crate::backend::docker::is_docker_session(backend_id) {
-            self.sandbox_backend.as_ref().unwrap_or(&self.backend)
+            self.docker_backend.as_ref().unwrap_or(&self.backend)
         } else {
             &self.backend
         }
@@ -146,18 +146,18 @@ impl SessionManager {
 
         let id = Uuid::new_v4();
         let name = req.name.clone();
-        let is_sandbox = req.sandbox.unwrap_or(false);
-        let backend_id = if is_sandbox {
-            if self.sandbox_backend.is_none() {
-                bail!("sandbox not configured — set [sandbox] image in config.toml");
+        let runtime = req.runtime.unwrap_or_default();
+        let backend_id = if runtime == Runtime::Docker {
+            if self.docker_backend.is_none() {
+                bail!("docker runtime not configured — set [docker] image in config.toml");
             }
             format!("docker:pulpo-{}", req.name)
         } else {
             self.backend.session_id(&name)
         };
 
-        // Sandbox sessions run the command directly; tmux sessions get the wrapper
-        let final_command = if is_sandbox {
+        // Docker sessions run the command directly; tmux sessions get the wrapper
+        let final_command = if runtime == Runtime::Docker {
             command.clone()
         } else {
             wrap_command(&command, &id, &name)
@@ -183,7 +183,7 @@ impl SessionManager {
             idle_since: None,
             idle_threshold_secs: req.idle_threshold_secs,
             worktree_path,
-            sandbox: is_sandbox,
+            runtime,
             created_at: now,
             updated_at: now,
         };
@@ -201,7 +201,9 @@ impl SessionManager {
 
         // Query the tmux $N session ID and update if available (tmux only)
         let mut session = session;
-        if !is_sandbox && let Ok(tmux_id) = self.backend.query_backend_id(&name) {
+        if runtime == Runtime::Tmux
+            && let Ok(tmux_id) = self.backend.query_backend_id(&name)
+        {
             let _ = self
                 .store
                 .update_backend_session_id(&id.to_string(), &tmux_id)
@@ -422,7 +424,7 @@ impl SessionManager {
         let active_backend = self.backend_for_id(&backend_id);
         let alive = active_backend.is_alive(&backend_id)?;
         if !alive {
-            let final_command = if session.sandbox {
+            let final_command = if session.runtime == Runtime::Docker {
                 session.command.clone()
             } else {
                 wrap_command(&session.command, &session.id, &session.name)
@@ -430,7 +432,7 @@ impl SessionManager {
             active_backend.create_session(&backend_id, &session.workdir, &final_command)?;
 
             // Query the new tmux $N session ID (tmux only)
-            if !session.sandbox
+            if session.runtime == Runtime::Tmux
                 && let Ok(tmux_id) = self.backend.query_backend_id(&session.name)
             {
                 let _ = self
@@ -469,7 +471,7 @@ impl SessionManager {
                 continue;
             }
             // Backend is dead — resume the session
-            let final_command = if session.sandbox {
+            let final_command = if session.runtime == Runtime::Docker {
                 session.command.clone()
             } else {
                 wrap_command(&session.command, &session.id, &session.name)
@@ -489,7 +491,7 @@ impl SessionManager {
             }
 
             // Query the new tmux $N session ID (tmux only)
-            if !session.sandbox
+            if session.runtime == Runtime::Tmux
                 && let Ok(tmux_id) = self.backend.query_backend_id(&session.name)
             {
                 let _ = self
@@ -752,7 +754,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         }
     }
 
@@ -789,7 +791,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -825,7 +827,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -858,7 +860,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Explicit command wins over ink command
@@ -878,7 +880,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let result = mgr.create_session(req).await;
         let err = result.unwrap_err().to_string();
@@ -897,7 +899,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert!(!session.workdir.is_empty());
@@ -1552,7 +1554,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let (cmd, desc) = mgr.resolve_ink(&req).unwrap();
         // Falls back to $SHELL or /bin/sh
@@ -1586,7 +1588,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.description, Some("Ink desc".into()));
@@ -1618,7 +1620,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         // Ink with no command falls back to $SHELL
         let session = mgr.create_session(req).await.unwrap();
@@ -1644,7 +1646,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude");
@@ -1669,7 +1671,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "custom-agent");
@@ -1702,7 +1704,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -1720,7 +1722,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -1827,7 +1829,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: Utc::now() - chrono::Duration::hours(1),
             updated_at: Utc::now(),
         };
@@ -1853,17 +1855,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_with_sandbox_backend_routes_docker_sessions() {
-        let sandbox = Arc::new(MockBackend::new());
+    async fn test_with_docker_backend_routes_docker_sessions() {
+        let docker = Arc::new(MockBackend::new());
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let main_backend = Arc::new(MockBackend::new());
         let mgr = SessionManager::new(main_backend.clone(), store, HashMap::new(), None)
-            .with_sandbox_backend(sandbox.clone())
+            .with_docker_backend(docker.clone())
             .with_no_stale_grace();
-        // Create a sandbox session
+        // Create a docker session
         let req = CreateSessionRequest {
             name: "docker-test".to_owned(),
             workdir: Some("/tmp".into()),
@@ -1873,10 +1875,10 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: Some(true),
+            runtime: Some(Runtime::Docker),
         };
         let session = mgr.create_session(req).await.unwrap();
-        assert!(session.sandbox);
+        assert_eq!(session.runtime, Runtime::Docker);
         assert!(
             session
                 .backend_session_id
@@ -1884,11 +1886,11 @@ mod tests {
                 .unwrap()
                 .starts_with("docker:")
         );
-        // Sandbox backend should have received the create call, not the main backend
-        let sandbox_calls: Vec<_> = sandbox.calls.lock().unwrap().clone();
+        // Docker backend should have received the create call, not the main backend
+        let docker_calls: Vec<_> = docker.calls.lock().unwrap().clone();
         assert!(
-            sandbox_calls.iter().any(|c| c.starts_with("create:")),
-            "sandbox backend should handle docker sessions"
+            docker_calls.iter().any(|c| c.starts_with("create:")),
+            "docker backend should handle docker sessions"
         );
         let main_calls: Vec<_> = main_backend.calls.lock().unwrap().clone();
         assert!(
@@ -1898,8 +1900,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sandbox_no_config_fails() {
-        // No sandbox backend configured
+    async fn test_docker_no_config_fails() {
+        // No docker backend configured
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
             name: "docker-test".to_owned(),
@@ -1910,24 +1912,27 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: Some(true),
+            runtime: Some(Runtime::Docker),
         };
         let err = mgr.create_session(req).await.unwrap_err();
-        assert!(err.to_string().contains("sandbox not configured"), "{err}");
+        assert!(
+            err.to_string().contains("docker runtime not configured"),
+            "{err}"
+        );
     }
 
     #[tokio::test]
-    async fn test_sandbox_command_not_wrapped() {
-        let sandbox = Arc::new(MockBackend::new());
+    async fn test_docker_command_not_wrapped() {
+        let docker = Arc::new(MockBackend::new());
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let mgr = SessionManager::new(Arc::new(MockBackend::new()), store, HashMap::new(), None)
-            .with_sandbox_backend(sandbox.clone())
+            .with_docker_backend(docker.clone())
             .with_no_stale_grace();
         let req = CreateSessionRequest {
-            name: "sandbox-cmd".to_owned(),
+            name: "docker-cmd".to_owned(),
             workdir: Some("/tmp".into()),
             command: Some("claude".into()),
             ink: None,
@@ -1935,19 +1940,19 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: Some(true),
+            runtime: Some(Runtime::Docker),
         };
         mgr.create_session(req).await.unwrap();
-        // Sandbox command should NOT be wrapped with bash -l -c
-        let calls: Vec<_> = sandbox.calls.lock().unwrap().clone();
+        // Docker command should NOT be wrapped with bash -l -c
+        let calls: Vec<_> = docker.calls.lock().unwrap().clone();
         let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
         assert!(
             !create_call.contains("bash -l -c"),
-            "sandbox command should not be wrapped: {create_call}"
+            "docker command should not be wrapped: {create_call}"
         );
         assert!(
             create_call.contains("claude"),
-            "sandbox command should be raw: {create_call}"
+            "docker command should be raw: {create_call}"
         );
     }
 
@@ -2027,8 +2032,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resume_lost_sessions_sandbox_command_not_wrapped() {
-        let sandbox = Arc::new(MockBackend::new().with_alive(false));
+    async fn test_resume_lost_sessions_docker_command_not_wrapped() {
+        let docker = Arc::new(MockBackend::new().with_alive(false));
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -2040,10 +2045,10 @@ mod tests {
             HashMap::new(),
             None,
         )
-        .with_sandbox_backend(sandbox.clone())
+        .with_docker_backend(docker.clone())
         .with_no_stale_grace();
 
-        // Create a sandbox session and mark it active with dead backend
+        // Create a docker session and mark it active with dead backend
         let req = CreateSessionRequest {
             name: "auto-resume-docker".to_owned(),
             workdir: Some("/tmp".into()),
@@ -2053,24 +2058,24 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: Some(true),
+            runtime: Some(Runtime::Docker),
         };
         let session = mgr.create_session(req).await.unwrap();
         // Mark it active (create_session left it as Active) — backend is dead
-        sandbox.calls.lock().unwrap().clear();
+        docker.calls.lock().unwrap().clear();
 
         let resumed = mgr.resume_lost_sessions().await.unwrap();
         assert_eq!(resumed, 1);
-        // Sandbox auto-resume should NOT wrap the command
-        let calls: Vec<_> = sandbox.calls.lock().unwrap().clone();
+        // Docker auto-resume should NOT wrap the command
+        let calls: Vec<_> = docker.calls.lock().unwrap().clone();
         let create_call = calls.iter().find(|c| c.starts_with("create:"));
         assert!(
             create_call.is_some(),
-            "sandbox backend should re-create session"
+            "docker backend should re-create session"
         );
         assert!(
             !create_call.unwrap().contains("bash -l -c"),
-            "auto-resumed sandbox command should not be wrapped"
+            "auto-resumed docker command should not be wrapped"
         );
         // Verify the session ID was stored correctly
         let updated = sqlx::query_as::<_, (String,)>("SELECT status FROM sessions WHERE id = ?")

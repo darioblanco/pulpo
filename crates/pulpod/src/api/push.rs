@@ -106,7 +106,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            sandbox: crate::config::SandboxConfig::default(),
+            docker: crate::config::DockerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =

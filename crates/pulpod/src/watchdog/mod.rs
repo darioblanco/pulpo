@@ -9,7 +9,7 @@ use pulpo_common::session::SessionStatus;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
-use pulpo_common::session::{InterventionCode, Session};
+use pulpo_common::session::{InterventionCode, Runtime, Session};
 
 use crate::backend::Backend;
 use crate::store::Store;
@@ -750,7 +750,7 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -980,7 +980,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1447,7 +1447,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1771,7 +1771,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1824,7 +1824,7 @@ mod tests {
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1885,7 +1885,7 @@ mod tests {
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(100)),
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -1936,7 +1936,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2007,7 +2007,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2058,7 +2058,7 @@ mod tests {
             idle_since: Some(idle_time),
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2110,7 +2110,7 @@ mod tests {
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2183,7 +2183,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now() - chrono::Duration::seconds(700),
             updated_at: chrono::Utc::now(),
         };
@@ -2258,7 +2258,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2325,7 +2325,7 @@ mod tests {
             idle_since: Some(chrono::Utc::now()),
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2363,7 +2363,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2396,7 +2396,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2454,7 +2454,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2513,7 +2513,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2695,7 +2695,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2945,7 +2945,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -2995,7 +2995,7 @@ mod tests {
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(60)),
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -3044,7 +3044,7 @@ mod tests {
             idle_since,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
@@ -3700,7 +3700,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };

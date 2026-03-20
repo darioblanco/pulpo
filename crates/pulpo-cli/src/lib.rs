@@ -5,7 +5,7 @@ use pulpo_common::api::{
     AuthTokenResponse, ConfigResponse, CreateSessionResponse, InterventionEventResponse,
     PeersResponse,
 };
-use pulpo_common::session::Session;
+use pulpo_common::session::{Runtime, Session};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -84,9 +84,9 @@ pub enum Commands {
         #[arg(long)]
         worktree: bool,
 
-        /// Run in a Docker sandbox container
+        /// Runtime environment: tmux (default) or docker
         #[arg(long)]
-        sandbox: bool,
+        runtime: Option<String>,
 
         /// Command to run (everything after --)
         #[arg(last = true)]
@@ -296,10 +296,10 @@ struct OutputResponse {
 }
 
 /// Format a list of sessions as a table.
-fn session_runtime(session: &Session) -> &'static str {
-    match session.backend_session_id.as_deref() {
-        Some(id) if id.starts_with("docker:") => "docker",
-        _ => "tmux",
+const fn session_runtime(session: &Session) -> &'static str {
+    match session.runtime {
+        Runtime::Tmux => "tmux",
+        Runtime::Docker => "docker",
     }
 }
 
@@ -444,7 +444,7 @@ fn attach_session(backend_session_id: &str) -> Result<()> {
 /// Stub for Windows — tmux attach is not available.
 #[cfg(all(target_os = "windows", not(test), not(coverage)))]
 fn attach_session(_backend_session_id: &str) -> Result<()> {
-    eprintln!("tmux attach is not available on Windows. Use the web UI or --sandbox.");
+    eprintln!("tmux attach is not available on Windows. Use the web UI or --runtime docker.");
     Ok(())
 }
 
@@ -1073,7 +1073,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             idle_threshold,
             auto,
             worktree,
-            sandbox,
+            runtime,
             command,
         } => {
             let cmd = if command.is_empty() {
@@ -1112,8 +1112,8 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             if *worktree {
                 body["worktree"] = serde_json::json!(true);
             }
-            if *sandbox {
-                body["sandbox"] = serde_json::json!(true);
+            if let Some(rt) = runtime {
+                body["runtime"] = serde_json::json!(rt);
             }
             let spawn_url = if *auto {
                 let (auto_addr, auto_name) =
@@ -1654,7 +1654,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
-                sandbox: false,
+                runtime: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1679,7 +1679,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
-                sandbox: false,
+                runtime: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1689,7 +1689,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_spawn_with_idle_threshold_and_worktree_and_sandbox() {
+    async fn test_execute_spawn_with_idle_threshold_and_worktree_and_docker_runtime() {
         let node = start_test_server().await;
         let cli = Cli {
             node,
@@ -1703,7 +1703,7 @@ mod tests {
                 idle_threshold: Some(120),
                 auto: false,
                 worktree: true,
-                sandbox: true,
+                runtime: Some("docker".into()),
                 command: vec!["claude".into()],
             }),
             path: None,
@@ -1727,7 +1727,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
-                sandbox: false,
+                runtime: None,
                 command: vec!["echo".into(), "hello".into()],
             }),
             path: None,
@@ -1751,7 +1751,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
-                sandbox: false,
+                runtime: None,
                 command: vec![],
             }),
             path: None,
@@ -1775,7 +1775,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
-                sandbox: false,
+                runtime: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1799,7 +1799,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
-                sandbox: false,
+                runtime: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -2038,7 +2038,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
-                sandbox: false,
+                runtime: None,
                 command: vec!["test".into()],
             }),
             path: None,
@@ -2226,7 +2226,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
@@ -2267,7 +2267,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: true,
+            runtime: Runtime::Docker,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
@@ -2302,7 +2302,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
@@ -2401,7 +2401,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
-                sandbox: false,
+                runtime: None,
                 command: vec!["test".into()],
             }),
             path: None,
@@ -3940,7 +3940,7 @@ mod tests {
                 idle_threshold: None,
                 auto: true,
                 worktree: false,
-                sandbox: false,
+                runtime: None,
                 command: vec!["echo".into(), "hello".into()],
             }),
             path: None,

@@ -228,7 +228,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                sandbox: crate::config::SandboxConfig::default(),
+                docker: crate::config::DockerConfig::default(),
             },
             manager,
             peer_registry,
@@ -262,7 +262,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
-            sandbox: None,
+            runtime: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
         // DeadBackend's is_alive returns false, so get_session marks it Stale
@@ -310,7 +310,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
@@ -344,7 +344,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
-            sandbox: false,
+            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
