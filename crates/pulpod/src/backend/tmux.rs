@@ -70,6 +70,27 @@ fn build_create_command(
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
+fn build_set_mouse_command(tmux: &str, session_name: &str) -> Command {
+    let mut cmd = Command::new(tmux);
+    cmd.args(["set-option", "-t", session_name, "mouse", "on"]);
+    cmd
+}
+
+#[cfg_attr(coverage, allow(dead_code))]
+fn build_set_clipboard_command(tmux: &str, session_name: &str) -> Command {
+    let mut cmd = Command::new(tmux);
+    cmd.args(["set-option", "-t", session_name, "set-clipboard", "on"]);
+    cmd
+}
+
+#[cfg_attr(coverage, allow(dead_code))]
+fn build_allow_passthrough_command(tmux: &str, session_name: &str) -> Command {
+    let mut cmd = Command::new(tmux);
+    cmd.args(["set-option", "-t", session_name, "allow-passthrough", "on"]);
+    cmd
+}
+
+#[cfg_attr(coverage, allow(dead_code))]
 fn build_kill_command(tmux: &str, session_name: &str) -> Command {
     let mut cmd = Command::new(tmux);
     cmd.args(["kill-session", "-t", session_name]);
@@ -95,27 +116,6 @@ fn build_capture_command(tmux: &str, session_name: &str, lines: usize) -> Comman
         "-S",
         &start.to_string(),
     ]);
-    cmd
-}
-
-#[cfg_attr(coverage, allow(dead_code))]
-fn build_set_mouse_command(tmux: &str, session_name: &str) -> Command {
-    let mut cmd = Command::new(tmux);
-    cmd.args(["set-option", "-t", session_name, "mouse", "on"]);
-    cmd
-}
-
-#[cfg_attr(coverage, allow(dead_code))]
-fn build_set_clipboard_command(tmux: &str, session_name: &str) -> Command {
-    let mut cmd = Command::new(tmux);
-    cmd.args(["set-option", "-t", session_name, "set-clipboard", "on"]);
-    cmd
-}
-
-#[cfg_attr(coverage, allow(dead_code))]
-fn build_allow_passthrough_command(tmux: &str, session_name: &str) -> Command {
-    let mut cmd = Command::new(tmux);
-    cmd.args(["set-option", "-t", session_name, "allow-passthrough", "on"]);
     cmd
 }
 
@@ -313,21 +313,20 @@ impl Backend for TmuxBackend {
             build_create_command(&self.tmux_path, backend_id, working_dir, command),
             "create tmux session",
         )?;
-        // Enable mouse mode so scrollback works via the web terminal
-        run_tmux(
+        // Best-effort session options — if the command exits instantly and kills
+        // the tmux server, these will fail but the session was already dead anyway.
+        let _ = run_tmux(
             build_set_mouse_command(&self.tmux_path, backend_id),
             "enable tmux mouse mode",
-        )?;
-        // Enable clipboard forwarding for image paste support
-        run_tmux(
+        );
+        let _ = run_tmux(
             build_set_clipboard_command(&self.tmux_path, backend_id),
             "enable tmux clipboard",
-        )?;
-        // Allow escape sequence passthrough (image paste, OSC sequences)
-        run_tmux(
+        );
+        let _ = run_tmux(
             build_allow_passthrough_command(&self.tmux_path, backend_id),
             "enable tmux passthrough",
-        )?;
+        );
         Ok(())
     }
 

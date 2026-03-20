@@ -236,34 +236,12 @@ mod tests {
 
     // -- Middleware integration tests --
 
+    use crate::backend::StubBackend;
     use crate::config::{AuthConfig, Config, NodeConfig};
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
     use std::collections::HashMap;
-
-    struct StubBackend;
-
-    impl crate::backend::Backend for StubBackend {
-        fn create_session(&self, _: &str, _: &str, _: &str) -> anyhow::Result<()> {
-            Ok(())
-        }
-        fn kill_session(&self, _: &str) -> anyhow::Result<()> {
-            Ok(())
-        }
-        fn is_alive(&self, _: &str) -> anyhow::Result<bool> {
-            Ok(true)
-        }
-        fn capture_output(&self, _: &str, _: usize) -> anyhow::Result<String> {
-            Ok(String::new())
-        }
-        fn send_input(&self, _: &str, _: &str) -> anyhow::Result<()> {
-            Ok(())
-        }
-        fn setup_logging(&self, _: &str, _: &str) -> anyhow::Result<()> {
-            Ok(())
-        }
-    }
 
     async fn make_state(bind: BindMode, token: &str) -> Arc<AppState> {
         let tmpdir = tempfile::tempdir().unwrap();
@@ -431,17 +409,5 @@ mod tests {
             .unwrap();
         let resp = call_middleware(state, req, None).await;
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    #[test]
-    fn test_stub_backend_methods() {
-        use crate::backend::Backend;
-        let b = StubBackend;
-        assert!(b.create_session("n", "d", "c").is_ok());
-        assert!(b.kill_session("n").is_ok());
-        assert!(b.is_alive("n").unwrap());
-        assert!(b.capture_output("n", 10).unwrap().is_empty());
-        assert!(b.send_input("n", "t").is_ok());
-        assert!(b.setup_logging("n", "p").is_ok());
     }
 }

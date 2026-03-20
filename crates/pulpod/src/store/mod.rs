@@ -327,12 +327,34 @@ impl Store {
     }
 
     pub async fn has_active_session_by_name(&self, name: &str) -> Result<bool> {
-        let row = sqlx::query(
-            "SELECT 1 FROM sessions WHERE name = ? AND status IN ('creating', 'active', 'idle', 'ready') LIMIT 1",
-        )
-        .bind(name)
-        .fetch_optional(&self.pool)
-        .await?;
+        self.has_active_session_by_name_excluding(name, None).await
+    }
+
+    /// Check for an active session with `name`, optionally excluding a specific session ID.
+    pub async fn has_active_session_by_name_excluding(
+        &self,
+        name: &str,
+        exclude_id: Option<&str>,
+    ) -> Result<bool> {
+        let row = match exclude_id {
+            Some(id) => {
+                sqlx::query(
+                    "SELECT 1 FROM sessions WHERE name = ? AND id != ? AND status IN ('creating', 'active', 'idle', 'ready') LIMIT 1",
+                )
+                .bind(name)
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?
+            }
+            None => {
+                sqlx::query(
+                    "SELECT 1 FROM sessions WHERE name = ? AND status IN ('creating', 'active', 'idle', 'ready') LIMIT 1",
+                )
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?
+            }
+        };
         Ok(row.is_some())
     }
 
@@ -976,6 +998,44 @@ mod tests {
         assert!(
             store
                 .has_active_session_by_name("ready-session")
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_has_active_session_by_name_excluding_self() {
+        let store = test_store().await;
+        let mut session = make_session("ready-session");
+        session.status = SessionStatus::Ready;
+        store.insert_session(&session).await.unwrap();
+
+        // Excluding self should return false (no *other* active session with this name)
+        assert!(
+            !store
+                .has_active_session_by_name_excluding(
+                    "ready-session",
+                    Some(&session.id.to_string()),
+                )
+                .await
+                .unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_has_active_session_by_name_excluding_different_id() {
+        let store = test_store().await;
+        let mut session = make_session("clash-session");
+        session.status = SessionStatus::Active;
+        store.insert_session(&session).await.unwrap();
+
+        // Excluding a different ID should still find the active session
+        assert!(
+            store
+                .has_active_session_by_name_excluding(
+                    "clash-session",
+                    Some(&uuid::Uuid::new_v4().to_string()),
+                )
                 .await
                 .unwrap()
         );

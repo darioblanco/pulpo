@@ -146,35 +146,11 @@ mod tests {
     use pulpo_common::peer::{PeerEntry, PeerStatus};
 
     use crate::api::AppState;
-    use crate::backend::Backend;
+    use crate::backend::StubBackend;
     use crate::config::{Config, NodeConfig};
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
-    use anyhow::Result;
-
-    struct StubBackend;
-
-    impl Backend for StubBackend {
-        fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
-            Ok(())
-        }
-        fn kill_session(&self, _: &str) -> Result<()> {
-            Ok(())
-        }
-        fn is_alive(&self, _: &str) -> Result<bool> {
-            Ok(true)
-        }
-        fn capture_output(&self, _: &str, _: usize) -> Result<String> {
-            Ok(String::new())
-        }
-        fn send_input(&self, _: &str, _: &str) -> Result<()> {
-            Ok(())
-        }
-        fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
-            Ok(())
-        }
-    }
 
     async fn test_state_with_peers(peers_config: HashMap<String, PeerEntry>) -> Arc<AppState> {
         let tmpdir = tempfile::tempdir().unwrap();
@@ -204,18 +180,6 @@ mod tests {
             peer_registry,
             store,
         )
-    }
-
-    #[test]
-    fn test_stub_backend_methods() {
-        use crate::backend::Backend;
-        let b = StubBackend;
-        assert!(b.create_session("n", "d", "c").is_ok());
-        assert!(b.kill_session("n").is_ok());
-        assert!(b.is_alive("n").unwrap());
-        assert!(b.capture_output("n", 10).unwrap().is_empty());
-        assert!(b.send_input("n", "t").is_ok());
-        assert!(b.setup_logging("n", "p").is_ok());
     }
 
     #[tokio::test]

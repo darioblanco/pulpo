@@ -174,6 +174,7 @@ mod tests {
     use super::*;
     use crate::api::AppState;
     use crate::backend::Backend;
+    use crate::backend::StubBackend;
     use std::collections::HashMap;
 
     use crate::config::{Config, NodeConfig};
@@ -182,29 +183,6 @@ mod tests {
     use crate::store::Store;
     use anyhow::Result;
     use pulpo_common::api::CreateSessionRequest;
-
-    struct StubBackend;
-
-    impl Backend for StubBackend {
-        fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
-            Ok(())
-        }
-        fn kill_session(&self, _: &str) -> Result<()> {
-            Ok(())
-        }
-        fn is_alive(&self, _: &str) -> Result<bool> {
-            Ok(true)
-        }
-        fn capture_output(&self, _: &str, _: usize) -> Result<String> {
-            Ok(String::new())
-        }
-        fn send_input(&self, _: &str, _: &str) -> Result<()> {
-            Ok(())
-        }
-        fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
-            Ok(())
-        }
-    }
 
     struct DeadBackend;
 
@@ -295,17 +273,6 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_ne!(fetched.status, SessionStatus::Active);
-    }
-
-    #[test]
-    fn test_stubbackend_methods() {
-        let b = StubBackend;
-        assert!(b.create_session("n", "d", "c").is_ok());
-        assert!(b.kill_session("n").is_ok());
-        assert!(b.is_alive("n").unwrap());
-        assert!(b.capture_output("n", 10).unwrap().is_empty());
-        assert!(b.send_input("n", "t").is_ok());
-        assert!(b.setup_logging("n", "p").is_ok());
     }
 
     #[test]

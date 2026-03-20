@@ -77,35 +77,11 @@ mod tests {
 
     use crate::api::AppState;
     use crate::api::routes;
-    use crate::backend::Backend;
+    use crate::backend::StubBackend;
     use crate::config::{Config, NodeConfig, NotificationsConfig, VapidConfig};
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
-    use anyhow::Result;
-
-    struct StubBackend;
-
-    impl Backend for StubBackend {
-        fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
-            Ok(())
-        }
-        fn kill_session(&self, _: &str) -> Result<()> {
-            Ok(())
-        }
-        fn is_alive(&self, _: &str) -> Result<bool> {
-            Ok(true)
-        }
-        fn capture_output(&self, _: &str, _: usize) -> Result<String> {
-            Ok(String::new())
-        }
-        fn send_input(&self, _: &str, _: &str) -> Result<()> {
-            Ok(())
-        }
-        fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
-            Ok(())
-        }
-    }
 
     async fn test_server_with_vapid(private_key: &str, public_key: &str) -> (TestServer, Store) {
         let tmpdir = tempfile::tempdir().unwrap();

@@ -93,9 +93,13 @@ pub enum Commands {
         command: Vec<String>,
     },
 
-    /// List all sessions
+    /// List sessions (live only by default)
     #[command(visible_alias = "ls")]
-    List,
+    List {
+        /// Show all sessions including killed and lost
+        #[arg(short, long)]
+        all: bool,
+    },
 
     /// Show session logs/output
     #[command(visible_alias = "l")]
@@ -292,18 +296,36 @@ struct OutputResponse {
 }
 
 /// Format a list of sessions as a table.
+fn session_runtime(session: &Session) -> &'static str {
+    match session.backend_session_id.as_deref() {
+        Some(id) if id.starts_with("docker:") => "docker",
+        _ => "tmux",
+    }
+}
+
 fn format_sessions(sessions: &[Session]) -> String {
     if sessions.is_empty() {
         return "No sessions.".into();
     }
-    let mut lines = vec![format!("{:<20} {:<12} {}", "NAME", "STATUS", "COMMAND")];
+    let mut lines = vec![format!(
+        "{:<10} {:<20} {:<12} {:<8} {}",
+        "ID", "NAME", "STATUS", "RUNTIME", "COMMAND"
+    )];
     for s in sessions {
         let cmd_display = if s.command.len() > 50 {
             format!("{}...", &s.command[..47])
         } else {
             s.command.clone()
         };
-        lines.push(format!("{:<20} {:<12} {}", s.name, s.status, cmd_display));
+        let short_id = &s.id.to_string()[..8];
+        lines.push(format!(
+            "{:<10} {:<20} {:<12} {:<8} {}",
+            short_id,
+            s.name,
+            s.status,
+            session_runtime(s),
+            cmd_display
+        ));
     }
     lines.join("\n")
 }
@@ -606,7 +628,7 @@ fn authed_delete(
 }
 
 /// Build an authenticated PUT request.
-#[cfg_attr(coverage, allow(dead_code))]
+#[cfg(not(coverage))]
 fn authed_put(
     client: &reqwest::Client,
     url: String,
@@ -935,6 +957,14 @@ pub async fn execute(cli: &Cli) -> Result<String> {
         .or(peer_token);
 
     // Handle `pulpo <path>` shortcut — spawn a session in the given directory
+    if cli.command.is_none() && cli.path.is_none() {
+        // No subcommand and no path: print help
+        use clap::CommandFactory;
+        let mut cmd = Cli::command();
+        cmd.print_help()?;
+        println!();
+        return Ok(String::new());
+    }
     if cli.command.is_none() {
         let path = cli.path.as_deref().unwrap_or(".");
         let resolved_workdir = resolve_path(path);
@@ -1011,8 +1041,13 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             ok_or_api_error(resp).await?;
             Ok(format!("Sent input to session {name}."))
         }
-        Commands::List => {
-            let resp = authed_get(&client, format!("{url}/api/v1/sessions"), token.as_deref())
+        Commands::List { all } => {
+            let list_url = if *all {
+                format!("{url}/api/v1/sessions")
+            } else {
+                format!("{url}/api/v1/sessions?status=creating,active,idle,ready")
+            };
+            let resp = authed_get(&client, list_url, token.as_deref())
                 .send()
                 .await
                 .map_err(|e| friendly_error(&e, node))?;
@@ -1226,7 +1261,7 @@ mod tests {
     fn test_cli_parse_list() {
         let cli = Cli::try_parse_from(["pulpo", "list"]).unwrap();
         assert_eq!(cli.node, "localhost:7433");
-        assert!(matches!(cli.command, Some(Commands::List)));
+        assert!(matches!(cli.command, Some(Commands::List { .. })));
     }
 
     #[test]
@@ -1499,8 +1534,8 @@ mod tests {
 
     #[test]
     fn test_commands_debug() {
-        let cmd = Commands::List;
-        assert_eq!(format!("{cmd:?}"), "List");
+        let cmd = Commands::List { all: false };
+        assert_eq!(format!("{cmd:?}"), "List { all: false }");
     }
 
     /// A valid Session JSON for test responses.
@@ -1582,7 +1617,7 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Some(Commands::List),
+            command: Some(Commands::List { all: false }),
             path: None,
         };
         let result = execute(&cli).await.unwrap();
@@ -1646,6 +1681,54 @@ mod tests {
                 worktree: false,
                 sandbox: false,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Created session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_spawn_with_idle_threshold_and_worktree_and_sandbox() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Some(Commands::Spawn {
+                name: Some("full-opts".into()),
+                workdir: Some("/tmp/repo".into()),
+                ink: Some("coder".into()),
+                description: Some("Full options".into()),
+                detach: true,
+                idle_threshold: Some(120),
+                auto: false,
+                worktree: true,
+                sandbox: true,
+                command: vec!["claude".into()],
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Created session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_spawn_no_name_derives_from_workdir() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Some(Commands::Spawn {
+                name: None,
+                workdir: Some("/tmp/my-project".into()),
+                ink: None,
+                description: None,
+                detach: true,
+                idle_threshold: None,
+                auto: false,
+                worktree: false,
+                sandbox: false,
+                command: vec!["echo".into(), "hello".into()],
             }),
             path: None,
         };
@@ -1778,7 +1861,7 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Some(Commands::List),
+            command: Some(Commands::List { all: false }),
             path: None,
         };
         let result = execute(&cli).await;
@@ -2148,11 +2231,48 @@ mod tests {
             updated_at: Utc::now(),
         }];
         let output = format_sessions(&sessions);
+        assert!(output.contains("ID"));
         assert!(output.contains("NAME"));
+        assert!(output.contains("RUNTIME"));
         assert!(output.contains("COMMAND"));
+        assert!(output.contains("00000000"));
         assert!(output.contains("my-api"));
         assert!(output.contains("active"));
+        assert!(output.contains("tmux"));
         assert!(output.contains("claude -p 'Fix the bug'"));
+    }
+
+    #[test]
+    fn test_format_sessions_docker_runtime() {
+        use chrono::Utc;
+        use pulpo_common::session::SessionStatus;
+        use uuid::Uuid;
+
+        let sessions = vec![Session {
+            id: Uuid::nil(),
+            name: "sandbox-test".into(),
+            workdir: "/tmp".into(),
+            command: "claude".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: Some("docker:pulpo-sandbox-test".into()),
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: None,
+            sandbox: true,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_sessions(&sessions);
+        assert!(output.contains("docker"));
     }
 
     #[test]
@@ -2557,7 +2677,7 @@ mod tests {
         let cli = Cli {
             node,
             token: Some("test-token".into()),
-            command: Some(Commands::List),
+            command: Some(Commands::List { all: false }),
             path: None,
         };
         let result = execute(&cli).await.unwrap();
@@ -2840,7 +2960,16 @@ mod tests {
     #[test]
     fn test_cli_parse_alias_list() {
         let cli = Cli::try_parse_from(["pulpo", "ls"]).unwrap();
-        assert!(matches!(&cli.command, Some(Commands::List)));
+        assert!(matches!(&cli.command, Some(Commands::List { all: false })));
+    }
+
+    #[test]
+    fn test_cli_parse_list_all() {
+        let cli = Cli::try_parse_from(["pulpo", "ls", "-a"]).unwrap();
+        assert!(matches!(&cli.command, Some(Commands::List { all: true })));
+
+        let cli = Cli::try_parse_from(["pulpo", "list", "--all"]).unwrap();
+        assert!(matches!(&cli.command, Some(Commands::List { all: true })));
     }
 
     #[test]
@@ -3379,7 +3508,6 @@ mod tests {
         ));
     }
 
-    #[cfg(not(coverage))]
     #[tokio::test]
     async fn test_execute_schedule_list_via_execute() {
         let node = start_test_server().await;
@@ -3392,6 +3520,10 @@ mod tests {
             path: None,
         };
         let result = execute(&cli).await.unwrap();
+        // Under coverage, execute_schedule is a stub that returns empty string
+        #[cfg(coverage)]
+        assert!(result.is_empty());
+        #[cfg(not(coverage))]
         assert_eq!(result, "No schedules.");
     }
 
@@ -3476,6 +3608,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_execute_no_args_shows_help() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            path: None,
+            command: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(
+            result.is_empty(),
+            "no-args should return empty string after printing help"
+        );
+    }
+
+    #[tokio::test]
     async fn test_execute_path_shortcut() {
         let node = start_test_server().await;
         let cli = Cli {
@@ -3486,6 +3634,54 @@ mod tests {
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Detached from session"));
+    }
+
+    #[tokio::test]
+    async fn test_deduplicate_session_name_no_conflict() {
+        // Connection refused → falls through to "name not taken" path
+        let base = "http://127.0.0.1:1";
+        let client = reqwest::Client::new();
+        let name = deduplicate_session_name(&client, base, "fresh", None).await;
+        assert_eq!(name, "fresh");
+    }
+
+    #[tokio::test]
+    async fn test_deduplicate_session_name_with_conflict() {
+        use axum::{Router, routing::get};
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let call_count = std::sync::Arc::new(AtomicU32::new(0));
+        let counter = call_count.clone();
+        let app = Router::new()
+            .route(
+                "/api/v1/sessions/{id}",
+                get(move || {
+                    let c = counter.clone();
+                    async move {
+                        let n = c.fetch_add(1, Ordering::SeqCst);
+                        if n == 0 {
+                            // First call (base name) → exists
+                            (axum::http::StatusCode::OK, TEST_SESSION_JSON.to_owned())
+                        } else {
+                            // Suffixed name → not found
+                            (axum::http::StatusCode::NOT_FOUND, "not found".to_owned())
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/api/v1/peers",
+                get(|| async {
+                    r#"{"local":{"name":"test","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":0,"gpu":null},"peers":[]}"#.to_owned()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let base = format!("http://127.0.0.1:{}", addr.port());
+        let client = reqwest::Client::new();
+        let name = deduplicate_session_name(&client, &base, "repo", None).await;
+        assert_eq!(name, "repo-2");
     }
 
     // -- Node resolution tests --
@@ -3588,7 +3784,7 @@ mod tests {
         let cli = Cli {
             node: "nonexistent-peer".into(),
             token: None,
-            command: Some(Commands::List),
+            command: Some(Commands::List { all: false }),
             path: None,
         };
         let result = execute(&cli).await;

@@ -404,8 +404,12 @@ impl SessionManager {
             bail!("session cannot be resumed (status: {previous_status})");
         }
 
-        // Check for name collision with another live session
-        if self.store.has_active_session_by_name(&session.name).await? {
+        // Check for name collision with another live session (exclude self)
+        if self
+            .store
+            .has_active_session_by_name_excluding(&session.name, Some(&session.id.to_string()))
+            .await?
+        {
             bail!(
                 "another session named '{}' is already active — kill it first before resuming",
                 session.name
@@ -596,7 +600,7 @@ fn wrap_command(command: &str, session_id: &uuid::Uuid, session_name: &str) -> S
     // Use $SHELL for the fallback shell so the user gets their preferred shell (zsh, fish, etc.)
     // after the agent exits. Falls back to bash if $SHELL is unset.
     format!(
-        "bash -l -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\'''; exec ${{SHELL:-bash}} -l'"
+        "bash -l -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec ${{SHELL:-bash}} -l'"
     )
 }
 
@@ -1365,6 +1369,24 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[tokio::test]
+    async fn test_resume_ready_session_does_not_self_collide() {
+        let (mgr, _, pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr.create_session(make_req("ready-test")).await.unwrap();
+        let id = session.id.to_string();
+
+        // Mark session as Ready (simulates a session whose agent finished)
+        sqlx::query("UPDATE sessions SET status = 'ready' WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // Resuming a Ready session should succeed — it must not collide with itself
+        let resumed = mgr.resume_session(&id).await.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Active);
+    }
+
     #[test]
     fn test_wrap_command_basic() {
         let id = uuid::Uuid::new_v4();
@@ -1393,6 +1415,25 @@ mod tests {
         assert!(cmd.contains("PULPO_SESSION_NAME=my-task"));
         assert!(cmd.contains("(session: my-task)"));
         assert!(cmd.contains("Run: pulpo resume my-task"));
+    }
+
+    #[test]
+    fn test_wrap_command_quoting_is_valid_shell() {
+        // Verify the wrapped command has balanced single quotes so it doesn't
+        // cause "unmatched '" errors when tmux passes it to the shell.
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("claude", &id, "test-session");
+
+        // Count single quotes outside of escaped sequences (\')
+        // The '\'' pattern (end-quote, escaped-quote, start-quote) is valid.
+        // After removing all '\'' patterns, remaining quotes must be balanced.
+        let simplified = cmd.replace("'\\''", "X");
+        let quote_count = simplified.chars().filter(|&c| c == '\'').count();
+        assert_eq!(
+            quote_count % 2,
+            0,
+            "unbalanced single quotes in wrapped command: {cmd}"
+        );
     }
 
     #[test]
@@ -1809,5 +1850,234 @@ mod tests {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let resumed = mgr.resume_lost_sessions().await.unwrap();
         assert_eq!(resumed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_with_sandbox_backend_routes_docker_sessions() {
+        let sandbox = Arc::new(MockBackend::new());
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let main_backend = Arc::new(MockBackend::new());
+        let mgr = SessionManager::new(main_backend.clone(), store, HashMap::new(), None)
+            .with_sandbox_backend(sandbox.clone())
+            .with_no_stale_grace();
+        // Create a sandbox session
+        let req = CreateSessionRequest {
+            name: "docker-test".to_owned(),
+            workdir: Some("/tmp".into()),
+            command: Some("echo hi".into()),
+            ink: None,
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            sandbox: Some(true),
+        };
+        let session = mgr.create_session(req).await.unwrap();
+        assert!(session.sandbox);
+        assert!(
+            session
+                .backend_session_id
+                .as_deref()
+                .unwrap()
+                .starts_with("docker:")
+        );
+        // Sandbox backend should have received the create call, not the main backend
+        let sandbox_calls: Vec<_> = sandbox.calls.lock().unwrap().clone();
+        assert!(
+            sandbox_calls.iter().any(|c| c.starts_with("create:")),
+            "sandbox backend should handle docker sessions"
+        );
+        let main_calls: Vec<_> = main_backend.calls.lock().unwrap().clone();
+        assert!(
+            !main_calls.iter().any(|c| c.starts_with("create:")),
+            "main backend should not handle docker sessions"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_no_config_fails() {
+        // No sandbox backend configured
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let req = CreateSessionRequest {
+            name: "docker-test".to_owned(),
+            workdir: Some("/tmp".into()),
+            command: Some("echo hi".into()),
+            ink: None,
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            sandbox: Some(true),
+        };
+        let err = mgr.create_session(req).await.unwrap_err();
+        assert!(err.to_string().contains("sandbox not configured"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn test_sandbox_command_not_wrapped() {
+        let sandbox = Arc::new(MockBackend::new());
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let mgr = SessionManager::new(Arc::new(MockBackend::new()), store, HashMap::new(), None)
+            .with_sandbox_backend(sandbox.clone())
+            .with_no_stale_grace();
+        let req = CreateSessionRequest {
+            name: "sandbox-cmd".to_owned(),
+            workdir: Some("/tmp".into()),
+            command: Some("claude".into()),
+            ink: None,
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            sandbox: Some(true),
+        };
+        mgr.create_session(req).await.unwrap();
+        // Sandbox command should NOT be wrapped with bash -l -c
+        let calls: Vec<_> = sandbox.calls.lock().unwrap().clone();
+        let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
+        assert!(
+            !create_call.contains("bash -l -c"),
+            "sandbox command should not be wrapped: {create_call}"
+        );
+        assert!(
+            create_call.contains("claude"),
+            "sandbox command should be raw: {create_call}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stale_grace_period_prevents_early_marking() {
+        // Use default stale_grace_secs (5) — don't use with_no_stale_grace
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let backend = Arc::new(MockBackend::new().with_alive(false));
+        let mgr = SessionManager::new(backend, store, HashMap::new(), None);
+
+        let session = mgr.create_session(make_req("young")).await.unwrap();
+        // Session was just created — within grace period, so check_and_mark_stale returns false
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        // Status should remain Active despite backend being dead (grace period)
+        assert_eq!(fetched.status, SessionStatus::Active);
+    }
+
+    #[test]
+    fn test_cleanup_worktree_nonexistent_path() {
+        // Should not panic on nonexistent path
+        cleanup_worktree("/tmp/nonexistent-worktree-path-for-test");
+    }
+
+    #[test]
+    fn test_cleanup_worktree_existing_path() {
+        // Create a temporary directory structure: repo/.pulpo/worktrees/session
+        let tmpdir = tempfile::tempdir().unwrap();
+        let wt_path = tmpdir
+            .path()
+            .join(".pulpo")
+            .join("worktrees")
+            .join("test-session");
+        std::fs::create_dir_all(&wt_path).unwrap();
+        let wt_str = wt_path.to_str().unwrap();
+        assert!(wt_path.exists());
+        cleanup_worktree(wt_str);
+        // The worktree directory should be removed
+        assert!(!wt_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_kill_session_with_worktree() {
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+        let session = mgr.create_session(make_req("wt-kill")).await.unwrap();
+        let id = session.id.to_string();
+        // Simulate a session with a worktree path (nonexistent — cleanup is best-effort)
+        sqlx::query("UPDATE sessions SET worktree_path = ? WHERE id = ?")
+            .bind("/tmp/nonexistent-wt-kill-test")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Kill should succeed even with a worktree path
+        mgr.kill_session(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_delete_session_with_worktree() {
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+        let session = mgr.create_session(make_req("wt-del")).await.unwrap();
+        let id = session.id.to_string();
+        // Mark as killed so we can delete
+        sqlx::query("UPDATE sessions SET status = 'killed', worktree_path = ? WHERE id = ?")
+            .bind("/tmp/nonexistent-wt-del-test")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        mgr.delete_session(&id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_sandbox_command_not_wrapped() {
+        let sandbox = Arc::new(MockBackend::new().with_alive(false));
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let pool = store.pool().clone();
+        let mgr = SessionManager::new(
+            Arc::new(MockBackend::new().with_alive(false)),
+            store,
+            HashMap::new(),
+            None,
+        )
+        .with_sandbox_backend(sandbox.clone())
+        .with_no_stale_grace();
+
+        // Create a sandbox session and mark it active with dead backend
+        let req = CreateSessionRequest {
+            name: "auto-resume-docker".to_owned(),
+            workdir: Some("/tmp".into()),
+            command: Some("echo hi".into()),
+            ink: None,
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            sandbox: Some(true),
+        };
+        let session = mgr.create_session(req).await.unwrap();
+        // Mark it active (create_session left it as Active) — backend is dead
+        sandbox.calls.lock().unwrap().clear();
+
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 1);
+        // Sandbox auto-resume should NOT wrap the command
+        let calls: Vec<_> = sandbox.calls.lock().unwrap().clone();
+        let create_call = calls.iter().find(|c| c.starts_with("create:"));
+        assert!(
+            create_call.is_some(),
+            "sandbox backend should re-create session"
+        );
+        assert!(
+            !create_call.unwrap().contains("bash -l -c"),
+            "auto-resumed sandbox command should not be wrapped"
+        );
+        // Verify the session ID was stored correctly
+        let updated = sqlx::query_as::<_, (String,)>("SELECT status FROM sessions WHERE id = ?")
+            .bind(session.id.to_string())
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(updated.0, "active");
     }
 }

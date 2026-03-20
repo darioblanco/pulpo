@@ -89,6 +89,33 @@ pub trait Backend: Send + Sync {
     }
 }
 
+/// Shared no-op backend for use in tests across the crate.
+/// Returns `Ok(())` / `Ok(true)` / `Ok(String::new())` for all required trait methods.
+#[cfg(test)]
+pub(crate) struct StubBackend;
+
+#[cfg(test)]
+impl Backend for StubBackend {
+    fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
+        Ok(())
+    }
+    fn kill_session(&self, _: &str) -> Result<()> {
+        Ok(())
+    }
+    fn is_alive(&self, _: &str) -> Result<bool> {
+        Ok(true)
+    }
+    fn capture_output(&self, _: &str, _: usize) -> Result<String> {
+        Ok(String::new())
+    }
+    fn send_input(&self, _: &str, _: &str) -> Result<()> {
+        Ok(())
+    }
+    fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,5 +209,16 @@ mod tests {
         assert_eq!(b.capture_output("s", 10).unwrap(), "");
         assert!(b.send_input("s", "hello").is_ok());
         assert!(b.setup_logging("s", "/tmp/log").is_ok());
+    }
+
+    #[test]
+    fn test_stub_backend_methods() {
+        let b = StubBackend;
+        assert!(b.create_session("n", "d", "c").is_ok());
+        assert!(b.kill_session("n").is_ok());
+        assert!(b.is_alive("n").unwrap());
+        assert!(b.capture_output("n", 10).unwrap().is_empty());
+        assert!(b.send_input("n", "t").is_ok());
+        assert!(b.setup_logging("n", "p").is_ok());
     }
 }
