@@ -18,16 +18,16 @@ Download `pulpod.exe` and `pulpo.exe` from [GitHub Releases](https://github.com/
 
 Requirements:
 
-- [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/) (for `--sandbox` sessions)
+- [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/) (for `--runtime docker` sessions)
 
-On Windows, all sessions use Docker containers (`--sandbox` flag). tmux is not available on Windows, so sessions without `--sandbox` will show an error directing you to use Docker.
+On Windows, all sessions use Docker containers (`--runtime docker`). tmux is not available on Windows, so sessions without `--runtime docker` will show an error directing you to use Docker.
 
 ```powershell
 # Start daemon
 .\pulpod.exe
 
-# Spawn a sandboxed session
-.\pulpo.exe spawn my-task --sandbox -- claude -p "Fix the bug"
+# Spawn a Docker runtime session
+.\pulpo.exe spawn my-task --runtime docker -- claude -p "Fix the bug"
 
 # Open web UI
 start http://localhost:7433

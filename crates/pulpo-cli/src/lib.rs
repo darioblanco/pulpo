@@ -408,9 +408,16 @@ fn open_browser(_url: &str) -> Result<()> {
 }
 
 /// Build the command to attach to a session's terminal.
-/// Takes the backend session ID (e.g. `my-session`) — the tmux session name.
+/// Detects Docker sessions by the `docker:` prefix in the backend session ID.
 #[cfg_attr(coverage, allow(dead_code))]
 fn build_attach_command(backend_session_id: &str) -> std::process::Command {
+    // Docker sessions: exec into the container
+    if let Some(container) = backend_session_id.strip_prefix("docker:") {
+        let mut cmd = std::process::Command::new("docker");
+        cmd.args(["exec", "-it", container, "/bin/sh"]);
+        return cmd;
+    }
+    // tmux sessions
     #[cfg(not(target_os = "windows"))]
     {
         let mut cmd = std::process::Command::new("tmux");
@@ -420,12 +427,11 @@ fn build_attach_command(backend_session_id: &str) -> std::process::Command {
     #[cfg(target_os = "windows")]
     {
         // tmux attach not available on Windows — inform the user
-        let _ = backend_session_id;
         let mut cmd = std::process::Command::new("cmd");
         cmd.args([
             "/C",
             "echo",
-            "Attach not available on Windows. Use the web UI.",
+            "Attach not available on Windows. Use the web UI or --runtime docker.",
         ]);
         cmd
     }
@@ -2821,11 +2827,19 @@ mod tests {
     // -- Attach command tests --
 
     #[test]
-    fn test_build_attach_command() {
+    fn test_build_attach_command_tmux() {
         let cmd = build_attach_command("my-session");
         assert_eq!(cmd.get_program(), "tmux");
         let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
         assert_eq!(args, vec!["attach-session", "-t", "my-session"]);
+    }
+
+    #[test]
+    fn test_build_attach_command_docker() {
+        let cmd = build_attach_command("docker:pulpo-my-task");
+        assert_eq!(cmd.get_program(), "docker");
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(args, vec!["exec", "-it", "pulpo-my-task", "/bin/sh"]);
     }
 
     #[test]

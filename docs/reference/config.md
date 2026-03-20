@@ -67,18 +67,18 @@ token = "secret"
 | `address` | string | — | `host:port` of the peer |
 | `token` | string | — | Auth token for this peer (optional) |
 
-## `[sandbox]`
+## `[docker]`
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `image` | string | `"ubuntu:latest"` | Docker image for sandbox containers |
+| `image` | string | `"ubuntu:latest"` | Docker image for Docker runtime containers |
 
 ```toml
-[sandbox]
+[docker]
 image = "my-agents-image:latest"  # Image with your agent tools installed
 ```
 
-Use with `pulpo spawn --sandbox` to run sessions in isolated Docker containers.
+Use with `pulpo spawn --runtime docker` to run sessions in isolated Docker containers.
 
 ## `[notifications.discord]`
 

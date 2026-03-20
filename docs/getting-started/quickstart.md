@@ -43,18 +43,18 @@ pulpo schedule add nightly-review "0 3 * * *" --workdir ~/repo -- claude -p "rev
 pulpo schedule list
 ```
 
-## 6. Docker sandbox
+## 6. Docker runtime
 
 Run agents in isolated containers — safe for unrestricted permissions:
 
 ```bash
-pulpo spawn risky-task --sandbox -- claude --dangerously-skip-permissions -p "refactor everything"
+pulpo spawn risky-task --runtime docker -- claude --dangerously-skip-permissions -p "refactor everything"
 ```
 
 The agent runs in a Docker container with only the workdir mounted. Configure the image in `~/.pulpo/config.toml`:
 
 ```toml
-[sandbox]
+[docker]
 image = "my-agents-image:latest"
 ```
 

@@ -35,7 +35,7 @@ By default, `spawn` auto-attaches to the tmux session. Use `--detach` / `-d` to 
 | `--description <TEXT>` | Human-readable description for the session |
 | `--idle-threshold <SECS>` | Per-session idle threshold (`0` = never idle) |
 | `--worktree` | Create an isolated git worktree for the session |
-| `--sandbox` | Run in a Docker sandbox container |
+| `--runtime <RUNTIME>` | Session runtime: `tmux` (default) or `docker` |
 | `--auto` | Auto-select the least loaded node |
 
 The command is whatever you want to run — any agent CLI, script, or shell command. If `--ink` is specified and no command is given after `--`, the ink's command is used.

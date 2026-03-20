@@ -2,7 +2,7 @@
 
 Pulpo is an agent session runtime — it runs coding agents in tmux sessions or Docker containers, with lifecycle management, crash recovery, watchdog supervision, and multi-node operations. Designed for coding agents but flexible enough for any long-running terminal work.
 
-**What makes it unique**: No other tool combines multi-node session orchestration with agent-aware lifecycle management and dual backends (tmux + Docker sandbox). tmuxinator manages layouts, overmind runs Procfiles, cmux wraps Claude — Pulpo is the infrastructure layer that makes any session durable, observable, and manageable across machines.
+**What makes it unique**: No other tool combines multi-node session orchestration with agent-aware lifecycle management and dual backends (tmux + Docker runtime). tmuxinator manages layouts, overmind runs Procfiles, cmux wraps Claude — Pulpo is the infrastructure layer that makes any session durable, observable, and manageable across machines.
 
 ## Components
 
@@ -103,13 +103,13 @@ Session spawn → resolve_ink → build_command → tmux create
   SSE events → web UI / Discord / webhooks
 ```
 
-## Docker Sandbox
+## Docker Runtime
 
-`--sandbox` runs sessions in Docker containers instead of tmux. The workdir is mounted at `/workspace` — the agent can read and write code but can't touch the host system.
+`--runtime docker` runs sessions in Docker containers instead of tmux. The workdir is mounted at `/workspace` — the agent can read and write code but can't touch the host system.
 
 ```bash
 # Safe for unrestricted agent execution
-pulpo spawn risky-task --sandbox -- claude --dangerously-skip-permissions -p "refactor"
+pulpo spawn risky-task --runtime docker -- claude --dangerously-skip-permissions -p "refactor"
 ```
 
 The `DockerBackend` implements the same `Backend` trait as tmux, using `docker` CLI commands:
@@ -118,9 +118,9 @@ The `DockerBackend` implements the same `Backend` trait as tmux, using `docker` 
 - `is_alive` → `docker inspect --format '{{.State.Running}}'`
 - `kill_session` → `docker stop + docker rm`
 
-Configure the sandbox image in `config.toml`:
+Configure the Docker image in `config.toml`:
 ```toml
-[sandbox]
+[docker]
 image = "my-agents-image:latest"  # must have agent tools installed
 ```
 
@@ -144,7 +144,7 @@ All session operations go through a `Backend` trait. The session lifecycle, watc
 | Backend | Use case | Backend ID format |
 |---------|----------|-------------------|
 | **tmux** (default) | Local/remote servers, zero infrastructure | `$0`, `$1`, ... |
-| **Docker** (`--sandbox`) | Isolated containers, safe for unrestricted agents | `docker:pulpo-<name>` |
+| **Docker** (`--runtime docker`) | Isolated containers, safe for unrestricted agents | `docker:pulpo-<name>` |
 | **Kubernetes** (future) | Cluster scale, team infrastructure | — |
 
 Adding a new backend means implementing ~10 methods (`create_session`, `kill_session`, `is_alive`, `capture_output`, etc.). Everything above the backend layer — lifecycle states, watchdog, scheduler, fleet, web UI — works unchanged.

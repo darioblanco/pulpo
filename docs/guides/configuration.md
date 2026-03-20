@@ -102,19 +102,19 @@ token = "auto-generated-uuid"
 
 For `local`, `tailscale`, and `container` modes, auth is skipped.
 
-## Sandbox
+## Docker Runtime
 
 Run agents in Docker containers for isolation:
 
 ```toml
-[sandbox]
+[docker]
 image = "my-agents-image:latest"   # Docker image with agent tools installed
 ```
 
-Use with `--sandbox` flag:
+Use with `--runtime docker` flag:
 
 ```bash
-pulpo spawn risky --sandbox -- claude --dangerously-skip-permissions -p "refactor"
+pulpo spawn risky --runtime docker -- claude --dangerously-skip-permissions -p "refactor"
 ```
 
 The workdir is mounted at `/workspace` inside the container. The agent can read and write code but can't access the rest of the host system.

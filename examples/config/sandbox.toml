@@ -1,11 +1,11 @@
-# Docker sandbox configuration — run agents in isolated containers.
-# Use with: pulpo spawn my-task --sandbox -- claude -p "review"
+# Docker runtime configuration — run agents in isolated containers.
+# Use with: pulpo spawn my-task --runtime docker -- claude -p "review"
 
 [node]
 name = "my-mac"
 
-[sandbox]
-# Docker image for sandbox containers.
+[docker]
+# Docker image for Docker runtime containers.
 # Must have the agent tools installed (claude, codex, etc.)
 image = "ubuntu:latest"
 

@@ -76,4 +76,4 @@ Most scripts use these environment variables:
 | `config/watchdog.toml` | Watchdog tuning (idle, memory, patterns) |
 | `config/multi-node-tailscale.toml` | Multi-node with Tailscale discovery |
 | `config/multi-node-public.toml` | Multi-node with auth + mDNS |
-| `config/sandbox.toml` | Docker sandbox for isolated agent execution |
+| `config/sandbox.toml` | Docker runtime for isolated agent execution |

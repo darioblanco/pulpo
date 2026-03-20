@@ -15,7 +15,7 @@ features:
   - title: Multi-Node Fleet
     details: Spawn and manage sessions across your machine fleet — Mac, Linux, cloud — from a single CLI, web UI, or API call. Tailscale, mDNS, and seed discovery built in.
   - title: Docker Sandbox
-    details: Run agents in isolated Docker containers with --sandbox. Safe for --dangerously-skip-permissions — the agent can't touch your host. Configurable sandbox image.
+    details: Run agents in isolated Docker containers with --runtime docker. Safe for --dangerously-skip-permissions — the agent can't touch your host. Configurable Docker image.
   - title: Agent-Aware Lifecycle
     details: Explicit states (active, idle, ready, killed, lost) with resume semantics, crash recovery, and watchdog supervision. Detects waiting-for-input prompts across 31 patterns for Claude Code, Codex, Gemini CLI, Aider, and more.
   - title: Command Agnostic
