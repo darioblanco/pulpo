@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
+import { GitBranch } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -150,6 +151,15 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
           >
             {session.name}
           </strong>
+          {session.worktree_path && (
+            <span
+              data-testid="worktree-badge"
+              className="flex shrink-0 items-center gap-0.5 rounded bg-[#1e2d3d] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#7a9aba]"
+            >
+              <GitBranch className="h-3 w-3" />
+              {session.worktree_path.split('/').pop()}
+            </span>
+          )}
           <span className="truncate max-w-[120px] sm:max-w-[200px] lg:max-w-none text-[0.6rem] uppercase text-[#5a7a9a]">
             {truncateCommand(session.command)}
           </span>

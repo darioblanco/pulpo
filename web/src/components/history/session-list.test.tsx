@@ -110,6 +110,19 @@ describe('SessionList', () => {
     });
   });
 
+  it('shows worktree path in expanded detail when set', () => {
+    renderList([makeSession({ worktree_path: '/repo/.pulpo/worktrees/feature-x' })]);
+    fireEvent.click(screen.getByTestId('history-item-sess-1'));
+    expect(screen.getByText('/repo/.pulpo/worktrees/feature-x')).toBeInTheDocument();
+    expect(screen.getByText('Worktree:')).toBeInTheDocument();
+  });
+
+  it('hides worktree info in expanded detail when not set', () => {
+    renderList([makeSession()]);
+    fireEvent.click(screen.getByTestId('history-item-sess-1'));
+    expect(screen.queryByText('Worktree:')).not.toBeInTheDocument();
+  });
+
   it('deletes session and refreshes', async () => {
     mockDeleteSession.mockResolvedValue(undefined);
     const onRefresh = vi.fn();

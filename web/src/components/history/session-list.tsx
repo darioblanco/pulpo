@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { GitBranch } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { deleteSession, downloadSessionOutput } from '@/api/client';
@@ -94,6 +95,12 @@ export function SessionList({ sessions, onRefresh }: SessionListProps) {
                   <span className="text-muted-foreground">Created:</span>{' '}
                   {new Date(session.created_at).toLocaleString()}
                 </p>
+                {session.worktree_path && (
+                  <p className="flex items-center gap-1">
+                    <GitBranch className="inline h-3 w-3 text-muted-foreground" />
+                    <span className="text-muted-foreground">Worktree:</span> {session.worktree_path}
+                  </p>
+                )}
                 {session.description && (
                   <p>
                     <span className="text-muted-foreground">Description:</span>{' '}

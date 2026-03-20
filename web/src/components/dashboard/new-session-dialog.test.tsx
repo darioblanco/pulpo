@@ -339,6 +339,64 @@ describe('NewSessionDialog', () => {
     });
   });
 
+  it('shows worktree toggle in dialog', async () => {
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    await openDialog();
+    expect(screen.getByLabelText(/Worktree/)).toBeInTheDocument();
+  });
+
+  it('shows helper text when worktree is enabled', async () => {
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+    const toggle = screen.getByRole('switch');
+    await user.click(toggle);
+    expect(screen.getByText('Run in an isolated git worktree')).toBeInTheDocument();
+  });
+
+  it('sends worktree flag when toggle is enabled', async () => {
+    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await user.type(screen.getByLabelText('Name'), 'wt-test');
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+
+    const toggle = screen.getByRole('switch');
+    await user.click(toggle);
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'wt-test',
+          workdir: '/repo',
+          worktree: true,
+        }),
+      );
+    });
+  });
+
+  it('does not send worktree flag when toggle is off', async () => {
+    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await user.type(screen.getByLabelText('Name'), 'no-wt');
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith({
+        name: 'no-wt',
+        workdir: '/repo',
+      });
+    });
+  });
+
   it('handles getInks failure gracefully', async () => {
     mockGetInks.mockRejectedValue(new Error('Network error'));
     render(<NewSessionDialog onCreated={vi.fn()} />);

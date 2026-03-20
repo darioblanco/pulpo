@@ -285,6 +285,27 @@ describe('SessionCard', () => {
 
   // Intervention
 
+  // Worktree badge
+
+  it('shows worktree badge when worktree_path is set', () => {
+    renderCard(makeSession({ worktree_path: '/repo/.pulpo/worktrees/my-task' }));
+    const badge = screen.getByTestId('worktree-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('my-task');
+  });
+
+  it('hides worktree badge when worktree_path is null', () => {
+    renderCard(makeSession({ worktree_path: null }));
+    expect(screen.queryByTestId('worktree-badge')).not.toBeInTheDocument();
+  });
+
+  it('hides worktree badge when worktree_path is undefined', () => {
+    renderCard(makeSession());
+    expect(screen.queryByTestId('worktree-badge')).not.toBeInTheDocument();
+  });
+
+  // Intervention
+
   it('shows intervention badge for killed sessions', () => {
     renderCard(
       makeSession({

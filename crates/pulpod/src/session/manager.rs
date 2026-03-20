@@ -121,13 +121,15 @@ impl SessionManager {
         });
 
         let runtime = req.runtime.unwrap_or_default();
-        // Validate workdir exists on the host (skip for Docker — workdir is inside the container)
-        if runtime != Runtime::Docker {
+        let wants_worktree = req.worktree.unwrap_or(false);
+        // Validate workdir exists on the host.
+        // Skip for Docker unless --worktree is requested (worktree creation happens on the host).
+        if runtime != Runtime::Docker || wants_worktree {
             validate_workdir(&workdir)?;
         }
 
         // Create git worktree if requested
-        let (effective_workdir, worktree_path) = if req.worktree.unwrap_or(false) {
+        let (effective_workdir, worktree_path) = if wants_worktree {
             #[cfg(not(coverage))]
             {
                 let wt_path = create_worktree(&workdir, &req.name)?;

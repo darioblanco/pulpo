@@ -17,7 +17,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { Plus } from 'lucide-react';
+import { Plus, GitBranch } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import { createSession, createRemoteSession, getInks } from '@/api/client';
 import type { InkConfig, PeerInfo, Session } from '@/api/types';
 
@@ -35,6 +36,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
   const [targetNode, setTargetNode] = useState('local');
   const [selectedInk, setSelectedInk] = useState('');
   const [inks, setInks] = useState<Record<string, InkConfig>>({});
+  const [worktree, setWorktree] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,6 +75,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         ...(command ? { command } : {}),
         ...(description ? { description } : {}),
         ...(selectedInk ? { ink: selectedInk } : {}),
+        ...(worktree ? { worktree: true } : {}),
       };
 
       let resp;
@@ -89,6 +92,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
       setCommand('');
       setDescription('');
       setSelectedInk('');
+      setWorktree(false);
       setOpen(false);
       onCreated(resp.session);
     } catch (e) {
@@ -136,6 +140,22 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
               onChange={(e) => setRepoPath(e.target.value)}
               required
             />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Switch
+              id="worktree-toggle"
+              checked={worktree}
+              onCheckedChange={setWorktree}
+              size="sm"
+            />
+            <Label htmlFor="worktree-toggle" className="flex items-center gap-1 text-sm">
+              <GitBranch className="h-3.5 w-3.5" />
+              Worktree
+            </Label>
+            {worktree && (
+              <span className="text-xs text-muted-foreground">Run in an isolated git worktree</span>
+            )}
           </div>
 
           <div className="space-y-1.5">

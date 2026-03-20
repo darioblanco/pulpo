@@ -308,7 +308,7 @@ fn format_sessions(sessions: &[Session]) -> String {
         return "No sessions.".into();
     }
     let mut lines = vec![format!(
-        "{:<10} {:<20} {:<12} {:<8} {}",
+        "{:<10} {:<24} {:<12} {:<8} {}",
         "ID", "NAME", "STATUS", "RUNTIME", "COMMAND"
     )];
     for s in sessions {
@@ -318,10 +318,15 @@ fn format_sessions(sessions: &[Session]) -> String {
             s.command.clone()
         };
         let short_id = &s.id.to_string()[..8];
+        let name_display = if s.worktree_path.is_some() {
+            format!("{} [wt]", s.name)
+        } else {
+            s.name.clone()
+        };
         lines.push(format!(
-            "{:<10} {:<20} {:<12} {:<8} {}",
+            "{:<10} {:<24} {:<12} {:<8} {}",
             short_id,
-            s.name,
+            name_display,
             s.status,
             session_runtime(s),
             cmd_display
@@ -2346,6 +2351,43 @@ mod tests {
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("..."));
+    }
+
+    #[test]
+    fn test_format_sessions_worktree_indicator() {
+        use chrono::Utc;
+        use pulpo_common::session::SessionStatus;
+        use uuid::Uuid;
+
+        let sessions = vec![Session {
+            id: Uuid::nil(),
+            name: "wt-task".into(),
+            workdir: "/repo/.pulpo/worktrees/wt-task".into(),
+            command: "claude".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: Some("/repo/.pulpo/worktrees/wt-task".into()),
+            runtime: Runtime::Tmux,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_sessions(&sessions);
+        assert!(
+            output.contains("[wt]"),
+            "should show worktree indicator: {output}"
+        );
+        assert!(output.contains("wt-task [wt]"));
     }
 
     #[test]
