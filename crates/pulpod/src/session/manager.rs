@@ -119,7 +119,12 @@ impl SessionManager {
         let workdir = req.workdir.unwrap_or_else(|| {
             dirs::home_dir().map_or_else(|| "/tmp".to_owned(), |h| h.to_string_lossy().into_owned())
         });
-        validate_workdir(&workdir)?;
+
+        let runtime = req.runtime.unwrap_or_default();
+        // Validate workdir exists on the host (skip for Docker — workdir is inside the container)
+        if runtime != Runtime::Docker {
+            validate_workdir(&workdir)?;
+        }
 
         // Create git worktree if requested
         let (effective_workdir, worktree_path) = if req.worktree.unwrap_or(false) {
@@ -146,7 +151,6 @@ impl SessionManager {
 
         let id = Uuid::new_v4();
         let name = req.name.clone();
-        let runtime = req.runtime.unwrap_or_default();
         let backend_id = if runtime == Runtime::Docker {
             if self.docker_backend.is_none() {
                 bail!("docker runtime not configured — set [docker] image in config.toml");
@@ -416,6 +420,11 @@ impl SessionManager {
                 "another session named '{}' is already active — kill it first before resuming",
                 session.name
             );
+        }
+
+        // Validate workdir still exists (skip for Docker — workdir is inside the container)
+        if session.runtime != Runtime::Docker {
+            validate_workdir(&session.workdir)?;
         }
 
         // If the backend session is still alive, just re-mark it as running.
@@ -1852,6 +1861,75 @@ mod tests {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let resumed = mgr.resume_lost_sessions().await.unwrap();
         assert_eq!(resumed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_create_session_invalid_workdir() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let req = CreateSessionRequest {
+            name: "bad-dir".to_owned(),
+            workdir: Some("/nonexistent/path/that/does/not/exist".into()),
+            command: Some("echo hi".into()),
+            ink: None,
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            runtime: None,
+        };
+        let err = mgr.create_session(req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("working directory does not exist"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_session_docker_skips_workdir_check() {
+        let docker = Arc::new(MockBackend::new());
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let mgr = SessionManager::new(Arc::new(MockBackend::new()), store, HashMap::new(), None)
+            .with_docker_backend(docker)
+            .with_no_stale_grace();
+        // Docker session with nonexistent workdir should succeed (workdir is inside container)
+        let req = CreateSessionRequest {
+            name: "docker-bad-dir".to_owned(),
+            workdir: Some("/nonexistent/container/path".into()),
+            command: Some("echo hi".into()),
+            ink: None,
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            runtime: Some(Runtime::Docker),
+        };
+        let session = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.runtime, Runtime::Docker);
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_invalid_workdir() {
+        let (mgr, _, pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr
+            .create_session(make_req("resume-bad-dir"))
+            .await
+            .unwrap();
+        let id = session.id.to_string();
+        // Mark as lost and set workdir to nonexistent path
+        sqlx::query("UPDATE sessions SET status = 'lost', workdir = ? WHERE id = ?")
+            .bind("/nonexistent/path/that/does/not/exist")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = mgr.resume_session(&id).await.unwrap_err();
+        assert!(
+            err.to_string().contains("working directory does not exist"),
+            "{err}"
+        );
     }
 
     #[tokio::test]
