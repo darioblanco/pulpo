@@ -1133,6 +1133,9 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             if *worktree {
                 body["worktree"] = serde_json::json!(true);
+                eprintln!(
+                    "Worktree: branch pulpo/{resolved_name} in {resolved_workdir}/.pulpo/worktrees/{resolved_name}/"
+                );
             }
             if let Some(rt) = runtime {
                 body["runtime"] = serde_json::json!(rt);
