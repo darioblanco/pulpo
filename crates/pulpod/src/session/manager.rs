@@ -347,6 +347,7 @@ impl SessionManager {
         dead_session.status = SessionStatus::Killed;
         // Clean up worktree if this was a worktree session
         if let Some(ref wt_path) = dead_session.worktree_path {
+            tracing::info!(session = %dead_session.name, path = %wt_path, "Cleaning up worktree after kill");
             cleanup_worktree(wt_path);
         }
         self.emit_event(&dead_session, Some(previous));
@@ -377,6 +378,7 @@ impl SessionManager {
         self.store.delete_session(&session.id.to_string()).await?;
         // Clean up worktree if this was a worktree session
         if let Some(ref wt_path) = session.worktree_path {
+            tracing::info!(session = %session.name, path = %wt_path, "Cleaning up worktree after delete");
             cleanup_worktree(wt_path);
         }
         Ok(())
@@ -579,6 +581,7 @@ fn create_worktree(repo_dir: &str, session_name: &str) -> Result<String> {
 /// Remove a git worktree and prune stale entries.
 pub(crate) fn cleanup_worktree(worktree_path: &str) {
     if !std::path::Path::new(worktree_path).exists() {
+        tracing::info!(path = %worktree_path, "Worktree path does not exist, skipping cleanup");
         return;
     }
     // Worktree path is <repo>/.pulpo/worktrees/<session-name>
@@ -587,7 +590,12 @@ pub(crate) fn cleanup_worktree(worktree_path: &str) {
         .and_then(|p| p.parent()) // .pulpo/
         .and_then(|p| p.parent()); // <repo>/
 
-    let _ = std::fs::remove_dir_all(worktree_path);
+    match std::fs::remove_dir_all(worktree_path) {
+        Ok(()) => tracing::info!(path = %worktree_path, "Worktree directory removed"),
+        Err(e) => {
+            tracing::warn!(path = %worktree_path, error = %e, "Failed to remove worktree directory");
+        }
+    }
 
     if let Some(root) = repo_root {
         let _ = std::process::Command::new("git")

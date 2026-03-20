@@ -110,17 +110,18 @@ describe('SessionList', () => {
     });
   });
 
-  it('shows worktree path in expanded detail when set', () => {
+  it('shows branch name and worktree path in expanded detail when set', () => {
     renderList([makeSession({ worktree_path: '/repo/.pulpo/worktrees/feature-x' })]);
     fireEvent.click(screen.getByTestId('history-item-sess-1'));
-    expect(screen.getByText('/repo/.pulpo/worktrees/feature-x')).toBeInTheDocument();
-    expect(screen.getByText('Worktree:')).toBeInTheDocument();
+    expect(screen.getByText('Branch:')).toBeInTheDocument();
+    expect(screen.getByText('pulpo/feature-x')).toBeInTheDocument();
+    expect(screen.getByText('Worktree: /repo/.pulpo/worktrees/feature-x')).toBeInTheDocument();
   });
 
   it('hides worktree info in expanded detail when not set', () => {
     renderList([makeSession()]);
     fireEvent.click(screen.getByTestId('history-item-sess-1'));
-    expect(screen.queryByText('Worktree:')).not.toBeInTheDocument();
+    expect(screen.queryByText('Branch:')).not.toBeInTheDocument();
   });
 
   it('deletes session and refreshes', async () => {

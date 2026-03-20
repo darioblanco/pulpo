@@ -96,10 +96,16 @@ export function SessionList({ sessions, onRefresh }: SessionListProps) {
                   {new Date(session.created_at).toLocaleString()}
                 </p>
                 {session.worktree_path && (
-                  <p className="flex items-center gap-1">
-                    <GitBranch className="inline h-3 w-3 text-muted-foreground" />
-                    <span className="text-muted-foreground">Worktree:</span> {session.worktree_path}
-                  </p>
+                  <>
+                    <p className="flex items-center gap-1">
+                      <GitBranch className="inline h-3 w-3 text-muted-foreground" />
+                      <span className="text-muted-foreground">Branch:</span> pulpo/
+                      {session.worktree_path.split('/').pop()}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Worktree: {session.worktree_path}
+                    </p>
+                  </>
                 )}
                 {session.description && (
                   <p>

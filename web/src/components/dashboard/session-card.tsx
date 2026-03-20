@@ -157,7 +157,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
               className="flex shrink-0 items-center gap-0.5 rounded bg-[#1e2d3d] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#7a9aba]"
             >
               <GitBranch className="h-3 w-3" />
-              {session.worktree_path.split('/').pop()}
+              pulpo/{session.worktree_path.split('/').pop()}
             </span>
           )}
           <span className="truncate max-w-[120px] sm:max-w-[200px] lg:max-w-none text-[0.6rem] uppercase text-[#5a7a9a]">
@@ -253,6 +253,15 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
             session.status === 'ready' ||
             session.status === 'killed') && (
             <OutputView sessionId={session.id} sessionStatus={session.status} />
+          )}
+
+          {(session.status === 'killed' || session.status === 'lost') && session.worktree_path && (
+            <p
+              data-testid="worktree-cleaned"
+              className="mx-3 mb-2 font-mono text-xs text-muted-foreground"
+            >
+              Worktree cleaned up
+            </p>
           )}
 
           {session.status === 'killed' && session.intervention_reason && (

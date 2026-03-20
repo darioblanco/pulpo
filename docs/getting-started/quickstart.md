@@ -34,7 +34,7 @@ pulpo spawn frontend --workdir ~/repo --worktree -- claude -p "redesign sidebar"
 pulpo spawn backend  --workdir ~/repo --worktree -- codex "optimize queries"
 ```
 
-Each agent gets an isolated git worktree at `<repo>/.pulpo/worktrees/<name>/`.
+Each agent gets an isolated git worktree at `<repo>/.pulpo/worktrees/<name>/`. See the [Worktrees Guide](/guides/worktrees) for details.
 
 ## 5. Schedule recurring runs
 

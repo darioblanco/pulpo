@@ -70,6 +70,7 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - Fleet sessions endpoint (`GET /api/v1/fleet/sessions`) — server-side aggregation
 - Fleet dashboard: "All" tab showing sessions across all nodes in a unified table
 - Smart node selection: `pulpo spawn --auto` picks least-loaded online peer
+- Git worktrees: `pulpo spawn --worktree` creates isolated worktrees for parallel agents on the same repo. Auto-cleanup on kill/delete. Worktree badge in CLI and dashboard.
 
 ## What's Next
 
@@ -100,22 +101,6 @@ Replace the crontab wrapper with a first-class scheduler inside `pulpod`. Schedu
 - Create/edit schedule dialog with cron builder
 - Run history per schedule (links to spawned sessions)
 - Schedule notifications: fire, success, failure
-
-### Phase 4: Worktree Support
-
-Spawn agents in isolated git worktrees so multiple agents can work on the same repo without conflicts. Infrastructure-level feature — works with any agent, not just Claude Code.
-
-**P4.1 — Worktree lifecycle**
-- `pulpo spawn my-task --workdir ~/repos/my-api --worktree -- claude -p "fix auth"`
-- Creates a git worktree at `<repo>/.pulpo/worktrees/<session-name>/`
-- Session's workdir is set to the worktree path
-- Worktree is cleaned up when session is killed or deleted
-- Branch name defaults to session name (e.g., `pulpo/my-task`)
-
-**P4.2 — Worktree in dashboard**
-- Worktree badge on session cards
-- Branch name visible in session detail
-- "Merge" action: merge worktree branch back to main (or create PR)
 
 ### Phase 5: Background Agent Operations
 

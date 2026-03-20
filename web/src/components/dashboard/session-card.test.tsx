@@ -291,7 +291,7 @@ describe('SessionCard', () => {
     renderCard(makeSession({ worktree_path: '/repo/.pulpo/worktrees/my-task' }));
     const badge = screen.getByTestId('worktree-badge');
     expect(badge).toBeInTheDocument();
-    expect(badge).toHaveTextContent('my-task');
+    expect(badge).toHaveTextContent('pulpo/my-task');
   });
 
   it('hides worktree badge when worktree_path is null', () => {
@@ -302,6 +302,24 @@ describe('SessionCard', () => {
   it('hides worktree badge when worktree_path is undefined', () => {
     renderCard(makeSession());
     expect(screen.queryByTestId('worktree-badge')).not.toBeInTheDocument();
+  });
+
+  it('shows worktree cleanup note for killed session with worktree', () => {
+    renderCard(makeSession({ status: 'killed', worktree_path: '/repo/.pulpo/worktrees/my-task' }));
+    clickExpand();
+    expect(screen.getByTestId('worktree-cleaned')).toHaveTextContent('Worktree cleaned up');
+  });
+
+  it('shows worktree cleanup note for lost session with worktree', () => {
+    renderCard(makeSession({ status: 'lost', worktree_path: '/repo/.pulpo/worktrees/my-task' }));
+    clickExpand();
+    expect(screen.getByTestId('worktree-cleaned')).toHaveTextContent('Worktree cleaned up');
+  });
+
+  it('does not show worktree cleanup note for active session', () => {
+    renderCard(makeSession({ worktree_path: '/repo/.pulpo/worktrees/my-task' }));
+    clickExpand();
+    expect(screen.queryByTestId('worktree-cleaned')).not.toBeInTheDocument();
   });
 
   // Intervention
