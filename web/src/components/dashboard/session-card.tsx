@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
-import { GitBranch } from 'lucide-react';
+import { GitBranch, GitPullRequest, ExternalLink } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -158,6 +158,29 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
             >
               <GitBranch className="h-3 w-3" />
               pulpo/{session.worktree_path.split('/').pop()}
+            </span>
+          )}
+          {session.metadata?.pr_url && (
+            <a
+              data-testid="pr-badge"
+              href={session.metadata.pr_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="flex shrink-0 items-center gap-0.5 rounded bg-[#0d2818] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#4ade80] hover:bg-[#14532d]"
+            >
+              <GitPullRequest className="h-3 w-3" />
+              PR
+              <ExternalLink className="h-2.5 w-2.5" />
+            </a>
+          )}
+          {session.metadata?.branch && (
+            <span
+              data-testid="branch-badge"
+              className="flex shrink-0 items-center gap-0.5 rounded bg-[#1e2d3d] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#7a9aba]"
+            >
+              <GitBranch className="h-3 w-3" />
+              {session.metadata.branch}
             </span>
           )}
           <span className="truncate max-w-[120px] sm:max-w-[200px] lg:max-w-none text-[0.6rem] uppercase text-[#5a7a9a]">

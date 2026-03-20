@@ -318,10 +318,15 @@ fn format_sessions(sessions: &[Session]) -> String {
             s.command.clone()
         };
         let short_id = &s.id.to_string()[..8];
-        let name_display = if s.worktree_path.is_some() {
-            format!("{} [wt]", s.name)
-        } else {
-            s.name.clone()
+        let has_pr = s
+            .metadata
+            .as_ref()
+            .is_some_and(|m| m.contains_key("pr_url"));
+        let name_display = match (s.worktree_path.is_some(), has_pr) {
+            (true, true) => format!("{} [wt] [PR]", s.name),
+            (true, false) => format!("{} [wt]", s.name),
+            (false, true) => format!("{} [PR]", s.name),
+            (false, false) => s.name.clone(),
         };
         lines.push(format!(
             "{:<10} {:<24} {:<12} {:<8} {}",
@@ -2391,6 +2396,121 @@ mod tests {
             "should show worktree indicator: {output}"
         );
         assert!(output.contains("wt-task [wt]"));
+    }
+
+    #[test]
+    fn test_format_sessions_pr_indicator() {
+        use chrono::Utc;
+        use pulpo_common::session::SessionStatus;
+        use std::collections::HashMap;
+        use uuid::Uuid;
+
+        let mut meta = HashMap::new();
+        meta.insert("pr_url".into(), "https://github.com/a/b/pull/1".into());
+        let sessions = vec![Session {
+            id: Uuid::nil(),
+            name: "pr-task".into(),
+            workdir: "/tmp".into(),
+            command: "claude".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: Some(meta),
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: None,
+            runtime: Runtime::Tmux,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_sessions(&sessions);
+        assert!(
+            output.contains("[PR]"),
+            "should show PR indicator: {output}"
+        );
+        assert!(output.contains("pr-task [PR]"));
+    }
+
+    #[test]
+    fn test_format_sessions_worktree_and_pr_indicator() {
+        use chrono::Utc;
+        use pulpo_common::session::SessionStatus;
+        use std::collections::HashMap;
+        use uuid::Uuid;
+
+        let mut meta = HashMap::new();
+        meta.insert("pr_url".into(), "https://github.com/a/b/pull/1".into());
+        let sessions = vec![Session {
+            id: Uuid::nil(),
+            name: "both-task".into(),
+            workdir: "/tmp".into(),
+            command: "claude".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: Some(meta),
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: Some("/repo/.pulpo/worktrees/both-task".into()),
+            runtime: Runtime::Tmux,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_sessions(&sessions);
+        assert!(
+            output.contains("[wt] [PR]"),
+            "should show both indicators: {output}"
+        );
+    }
+
+    #[test]
+    fn test_format_sessions_no_pr_without_metadata() {
+        use chrono::Utc;
+        use pulpo_common::session::SessionStatus;
+        use uuid::Uuid;
+
+        let sessions = vec![Session {
+            id: Uuid::nil(),
+            name: "no-pr".into(),
+            workdir: "/tmp".into(),
+            command: "claude".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: None,
+            runtime: Runtime::Tmux,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_sessions(&sessions);
+        assert!(
+            !output.contains("[PR]"),
+            "should not show PR indicator: {output}"
+        );
     }
 
     #[test]

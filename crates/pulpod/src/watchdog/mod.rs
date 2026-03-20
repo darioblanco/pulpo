@@ -1,4 +1,5 @@
 pub mod memory;
+pub mod output_patterns;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -409,6 +410,9 @@ async fn check_session_idle(
         return;
     }
 
+    // Detect PR URL and branch from output (only if not already stored)
+    detect_and_store_output_metadata(store, session, &current_output).await;
+
     // Determine if output changed since last check
     let output_changed = session.output_snapshot.as_deref() != Some(current_output.as_str());
 
@@ -516,6 +520,52 @@ async fn handle_active_session(store: &Store, session: &pulpo_common::session::S
             "Idle check: failed to clear idle_since for {}: {e}",
             session.name
         );
+    }
+}
+
+/// Detect PR URL and branch name from session output and store in metadata.
+/// Only writes if the key is not already present in the session metadata.
+async fn detect_and_store_output_metadata(store: &Store, session: &Session, output: &str) {
+    let meta = session.metadata.as_ref();
+
+    // Check and store PR URL
+    let has_pr = meta.is_some_and(|m| m.contains_key("pr_url"));
+    if !has_pr && let Some(pr_url) = output_patterns::extract_pr_url(output) {
+        if let Err(e) = store
+            .update_session_metadata_field(&session.id.to_string(), "pr_url", &pr_url)
+            .await
+        {
+            warn!(
+                session_name = %session.name,
+                "Failed to store pr_url metadata: {e}"
+            );
+        } else {
+            info!(
+                session_name = %session.name,
+                pr_url = %pr_url,
+                "Detected PR URL from session output"
+            );
+        }
+    }
+
+    // Check and store branch
+    let has_branch = meta.is_some_and(|m| m.contains_key("branch"));
+    if !has_branch && let Some(branch) = output_patterns::extract_branch(output) {
+        if let Err(e) = store
+            .update_session_metadata_field(&session.id.to_string(), "branch", &branch)
+            .await
+        {
+            warn!(
+                session_name = %session.name,
+                "Failed to store branch metadata: {e}"
+            );
+        } else {
+            info!(
+                session_name = %session.name,
+                branch = %branch,
+                "Detected branch from session output"
+            );
+        }
     }
 }
 
@@ -3745,5 +3795,112 @@ mod tests {
             sessions[0].command,
             "claude -p 'review code' --workdir /repo"
         );
+    }
+
+    // -- detect_and_store_output_metadata tests --
+
+    #[tokio::test]
+    async fn test_detect_and_store_pr_url() {
+        let store = test_store().await;
+        let session = create_running_session(&store, "pr-detect").await;
+
+        let output = "Pushing...\nremote: Create a pull request:\nremote:   https://github.com/owner/repo/pull/42\n";
+        detect_and_store_output_metadata(&store, &session, output).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta = fetched.metadata.unwrap();
+        assert_eq!(
+            meta.get("pr_url").unwrap(),
+            "https://github.com/owner/repo/pull/42"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_detect_and_store_branch() {
+        let store = test_store().await;
+        let session = create_running_session(&store, "branch-detect").await;
+
+        let output = "To github.com:owner/repo.git\n * [new branch]      feature/x -> feature/x\n";
+        detect_and_store_output_metadata(&store, &session, output).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta = fetched.metadata.unwrap();
+        assert_eq!(meta.get("branch").unwrap(), "feature/x");
+    }
+
+    #[tokio::test]
+    async fn test_detect_skips_if_already_stored() {
+        let store = test_store().await;
+        let session = create_running_session(&store, "already-stored").await;
+
+        // Pre-set pr_url in metadata
+        store
+            .update_session_metadata_field(&session.id.to_string(), "pr_url", "https://old")
+            .await
+            .unwrap();
+
+        // Re-fetch the session to get updated metadata
+        let session = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let output = "https://github.com/owner/repo/pull/99\n";
+        detect_and_store_output_metadata(&store, &session, output).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta = fetched.metadata.unwrap();
+        // Should keep old value, not overwrite
+        assert_eq!(meta.get("pr_url").unwrap(), "https://old");
+    }
+
+    #[tokio::test]
+    async fn test_detect_no_match() {
+        let store = test_store().await;
+        let session = create_running_session(&store, "no-match").await;
+
+        let output = "$ cargo test\nrunning tests...\nall passed\n";
+        detect_and_store_output_metadata(&store, &session, output).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fetched.metadata.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_detect_both_pr_and_branch() {
+        let store = test_store().await;
+        let session = create_running_session(&store, "both-detect").await;
+
+        let output = "remote: Create a pull request for 'feat/x' on GitHub:\nremote:   https://github.com/owner/repo/pull/5\n";
+        detect_and_store_output_metadata(&store, &session, output).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta = fetched.metadata.unwrap();
+        assert_eq!(
+            meta.get("pr_url").unwrap(),
+            "https://github.com/owner/repo/pull/5"
+        );
+        assert_eq!(meta.get("branch").unwrap(), "feat/x");
     }
 }

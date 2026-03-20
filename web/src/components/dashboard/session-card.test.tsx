@@ -359,6 +359,50 @@ describe('SessionCard', () => {
     expect(screen.getByText('Show history')).toBeInTheDocument();
   });
 
+  // PR badge
+
+  it('shows PR badge when metadata has pr_url', () => {
+    renderCard(makeSession({ metadata: { pr_url: 'https://github.com/a/b/pull/1' } }));
+    const badge = screen.getByTestId('pr-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveAttribute('href', 'https://github.com/a/b/pull/1');
+    expect(badge).toHaveAttribute('target', '_blank');
+  });
+
+  it('does not show PR badge when metadata is null', () => {
+    renderCard(makeSession({ metadata: null }));
+    expect(screen.queryByTestId('pr-badge')).not.toBeInTheDocument();
+  });
+
+  it('does not show PR badge when metadata has no pr_url', () => {
+    renderCard(makeSession({ metadata: { other: 'value' } }));
+    expect(screen.queryByTestId('pr-badge')).not.toBeInTheDocument();
+  });
+
+  // Branch badge
+
+  it('shows branch badge when metadata has branch', () => {
+    renderCard(makeSession({ metadata: { branch: 'feature/my-branch' } }));
+    const badge = screen.getByTestId('branch-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('feature/my-branch');
+  });
+
+  it('does not show branch badge when no branch in metadata', () => {
+    renderCard(makeSession({ metadata: { pr_url: 'https://github.com/a/b/pull/1' } }));
+    expect(screen.queryByTestId('branch-badge')).not.toBeInTheDocument();
+  });
+
+  it('shows both PR badge and branch badge together', () => {
+    renderCard(
+      makeSession({
+        metadata: { pr_url: 'https://github.com/a/b/pull/1', branch: 'my-branch' },
+      }),
+    );
+    expect(screen.getByTestId('pr-badge')).toBeInTheDocument();
+    expect(screen.getByTestId('branch-badge')).toBeInTheDocument();
+  });
+
   it('loads intervention history on toggle', async () => {
     mockGetInterventionEvents.mockResolvedValue([
       { id: 1, session_id: 'sess-1', reason: 'OOM kill', created_at: '2026-01-01T12:00:00Z' },

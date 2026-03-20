@@ -531,6 +531,34 @@ impl Store {
         Ok(())
     }
 
+    /// Update a single key in the session's metadata JSON.
+    /// Reads the existing metadata, adds/updates the key, and writes it back.
+    pub async fn update_session_metadata_field(
+        &self,
+        id: &str,
+        key: &str,
+        value: &str,
+    ) -> Result<()> {
+        let row = sqlx::query("SELECT metadata FROM sessions WHERE id = ?")
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await?;
+        let existing: Option<String> = row.get("metadata");
+        let mut map: std::collections::HashMap<String, String> = existing
+            .map(|s| serde_json::from_str(&s))
+            .transpose()?
+            .unwrap_or_default();
+        map.insert(key.to_owned(), value.to_owned());
+        let json = serde_json::to_string(&map)?;
+        sqlx::query("UPDATE sessions SET metadata = ?, updated_at = ? WHERE id = ?")
+            .bind(&json)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn update_backend_session_id(
         &self,
         session_id: &str,
@@ -2375,5 +2403,91 @@ mod tests {
             ..schedule
         };
         assert!(store.insert_schedule(&dup).await.is_err());
+    }
+
+    // -- update_session_metadata_field tests --
+
+    #[tokio::test]
+    async fn test_update_session_metadata_field_empty_metadata() {
+        let store = test_store().await;
+        let session = make_session("meta-empty");
+        store.insert_session(&session).await.unwrap();
+
+        store
+            .update_session_metadata_field(
+                &session.id.to_string(),
+                "pr_url",
+                "https://github.com/a/b/pull/1",
+            )
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta = fetched.metadata.unwrap();
+        assert_eq!(meta.get("pr_url").unwrap(), "https://github.com/a/b/pull/1");
+    }
+
+    #[tokio::test]
+    async fn test_update_session_metadata_field_existing_metadata() {
+        let store = test_store().await;
+        let mut session = make_session("meta-existing");
+        session.metadata =
+            Some(std::iter::once(("discord_channel".into(), "123".into())).collect());
+        store.insert_session(&session).await.unwrap();
+
+        store
+            .update_session_metadata_field(&session.id.to_string(), "branch", "feature/test")
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta = fetched.metadata.unwrap();
+        // Original key preserved
+        assert_eq!(meta.get("discord_channel").unwrap(), "123");
+        // New key added
+        assert_eq!(meta.get("branch").unwrap(), "feature/test");
+    }
+
+    #[tokio::test]
+    async fn test_update_session_metadata_field_overwrite_key() {
+        let store = test_store().await;
+        let session = make_session("meta-overwrite");
+        store.insert_session(&session).await.unwrap();
+
+        store
+            .update_session_metadata_field(&session.id.to_string(), "pr_url", "https://old")
+            .await
+            .unwrap();
+        store
+            .update_session_metadata_field(&session.id.to_string(), "pr_url", "https://new")
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fetched.metadata.unwrap().get("pr_url").unwrap(),
+            "https://new"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_update_session_metadata_field_nonexistent_session() {
+        let store = test_store().await;
+        let result = store
+            .update_session_metadata_field("nonexistent-id", "key", "value")
+            .await;
+        assert!(result.is_err());
     }
 }
