@@ -991,6 +991,17 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             .as_deref()
             .unwrap_or(&resp.session.name);
         eprintln!("{msg}");
+        // Brief pause to let the command start, then verify the session survived
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let status =
+            fetch_session_status(&client, &url, &resp.session.name, token.as_deref()).await;
+        if let Ok("lost" | "killed") = status.as_deref() {
+            anyhow::bail!(
+                "Session \"{}\" exited immediately — the command may have failed.\n  Check logs: pulpo logs {}",
+                resp.session.name,
+                resp.session.name
+            );
+        }
         attach_session(backend_id)?;
         return Ok(format!("Detached from session \"{}\".", resp.session.name));
     }
@@ -1145,6 +1156,17 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                     .as_deref()
                     .unwrap_or(&resp.session.name);
                 eprintln!("{msg}");
+                // Brief pause to let the command start, then verify the session survived
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let status =
+                    fetch_session_status(&client, &url, &resp.session.name, token.as_deref()).await;
+                if let Ok("lost" | "killed") = status.as_deref() {
+                    anyhow::bail!(
+                        "Session \"{}\" exited immediately — the command may have failed.\n  Check logs: pulpo logs {}",
+                        resp.session.name,
+                        resp.session.name
+                    );
+                }
                 attach_session(backend_id)?;
                 return Ok(format!("Detached from session \"{}\".", resp.session.name));
             }
@@ -1235,6 +1257,16 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 .as_deref()
                 .unwrap_or(&session.name);
             eprintln!("Resumed session \"{}\"", session.name);
+            // Brief pause to let the command start, then verify the session survived
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let status = fetch_session_status(&client, &url, name, token.as_deref()).await;
+            if let Ok("lost" | "killed") = status.as_deref() {
+                anyhow::bail!(
+                    "Session \"{}\" exited immediately after resume — the command may have failed.\n  Check logs: pulpo logs {}",
+                    session.name,
+                    session.name
+                );
+            }
             attach_session(backend_id)?;
             Ok(format!("Detached from session \"{}\".", session.name))
         }
