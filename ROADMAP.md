@@ -46,14 +46,13 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - `pulpo` CLI with attach, spawn, resume, kill, logs, schedule
 - SQLite-backed session persistence with full lifecycle state machine
 - Session statuses: `creating`, `active`, `idle`, `ready`, `killed`, `lost`
-- Resume from `lost` and `ready` states
+- Resume from `lost` and `ready` states (with workdir validation)
 - Watchdog: memory pressure intervention, idle detection, ready TTL cleanup
 - Auto-adopt: discovers external tmux sessions and brings them under management
 - Command-agnostic sessions (any CLI tool, any command)
 - Inks: reusable command templates with description + command
 - Multi-node: Tailscale, mDNS, seed-based peer discovery
 - SSE event stream, MCP server, Discord bot, webhook notifications
-- Crontab-based scheduling
 - Ocean gamification UI with canvas rendering
 - Homebrew distribution (`brew install darioblanco/tap/pulpo`)
 - PWA: installable app with service worker, offline shell caching
@@ -64,43 +63,30 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - Full command capture for adopted sessions
 - Optimized `follow_logs` (reduced HTTP polling)
 - Default-to-shell spawn: `pulpo spawn my-session` with no command opens `$SHELL`
-- Docker runtime: `pulpo spawn --runtime docker` runs sessions in isolated Docker containers
+- Docker runtime: `pulpo spawn --runtime docker` runs sessions in isolated Docker containers, `pulpo attach` uses `docker exec`
+- Runtime enum: extensible `Runtime` type (tmux/docker) replacing the old boolean sandbox flag
 - CLI node name resolution: `pulpo --node mac-mini spawn` resolves peer names via registry
 - Token forwarding from peer config entries
 - Fleet sessions endpoint (`GET /api/v1/fleet/sessions`) — server-side aggregation
 - Fleet dashboard: "All" tab showing sessions across all nodes in a unified table
 - Smart node selection: `pulpo spawn --auto` picks least-loaded online peer
-- Git worktrees: `pulpo spawn --worktree` creates isolated worktrees for parallel agents on the same repo. Auto-cleanup on kill/delete. Worktree badge in CLI and dashboard.
+- Git worktrees: `pulpo spawn --worktree` creates isolated `pulpo/<name>` branch in `<repo>/.pulpo/worktrees/<name>/`. Auto-cleanup on kill/delete with logging. Branch badge in CLI (`[wt]`) and dashboard.
+- Built-in scheduler: DB-backed schedules with cron expressions, CRUD API (`/api/v1/schedules`), CLI (`pulpo schedule add/list/pause/resume/remove`), scheduler loop firing every 60s
+- Schedule dashboard: create/edit dialog with cron presets, next-run calculation, status filtering, expandable run history per schedule (`/api/v1/schedules/{id}/runs`)
+- PR/branch detection: watchdog scans session output for GitHub/GitLab/Bitbucket PR URLs and git branch pushes, stores in session metadata, surfaces as clickable badges in dashboard and `[PR]` marker in CLI
+- `pulpo ls` shows live sessions by default (`-a` for all), with ID, RUNTIME, and worktree/PR indicators
+- Session liveness check: CLI verifies session survived before attach on spawn/resume, with clear error message on instant exit
 
 ## What's Next
 
-### Phase 3: Built-in Scheduler
-
-Replace the crontab wrapper with a first-class scheduler inside `pulpod`. Schedules are DB-backed, visible in the dashboard, and support multi-node targeting.
-
-**P3.1 — Scheduler engine**
-- `schedules` SQLite table: name, cron, command, workdir, target_node, ink, enabled, last_run_at, last_session_id
-- Scheduler loop (like watchdog): ticks every 60s, checks which schedules are due, calls `session_manager.create_session()`
-- Migrate existing crontab wrapper: `pulpo schedule` CRUD talks to the DB, not crontab
-- Run history: link spawned sessions back to their schedule
+### Phase 3: Multi-node Scheduling
 
 **P3.2 — Multi-node scheduling**
 - `target_node` field: `NULL` = local, `"mac-mini"` = specific node, `"auto"` = least-loaded peer
 - Local schedules fire via `session_manager.create_session()` directly
 - Remote schedules fire via HTTP POST to the target node's `/api/v1/sessions`
 - Auto schedules use `select_best_node` logic at fire time
-
-**P3.3 — Schedule API + CLI**
-- REST CRUD: `POST/GET/PUT/DELETE /api/v1/schedules`, `GET /api/v1/schedules/:id/runs`
-- CLI: `pulpo schedule add nightly-review "0 3 * * *" --node gpu-box -- claude -p "review"`
-- CLI: `pulpo schedule list`, `pulpo schedule pause <name>`, `pulpo schedule remove <name>`
 - SSE events for schedule fires and failures
-
-**P3.4 — Schedule dashboard**
-- Schedule list: name, cron, next run, last run, target node, enabled toggle
-- Create/edit schedule dialog with cron builder
-- Run history per schedule (links to spawned sessions)
-- Schedule notifications: fire, success, failure
 
 ### Phase 5: Background Agent Operations
 
@@ -113,10 +99,10 @@ Make agents reliable when nobody is watching.
 - Budget alerts via notifications
 - Stretch: parse Claude Code transcript JSONL for real token costs
 
-**P5.2 — Output-based completion detection**
-- Detect PR URLs in agent output → link in dashboard
+**P5.2 remaining — Configurable output matchers**
 - Detect error patterns → auto-alert
-- Configurable output matchers (regex → action)
+- Configurable output matchers (regex → action) in config
+- PR/branch detection is shipped; this extends it to user-defined patterns
 
 ### Phase 6: Team Readiness
 
@@ -143,15 +129,16 @@ Revisit when demanded by real usage, not by speculation.
 - **Agent-to-agent communication** — orchestration frameworks (Gas Town) handle this better. Pulpo is infrastructure, not workflow.
 - **MCP server expansion** — the existing STDIO server (12 tools, 4 resources) works. REST APIs are winning over MCP for integration. Keep as-is.
 - **Multi-user auth** — only if team adoption materializes.
-- ~~**Docker runtime backend**~~ — shipped as `--runtime docker` flag.
 - **Kubernetes backend** — implement when team adoption or cluster-scale demand materializes. The Backend trait is ready.
 - **Cloud VM backend** — ephemeral machines (Hetzner, AWS, GCP). Spin up for a task, tear down when done. Requires provider-specific APIs.
 - **Node labels/scheduling constraints** — useful at fleet scale, premature now.
 - **SLO metrics / Prometheus endpoint** — observability for its own sake; dashboard shows what matters.
+- **Worktree merge/PR action** — agents create PRs themselves; a pulpo-level merge button would duplicate agent functionality.
 
 ## Removed
 
 - ~~Kubernetes-lite framing~~ — the "universal agent runtime" vision is the right framing now that we have multiple backends.
+- ~~Docker runtime backend~~ — shipped as `--runtime docker` flag.
 - Voice-command surfaces
 - IDE-native UX competition
 - Event replay/export endpoint
