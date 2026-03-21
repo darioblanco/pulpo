@@ -1146,7 +1146,8 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             .as_deref()
             .unwrap_or(&resp.session.name);
         eprintln!("{msg}");
-        check_session_alive(&client, &url, &resp.session.name, token.as_deref()).await?;
+        // Path shortcut spawns a shell (no command) — skip liveness check
+        // since shell sessions are immediately detected as idle by the watchdog
         attach_session(backend_id)?;
         return Ok(format!("Detached from session \"{}\".", resp.session.name));
     }
@@ -1308,7 +1309,12 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                     .as_deref()
                     .unwrap_or(&resp.session.name);
                 eprintln!("{msg}");
-                check_session_alive(&client, &url, &resp.session.name, token.as_deref()).await?;
+                // Only check liveness for explicit commands — shell sessions (no command)
+                // may be immediately marked idle/killed by the watchdog, which is expected
+                if cmd.is_some() {
+                    check_session_alive(&client, &url, &resp.session.name, token.as_deref())
+                        .await?;
+                }
                 attach_session(backend_id)?;
                 return Ok(format!("Detached from session \"{}\".", resp.session.name));
             }
