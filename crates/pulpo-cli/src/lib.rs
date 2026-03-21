@@ -729,28 +729,42 @@ async fn fetch_session_status(
 }
 
 /// Wait for the session to leave "creating" state, then check if it died instantly.
+/// Uses the session ID (not name) to avoid matching old killed sessions with the same name.
 /// Returns an error with a helpful message if the session is lost/killed.
 async fn check_session_alive(
     client: &reqwest::Client,
     base: &str,
-    name: &str,
+    session_id: &str,
     token: Option<&str>,
 ) -> Result<()> {
     // Poll up to 3 times at 500ms intervals — handles slow daemons and Docker pull delays
     for _ in 0..3 {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        if let Ok(status) = fetch_session_status(client, base, name, token).await {
-            match status.as_str() {
-                "creating" => continue, // Still starting — wait more
+        // Fetch by ID to avoid name collisions with old sessions
+        let resp = authed_get(
+            client,
+            format!("{base}/api/v1/sessions/{session_id}"),
+            token,
+        )
+        .send()
+        .await;
+        if let Ok(resp) = resp
+            && let Ok(text) = ok_or_api_error(resp).await
+            && let Ok(session) = serde_json::from_str::<Session>(&text)
+        {
+            match session.status.to_string().as_str() {
+                "creating" => continue,
                 "lost" | "killed" => {
                     anyhow::bail!(
-                        "Session \"{name}\" exited immediately — the command may have failed.\n  Check logs: pulpo logs {name}"
+                        "Session \"{}\" exited immediately — the command may have failed.\n  Check logs: pulpo logs {}",
+                        session.name,
+                        session.name
                     );
                 }
-                _ => return Ok(()), // Active, idle, ready — all good
+                _ => return Ok(()),
             }
         }
-        // fetch failed (network issue) — don't block, proceed to attach
+        // fetch failed — don't block, proceed to attach
         break;
     }
     Ok(())
@@ -1312,8 +1326,8 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 // Only check liveness for explicit commands — shell sessions (no command)
                 // may be immediately marked idle/killed by the watchdog, which is expected
                 if cmd.is_some() {
-                    check_session_alive(&client, &url, &resp.session.name, token.as_deref())
-                        .await?;
+                    let sid = resp.session.id.to_string();
+                    check_session_alive(&client, &url, &sid, token.as_deref()).await?;
                 }
                 attach_session(backend_id)?;
                 return Ok(format!("Detached from session \"{}\".", resp.session.name));
@@ -1405,7 +1419,8 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 .as_deref()
                 .unwrap_or(&session.name);
             eprintln!("Resumed session \"{}\"", session.name);
-            check_session_alive(&client, &url, name, token.as_deref()).await?;
+            let sid = session.id.to_string();
+            check_session_alive(&client, &url, &sid, token.as_deref()).await?;
             attach_session(backend_id)?;
             Ok(format!("Detached from session \"{}\".", session.name))
         }
