@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.30](https://github.com/darioblanco/pulpo/compare/v0.0.29...v0.0.30) (2026-03-21)
+
+
+### Bug Fixes
+
+* liveness check uses session ID instead of name ([fa632e7](https://github.com/darioblanco/pulpo/commit/fa632e7fbe1f4cf24881f114037918c5a4c4d6c8))
+* skip liveness check for shell sessions (no explicit command) ([801b629](https://github.com/darioblanco/pulpo/commit/801b629ea2f2f5c4d70d385269e8ea67baece4ea))
+
 ## [0.0.29](https://github.com/darioblanco/pulpo/compare/v0.0.28...v0.0.29) (2026-03-21)
 
 
