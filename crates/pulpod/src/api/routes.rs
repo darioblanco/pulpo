@@ -201,6 +201,7 @@ mod tests {
             crate::config::InkConfig {
                 description: None,
                 command: Some("Review code".into()),
+                ..crate::config::InkConfig::default()
             },
         );
         let config = Config {

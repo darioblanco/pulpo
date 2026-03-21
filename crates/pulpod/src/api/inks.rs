@@ -73,6 +73,7 @@ mod tests {
             InkConfig {
                 description: None,
                 command: Some("Review code".into()),
+                ..InkConfig::default()
             },
         );
         let manager = SessionManager::new(Arc::new(StubBackend), store.clone(), inks.clone(), None)
@@ -112,6 +113,7 @@ mod tests {
             InkConfig {
                 description: None,
                 command: None,
+                ..InkConfig::default()
             },
         );
         let resp = InksResponse { inks };

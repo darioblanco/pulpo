@@ -29,6 +29,17 @@ pub struct SessionManager {
     stale_grace_secs: i64,
 }
 
+/// Result of resolving an ink: command, description, and optional defaults for
+/// secrets and runtime that the ink provides.
+struct ResolvedInk {
+    command: String,
+    description: Option<String>,
+    /// Secret names from the ink (merged with request secrets).
+    secrets: Vec<String>,
+    /// Runtime from the ink (used only if request doesn't specify one).
+    runtime: Option<Runtime>,
+}
+
 impl SessionManager {
     pub fn new(
         backend: Arc<dyn Backend>,
@@ -113,15 +124,18 @@ impl SessionManager {
 
     #[allow(clippy::too_many_lines)]
     pub async fn create_session(&self, req: CreateSessionRequest) -> Result<Session> {
-        // Resolve ink → get command
-        let (command, description) = self.resolve_ink(&req)?;
+        // Resolve ink → get command, description, and ink defaults for secrets/runtime
+        let resolved = self.resolve_ink(&req)?;
+        let command = resolved.command;
+        let description = resolved.description;
 
         // Default workdir to home dir
         let workdir = req.workdir.unwrap_or_else(|| {
             dirs::home_dir().map_or_else(|| "/tmp".to_owned(), |h| h.to_string_lossy().into_owned())
         });
 
-        let runtime = req.runtime.unwrap_or_default();
+        // Runtime: request overrides ink, ink overrides default (tmux)
+        let runtime = req.runtime.or(resolved.runtime).unwrap_or_default();
         let wants_worktree = req.worktree.unwrap_or(false);
         // Validate workdir exists on the host.
         // Skip for Docker unless --worktree is requested (worktree creation happens on the host).
@@ -152,13 +166,22 @@ impl SessionManager {
             );
         }
 
-        // Resolve secrets for injection
-        let secrets_env = if let Some(ref secret_names) = req.secrets
-            && !secret_names.is_empty()
-        {
-            self.store.get_secrets_for_injection(secret_names).await?
-        } else {
+        // Resolve secrets for injection: merge ink secrets with request secrets
+        // Request secrets override ink secrets (request is more specific)
+        let mut all_secret_names = resolved.secrets;
+        if let Some(ref req_secrets) = req.secrets {
+            for s in req_secrets {
+                if !all_secret_names.contains(s) {
+                    all_secret_names.push(s.clone());
+                }
+            }
+        }
+        let secrets_env = if all_secret_names.is_empty() {
             HashMap::new()
+        } else {
+            self.store
+                .get_secrets_for_injection(&all_secret_names)
+                .await?
         };
 
         let id = Uuid::new_v4();
@@ -245,35 +268,64 @@ impl SessionManager {
     }
 
     /// Resolve ink: if ink has command, use it. Request command takes precedence.
-    fn resolve_ink(&self, req: &CreateSessionRequest) -> Result<(String, Option<String>)> {
-        // If a command is explicitly provided, use it
-        if let Some(ref cmd) = req.command {
-            return Ok((cmd.clone(), req.description.clone()));
-        }
+    /// Also resolves secrets and runtime defaults from the ink.
+    fn resolve_ink(&self, req: &CreateSessionRequest) -> Result<ResolvedInk> {
+        let mut ink_secrets: Vec<String> = Vec::new();
+        let mut ink_runtime: Option<Runtime> = None;
 
-        // If an ink is specified, resolve it
+        // If an ink is specified, extract its defaults
         if let Some(ref ink_name) = req.ink {
             let ink = self
                 .inks
                 .get(ink_name)
                 .ok_or_else(|| anyhow!("unknown ink: {ink_name}"))?;
-            let command = ink.command.clone().unwrap_or_default();
-            // Ink description as fallback for session description
-            let description = req.description.clone().or_else(|| ink.description.clone());
-            if !command.is_empty() {
-                return Ok((command, description));
+            ink_secrets.clone_from(&ink.secrets);
+            ink_runtime = ink.runtime.as_deref().and_then(|r| r.parse().ok());
+
+            // If no explicit command, try the ink's command
+            if req.command.is_none() {
+                let command = ink.command.clone().unwrap_or_default();
+                let description = req.description.clone().or_else(|| ink.description.clone());
+                if !command.is_empty() {
+                    return Ok(ResolvedInk {
+                        command,
+                        description,
+                        secrets: ink_secrets,
+                        runtime: ink_runtime,
+                    });
+                }
+                // Ink has no command — fall through to default_command / $SHELL
             }
-            // Ink has no command — fall through to default_command / $SHELL
         }
 
-        // No command and no ink — fall back to default_command from config
+        // Explicit command takes precedence
+        if let Some(ref cmd) = req.command {
+            return Ok(ResolvedInk {
+                command: cmd.clone(),
+                description: req.description.clone(),
+                secrets: ink_secrets,
+                runtime: ink_runtime,
+            });
+        }
+
+        // No command and no ink command — fall back to default_command from config
         if let Some(ref default_cmd) = self.default_command {
-            return Ok((default_cmd.clone(), req.description.clone()));
+            return Ok(ResolvedInk {
+                command: default_cmd.clone(),
+                description: req.description.clone(),
+                secrets: ink_secrets,
+                runtime: ink_runtime,
+            });
         }
 
         // No fallback available — fall back to $SHELL (or /bin/sh)
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_owned());
-        Ok((shell, req.description.clone()))
+        Ok(ResolvedInk {
+            command: shell,
+            description: req.description.clone(),
+            secrets: ink_secrets,
+            runtime: ink_runtime,
+        })
     }
 
     pub async fn get_session(&self, id: &str) -> Result<Option<Session>> {
@@ -863,6 +915,7 @@ mod tests {
             InkConfig {
                 description: Some("Coder ink".into()),
                 command: Some("claude -p 'implement'".into()),
+                ..InkConfig::default()
             },
         );
         let tmpdir = tempfile::tempdir().unwrap();
@@ -897,6 +950,7 @@ mod tests {
             InkConfig {
                 description: Some("Coder ink".into()),
                 command: Some("claude -p 'default'".into()),
+                ..InkConfig::default()
             },
         );
         let tmpdir = tempfile::tempdir().unwrap();
@@ -1688,10 +1742,10 @@ mod tests {
             runtime: None,
             secrets: None,
         };
-        let (cmd, desc) = mgr.resolve_ink(&req).unwrap();
+        let resolved = mgr.resolve_ink(&req).unwrap();
         // Falls back to $SHELL or /bin/sh
-        assert!(!cmd.is_empty());
-        assert_eq!(desc, Some("desc".into()));
+        assert!(!resolved.command.is_empty());
+        assert_eq!(resolved.description, Some("desc".into()));
     }
 
     #[tokio::test]
@@ -1702,6 +1756,7 @@ mod tests {
             InkConfig {
                 description: Some("Ink desc".into()),
                 command: Some("echo test".into()),
+                ..InkConfig::default()
             },
         );
         let tmpdir = tempfile::tempdir().unwrap();
@@ -1735,6 +1790,7 @@ mod tests {
             InkConfig {
                 description: Some("Empty".into()),
                 command: None,
+                ..InkConfig::default()
             },
         );
         let tmpdir = tempfile::tempdir().unwrap();
@@ -1821,6 +1877,7 @@ mod tests {
             InkConfig {
                 description: Some("Coder ink".into()),
                 command: Some("claude -p 'implement'".into()),
+                ..InkConfig::default()
             },
         );
         let tmpdir = tempfile::tempdir().unwrap();
@@ -1845,6 +1902,124 @@ mod tests {
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
+    }
+
+    #[tokio::test]
+    async fn test_ink_provides_runtime() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "sandbox-coder".into(),
+            InkConfig {
+                description: Some("Docker coder".into()),
+                command: Some("claude".into()),
+                runtime: Some("docker".into()),
+                ..InkConfig::default()
+            },
+        );
+        let docker = Arc::new(MockBackend::new());
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let mgr = SessionManager::new(Arc::new(MockBackend::new()), store, inks, None)
+            .with_docker_backend(docker)
+            .with_no_stale_grace();
+
+        let req = CreateSessionRequest {
+            name: "ink-rt".into(),
+            workdir: Some("/tmp".into()),
+            command: None,
+            ink: Some("sandbox-coder".into()),
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            runtime: None, // Not set — should inherit from ink
+            secrets: None,
+        };
+        let session = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.runtime, Runtime::Docker);
+    }
+
+    #[tokio::test]
+    async fn test_ink_runtime_overridden_by_request() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "docker-ink".into(),
+            InkConfig {
+                command: Some("claude".into()),
+                runtime: Some("docker".into()),
+                ..InkConfig::default()
+            },
+        );
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let mgr = SessionManager::new(Arc::new(MockBackend::new()), store, inks, None)
+            .with_no_stale_grace();
+
+        let req = CreateSessionRequest {
+            name: "override-rt".into(),
+            workdir: Some("/tmp".into()),
+            command: None,
+            ink: Some("docker-ink".into()),
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            runtime: Some(Runtime::Tmux), // Override ink's docker runtime
+            secrets: None,
+        };
+        let session = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.runtime, Runtime::Tmux);
+    }
+
+    #[tokio::test]
+    async fn test_ink_secrets_merged_with_request_secrets() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "coder-with-secrets".into(),
+            InkConfig {
+                command: Some("claude".into()),
+                secrets: vec!["INK_SECRET".into()],
+                ..InkConfig::default()
+            },
+        );
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        // Set up the secrets in the store
+        store.set_secret("INK_SECRET", "ink-value").await.unwrap();
+        store.set_secret("REQ_SECRET", "req-value").await.unwrap();
+        let backend = Arc::new(MockBackend::new());
+        let mgr = SessionManager::new(backend.clone(), store, inks, None).with_no_stale_grace();
+
+        let req = CreateSessionRequest {
+            name: "merged-secrets".into(),
+            workdir: Some("/tmp".into()),
+            command: None,
+            ink: Some("coder-with-secrets".into()),
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            runtime: None,
+            secrets: Some(vec!["REQ_SECRET".into()]),
+        };
+        mgr.create_session(req).await.unwrap();
+        // Both secrets should be injected
+        let calls: Vec<_> = backend.calls.lock().unwrap().clone();
+        let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
+        assert!(
+            create_call.contains("INK_SECRET"),
+            "ink secret should be injected: {create_call}"
+        );
+        assert!(
+            create_call.contains("REQ_SECRET"),
+            "request secret should be injected: {create_call}"
+        );
     }
 
     #[tokio::test]

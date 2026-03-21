@@ -180,6 +180,7 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
                     crate::config::InkConfig {
                         description: v.description,
                         command: v.command,
+                        ..crate::config::InkConfig::default()
                     },
                 )
             })
@@ -756,6 +757,7 @@ mod tests {
                     crate::config::InkConfig {
                         description: None,
                         command: Some("claude -p 'code'".into()),
+                        ..crate::config::InkConfig::default()
                     },
                 );
                 m

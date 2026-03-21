@@ -69,6 +69,38 @@ When injected:
 - **tmux sessions**: Secrets are exported as `export KEY='VALUE'` statements inside the `bash -l -c '...'` wrapper. They are baked into the command string, so they persist across resume.
 - **Docker sessions**: Secrets should be passed as `-e KEY=VALUE` flags (future enhancement). Currently only tmux injection is fully supported.
 
+## Inks with Secrets and Runtime
+
+Inks can bundle secrets and runtime, making them reusable session blueprints:
+
+```toml
+[inks.docker-coder]
+command = "claude --dangerously-skip-permissions -p 'Implement the changes'"
+description = "Docker-isolated coder with work GitHub token"
+secrets = ["GH_WORK", "ANTHROPIC_KEY"]
+runtime = "docker"
+```
+
+Then spawn with just the ink — no `--secret` or `--runtime` flags needed:
+
+```bash
+pulpo spawn my-task --ink docker-coder
+# Equivalent to:
+# pulpo spawn my-task --runtime docker --secret GH_WORK --secret ANTHROPIC_KEY -- claude ...
+```
+
+Spawn flags override ink defaults:
+
+```bash
+# Use the ink's command and secrets, but override runtime to tmux
+pulpo spawn my-task --ink docker-coder --runtime tmux
+
+# Add extra secrets beyond what the ink provides
+pulpo spawn my-task --ink docker-coder --secret EXTRA_TOKEN
+```
+
+Ink secrets and request `--secret` flags are merged (deduplicated).
+
 ## Example Workflow
 
 Using multiple GitHub tokens for different repos:

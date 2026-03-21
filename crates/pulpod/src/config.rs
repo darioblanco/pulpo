@@ -44,12 +44,18 @@ fn default_docker_image() -> String {
     "ubuntu:latest".into()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct InkConfig {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
     pub command: Option<String>,
+    /// Secret names to inject as environment variables.
+    #[serde(default)]
+    pub secrets: Vec<String>,
+    /// Runtime to use (tmux or docker). Overridden by --runtime on spawn.
+    #[serde(default)]
+    pub runtime: Option<String>,
 }
 
 /// Notification configuration (webhooks for status updates).
@@ -343,6 +349,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
             command: Some(
                 "claude -p 'Review this code for bugs, security issues, and style'".to_owned(),
             ),
+            ..InkConfig::default()
         },
     );
     inks.insert(
@@ -355,6 +362,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                 "claude --dangerously-skip-permissions -p 'Implement the requested changes'"
                     .to_owned(),
             ),
+            ..InkConfig::default()
         },
     );
     inks.insert(
@@ -367,6 +375,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
                 "claude --dangerously-skip-permissions -p 'Fix the reported bug with minimal changes'"
                     .to_owned(),
             ),
+            ..InkConfig::default()
         },
     );
     inks.insert(
@@ -378,6 +387,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
             command: Some(
                 "claude -p 'Write comprehensive tests for the specified code'".to_owned(),
             ),
+            ..InkConfig::default()
         },
     );
     inks.insert(
@@ -389,6 +399,7 @@ pub fn built_in_inks() -> HashMap<String, InkConfig> {
             command: Some(
                 "claude --dangerously-skip-permissions -p 'Refactor the specified code'".to_owned(),
             ),
+            ..InkConfig::default()
         },
     );
     inks
@@ -1548,6 +1559,7 @@ command = "codex -p 'Do it'"
             InkConfig {
                 description: Some("Code reviewer".into()),
                 command: Some("claude -p 'Review only'".into()),
+                ..InkConfig::default()
             },
         );
         let config = Config {
@@ -1579,6 +1591,7 @@ command = "codex -p 'Do it'"
         let p = InkConfig {
             description: None,
             command: Some("claude -p 'test'".into()),
+            ..InkConfig::default()
         };
         let cloned = p.clone();
         assert_eq!(format!("{p:?}"), format!("{cloned:?}"));
@@ -1956,6 +1969,7 @@ name = "test"
             InkConfig {
                 description: Some("My custom reviewer".to_owned()),
                 command: Some("codex -p 'review'".to_owned()),
+                ..InkConfig::default()
             },
         );
         let merged = merge_built_in_inks(user_inks);
@@ -1981,6 +1995,7 @@ name = "test"
             InkConfig {
                 description: Some("Custom ink".to_owned()),
                 command: None,
+                ..InkConfig::default()
             },
         );
         let merged = merge_built_in_inks(user_inks);
@@ -2030,6 +2045,7 @@ command = "codex -p 'review'"
         let ink = InkConfig {
             description: Some("Test description".to_owned()),
             command: Some("claude -p 'test'".to_owned()),
+            ..InkConfig::default()
         };
         let toml_str = toml::to_string(&ink).unwrap();
         assert!(toml_str.contains("description = \"Test description\""));
@@ -2044,6 +2060,25 @@ command = "codex -p 'review'"
     fn test_ink_config_command_default_none() {
         let ink: InkConfig = toml::from_str("").unwrap();
         assert!(ink.command.is_none());
+    }
+
+    #[test]
+    fn test_ink_config_secrets_and_runtime() {
+        let toml_str = r#"
+            command = "claude"
+            secrets = ["GITHUB_TOKEN", "NPM_TOKEN"]
+            runtime = "docker"
+        "#;
+        let ink: InkConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(ink.secrets, vec!["GITHUB_TOKEN", "NPM_TOKEN"]);
+        assert_eq!(ink.runtime.as_deref(), Some("docker"));
+    }
+
+    #[test]
+    fn test_ink_config_secrets_default_empty() {
+        let ink: InkConfig = toml::from_str("").unwrap();
+        assert!(ink.secrets.is_empty());
+        assert!(ink.runtime.is_none());
     }
 
     // -- VAPID key generation tests --
