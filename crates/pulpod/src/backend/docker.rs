@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "macos")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 
 #[cfg(not(coverage))]
@@ -254,6 +256,7 @@ impl super::Backend for DockerBackend {
         let _ = build_rm_command(container_name).output();
 
         // Resolve volume mounts (expand ~, skip nonexistent)
+        #[allow(unused_mut)]
         let mut resolved_volumes = resolve_volumes(&self.volumes);
 
         // On macOS, try to extract Claude credentials from Keychain if needed

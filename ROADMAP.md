@@ -75,7 +75,10 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - Schedule dashboard: create/edit dialog with cron presets, next-run calculation, status filtering, expandable run history per schedule (`/api/v1/schedules/{id}/runs`)
 - PR/branch detection: watchdog scans session output for GitHub/GitLab/Bitbucket PR URLs and git branch pushes, stores in session metadata, surfaces as clickable badges in dashboard and `[PR]` marker in CLI
 - `pulpo ls` shows live sessions by default (`-a` for all), with ID, RUNTIME, and worktree/PR indicators
-- Session liveness check: CLI verifies session survived before attach on spawn/resume, with clear error message on instant exit
+- Session liveness check: CLI polls session status with retries before attach on spawn/resume
+- Secret store: encrypted-at-rest secrets (`pulpo secret set/list/delete`) with `--env` override for env var mapping, `--secret` flag on spawn for injection via temp files (tmux) or `-e` flags (Docker). Secrets never in command strings, `ps` output, or logs.
+- Ink blueprints: inks support `secrets` and `runtime` fields, making them full session blueprints. Ink + request secrets are merged, request `--runtime` overrides ink default.
+- Docker auth volumes: auto-mount `~/.claude`, `~/.codex`, `~/.gemini` (read-only) for OAuth/subscription auth. macOS Keychain extraction for Claude Code. Configurable via `[docker] volumes`.
 
 ## What's Next
 
