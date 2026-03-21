@@ -523,8 +523,9 @@ async fn handle_active_session(store: &Store, session: &pulpo_common::session::S
     }
 }
 
-/// Detect PR URL and branch name from session output and store in metadata.
-/// Only writes if the key is not already present in the session metadata.
+/// Detect PR URL, branch name, and rate limits from session output and store in metadata.
+/// PR and branch are only written if not already present. Rate limits are always updated
+/// (they are transient — a session may recover).
 async fn detect_and_store_output_metadata(store: &Store, session: &Session, output: &str) {
     let meta = session.metadata.as_ref();
 
@@ -564,6 +565,35 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
                 session_name = %session.name,
                 branch = %branch,
                 "Detected branch from session output"
+            );
+        }
+    }
+
+    // Always check for rate limits (transient — session may recover)
+    if let Some(rate_msg) = output_patterns::detect_rate_limit(output) {
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        if let Err(e) = store
+            .update_session_metadata_field(&session.id.to_string(), "rate_limit", &rate_msg)
+            .await
+        {
+            warn!(
+                session_name = %session.name,
+                "Failed to store rate_limit metadata: {e}"
+            );
+        }
+        if let Err(e) = store
+            .update_session_metadata_field(&session.id.to_string(), "rate_limit_at", &timestamp)
+            .await
+        {
+            warn!(
+                session_name = %session.name,
+                "Failed to store rate_limit_at metadata: {e}"
+            );
+        } else {
+            info!(
+                session_name = %session.name,
+                rate_limit = %rate_msg,
+                "Detected rate limit from session output"
             );
         }
     }
@@ -3902,5 +3932,86 @@ mod tests {
             "https://github.com/owner/repo/pull/5"
         );
         assert_eq!(meta.get("branch").unwrap(), "feat/x");
+    }
+
+    #[tokio::test]
+    async fn test_detect_and_store_rate_limit() {
+        let store = test_store().await;
+        let session = create_running_session(&store, "rate-limit-detect").await;
+
+        let output = "Working...\nError: Rate limit exceeded. Please wait.\n";
+        detect_and_store_output_metadata(&store, &session, output).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta = fetched.metadata.unwrap();
+        assert_eq!(meta.get("rate_limit").unwrap(), "Rate limited");
+        assert!(meta.contains_key("rate_limit_at"));
+    }
+
+    #[tokio::test]
+    async fn test_detect_rate_limit_updates_on_every_tick() {
+        let store = test_store().await;
+        let session = create_running_session(&store, "rate-limit-update").await;
+
+        // First detection
+        let output1 = "Error: too many requests\n";
+        detect_and_store_output_metadata(&store, &session, output1).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta = fetched.metadata.unwrap();
+        assert_eq!(
+            meta.get("rate_limit").unwrap(),
+            "Rate limited: too many requests"
+        );
+        let first_ts = meta.get("rate_limit_at").unwrap().clone();
+
+        // Second detection with different message — should update
+        let output2 = "RESOURCE_EXHAUSTED: quota used up\n";
+        // Re-fetch session with updated metadata
+        let session2 = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        detect_and_store_output_metadata(&store, &session2, output2).await;
+
+        let fetched2 = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta2 = fetched2.metadata.unwrap();
+        assert_eq!(
+            meta2.get("rate_limit").unwrap(),
+            "Rate limited: resource exhausted"
+        );
+        // Timestamp should have been updated
+        let second_ts = meta2.get("rate_limit_at").unwrap();
+        assert!(second_ts >= &first_ts);
+    }
+
+    #[tokio::test]
+    async fn test_detect_no_rate_limit() {
+        let store = test_store().await;
+        let session = create_running_session(&store, "no-rate-limit").await;
+
+        let output = "$ cargo test\nrunning tests...\nall passed\n";
+        detect_and_store_output_metadata(&store, &session, output).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        // No metadata should be set
+        assert!(fetched.metadata.is_none());
     }
 }

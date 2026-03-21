@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
-import { GitBranch, GitPullRequest, ExternalLink } from 'lucide-react';
+import { GitBranch, GitPullRequest, ExternalLink, AlertTriangle } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -181,6 +181,34 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
             >
               <GitBranch className="h-3 w-3" />
               {session.metadata.branch}
+            </span>
+          )}
+          {session.metadata?.auth_plan && (
+            <span
+              data-testid="auth-plan-badge"
+              title={session.metadata.auth_email || undefined}
+              className="shrink-0 rounded bg-[#1a1a2e] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#8b8bcd]"
+            >
+              {session.metadata.auth_plan}
+            </span>
+          )}
+          {session.metadata?.rate_limit && (
+            <span
+              data-testid="rate-limit-badge"
+              title={
+                session.metadata.rate_limit_at
+                  ? `${session.metadata.rate_limit} at ${new Date(session.metadata.rate_limit_at).toLocaleString()}`
+                  : session.metadata.rate_limit
+              }
+              className={`flex shrink-0 items-center gap-0.5 rounded px-1.5 py-0.5 font-mono text-[0.55rem] ${
+                session.metadata.rate_limit_at &&
+                Date.now() - new Date(session.metadata.rate_limit_at).getTime() < 300_000
+                  ? 'bg-[#3d2e0d] text-[#fbbf24]'
+                  : 'bg-[#2d2a1e] text-[#a89a6a]'
+              }`}
+            >
+              <AlertTriangle className="h-3 w-3" />
+              {session.metadata.rate_limit}
             </span>
           )}
           <span className="truncate max-w-[120px] sm:max-w-[200px] lg:max-w-none text-[0.6rem] uppercase text-[#5a7a9a]">

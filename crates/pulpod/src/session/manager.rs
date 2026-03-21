@@ -269,6 +269,32 @@ impl SessionManager {
         let log_path = format!("{log_dir}/{id}.log");
         let _ = active_backend.setup_logging(&backend_id, &log_path);
 
+        // Detect auth info from agent credentials and store in metadata
+        #[cfg(not(coverage))]
+        if let Some(auth_info) = crate::auth_info::detect_auth_for_command(&session.command) {
+            let sid = id.to_string();
+            let _ = self
+                .store
+                .update_session_metadata_field(&sid, "auth_provider", &auth_info.provider)
+                .await;
+            if let Some(ref plan) = auth_info.plan {
+                let _ = self
+                    .store
+                    .update_session_metadata_field(&sid, "auth_plan", plan)
+                    .await;
+            }
+            if let Some(ref email) = auth_info.email {
+                let _ = self
+                    .store
+                    .update_session_metadata_field(&sid, "auth_email", email)
+                    .await;
+            }
+            // Refresh session metadata to reflect the stored auth info
+            if let Ok(Some(refreshed)) = self.store.get_session(&sid).await {
+                session.metadata = refreshed.metadata;
+            }
+        }
+
         // Return the session with updated status (avoids unnecessary re-fetch)
         session.status = SessionStatus::Active;
         session.updated_at = Utc::now();

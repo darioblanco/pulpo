@@ -133,6 +133,38 @@ fn find_url_with_path(line: &str, host: &str, path_segment: &str) -> Option<Stri
     None
 }
 
+/// Patterns that indicate rate limiting in agent output.
+/// Each entry is (pattern, human-readable label).
+const RATE_LIMIT_PATTERNS: &[(&str, &str)] = &[
+    ("rate limit", "Rate limited"),
+    ("too many requests", "Rate limited: too many requests"),
+    ("429", "Rate limited (429)"),
+    ("capacity", "Rate limited: at capacity"),
+    ("overloaded", "Rate limited: overloaded"),
+    ("quota exceeded", "Rate limited: quota exceeded"),
+    ("resource_exhausted", "Rate limited: resource exhausted"),
+];
+
+/// Detect rate limit warnings in agent output.
+/// Returns a human-readable message if rate limiting is detected.
+///
+/// Checks the last 20 lines of output (after ANSI stripping) for known
+/// rate limit patterns. Returns the first match found.
+pub fn detect_rate_limit(output: &str) -> Option<String> {
+    let cleaned = strip_ansi(output);
+    let last_lines: Vec<&str> = cleaned.lines().rev().take(20).collect();
+
+    for line in &last_lines {
+        let lower = line.to_lowercase();
+        for &(pattern, label) in RATE_LIMIT_PATTERNS {
+            if lower.contains(pattern) {
+                return Some(label.to_owned());
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,5 +340,91 @@ mod tests {
             "/pull/",
         );
         assert_eq!(url, Some("https://github.com/a/b/pull/5".into()));
+    }
+
+    // -- detect_rate_limit tests --
+
+    #[test]
+    fn test_detect_rate_limit_basic() {
+        let output = "Processing...\nError: Rate limit exceeded. Please wait.\n";
+        let result = detect_rate_limit(output);
+        assert_eq!(result, Some("Rate limited".into()));
+    }
+
+    #[test]
+    fn test_detect_rate_limit_429() {
+        let output = "HTTP 429: please retry later\n";
+        let result = detect_rate_limit(output);
+        assert_eq!(result, Some("Rate limited (429)".into()));
+    }
+
+    #[test]
+    fn test_detect_rate_limit_too_many_requests() {
+        let output = "Error: too many requests, please slow down\n";
+        let result = detect_rate_limit(output);
+        assert_eq!(result, Some("Rate limited: too many requests".into()));
+    }
+
+    #[test]
+    fn test_detect_rate_limit_capacity() {
+        let output = "The API is at capacity right now.\n";
+        let result = detect_rate_limit(output);
+        assert_eq!(result, Some("Rate limited: at capacity".into()));
+    }
+
+    #[test]
+    fn test_detect_rate_limit_overloaded() {
+        let output = "Service is overloaded. Retrying in 30s.\n";
+        let result = detect_rate_limit(output);
+        assert_eq!(result, Some("Rate limited: overloaded".into()));
+    }
+
+    #[test]
+    fn test_detect_rate_limit_quota_exceeded() {
+        let output = "Error: Quota exceeded for project.\n";
+        let result = detect_rate_limit(output);
+        assert_eq!(result, Some("Rate limited: quota exceeded".into()));
+    }
+
+    #[test]
+    fn test_detect_rate_limit_resource_exhausted() {
+        let output = "RESOURCE_EXHAUSTED: API limit reached.\n";
+        let result = detect_rate_limit(output);
+        assert_eq!(result, Some("Rate limited: resource exhausted".into()));
+    }
+
+    #[test]
+    fn test_detect_rate_limit_no_match() {
+        let output = "$ cargo test\nrunning 42 tests\nall passed\n";
+        assert!(detect_rate_limit(output).is_none());
+    }
+
+    #[test]
+    fn test_detect_rate_limit_with_ansi() {
+        let output = "\x1b[31mRate limit exceeded\x1b[0m\n";
+        let result = detect_rate_limit(output);
+        assert_eq!(result, Some("Rate limited".into()));
+    }
+
+    #[test]
+    fn test_detect_rate_limit_case_insensitive() {
+        let output = "RATE LIMIT warning: slow down\n";
+        let result = detect_rate_limit(output);
+        assert_eq!(result, Some("Rate limited".into()));
+    }
+
+    #[test]
+    fn test_detect_rate_limit_only_last_20_lines() {
+        // Put the rate limit message beyond the last 20 lines
+        let mut output = String::from("Rate limit exceeded\n");
+        for _ in 0..25 {
+            output.push_str("normal output line\n");
+        }
+        assert!(detect_rate_limit(&output).is_none());
+    }
+
+    #[test]
+    fn test_detect_rate_limit_empty() {
+        assert!(detect_rate_limit("").is_none());
     }
 }

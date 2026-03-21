@@ -403,6 +403,76 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('branch-badge')).toBeInTheDocument();
   });
 
+  // Auth plan badge
+
+  it('shows auth plan badge when metadata has auth_plan', () => {
+    renderCard(makeSession({ metadata: { auth_plan: 'max' } }));
+    const badge = screen.getByTestId('auth-plan-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('max');
+  });
+
+  it('shows auth email as tooltip on plan badge', () => {
+    renderCard(makeSession({ metadata: { auth_plan: 'pro', auth_email: 'user@example.com' } }));
+    const badge = screen.getByTestId('auth-plan-badge');
+    expect(badge).toHaveAttribute('title', 'user@example.com');
+  });
+
+  it('does not show auth plan badge when not in metadata', () => {
+    renderCard(makeSession({ metadata: { pr_url: 'https://github.com/a/b/pull/1' } }));
+    expect(screen.queryByTestId('auth-plan-badge')).not.toBeInTheDocument();
+  });
+
+  it('does not show auth plan badge when metadata is null', () => {
+    renderCard(makeSession({ metadata: null }));
+    expect(screen.queryByTestId('auth-plan-badge')).not.toBeInTheDocument();
+  });
+
+  // Rate limit badge
+
+  it('shows rate limit badge when metadata has rate_limit', () => {
+    renderCard(makeSession({ metadata: { rate_limit: 'Rate limited' } }));
+    const badge = screen.getByTestId('rate-limit-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('Rate limited');
+  });
+
+  it('highlights rate limit badge when recent (within 5 minutes)', () => {
+    const recentTime = new Date().toISOString();
+    renderCard(
+      makeSession({
+        metadata: { rate_limit: 'Rate limited', rate_limit_at: recentTime },
+      }),
+    );
+    const badge = screen.getByTestId('rate-limit-badge');
+    expect(badge).toBeInTheDocument();
+    // Recent: bright amber styling
+    expect(badge.className).toContain('text-[#fbbf24]');
+  });
+
+  it('shows dimmer rate limit badge when older than 5 minutes', () => {
+    const oldTime = new Date(Date.now() - 600_000).toISOString();
+    renderCard(
+      makeSession({
+        metadata: { rate_limit: 'Rate limited', rate_limit_at: oldTime },
+      }),
+    );
+    const badge = screen.getByTestId('rate-limit-badge');
+    expect(badge).toBeInTheDocument();
+    // Old: dimmer styling
+    expect(badge.className).toContain('text-[#a89a6a]');
+  });
+
+  it('does not show rate limit badge when not in metadata', () => {
+    renderCard(makeSession({ metadata: { branch: 'main' } }));
+    expect(screen.queryByTestId('rate-limit-badge')).not.toBeInTheDocument();
+  });
+
+  it('does not show rate limit badge when metadata is null', () => {
+    renderCard(makeSession({ metadata: null }));
+    expect(screen.queryByTestId('rate-limit-badge')).not.toBeInTheDocument();
+  });
+
   it('loads intervention history on toggle', async () => {
     mockGetInterventionEvents.mockResolvedValue([
       { id: 1, session_id: 'sess-1', reason: 'OOM kill', created_at: '2026-01-01T12:00:00Z' },

@@ -1,4 +1,5 @@
 pub mod api;
+pub mod auth_info;
 pub mod backend;
 pub mod config;
 pub mod discovery;
