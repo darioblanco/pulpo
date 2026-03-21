@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.28](https://github.com/darioblanco/pulpo/compare/v0.0.27...v0.0.28) (2026-03-21)
+
+
+### Features
+
+* account/plan detection and rate limit warnings ([042dbb9](https://github.com/darioblanco/pulpo/commit/042dbb9a7d70e091ac0d7637f2945f840a17f4dd))
+
+
+### Bug Fixes
+
+* vendor OpenSSL for Windows builds ([a7d6dd6](https://github.com/darioblanco/pulpo/commit/a7d6dd69aaa70c1bd096ac3b98518425c2509de7))
+
 ## [0.0.27](https://github.com/darioblanco/pulpo/compare/v0.0.26...v0.0.27) (2026-03-21)
 
 
