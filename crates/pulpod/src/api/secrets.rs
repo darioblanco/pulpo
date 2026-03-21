@@ -72,6 +72,14 @@ pub async fn set_secret(
         ));
     }
     let value = req.value.trim().to_owned();
+    if value.contains('\n') || value.contains('\r') || value.contains('\0') {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Secret value must not contain newlines or null bytes".to_owned(),
+            }),
+        ));
+    }
     state
         .store
         .set_secret_with_env(&name, &value, req.env.as_deref())
@@ -260,6 +268,33 @@ mod tests {
         let req = SetSecretRequest {
             value: "val".into(),
             env: Some(String::new()),
+        };
+        let result = set_secret(State(state), Path("MY_KEY".into()), Json(req)).await;
+        assert!(result.is_err());
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_rejects_newlines() {
+        let state = test_state().await;
+        let req = SetSecretRequest {
+            value: "line1\nline2".into(),
+            env: None,
+        };
+        let result = set_secret(State(state), Path("MY_KEY".into()), Json(req)).await;
+        assert!(result.is_err());
+        let (status, body) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.0.error.contains("newlines"));
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_rejects_null_bytes() {
+        let state = test_state().await;
+        let req = SetSecretRequest {
+            value: "value\0with\0nulls".into(),
+            env: None,
         };
         let result = set_secret(State(state), Path("MY_KEY".into()), Json(req)).await;
         assert!(result.is_err());
