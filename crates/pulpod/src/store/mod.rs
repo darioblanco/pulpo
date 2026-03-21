@@ -262,6 +262,18 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
+        // Idempotent migration: add env column to secrets table
+        let has_secret_env: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('secrets') WHERE name = 'env'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_secret_env == 0 {
+            sqlx::query("ALTER TABLE secrets ADD COLUMN env TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+
         // Set restrictive file permissions on the database file (Unix only)
         #[cfg(unix)]
         {
@@ -742,13 +754,26 @@ impl Store {
 
     /// Upsert a secret (INSERT OR REPLACE).
     pub async fn set_secret(&self, name: &str, value: &str) -> Result<()> {
+        self.set_secret_with_env(name, value, None).await
+    }
+
+    /// Upsert a secret with an optional env var name override.
+    pub async fn set_secret_with_env(
+        &self,
+        name: &str,
+        value: &str,
+        env: Option<&str>,
+    ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query("INSERT OR REPLACE INTO secrets (name, value, created_at) VALUES (?, ?, ?)")
-            .bind(name)
-            .bind(value)
-            .bind(&now)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "INSERT OR REPLACE INTO secrets (name, value, env, created_at) VALUES (?, ?, ?, ?)",
+        )
+        .bind(name)
+        .bind(value)
+        .bind(env)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -761,13 +786,35 @@ impl Store {
         Ok(row.map(|(v,)| v))
     }
 
-    /// List secret names (never returns values).
-    pub async fn list_secret_names(&self) -> Result<Vec<(String, String)>> {
-        let rows: Vec<(String, String)> =
-            sqlx::query_as("SELECT name, created_at FROM secrets ORDER BY name")
+    /// List secret names with optional env override (never returns values).
+    /// Returns `(name, env, created_at)` tuples.
+    pub async fn list_secret_names(&self) -> Result<Vec<(String, Option<String>, String)>> {
+        let rows: Vec<(String, Option<String>, String)> =
+            sqlx::query_as("SELECT name, env, created_at FROM secrets ORDER BY name")
                 .fetch_all(&self.pool)
                 .await?;
         Ok(rows)
+    }
+
+    /// Given a list of secret names, returns a map of `env_var_name` -> value.
+    /// Uses the `env` field if set, otherwise uses `name` as the env var.
+    pub async fn get_secrets_for_injection(
+        &self,
+        names: &[String],
+    ) -> Result<std::collections::HashMap<String, String>> {
+        let mut result = std::collections::HashMap::new();
+        for name in names {
+            let row: Option<(String, Option<String>)> =
+                sqlx::query_as("SELECT value, env FROM secrets WHERE name = ?")
+                    .bind(name)
+                    .fetch_optional(&self.pool)
+                    .await?;
+            if let Some((value, env)) = row {
+                let env_var = env.unwrap_or_else(|| name.clone());
+                result.insert(env_var, value);
+            }
+        }
+        Ok(result)
     }
 
     /// Delete a secret. Returns true if deleted, false if not found.
@@ -2597,9 +2644,26 @@ mod tests {
         let names = store.list_secret_names().await.unwrap();
         assert_eq!(names.len(), 2);
         assert_eq!(names[0].0, "A_TOKEN");
+        assert!(names[0].1.is_none()); // no env override
         assert_eq!(names[1].0, "B_TOKEN");
         // created_at should be non-empty
-        assert!(!names[0].1.is_empty());
+        assert!(!names[0].2.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_secret_names_with_env() {
+        let store = test_store().await;
+        store
+            .set_secret_with_env("GH_WORK", "token1", Some("GITHUB_TOKEN"))
+            .await
+            .unwrap();
+        store.set_secret("PLAIN_KEY", "token2").await.unwrap();
+        let names = store.list_secret_names().await.unwrap();
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0].0, "GH_WORK");
+        assert_eq!(names[0].1.as_deref(), Some("GITHUB_TOKEN"));
+        assert_eq!(names[1].0, "PLAIN_KEY");
+        assert!(names[1].1.is_none());
     }
 
     #[tokio::test]
@@ -2624,6 +2688,83 @@ mod tests {
         let store = test_store().await;
         let deleted = store.delete_secret("NONEXISTENT").await.unwrap();
         assert!(!deleted);
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_with_env() {
+        let store = test_store().await;
+        store
+            .set_secret_with_env("GH_WORK", "token123", Some("GITHUB_TOKEN"))
+            .await
+            .unwrap();
+        let value = store.get_secret("GH_WORK").await.unwrap();
+        assert_eq!(value, Some("token123".into()));
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_with_env_none() {
+        let store = test_store().await;
+        store
+            .set_secret_with_env("MY_KEY", "val", None)
+            .await
+            .unwrap();
+        let value = store.get_secret("MY_KEY").await.unwrap();
+        assert_eq!(value, Some("val".into()));
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_with_env_upsert() {
+        let store = test_store().await;
+        store
+            .set_secret_with_env("GH_WORK", "old", Some("OLD_VAR"))
+            .await
+            .unwrap();
+        store
+            .set_secret_with_env("GH_WORK", "new", Some("NEW_VAR"))
+            .await
+            .unwrap();
+        let value = store.get_secret("GH_WORK").await.unwrap();
+        assert_eq!(value, Some("new".into()));
+        let names = store.list_secret_names().await.unwrap();
+        assert_eq!(names[0].1.as_deref(), Some("NEW_VAR"));
+    }
+
+    #[tokio::test]
+    async fn test_get_secrets_for_injection() {
+        let store = test_store().await;
+        store
+            .set_secret_with_env("GH_WORK", "token1", Some("GITHUB_TOKEN"))
+            .await
+            .unwrap();
+        store.set_secret("NPM_TOKEN", "token2").await.unwrap();
+        let secrets = store
+            .get_secrets_for_injection(&["GH_WORK".into(), "NPM_TOKEN".into()])
+            .await
+            .unwrap();
+        assert_eq!(secrets.len(), 2);
+        // GH_WORK has env override → key is GITHUB_TOKEN
+        assert_eq!(secrets.get("GITHUB_TOKEN").unwrap(), "token1");
+        // NPM_TOKEN has no env override → key is NPM_TOKEN
+        assert_eq!(secrets.get("NPM_TOKEN").unwrap(), "token2");
+    }
+
+    #[tokio::test]
+    async fn test_get_secrets_for_injection_missing() {
+        let store = test_store().await;
+        store.set_secret("EXISTING", "val").await.unwrap();
+        let secrets = store
+            .get_secrets_for_injection(&["EXISTING".into(), "MISSING".into()])
+            .await
+            .unwrap();
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets.get("EXISTING").unwrap(), "val");
+    }
+
+    #[tokio::test]
+    async fn test_get_secrets_for_injection_empty() {
+        let store = test_store().await;
+        let secrets = store.get_secrets_for_injection(&[]).await.unwrap();
+        assert!(secrets.is_empty());
     }
 
     #[tokio::test]
@@ -2652,10 +2793,22 @@ mod tests {
             .await
             .unwrap();
         assert!(store.set_secret("K", "V").await.is_err());
+        assert!(
+            store
+                .set_secret_with_env("K", "V", Some("E"))
+                .await
+                .is_err()
+        );
         assert!(store.get_secret("K").await.is_err());
         assert!(store.list_secret_names().await.is_err());
         assert!(store.delete_secret("K").await.is_err());
         assert!(store.get_all_secrets().await.is_err());
+        assert!(
+            store
+                .get_secrets_for_injection(&["K".into()])
+                .await
+                .is_err()
+        );
     }
 
     #[cfg(unix)]

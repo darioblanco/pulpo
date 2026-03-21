@@ -158,6 +158,7 @@ export interface CreateSessionRequest {
   metadata?: Record<string, string>;
   worktree?: boolean;
   runtime?: 'tmux' | 'docker';
+  secrets?: string[];
 }
 
 export interface CreateSessionResponse {
@@ -202,6 +203,7 @@ export interface ScheduleInfo {
 
 export interface SecretEntry {
   name: string;
+  env?: string | null;
   created_at: string;
 }
 

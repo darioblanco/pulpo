@@ -815,6 +815,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
         state
@@ -915,6 +916,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -947,6 +949,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -978,6 +981,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1019,6 +1023,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1058,6 +1063,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 

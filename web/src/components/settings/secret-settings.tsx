@@ -12,6 +12,7 @@ export function SecretSettings() {
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState('');
   const [newValue, setNewValue] = useState('');
+  const [newEnv, setNewEnv] = useState('');
   const [showValue, setShowValue] = useState(false);
   const [adding, setAdding] = useState(false);
   const [deletingName, setDeletingName] = useState<string | null>(null);
@@ -36,10 +37,11 @@ export function SecretSettings() {
     if (!newName.trim() || !newValue.trim()) return;
     setAdding(true);
     try {
-      await setSecret(newName.trim(), newValue.trim());
+      await setSecret(newName.trim(), newValue.trim(), newEnv.trim() || undefined);
       toast.success(`Secret "${newName.trim()}" saved.`);
       setNewName('');
       setNewValue('');
+      setNewEnv('');
       setShowValue(false);
       await loadSecrets();
     } catch (err) {
@@ -67,8 +69,8 @@ export function SecretSettings() {
       <CardHeader>
         <CardTitle>Secrets</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Environment variables injected into sessions. Values are never returned by the API after
-          saving.
+          Environment variables injected into sessions via <code>--secret</code> flags. Values are
+          never returned by the API after saving.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -88,6 +90,14 @@ export function SecretSettings() {
               >
                 <div>
                   <p className="font-mono text-sm font-medium">{s.name}</p>
+                  {s.env && s.env !== s.name && (
+                    <p
+                      className="font-mono text-xs text-muted-foreground"
+                      data-testid={`secret-env-${s.name}`}
+                    >
+                      ENV: {s.env}
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     Created {new Date(s.created_at).toLocaleDateString()}
                   </p>
@@ -116,6 +126,16 @@ export function SecretSettings() {
               placeholder="GITHUB_TOKEN"
               value={newName}
               onChange={(e) => setNewName(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="secret-env">Env var name (optional)</Label>
+            <Input
+              id="secret-env"
+              data-testid="secret-env-input"
+              placeholder="defaults to secret name"
+              value={newEnv}
+              onChange={(e) => setNewEnv(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ''))}
             />
           </div>
           <div className="grid gap-2">

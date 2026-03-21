@@ -53,13 +53,38 @@ describe('SecretSettings', () => {
     });
   });
 
-  it('renders add secret form', async () => {
+  it('displays env override when different from name', async () => {
+    mockGetSecrets.mockResolvedValue([
+      { name: 'GH_WORK', env: 'GITHUB_TOKEN', created_at: '2026-01-01T00:00:00Z' },
+    ]);
+    render(<SecretSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-env-GH_WORK')).toBeInTheDocument();
+      expect(screen.getByTestId('secret-env-GH_WORK')).toHaveTextContent('ENV: GITHUB_TOKEN');
+    });
+  });
+
+  it('does not display env when same as name', async () => {
+    mockGetSecrets.mockResolvedValue([
+      { name: 'GITHUB_TOKEN', env: 'GITHUB_TOKEN', created_at: '2026-01-01T00:00:00Z' },
+    ]);
+    render(<SecretSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-GITHUB_TOKEN')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('secret-env-GITHUB_TOKEN')).not.toBeInTheDocument();
+  });
+
+  it('renders add secret form with env field', async () => {
     mockGetSecrets.mockResolvedValue([]);
     render(<SecretSettings />);
 
     await waitFor(() => {
       expect(screen.getByTestId('add-secret-form')).toBeInTheDocument();
       expect(screen.getByTestId('secret-name-input')).toBeInTheDocument();
+      expect(screen.getByTestId('secret-env-input')).toBeInTheDocument();
       expect(screen.getByTestId('secret-value-input')).toBeInTheDocument();
       expect(screen.getByTestId('add-secret-btn')).toBeInTheDocument();
     });
@@ -108,7 +133,33 @@ describe('SecretSettings', () => {
     fireEvent.click(screen.getByTestId('add-secret-btn'));
 
     await waitFor(() => {
-      expect(mockSetSecret).toHaveBeenCalledWith('MY_TOKEN', 'abc123');
+      expect(mockSetSecret).toHaveBeenCalledWith('MY_TOKEN', 'abc123', undefined);
+    });
+  });
+
+  it('adds a secret with env override', async () => {
+    mockGetSecrets.mockResolvedValue([]);
+    mockSetSecret.mockResolvedValue(undefined);
+    render(<SecretSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('add-secret-btn')).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByTestId('secret-name-input'), {
+      target: { value: 'GH_WORK' },
+    });
+    fireEvent.change(screen.getByTestId('secret-env-input'), {
+      target: { value: 'GITHUB_TOKEN' },
+    });
+    fireEvent.change(screen.getByTestId('secret-value-input'), {
+      target: { value: 'token123' },
+    });
+
+    fireEvent.click(screen.getByTestId('add-secret-btn'));
+
+    await waitFor(() => {
+      expect(mockSetSecret).toHaveBeenCalledWith('GH_WORK', 'token123', 'GITHUB_TOKEN');
     });
   });
 
@@ -182,6 +233,21 @@ describe('SecretSettings', () => {
     // The onChange handler uppercases and strips invalid chars
     // The value displayed should be MYTOKEN (hyphens stripped)
     expect(screen.getByTestId('secret-name-input')).toHaveValue('MYTOKEN');
+  });
+
+  it('forces uppercase and valid chars in env input', async () => {
+    mockGetSecrets.mockResolvedValue([]);
+    render(<SecretSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-env-input')).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByTestId('secret-env-input'), {
+      target: { value: 'my-var' },
+    });
+
+    expect(screen.getByTestId('secret-env-input')).toHaveValue('MYVAR');
   });
 
   it('shows error on load failure', async () => {

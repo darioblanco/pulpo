@@ -111,6 +111,7 @@ impl SessionManager {
             .unwrap_or_else(|| self.backend.session_id(&session.name))
     }
 
+    #[allow(clippy::too_many_lines)]
     pub async fn create_session(&self, req: CreateSessionRequest) -> Result<Session> {
         // Resolve ink → get command
         let (command, description) = self.resolve_ink(&req)?;
@@ -151,6 +152,15 @@ impl SessionManager {
             );
         }
 
+        // Resolve secrets for injection
+        let secrets_env = if let Some(ref secret_names) = req.secrets
+            && !secret_names.is_empty()
+        {
+            self.store.get_secrets_for_injection(secret_names).await?
+        } else {
+            HashMap::new()
+        };
+
         let id = Uuid::new_v4();
         let name = req.name.clone();
         let backend_id = if runtime == Runtime::Docker {
@@ -166,7 +176,7 @@ impl SessionManager {
         let final_command = if runtime == Runtime::Docker {
             command.clone()
         } else {
-            wrap_command(&command, &id, &name)
+            wrap_command(&command, &id, &name, &secrets_env)
         };
 
         let now = Utc::now();
@@ -440,7 +450,12 @@ impl SessionManager {
             let final_command = if session.runtime == Runtime::Docker {
                 session.command.clone()
             } else {
-                wrap_command(&session.command, &session.id, &session.name)
+                wrap_command(
+                    &session.command,
+                    &session.id,
+                    &session.name,
+                    &HashMap::new(),
+                )
             };
             active_backend.create_session(&backend_id, &session.workdir, &final_command)?;
 
@@ -487,7 +502,12 @@ impl SessionManager {
             let final_command = if session.runtime == Runtime::Docker {
                 session.command.clone()
             } else {
-                wrap_command(&session.command, &session.id, &session.name)
+                wrap_command(
+                    &session.command,
+                    &session.id,
+                    &session.name,
+                    &HashMap::new(),
+                )
             };
             if let Err(e) =
                 active_backend.create_session(&backend_id, &session.workdir, &final_command)
@@ -608,20 +628,33 @@ pub(crate) fn cleanup_worktree(worktree_path: &str) {
 /// Uses `bash -l -c` (login shell) so that `.bash_profile` / `.zprofile` are sourced,
 /// ensuring PATH includes Homebrew, nvm, and other tools — critical when pulpod runs
 /// as a launchd/systemd service where the environment is minimal.
-fn wrap_command(command: &str, session_id: &uuid::Uuid, session_name: &str) -> String {
+fn wrap_command(
+    command: &str,
+    session_id: &uuid::Uuid,
+    session_name: &str,
+    secrets: &HashMap<String, String>,
+) -> String {
+    // Build secret export statements: export KEY='VALUE'; (with single-quote escaping)
+    use std::fmt::Write;
+    let mut secret_exports = String::new();
+    for (key, value) in secrets {
+        let escaped_value = value.replace('\'', "'\\''");
+        let _ = write!(secret_exports, "export {key}='{escaped_value}'; ");
+    }
+
     if is_shell_command(command) {
         // Shell session: set env vars and exec the shell directly.
         // No exit marker, no fallback bash — exiting the shell kills the tmux session.
         let escaped = command.replace('\'', "'\\''");
         return format!(
-            "bash -l -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
+            "bash -l -c '{secret_exports}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
         );
     }
     let escaped = command.replace('\'', "'\\''");
     // Use $SHELL for the fallback shell so the user gets their preferred shell (zsh, fish, etc.)
     // after the agent exits. Falls back to bash if $SHELL is unset.
     format!(
-        "bash -l -c 'export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec ${{SHELL:-bash}} -l'"
+        "bash -l -c '{secret_exports}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec ${{SHELL:-bash}} -l'"
     )
 }
 
@@ -774,6 +807,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         }
     }
 
@@ -811,6 +845,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -847,6 +882,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -880,6 +916,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Explicit command wins over ink command
@@ -900,6 +937,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let result = mgr.create_session(req).await;
         let err = result.unwrap_err().to_string();
@@ -919,6 +957,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert!(!session.workdir.is_empty());
@@ -1411,7 +1450,7 @@ mod tests {
     #[test]
     fn test_wrap_command_basic() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo hello", &id, "test-session");
+        let cmd = wrap_command("echo hello", &id, "test-session", &HashMap::new());
         assert!(cmd.contains("bash -l -c"));
         assert!(cmd.contains("echo hello"));
         assert!(cmd.contains("[pulpo] Agent exited (session: test-session)"));
@@ -1427,7 +1466,7 @@ mod tests {
     #[test]
     fn test_wrap_command_single_quotes() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude -p 'Fix the bug'", &id, "my-task");
+        let cmd = wrap_command("claude -p 'Fix the bug'", &id, "my-task", &HashMap::new());
         assert!(cmd.contains("bash -l -c"));
         // Single quotes should be properly escaped
         assert!(cmd.contains("claude -p"));
@@ -1443,7 +1482,7 @@ mod tests {
         // Verify the wrapped command has balanced single quotes so it doesn't
         // cause "unmatched '" errors when tmux passes it to the shell.
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude", &id, "test-session");
+        let cmd = wrap_command("claude", &id, "test-session", &HashMap::new());
 
         // Count single quotes outside of escaped sequences (\')
         // The '\'' pattern (end-quote, escaped-quote, start-quote) is valid.
@@ -1475,7 +1514,7 @@ mod tests {
     #[test]
     fn test_wrap_command_shell_no_exit_marker() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("bash", &id, "my-shell");
+        let cmd = wrap_command("bash", &id, "my-shell", &HashMap::new());
         assert!(cmd.contains("exec bash"));
         assert!(cmd.contains(&format!("PULPO_SESSION_ID={id}")));
         assert!(cmd.contains("PULPO_SESSION_NAME=my-shell"));
@@ -1487,9 +1526,82 @@ mod tests {
     #[test]
     fn test_wrap_command_shell_with_path() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("/usr/bin/zsh", &id, "zsh-session");
+        let cmd = wrap_command("/usr/bin/zsh", &id, "zsh-session", &HashMap::new());
         assert!(cmd.contains("exec /usr/bin/zsh"));
         assert!(!cmd.contains("[pulpo] Agent exited"));
+    }
+
+    #[test]
+    fn test_wrap_command_with_secrets() {
+        let id = uuid::Uuid::new_v4();
+        let mut secrets = HashMap::new();
+        secrets.insert("GITHUB_TOKEN".to_owned(), "ghp_abc123".to_owned());
+        secrets.insert("NPM_TOKEN".to_owned(), "npm_xyz".to_owned());
+        let cmd = wrap_command("echo hello", &id, "test", &secrets);
+        assert!(cmd.contains("export GITHUB_TOKEN='ghp_abc123'"));
+        assert!(cmd.contains("export NPM_TOKEN='npm_xyz'"));
+        assert!(cmd.contains("echo hello"));
+    }
+
+    #[test]
+    fn test_wrap_command_secrets_with_single_quotes() {
+        let id = uuid::Uuid::new_v4();
+        let mut secrets = HashMap::new();
+        secrets.insert("MY_KEY".to_owned(), "value'with'quotes".to_owned());
+        let cmd = wrap_command("echo hello", &id, "test", &secrets);
+        // Single quotes in values should be escaped with '\'' pattern
+        assert!(cmd.contains("export MY_KEY='value'\\''with'\\''quotes'"));
+    }
+
+    #[test]
+    fn test_wrap_command_shell_with_secrets() {
+        let id = uuid::Uuid::new_v4();
+        let mut secrets = HashMap::new();
+        secrets.insert("API_KEY".to_owned(), "secret123".to_owned());
+        let cmd = wrap_command("bash", &id, "my-shell", &secrets);
+        assert!(cmd.contains("export API_KEY='secret123'"));
+        assert!(cmd.contains("exec bash"));
+    }
+
+    #[tokio::test]
+    async fn test_create_session_with_secrets() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        // Pre-populate secrets
+        mgr.store()
+            .set_secret("MY_TOKEN", "secret123")
+            .await
+            .unwrap();
+        mgr.store()
+            .set_secret_with_env("GH_WORK", "ghp_abc", Some("GITHUB_TOKEN"))
+            .await
+            .unwrap();
+
+        let mut req = make_req("secret-test");
+        req.secrets = Some(vec!["MY_TOKEN".into(), "GH_WORK".into()]);
+        let session = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.status, SessionStatus::Active);
+
+        let calls = backend.calls.lock().unwrap();
+        let create_call = &calls[0];
+        // Secrets should be injected via wrap_command
+        assert!(
+            create_call.contains("export MY_TOKEN='secret123'"),
+            "{create_call}"
+        );
+        assert!(
+            create_call.contains("export GITHUB_TOKEN='ghp_abc'"),
+            "{create_call}"
+        );
+        drop(calls);
+    }
+
+    #[tokio::test]
+    async fn test_create_session_with_empty_secrets() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let mut req = make_req("empty-secrets");
+        req.secrets = Some(vec![]);
+        let session = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -1574,6 +1686,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (cmd, desc) = mgr.resolve_ink(&req).unwrap();
         // Falls back to $SHELL or /bin/sh
@@ -1608,6 +1721,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.description, Some("Ink desc".into()));
@@ -1640,6 +1754,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         // Ink with no command falls back to $SHELL
         let session = mgr.create_session(req).await.unwrap();
@@ -1666,6 +1781,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude");
@@ -1691,6 +1807,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "custom-agent");
@@ -1724,6 +1841,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -1742,6 +1860,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -1886,6 +2005,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let err = mgr.create_session(req).await.unwrap_err();
         assert!(
@@ -1915,6 +2035,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: Some(Runtime::Docker),
+            secrets: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.runtime, Runtime::Docker);
@@ -1964,6 +2085,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: Some(Runtime::Docker),
+            secrets: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.runtime, Runtime::Docker);
@@ -2001,6 +2123,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: Some(Runtime::Docker),
+            secrets: None,
         };
         let err = mgr.create_session(req).await.unwrap_err();
         assert!(
@@ -2029,6 +2152,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: Some(Runtime::Docker),
+            secrets: None,
         };
         mgr.create_session(req).await.unwrap();
         // Docker command should NOT be wrapped with bash -l -c
@@ -2147,6 +2271,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: Some(Runtime::Docker),
+            secrets: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Mark it active (create_session left it as Active) — backend is dead

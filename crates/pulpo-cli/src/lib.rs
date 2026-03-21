@@ -88,6 +88,10 @@ pub enum Commands {
         #[arg(long)]
         runtime: Option<String>,
 
+        /// Secrets to inject as environment variables (by name)
+        #[arg(long)]
+        secret: Vec<String>,
+
         /// Command to run (everything after --)
         #[arg(last = true)]
         command: Vec<String>,
@@ -174,6 +178,9 @@ pub enum SecretAction {
         name: String,
         /// Secret value
         value: String,
+        /// Environment variable name (defaults to secret name)
+        #[arg(long)]
+        env: Option<String>,
     },
     /// List secret names
     #[command(visible_alias = "ls")]
@@ -919,13 +926,16 @@ fn format_secrets(secrets: &[serde_json::Value]) -> String {
     if secrets.is_empty() {
         return "No secrets configured.".into();
     }
-    let mut lines = vec![format!("{:<30} {}", "NAME", "CREATED")];
+    let mut lines = vec![format!("{:<24} {:<24} {}", "NAME", "ENV", "CREATED")];
     for s in secrets {
         let name = s["name"].as_str().unwrap_or("?");
+        let env_display = s["env"]
+            .as_str()
+            .map_or_else(|| name.to_owned(), String::from);
         let created = s["created_at"]
             .as_str()
             .map_or("-", |t| if t.len() >= 16 { &t[..16] } else { t });
-        lines.push(format!("{name:<30} {created}"));
+        lines.push(format!("{name:<24} {env_display:<24} {created}"));
     }
     lines.join("\n")
 }
@@ -939,8 +949,11 @@ async fn execute_secret(
     token: Option<&str>,
 ) -> Result<String> {
     match action {
-        SecretAction::Set { name, value } => {
-            let body = serde_json::json!({ "value": value });
+        SecretAction::Set { name, value, env } => {
+            let mut body = serde_json::json!({ "value": value });
+            if let Some(e) = env {
+                body["env"] = serde_json::json!(e);
+            }
             let resp = authed_put(client, format!("{base}/api/v1/secrets/{name}"), token)
                 .json(&body)
                 .send()
@@ -1196,6 +1209,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             auto,
             worktree,
             runtime,
+            secret,
             command,
         } => {
             let cmd = if command.is_empty() {
@@ -1239,6 +1253,9 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             if let Some(rt) = runtime {
                 body["runtime"] = serde_json::json!(rt);
+            }
+            if !secret.is_empty() {
+                body["secrets"] = serde_json::json!(secret);
             }
             let spawn_url = if *auto {
                 let (auto_addr, auto_name) =
@@ -1529,6 +1546,62 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_spawn_secrets() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "spawn",
+            "my-task",
+            "--secret",
+            "GITHUB_TOKEN",
+            "--secret",
+            "NPM_TOKEN",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { secret, .. }) if secret == &["GITHUB_TOKEN", "NPM_TOKEN"]
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_no_secrets() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { secret, .. }) if secret.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_secret_set_with_env() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "secret",
+            "set",
+            "GH_WORK",
+            "token123",
+            "--env",
+            "GITHUB_TOKEN",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Secret { action: SecretAction::Set { name, value, env } })
+                if name == "GH_WORK" && value == "token123" && env.as_deref() == Some("GITHUB_TOKEN")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_secret_set_without_env() {
+        let cli = Cli::try_parse_from(["pulpo", "secret", "set", "MY_KEY", "val"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Secret { action: SecretAction::Set { name, value, env } })
+                if name == "MY_KEY" && value == "val" && env.is_none()
+        ));
+    }
+
+    #[test]
     fn test_cli_parse_spawn_worktree() {
         let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--worktree"]).unwrap();
         assert!(matches!(
@@ -1807,6 +1880,7 @@ mod tests {
                 auto: false,
                 worktree: false,
                 runtime: None,
+                secret: vec![],
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1832,6 +1906,7 @@ mod tests {
                 auto: false,
                 worktree: false,
                 runtime: None,
+                secret: vec![],
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1856,6 +1931,7 @@ mod tests {
                 auto: false,
                 worktree: true,
                 runtime: Some("docker".into()),
+                secret: vec![],
                 command: vec!["claude".into()],
             }),
             path: None,
@@ -1880,6 +1956,7 @@ mod tests {
                 auto: false,
                 worktree: false,
                 runtime: None,
+                secret: vec![],
                 command: vec!["echo".into(), "hello".into()],
             }),
             path: None,
@@ -1904,6 +1981,7 @@ mod tests {
                 auto: false,
                 worktree: false,
                 runtime: None,
+                secret: vec![],
                 command: vec![],
             }),
             path: None,
@@ -1928,6 +2006,7 @@ mod tests {
                 auto: false,
                 worktree: false,
                 runtime: None,
+                secret: vec![],
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -1952,6 +2031,7 @@ mod tests {
                 auto: false,
                 worktree: false,
                 runtime: None,
+                secret: vec![],
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -2191,6 +2271,7 @@ mod tests {
                 auto: false,
                 worktree: false,
                 runtime: None,
+                secret: vec![],
                 command: vec!["test".into()],
             }),
             path: None,
@@ -2706,6 +2787,7 @@ mod tests {
                 auto: false,
                 worktree: false,
                 runtime: None,
+                secret: vec![],
                 command: vec!["test".into()],
             }),
             path: None,
@@ -4253,6 +4335,7 @@ mod tests {
                 auto: true,
                 worktree: false,
                 runtime: None,
+                secret: vec![],
                 command: vec!["echo".into(), "hello".into()],
             }),
             path: None,
@@ -4291,8 +4374,8 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "secret", "set", "MY_TOKEN", "abc123"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Some(Commands::Secret { action: SecretAction::Set { name, value } })
-                if name == "MY_TOKEN" && value == "abc123"
+            Some(Commands::Secret { action: SecretAction::Set { name, value, env } })
+                if name == "MY_TOKEN" && value == "abc123" && env.is_none()
         ));
     }
 
@@ -4365,7 +4448,20 @@ mod tests {
         assert!(output.contains("GITHUB_TOKEN"));
         assert!(output.contains("NPM_TOKEN"));
         assert!(output.contains("NAME"));
+        assert!(output.contains("ENV"));
         assert!(output.contains("CREATED"));
+    }
+
+    #[test]
+    fn test_format_secrets_with_env() {
+        let secrets = vec![
+            serde_json::json!({"name": "GH_WORK", "env": "GITHUB_TOKEN", "created_at": "2026-03-21T12:00:00Z"}),
+            serde_json::json!({"name": "NPM_TOKEN", "created_at": "2026-03-20T10:30:00Z"}),
+        ];
+        let output = format_secrets(&secrets);
+        assert!(output.contains("GH_WORK"));
+        assert!(output.contains("GITHUB_TOKEN"));
+        assert!(output.contains("NPM_TOKEN"));
     }
 
     #[test]

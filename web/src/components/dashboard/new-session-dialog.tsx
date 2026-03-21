@@ -17,10 +17,11 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { Plus, GitBranch } from 'lucide-react';
+import { Plus, GitBranch, X } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
-import { createSession, createRemoteSession, getInks } from '@/api/client';
-import type { InkConfig, PeerInfo, Session } from '@/api/types';
+import { Badge } from '@/components/ui/badge';
+import { createSession, createRemoteSession, getInks, getSecrets } from '@/api/client';
+import type { InkConfig, PeerInfo, SecretEntry, Session } from '@/api/types';
 
 interface NewSessionDialogProps {
   peers?: PeerInfo[];
@@ -39,6 +40,8 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
   const [worktree, setWorktree] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [availableSecrets, setAvailableSecrets] = useState<SecretEntry[]>([]);
+  const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
 
   const onlinePeers = peers.filter((p) => p.status === 'online');
 
@@ -48,6 +51,11 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         .then((res) => setInks(res.inks))
         .catch(() => {
           /* inks are optional */
+        });
+      getSecrets()
+        .then((entries) => setAvailableSecrets(entries))
+        .catch(() => {
+          /* secrets are optional */
         });
     }
   }, [open]);
@@ -63,6 +71,12 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
     if (ink.command) setCommand(ink.command);
   }
 
+  function toggleSecret(secretName: string) {
+    setSelectedSecrets((prev) =>
+      prev.includes(secretName) ? prev.filter((s) => s !== secretName) : [...prev, secretName],
+    );
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !repoPath) return;
@@ -76,6 +90,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         ...(description ? { description } : {}),
         ...(selectedInk ? { ink: selectedInk } : {}),
         ...(worktree ? { worktree: true } : {}),
+        ...(selectedSecrets.length > 0 ? { secrets: selectedSecrets } : {}),
       };
 
       let resp;
@@ -93,6 +108,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
       setDescription('');
       setSelectedInk('');
       setWorktree(false);
+      setSelectedSecrets([]);
       setOpen(false);
       onCreated(resp.session);
     } catch (e) {
@@ -199,6 +215,34 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
               {activeInk && (
                 <p className="text-xs text-muted-foreground" data-testid="ink-summary">
                   {[activeInk.command, activeInk.description].filter(Boolean).join(' · ')}
+                </p>
+              )}
+            </div>
+          )}
+
+          {availableSecrets.length > 0 && (
+            <div className="space-y-1.5" data-testid="secrets-picker">
+              <Label>Secrets</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {availableSecrets.map((s) => {
+                  const isSelected = selectedSecrets.includes(s.name);
+                  return (
+                    <Badge
+                      key={s.name}
+                      variant={isSelected ? 'default' : 'outline'}
+                      className="cursor-pointer"
+                      data-testid={`secret-badge-${s.name}`}
+                      onClick={() => toggleSecret(s.name)}
+                    >
+                      {s.name}
+                      {isSelected && <X className="ml-1 h-3 w-3" />}
+                    </Badge>
+                  );
+                })}
+              </div>
+              {selectedSecrets.length > 0 && (
+                <p className="text-xs text-muted-foreground" data-testid="secrets-selected-count">
+                  {selectedSecrets.length} secret{selectedSecrets.length > 1 ? 's' : ''} selected
                 </p>
               )}
             </div>

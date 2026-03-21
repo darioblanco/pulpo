@@ -419,6 +419,7 @@ impl PulpoMcp {
                 idle_threshold_secs: None,
                 worktree: None,
                 runtime: None,
+                secrets: None,
             };
             self.session_manager.create_session(req).await
         } else {
@@ -492,6 +493,7 @@ impl PulpoMcp {
                 idle_threshold_secs: None,
                 worktree: None,
                 runtime: None,
+                secrets: None,
             };
             self.session_manager.create_session(req).await
         } else {

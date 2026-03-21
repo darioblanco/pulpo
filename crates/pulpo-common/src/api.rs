@@ -20,6 +20,9 @@ pub struct CreateSessionRequest {
     pub worktree: Option<bool>,
     /// Runtime environment (tmux or docker). Defaults to tmux.
     pub runtime: Option<crate::session::Runtime>,
+    /// Secret names to inject as environment variables.
+    #[serde(default)]
+    pub secrets: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -325,6 +328,9 @@ pub struct UpdateScheduleRequest {
 #[derive(Debug, Deserialize)]
 pub struct SetSecretRequest {
     pub value: String,
+    /// Optional env var name override. If set, the secret is exported as this
+    /// environment variable instead of using the secret name.
+    pub env: Option<String>,
 }
 
 /// Response for GET /api/v1/secrets
@@ -337,6 +343,10 @@ pub struct SecretListResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecretEntry {
     pub name: String,
+    /// The env var name this secret maps to. `None` means the secret name is
+    /// used directly as the env var.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
     pub created_at: String,
 }
 
@@ -605,9 +615,27 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("/tmp"));
+    }
+
+    #[test]
+    fn test_create_session_request_with_secrets() {
+        let json = r#"{"name":"test","secrets":["GITHUB_TOKEN","NPM_TOKEN"]}"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            req.secrets,
+            Some(vec!["GITHUB_TOKEN".into(), "NPM_TOKEN".into()])
+        );
+    }
+
+    #[test]
+    fn test_create_session_request_without_secrets() {
+        let json = r#"{"name":"test"}"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert!(req.secrets.is_none());
     }
 
     #[test]
@@ -1478,6 +1506,15 @@ mod tests {
         let json = r#"{"value":"super-secret"}"#;
         let req: SetSecretRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.value, "super-secret");
+        assert!(req.env.is_none());
+    }
+
+    #[test]
+    fn test_set_secret_request_with_env() {
+        let json = r#"{"value":"super-secret","env":"CUSTOM_VAR"}"#;
+        let req: SetSecretRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.value, "super-secret");
+        assert_eq!(req.env.as_deref(), Some("CUSTOM_VAR"));
     }
 
     #[test]
@@ -1491,6 +1528,7 @@ mod tests {
     fn test_set_secret_request_debug() {
         let req = SetSecretRequest {
             value: "secret".into(),
+            env: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("SetSecretRequest"));
@@ -1501,12 +1539,29 @@ mod tests {
         let resp = SecretListResponse {
             secrets: vec![SecretEntry {
                 name: "MY_TOKEN".into(),
+                env: None,
                 created_at: "2026-01-01T00:00:00Z".into(),
             }],
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("MY_TOKEN"));
         assert!(json.contains("2026-01-01"));
+        // env is None, so it should be skipped
+        assert!(!json.contains("\"env\""));
+    }
+
+    #[test]
+    fn test_secret_list_response_serialize_with_env() {
+        let resp = SecretListResponse {
+            secrets: vec![SecretEntry {
+                name: "GH_WORK".into(),
+                env: Some("GITHUB_TOKEN".into()),
+                created_at: "2026-01-01T00:00:00Z".into(),
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("GH_WORK"));
+        assert!(json.contains("GITHUB_TOKEN"));
     }
 
     #[test]
@@ -1515,6 +1570,14 @@ mod tests {
         let resp: SecretListResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.secrets.len(), 1);
         assert_eq!(resp.secrets[0].name, "KEY");
+        assert!(resp.secrets[0].env.is_none());
+    }
+
+    #[test]
+    fn test_secret_list_response_deserialize_with_env() {
+        let json = r#"{"secrets":[{"name":"KEY","env":"CUSTOM_ENV","created_at":"2026-01-01T00:00:00Z"}]}"#;
+        let resp: SecretListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.secrets[0].env.as_deref(), Some("CUSTOM_ENV"));
     }
 
     #[test]
@@ -1535,17 +1598,20 @@ mod tests {
     fn test_secret_entry_clone() {
         let entry = SecretEntry {
             name: "KEY".into(),
+            env: Some("CUSTOM".into()),
             created_at: "now".into(),
         };
         #[allow(clippy::redundant_clone)]
         let cloned = entry.clone();
         assert_eq!(cloned.name, "KEY");
+        assert_eq!(cloned.env.as_deref(), Some("CUSTOM"));
     }
 
     #[test]
     fn test_secret_entry_debug() {
         let entry = SecretEntry {
             name: "KEY".into(),
+            env: None,
             created_at: "now".into(),
         };
         let debug = format!("{entry:?}");
@@ -1556,12 +1622,27 @@ mod tests {
     fn test_secret_entry_roundtrip() {
         let entry = SecretEntry {
             name: "MY_VAR".into(),
+            env: None,
             created_at: "2026-03-21T00:00:00Z".into(),
         };
         let json = serde_json::to_string(&entry).unwrap();
         let deserialized: SecretEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.name, "MY_VAR");
+        assert!(deserialized.env.is_none());
         assert_eq!(deserialized.created_at, "2026-03-21T00:00:00Z");
+    }
+
+    #[test]
+    fn test_secret_entry_roundtrip_with_env() {
+        let entry = SecretEntry {
+            name: "GH_WORK".into(),
+            env: Some("GITHUB_TOKEN".into()),
+            created_at: "2026-03-21T00:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: SecretEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.name, "GH_WORK");
+        assert_eq!(deserialized.env.as_deref(), Some("GITHUB_TOKEN"));
     }
 
     #[test]

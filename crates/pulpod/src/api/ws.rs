@@ -263,6 +263,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
         // DeadBackend's is_alive returns false, so get_session marks it Stale

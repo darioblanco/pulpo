@@ -332,11 +332,13 @@ export async function getSecrets(): Promise<SecretEntry[]> {
   return data.secrets;
 }
 
-export async function setSecret(name: string, value: string): Promise<void> {
+export async function setSecret(name: string, value: string, env?: string): Promise<void> {
+  const body: Record<string, string> = { value };
+  if (env) body.env = env;
   const res = await authFetch(`${resolveBaseUrl()}/secrets/${encodeURIComponent(name)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ value }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const err = await res.json();

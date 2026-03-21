@@ -367,6 +367,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let _ = create(State(state.clone()), Json(req)).await.unwrap();
 
@@ -408,6 +409,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_ok());
@@ -429,6 +431,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let _ = create(State(state.clone()), Json(req())).await.unwrap();
         let result = create(State(state), Json(req())).await;
@@ -460,6 +463,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -481,6 +485,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -515,6 +520,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -655,6 +661,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -679,6 +686,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -731,6 +739,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_err());
@@ -751,6 +760,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -776,6 +786,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -833,6 +844,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -858,6 +870,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -947,6 +960,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1015,6 +1029,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1050,6 +1065,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1074,6 +1090,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1096,6 +1113,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1162,6 +1180,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1249,6 +1268,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1305,6 +1325,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let old_id = resp.session.id.to_string();
@@ -1325,6 +1346,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let _ = create(State(state.clone()), Json(req2)).await.unwrap();
 
@@ -1426,6 +1448,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1453,6 +1476,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1477,6 +1501,7 @@ mod tests {
             idle_threshold_secs: None,
             worktree: None,
             runtime: None,
+            secrets: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;

@@ -37,7 +37,11 @@ pub async fn list_secrets(
         .map_err(|e| internal_error(&e.to_string()))?;
     let secrets = names
         .into_iter()
-        .map(|(name, created_at)| SecretEntry { name, created_at })
+        .map(|(name, env, created_at)| SecretEntry {
+            name,
+            env,
+            created_at,
+        })
         .collect();
     Ok(Json(SecretListResponse { secrets }))
 }
@@ -55,10 +59,22 @@ pub async fn set_secret(
             }),
         ));
     }
+    // Validate env field if provided
+    if let Some(ref env) = req.env
+        && !is_valid_secret_name(env)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Invalid env var name: must be uppercase alphanumeric and underscores"
+                    .to_owned(),
+            }),
+        ));
+    }
     let value = req.value.trim().to_owned();
     state
         .store
-        .set_secret(&name, &value)
+        .set_secret_with_env(&name, &value, req.env.as_deref())
         .await
         .map_err(|e| internal_error(&e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
@@ -139,6 +155,7 @@ mod tests {
         let state = test_state().await;
         let req = SetSecretRequest {
             value: "my-token".into(),
+            env: None,
         };
         let status = set_secret(State(state.clone()), Path("GITHUB_TOKEN".into()), Json(req))
             .await
@@ -148,7 +165,26 @@ mod tests {
         let Json(resp) = list_secrets(State(state)).await.unwrap();
         assert_eq!(resp.secrets.len(), 1);
         assert_eq!(resp.secrets[0].name, "GITHUB_TOKEN");
+        assert!(resp.secrets[0].env.is_none());
         assert!(!resp.secrets[0].created_at.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_set_and_list_secrets_with_env() {
+        let state = test_state().await;
+        let req = SetSecretRequest {
+            value: "token123".into(),
+            env: Some("GITHUB_TOKEN".into()),
+        };
+        let status = set_secret(State(state.clone()), Path("GH_WORK".into()), Json(req))
+            .await
+            .unwrap();
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        let Json(resp) = list_secrets(State(state)).await.unwrap();
+        assert_eq!(resp.secrets.len(), 1);
+        assert_eq!(resp.secrets[0].name, "GH_WORK");
+        assert_eq!(resp.secrets[0].env.as_deref(), Some("GITHUB_TOKEN"));
     }
 
     #[tokio::test]
@@ -156,6 +192,7 @@ mod tests {
         let state = test_state().await;
         let req = SetSecretRequest {
             value: "  my-token  ".into(),
+            env: None,
         };
         set_secret(State(state.clone()), Path("TOKEN".into()), Json(req))
             .await
@@ -169,6 +206,7 @@ mod tests {
         let state = test_state().await;
         let req = SetSecretRequest {
             value: "val".into(),
+            env: None,
         };
         let result = set_secret(State(state.clone()), Path("invalid-name".into()), Json(req)).await;
         assert!(result.is_err());
@@ -181,6 +219,7 @@ mod tests {
         let state = test_state().await;
         let req = SetSecretRequest {
             value: "val".into(),
+            env: None,
         };
         let result = set_secret(State(state), Path(String::new()), Json(req)).await;
         assert!(result.is_err());
@@ -193,8 +232,36 @@ mod tests {
         let state = test_state().await;
         let req = SetSecretRequest {
             value: "val".into(),
+            env: None,
         };
         let result = set_secret(State(state), Path("1TOKEN".into()), Json(req)).await;
+        assert!(result.is_err());
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_invalid_env() {
+        let state = test_state().await;
+        let req = SetSecretRequest {
+            value: "val".into(),
+            env: Some("invalid-env".into()),
+        };
+        let result = set_secret(State(state), Path("MY_KEY".into()), Json(req)).await;
+        assert!(result.is_err());
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(err.error.contains("env var name"));
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_invalid_env_empty() {
+        let state = test_state().await;
+        let req = SetSecretRequest {
+            value: "val".into(),
+            env: Some(String::new()),
+        };
+        let result = set_secret(State(state), Path("MY_KEY".into()), Json(req)).await;
         assert!(result.is_err());
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
