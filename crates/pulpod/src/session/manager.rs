@@ -195,11 +195,20 @@ impl SessionManager {
             self.backend.session_id(&name)
         };
 
+        // Write secrets to a temp file (tmux only — Docker passes env vars separately).
+        // The file is sourced and immediately deleted by the session shell, so secrets
+        // never appear in the command string visible in `ps` or `capture-pane`.
+        let secrets_file = if runtime != Runtime::Docker && !secrets_env.is_empty() {
+            write_secrets_file(&id, &secrets_env)?
+        } else {
+            None
+        };
+
         // Docker sessions run the command directly; tmux sessions get the wrapper
         let final_command = if runtime == Runtime::Docker {
             command.clone()
         } else {
-            wrap_command(&command, &id, &name, &secrets_env)
+            wrap_command(&command, &id, &name, secrets_file.as_deref())
         };
 
         let now = Utc::now();
@@ -502,12 +511,7 @@ impl SessionManager {
             let final_command = if session.runtime == Runtime::Docker {
                 session.command.clone()
             } else {
-                wrap_command(
-                    &session.command,
-                    &session.id,
-                    &session.name,
-                    &HashMap::new(),
-                )
+                wrap_command(&session.command, &session.id, &session.name, None)
             };
             active_backend.create_session(&backend_id, &session.workdir, &final_command)?;
 
@@ -554,12 +558,7 @@ impl SessionManager {
             let final_command = if session.runtime == Runtime::Docker {
                 session.command.clone()
             } else {
-                wrap_command(
-                    &session.command,
-                    &session.id,
-                    &session.name,
-                    &HashMap::new(),
-                )
+                wrap_command(&session.command, &session.id, &session.name, None)
             };
             if let Err(e) =
                 active_backend.create_session(&backend_id, &session.workdir, &final_command)
@@ -677,36 +676,76 @@ pub(crate) fn cleanup_worktree(worktree_path: &str) {
     }
 }
 
+/// Write secrets to a temporary file that will be sourced and immediately deleted
+/// by the session command. Returns `Some(path)` if secrets were written, `None` if
+/// there are no secrets. The file is chmod 0600 to restrict access.
+///
+/// Security: secrets never appear in the command string visible in `ps`, tmux
+/// `capture-pane`, or the database. The temp file is deleted by the session shell
+/// immediately after sourcing.
+fn write_secrets_file(
+    session_id: &uuid::Uuid,
+    secrets: &HashMap<String, String>,
+) -> Result<Option<String>> {
+    use std::fmt::Write;
+
+    if secrets.is_empty() {
+        return Ok(None);
+    }
+
+    let mut content = String::new();
+    for (key, value) in secrets {
+        let escaped_value = value.replace('\'', "'\\''");
+        let _ = writeln!(content, "export {key}='{escaped_value}'");
+    }
+
+    let path = format!("/tmp/pulpo-secrets-{session_id}.sh");
+
+    std::fs::write(&path, &content)
+        .map_err(|e| anyhow!("failed to write secrets file {path}: {e}"))?;
+
+    // Restrict permissions to owner-only (0600)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        std::fs::set_permissions(&path, perms)
+            .map_err(|e| anyhow!("failed to set permissions on secrets file {path}: {e}"))?;
+    }
+
+    Ok(Some(path))
+}
+
 /// Uses `bash -l -c` (login shell) so that `.bash_profile` / `.zprofile` are sourced,
 /// ensuring PATH includes Homebrew, nvm, and other tools — critical when pulpod runs
 /// as a launchd/systemd service where the environment is minimal.
+///
+/// If `secrets_file` is provided, the command will source the file and delete it
+/// immediately — secrets never appear in the command string itself.
 fn wrap_command(
     command: &str,
     session_id: &uuid::Uuid,
     session_name: &str,
-    secrets: &HashMap<String, String>,
+    secrets_file: Option<&str>,
 ) -> String {
-    // Build secret export statements: export KEY='VALUE'; (with single-quote escaping)
-    use std::fmt::Write;
-    let mut secret_exports = String::new();
-    for (key, value) in secrets {
-        let escaped_value = value.replace('\'', "'\\''");
-        let _ = write!(secret_exports, "export {key}='{escaped_value}'; ");
-    }
+    // Build the secrets-sourcing prefix: source the file and delete it immediately.
+    // Uses `. <file>` (POSIX source) for compatibility.
+    let secrets_source =
+        secrets_file.map_or_else(String::new, |path| format!(". {path} && rm -f {path}; "));
 
     if is_shell_command(command) {
         // Shell session: set env vars and exec the shell directly.
         // No exit marker, no fallback bash — exiting the shell kills the tmux session.
         let escaped = command.replace('\'', "'\\''");
         return format!(
-            "bash -l -c '{secret_exports}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
+            "bash -l -c '{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
         );
     }
     let escaped = command.replace('\'', "'\\''");
     // Use $SHELL for the fallback shell so the user gets their preferred shell (zsh, fish, etc.)
     // after the agent exits. Falls back to bash if $SHELL is unset.
     format!(
-        "bash -l -c '{secret_exports}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec ${{SHELL:-bash}} -l'"
+        "bash -l -c '{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec ${{SHELL:-bash}} -l'"
     )
 }
 
@@ -1504,7 +1543,7 @@ mod tests {
     #[test]
     fn test_wrap_command_basic() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo hello", &id, "test-session", &HashMap::new());
+        let cmd = wrap_command("echo hello", &id, "test-session", None);
         assert!(cmd.contains("bash -l -c"));
         assert!(cmd.contains("echo hello"));
         assert!(cmd.contains("[pulpo] Agent exited (session: test-session)"));
@@ -1520,7 +1559,7 @@ mod tests {
     #[test]
     fn test_wrap_command_single_quotes() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude -p 'Fix the bug'", &id, "my-task", &HashMap::new());
+        let cmd = wrap_command("claude -p 'Fix the bug'", &id, "my-task", None);
         assert!(cmd.contains("bash -l -c"));
         // Single quotes should be properly escaped
         assert!(cmd.contains("claude -p"));
@@ -1536,7 +1575,7 @@ mod tests {
         // Verify the wrapped command has balanced single quotes so it doesn't
         // cause "unmatched '" errors when tmux passes it to the shell.
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude", &id, "test-session", &HashMap::new());
+        let cmd = wrap_command("claude", &id, "test-session", None);
 
         // Count single quotes outside of escaped sequences (\')
         // The '\'' pattern (end-quote, escaped-quote, start-quote) is valid.
@@ -1568,7 +1607,7 @@ mod tests {
     #[test]
     fn test_wrap_command_shell_no_exit_marker() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("bash", &id, "my-shell", &HashMap::new());
+        let cmd = wrap_command("bash", &id, "my-shell", None);
         assert!(cmd.contains("exec bash"));
         assert!(cmd.contains(&format!("PULPO_SESSION_ID={id}")));
         assert!(cmd.contains("PULPO_SESSION_NAME=my-shell"));
@@ -1580,41 +1619,88 @@ mod tests {
     #[test]
     fn test_wrap_command_shell_with_path() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("/usr/bin/zsh", &id, "zsh-session", &HashMap::new());
+        let cmd = wrap_command("/usr/bin/zsh", &id, "zsh-session", None);
         assert!(cmd.contains("exec /usr/bin/zsh"));
         assert!(!cmd.contains("[pulpo] Agent exited"));
     }
 
     #[test]
-    fn test_wrap_command_with_secrets() {
+    fn test_wrap_command_with_secrets_file() {
         let id = uuid::Uuid::new_v4();
-        let mut secrets = HashMap::new();
-        secrets.insert("GITHUB_TOKEN".to_owned(), "ghp_abc123".to_owned());
-        secrets.insert("NPM_TOKEN".to_owned(), "npm_xyz".to_owned());
-        let cmd = wrap_command("echo hello", &id, "test", &secrets);
-        assert!(cmd.contains("export GITHUB_TOKEN='ghp_abc123'"));
-        assert!(cmd.contains("export NPM_TOKEN='npm_xyz'"));
+        let secrets_path = "/tmp/pulpo-secrets-test.sh";
+        let cmd = wrap_command("echo hello", &id, "test", Some(secrets_path));
+        // Command should source the secrets file and delete it — NOT contain secret values
+        assert!(cmd.contains(". /tmp/pulpo-secrets-test.sh && rm -f /tmp/pulpo-secrets-test.sh"));
+        assert!(cmd.contains("echo hello"));
+        // Secret values should NOT appear in the command string
+        assert!(!cmd.contains("export GITHUB_TOKEN"));
+    }
+
+    #[test]
+    fn test_wrap_command_shell_with_secrets_file() {
+        let id = uuid::Uuid::new_v4();
+        let secrets_path = "/tmp/pulpo-secrets-shell.sh";
+        let cmd = wrap_command("bash", &id, "my-shell", Some(secrets_path));
+        assert!(cmd.contains(". /tmp/pulpo-secrets-shell.sh && rm -f /tmp/pulpo-secrets-shell.sh"));
+        assert!(cmd.contains("exec bash"));
+    }
+
+    #[test]
+    fn test_wrap_command_no_secrets_file() {
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("echo hello", &id, "test", None);
+        // Without secrets, no source/rm prefix should appear
+        assert!(!cmd.contains(". /tmp/pulpo-secrets"));
+        assert!(!cmd.contains("rm -f"));
         assert!(cmd.contains("echo hello"));
     }
 
     #[test]
-    fn test_wrap_command_secrets_with_single_quotes() {
+    fn test_write_secrets_file_empty() {
         let id = uuid::Uuid::new_v4();
-        let mut secrets = HashMap::new();
-        secrets.insert("MY_KEY".to_owned(), "value'with'quotes".to_owned());
-        let cmd = wrap_command("echo hello", &id, "test", &secrets);
-        // Single quotes in values should be escaped with '\'' pattern
-        assert!(cmd.contains("export MY_KEY='value'\\''with'\\''quotes'"));
+        let result = write_secrets_file(&id, &HashMap::new()).unwrap();
+        assert!(result.is_none());
     }
 
     #[test]
-    fn test_wrap_command_shell_with_secrets() {
+    fn test_write_secrets_file_creates_file() {
         let id = uuid::Uuid::new_v4();
         let mut secrets = HashMap::new();
-        secrets.insert("API_KEY".to_owned(), "secret123".to_owned());
-        let cmd = wrap_command("bash", &id, "my-shell", &secrets);
-        assert!(cmd.contains("export API_KEY='secret123'"));
-        assert!(cmd.contains("exec bash"));
+        secrets.insert("GITHUB_TOKEN".to_owned(), "ghp_abc123".to_owned());
+        secrets.insert("NPM_TOKEN".to_owned(), "npm_xyz".to_owned());
+
+        let path = write_secrets_file(&id, &secrets).unwrap().unwrap();
+        assert_eq!(path, format!("/tmp/pulpo-secrets-{id}.sh"));
+
+        // File should exist and contain export statements
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("export GITHUB_TOKEN='ghp_abc123'"));
+        assert!(content.contains("export NPM_TOKEN='npm_xyz'"));
+
+        // File should have restrictive permissions (0600)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(&path).unwrap();
+            assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+        }
+
+        // Clean up
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_write_secrets_file_escapes_single_quotes() {
+        let id = uuid::Uuid::new_v4();
+        let mut secrets = HashMap::new();
+        secrets.insert("MY_KEY".to_owned(), "value'with'quotes".to_owned());
+
+        let path = write_secrets_file(&id, &secrets).unwrap().unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("export MY_KEY='value'\\''with'\\''quotes'"));
+
+        // Clean up
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[tokio::test]
@@ -1637,16 +1723,33 @@ mod tests {
 
         let calls = backend.calls.lock().unwrap();
         let create_call = &calls[0];
-        // Secrets should be injected via wrap_command
+        // Secrets should NOT appear in the command string (security fix)
         assert!(
-            create_call.contains("export MY_TOKEN='secret123'"),
-            "{create_call}"
+            !create_call.contains("secret123"),
+            "secret value leaked into command: {create_call}"
         );
         assert!(
-            create_call.contains("export GITHUB_TOKEN='ghp_abc'"),
-            "{create_call}"
+            !create_call.contains("ghp_abc"),
+            "secret value leaked into command: {create_call}"
+        );
+        // Instead, the command should source a secrets file
+        assert!(
+            create_call.contains(". /tmp/pulpo-secrets-"),
+            "command should source secrets file: {create_call}"
+        );
+        assert!(
+            create_call.contains("&& rm -f /tmp/pulpo-secrets-"),
+            "command should delete secrets file: {create_call}"
         );
         drop(calls);
+
+        // Verify the secrets file was created with correct content
+        let secrets_path = format!("/tmp/pulpo-secrets-{}.sh", session.id);
+        let content = std::fs::read_to_string(&secrets_path).unwrap();
+        assert!(content.contains("export MY_TOKEN='secret123'"));
+        assert!(content.contains("export GITHUB_TOKEN='ghp_abc'"));
+        // Clean up
+        std::fs::remove_file(&secrets_path).unwrap();
     }
 
     #[tokio::test]
@@ -2008,18 +2111,37 @@ mod tests {
             runtime: None,
             secrets: Some(vec!["REQ_SECRET".into()]),
         };
-        mgr.create_session(req).await.unwrap();
-        // Both secrets should be injected
+        let session = mgr.create_session(req).await.unwrap();
+        // Secret values should NOT appear in the command string (security fix)
         let calls: Vec<_> = backend.calls.lock().unwrap().clone();
         let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
         assert!(
-            create_call.contains("INK_SECRET"),
-            "ink secret should be injected: {create_call}"
+            !create_call.contains("ink-value"),
+            "ink secret value leaked into command: {create_call}"
         );
         assert!(
-            create_call.contains("REQ_SECRET"),
-            "request secret should be injected: {create_call}"
+            !create_call.contains("req-value"),
+            "request secret value leaked into command: {create_call}"
         );
+        // Instead, the command should source a secrets file
+        assert!(
+            create_call.contains(". /tmp/pulpo-secrets-"),
+            "command should source secrets file: {create_call}"
+        );
+
+        // Verify the secrets file contains both secrets
+        let secrets_path = format!("/tmp/pulpo-secrets-{}.sh", session.id);
+        let content = std::fs::read_to_string(&secrets_path).unwrap();
+        assert!(
+            content.contains("INK_SECRET"),
+            "ink secret should be in file: {content}"
+        );
+        assert!(
+            content.contains("REQ_SECRET"),
+            "request secret should be in file: {content}"
+        );
+        // Clean up
+        std::fs::remove_file(&secrets_path).unwrap();
     }
 
     #[tokio::test]
