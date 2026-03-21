@@ -15,6 +15,8 @@ import type {
   VapidPublicKeyResponse,
   ScheduleInfo,
   CreateScheduleRequest,
+  SecretEntry,
+  SecretListResponse,
 } from './types';
 
 let getBaseUrl: () => string = () => '';
@@ -319,5 +321,35 @@ export async function deleteSchedule(id: string): Promise<void> {
   if (!res.ok) {
     const err = await res.json();
     throw new Error(err.error || 'Failed to delete schedule');
+  }
+}
+
+// -- Secrets API --
+
+export async function getSecrets(): Promise<SecretEntry[]> {
+  const res = await authFetch(`${resolveBaseUrl()}/secrets`);
+  const data: SecretListResponse = await res.json();
+  return data.secrets;
+}
+
+export async function setSecret(name: string, value: string): Promise<void> {
+  const res = await authFetch(`${resolveBaseUrl()}/secrets/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ value }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to set secret');
+  }
+}
+
+export async function deleteSecret(name: string): Promise<void> {
+  const res = await authFetch(`${resolveBaseUrl()}/secrets/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to delete secret');
   }
 }

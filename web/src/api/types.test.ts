@@ -6,6 +6,8 @@ import type {
   ConfigResponse,
   VapidPublicKeyResponse,
   PushSubscriptionRequest,
+  SecretEntry,
+  SecretListResponse,
 } from './types';
 
 describe('types', () => {
@@ -96,5 +98,22 @@ describe('types', () => {
     expect(req.endpoint).toBe('https://fcm.googleapis.com/fcm/send/abc');
     expect(req.keys.p256dh).toBe('key-data');
     expect(req.keys.auth).toBe('auth-data');
+  });
+
+  it('SecretEntry has name and created_at', () => {
+    const entry: SecretEntry = {
+      name: 'GITHUB_TOKEN',
+      created_at: '2026-01-01T00:00:00Z',
+    };
+    expect(entry.name).toBe('GITHUB_TOKEN');
+    expect(entry.created_at).toBe('2026-01-01T00:00:00Z');
+  });
+
+  it('SecretListResponse contains secrets array', () => {
+    const resp: SecretListResponse = {
+      secrets: [{ name: 'TOKEN', created_at: '2026-01-01T00:00:00Z' }],
+    };
+    expect(resp.secrets).toHaveLength(1);
+    expect(resp.secrets[0].name).toBe('TOKEN');
   });
 });

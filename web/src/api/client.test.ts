@@ -28,6 +28,9 @@ import {
   getVapidKey,
   subscribePush,
   unsubscribePush,
+  getSecrets,
+  setSecret,
+  deleteSecret,
 } from './client';
 
 const mockFetch = vi.fn();
@@ -742,5 +745,100 @@ describe('unsubscribePush', () => {
     mockFetch.mockResolvedValue({ ok: false });
 
     await expect(unsubscribePush('https://example.com')).rejects.toThrow('Failed to unsubscribe');
+  });
+});
+
+// -- Secrets API tests --
+
+describe('getSecrets', () => {
+  it('fetches /api/v1/secrets and returns entries', async () => {
+    const secrets = [{ name: 'MY_TOKEN', created_at: '2026-01-01T00:00:00Z' }];
+    mockFetch.mockResolvedValue(jsonResponse({ secrets }));
+
+    const result = await getSecrets();
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/secrets', { headers: {} });
+    expect(result).toEqual(secrets);
+  });
+
+  it('returns empty array when no secrets', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ secrets: [] }));
+
+    const result = await getSecrets();
+    expect(result).toEqual([]);
+  });
+});
+
+describe('setSecret', () => {
+  it('sends PUT /api/v1/secrets/{name} with value', async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await setSecret('MY_TOKEN', 'secret-value');
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/secrets/MY_TOKEN', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: 'secret-value' }),
+    });
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'Invalid name' }),
+    });
+
+    await expect(setSecret('bad', 'val')).rejects.toThrow('Invalid name');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(setSecret('bad', 'val')).rejects.toThrow('Failed to set secret');
+  });
+});
+
+describe('deleteSecret', () => {
+  it('sends DELETE /api/v1/secrets/{name}', async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await deleteSecret('MY_TOKEN');
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/secrets/MY_TOKEN', {
+      method: 'DELETE',
+      headers: {},
+    });
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'not found' }),
+    });
+
+    await expect(deleteSecret('NOPE')).rejects.toThrow('not found');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(deleteSecret('NOPE')).rejects.toThrow('Failed to delete secret');
+  });
+
+  it('encodes name in URL', async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await deleteSecret('MY TOKEN');
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/secrets/MY%20TOKEN', {
+      method: 'DELETE',
+      headers: {},
+    });
   });
 });

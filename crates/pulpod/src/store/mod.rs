@@ -251,6 +251,29 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
+        // Idempotent migration: secrets table
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS secrets (
+                name TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Set restrictive file permissions on the database file (Unix only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let db_path = format!("{}/state.db", self.data_dir);
+            if let Ok(metadata) = std::fs::metadata(&db_path) {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o600);
+                let _ = std::fs::set_permissions(&db_path, perms);
+            }
+        }
+
         // Idempotent migration: schedules table
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS schedules (
@@ -713,6 +736,55 @@ impl Store {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    // -- Secret methods --
+
+    /// Upsert a secret (INSERT OR REPLACE).
+    pub async fn set_secret(&self, name: &str, value: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("INSERT OR REPLACE INTO secrets (name, value, created_at) VALUES (?, ?, ?)")
+            .bind(name)
+            .bind(value)
+            .bind(&now)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Get a secret's value by name (used internally for injection, never exposed via API).
+    pub async fn get_secret(&self, name: &str) -> Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM secrets WHERE name = ?")
+            .bind(name)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|(v,)| v))
+    }
+
+    /// List secret names (never returns values).
+    pub async fn list_secret_names(&self) -> Result<Vec<(String, String)>> {
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT name, created_at FROM secrets ORDER BY name")
+                .fetch_all(&self.pool)
+                .await?;
+        Ok(rows)
+    }
+
+    /// Delete a secret. Returns true if deleted, false if not found.
+    pub async fn delete_secret(&self, name: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM secrets WHERE name = ?")
+            .bind(name)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Get all secrets as name→value pairs (used internally for session env injection).
+    pub async fn get_all_secrets(&self) -> Result<std::collections::HashMap<String, String>> {
+        let rows: Vec<(String, String)> = sqlx::query_as("SELECT name, value FROM secrets")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows.into_iter().collect())
     }
 }
 
@@ -2489,5 +2561,114 @@ mod tests {
             .update_session_metadata_field("nonexistent-id", "key", "value")
             .await;
         assert!(result.is_err());
+    }
+
+    // -- Secret tests --
+
+    #[tokio::test]
+    async fn test_set_and_get_secret() {
+        let store = test_store().await;
+        store.set_secret("MY_TOKEN", "abc123").await.unwrap();
+        let value = store.get_secret("MY_TOKEN").await.unwrap();
+        assert_eq!(value, Some("abc123".into()));
+    }
+
+    #[tokio::test]
+    async fn test_get_secret_not_found() {
+        let store = test_store().await;
+        let value = store.get_secret("NONEXISTENT").await.unwrap();
+        assert!(value.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_upsert() {
+        let store = test_store().await;
+        store.set_secret("MY_TOKEN", "old").await.unwrap();
+        store.set_secret("MY_TOKEN", "new").await.unwrap();
+        let value = store.get_secret("MY_TOKEN").await.unwrap();
+        assert_eq!(value, Some("new".into()));
+    }
+
+    #[tokio::test]
+    async fn test_list_secret_names() {
+        let store = test_store().await;
+        store.set_secret("B_TOKEN", "val").await.unwrap();
+        store.set_secret("A_TOKEN", "val").await.unwrap();
+        let names = store.list_secret_names().await.unwrap();
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0].0, "A_TOKEN");
+        assert_eq!(names[1].0, "B_TOKEN");
+        // created_at should be non-empty
+        assert!(!names[0].1.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_secret_names_empty() {
+        let store = test_store().await;
+        let names = store.list_secret_names().await.unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_secret_found() {
+        let store = test_store().await;
+        store.set_secret("MY_TOKEN", "val").await.unwrap();
+        let deleted = store.delete_secret("MY_TOKEN").await.unwrap();
+        assert!(deleted);
+        let value = store.get_secret("MY_TOKEN").await.unwrap();
+        assert!(value.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_delete_secret_not_found() {
+        let store = test_store().await;
+        let deleted = store.delete_secret("NONEXISTENT").await.unwrap();
+        assert!(!deleted);
+    }
+
+    #[tokio::test]
+    async fn test_get_all_secrets() {
+        let store = test_store().await;
+        store.set_secret("KEY_A", "val_a").await.unwrap();
+        store.set_secret("KEY_B", "val_b").await.unwrap();
+        let all = store.get_all_secrets().await.unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all.get("KEY_A").unwrap(), "val_a");
+        assert_eq!(all.get("KEY_B").unwrap(), "val_b");
+    }
+
+    #[tokio::test]
+    async fn test_get_all_secrets_empty() {
+        let store = test_store().await;
+        let all = store.get_all_secrets().await.unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_secret_after_table_dropped() {
+        let store = test_store().await;
+        sqlx::query("DROP TABLE secrets")
+            .execute(store.pool())
+            .await
+            .unwrap();
+        assert!(store.set_secret("K", "V").await.is_err());
+        assert!(store.get_secret("K").await.is_err());
+        assert!(store.list_secret_names().await.is_err());
+        assert!(store.delete_secret("K").await.is_err());
+        assert!(store.get_all_secrets().await.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_db_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let db_path = tmpdir.path().join("state.db");
+        let metadata = std::fs::metadata(&db_path).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

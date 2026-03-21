@@ -14,6 +14,7 @@ pulpo resume <NAME>                       Resume a lost or ready session (auto-a
 pulpo interventions <NAME>                Show watchdog interventions
 pulpo nodes                               List known nodes/peers
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
+pulpo secret <SUBCOMMAND>                 Manage secrets (env vars for sessions)
 pulpo ui                                  Open web UI in browser
 ```
 
@@ -49,6 +50,16 @@ pulpo schedule pause <ID>                     Pause a job
 pulpo schedule resume <ID>                    Resume a paused job
 pulpo schedule remove <ID>                    Remove a job
 ```
+
+## Secret Subcommands
+
+```text
+pulpo secret set <NAME> <VALUE>           Set a secret (env var)
+pulpo secret list                         List secret names (alias: ls)
+pulpo secret delete <NAME>                Delete a secret (alias: rm)
+```
+
+Secrets are environment variables injected into sessions. Names must be uppercase alphanumeric with underscores (e.g., `GITHUB_TOKEN`). Values are never returned by the API.
 
 ## Global Options
 

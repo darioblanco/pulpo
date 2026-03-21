@@ -12,6 +12,7 @@ pub mod push;
 
 pub mod routes;
 pub mod schedules;
+pub mod secrets;
 pub mod sessions;
 pub mod static_files;
 pub mod watchdog;

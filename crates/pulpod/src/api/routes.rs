@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Router, middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use tower_http::cors::{Any, CorsLayer};
 
@@ -19,6 +19,7 @@ use super::peers;
 
 use super::push;
 use super::schedules;
+use super::secrets;
 use super::sessions;
 use super::static_files;
 use super::watchdog;
@@ -90,6 +91,11 @@ pub fn build(state: Arc<AppState>) -> Router {
                 .delete(schedules::delete),
         )
         .route("/api/v1/schedules/{id}/runs", get(schedules::list_runs))
+        .route("/api/v1/secrets", get(secrets::list_secrets))
+        .route(
+            "/api/v1/secrets/{name}",
+            put(secrets::set_secret).delete(secrets::delete_secret),
+        )
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_auth,
@@ -1536,6 +1542,69 @@ mod tests {
         let server = test_server().await;
         let resp = server.get("/api/v1/push/vapid-key").await;
         resp.assert_status(StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    // -- Secrets integration tests --
+
+    #[tokio::test]
+    async fn test_list_secrets_empty() {
+        let server = test_server().await;
+        let resp = server.get("/api/v1/secrets").await;
+        resp.assert_status_ok();
+        let body = resp.text();
+        assert!(body.contains("\"secrets\":[]"));
+    }
+
+    #[tokio::test]
+    async fn test_set_and_list_secret() {
+        let server = test_server().await;
+        let resp = server
+            .put("/api/v1/secrets/MY_TOKEN")
+            .json(&serde_json::json!({"value": "secret-value"}))
+            .await;
+        resp.assert_status(StatusCode::NO_CONTENT);
+
+        let resp = server.get("/api/v1/secrets").await;
+        resp.assert_status_ok();
+        let body = resp.text();
+        assert!(body.contains("MY_TOKEN"));
+        // Value should NEVER appear in list response
+        assert!(!body.contains("secret-value"));
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_invalid_name() {
+        let server = test_server().await;
+        let resp = server
+            .put("/api/v1/secrets/invalid-name")
+            .json(&serde_json::json!({"value": "val"}))
+            .await;
+        resp.assert_status(StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_delete_secret() {
+        let server = test_server().await;
+        server
+            .put("/api/v1/secrets/DEL_ME")
+            .json(&serde_json::json!({"value": "val"}))
+            .await;
+        let resp = server.delete("/api/v1/secrets/DEL_ME").await;
+        resp.assert_status(StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn test_delete_secret_not_found() {
+        let server = test_server().await;
+        let resp = server.delete("/api/v1/secrets/NONEXISTENT").await;
+        resp.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_secrets_require_auth() {
+        let server = authed_test_server().await;
+        let resp = server.get("/api/v1/secrets").await;
+        resp.assert_status(StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

@@ -319,6 +319,27 @@ pub struct UpdateScheduleRequest {
     pub enabled: Option<bool>,
 }
 
+// -- Secret types --
+
+/// Request body for PUT /api/v1/secrets/{name}
+#[derive(Debug, Deserialize)]
+pub struct SetSecretRequest {
+    pub value: String,
+}
+
+/// Response for GET /api/v1/secrets
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SecretListResponse {
+    pub secrets: Vec<SecretEntry>,
+}
+
+/// A single secret entry (name + `created_at`, never includes the value).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecretEntry {
+    pub name: String,
+    pub created_at: String,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct ListSessionsQuery {
     pub status: Option<String>,
@@ -1448,6 +1469,99 @@ mod tests {
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("true"));
+    }
+
+    // -- Secret type tests --
+
+    #[test]
+    fn test_set_secret_request_deserialize() {
+        let json = r#"{"value":"super-secret"}"#;
+        let req: SetSecretRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.value, "super-secret");
+    }
+
+    #[test]
+    fn test_set_secret_request_missing_value() {
+        let json = r"{}";
+        let result = serde_json::from_str::<SetSecretRequest>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_set_secret_request_debug() {
+        let req = SetSecretRequest {
+            value: "secret".into(),
+        };
+        let debug = format!("{req:?}");
+        assert!(debug.contains("SetSecretRequest"));
+    }
+
+    #[test]
+    fn test_secret_list_response_serialize() {
+        let resp = SecretListResponse {
+            secrets: vec![SecretEntry {
+                name: "MY_TOKEN".into(),
+                created_at: "2026-01-01T00:00:00Z".into(),
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("MY_TOKEN"));
+        assert!(json.contains("2026-01-01"));
+    }
+
+    #[test]
+    fn test_secret_list_response_deserialize() {
+        let json = r#"{"secrets":[{"name":"KEY","created_at":"2026-01-01T00:00:00Z"}]}"#;
+        let resp: SecretListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.secrets.len(), 1);
+        assert_eq!(resp.secrets[0].name, "KEY");
+    }
+
+    #[test]
+    fn test_secret_list_response_empty() {
+        let resp = SecretListResponse { secrets: vec![] };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"secrets":[]}"#);
+    }
+
+    #[test]
+    fn test_secret_list_response_debug() {
+        let resp = SecretListResponse { secrets: vec![] };
+        let debug = format!("{resp:?}");
+        assert!(debug.contains("SecretListResponse"));
+    }
+
+    #[test]
+    fn test_secret_entry_clone() {
+        let entry = SecretEntry {
+            name: "KEY".into(),
+            created_at: "now".into(),
+        };
+        #[allow(clippy::redundant_clone)]
+        let cloned = entry.clone();
+        assert_eq!(cloned.name, "KEY");
+    }
+
+    #[test]
+    fn test_secret_entry_debug() {
+        let entry = SecretEntry {
+            name: "KEY".into(),
+            created_at: "now".into(),
+        };
+        let debug = format!("{entry:?}");
+        assert!(debug.contains("SecretEntry"));
+    }
+
+    #[test]
+    fn test_secret_entry_roundtrip() {
+        let entry = SecretEntry {
+            name: "MY_VAR".into(),
+            created_at: "2026-03-21T00:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: SecretEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.name, "MY_VAR");
+        assert_eq!(deserialized.created_at, "2026-03-21T00:00:00Z");
     }
 
     #[test]

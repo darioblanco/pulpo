@@ -5,6 +5,7 @@ import { WatchdogSettings } from '@/components/settings/watchdog-settings';
 import { InkSettings } from '@/components/settings/ink-settings';
 import { NotificationsSettings } from '@/components/settings/notifications-settings';
 import { PeerSettings } from '@/components/settings/peer-settings';
+import { SecretSettings } from '@/components/settings/secret-settings';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -180,6 +181,7 @@ export function SettingsPage() {
                   identity and network configuration.
                 </p>
                 <div className="space-y-6">
+                  <SecretSettings />
                   <NodeSettings
                     name={nodeName}
                     onNameChange={setNodeName}

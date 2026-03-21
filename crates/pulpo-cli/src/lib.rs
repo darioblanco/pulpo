@@ -157,6 +157,33 @@ pub enum Commands {
         #[command(subcommand)]
         action: ScheduleAction,
     },
+
+    /// Manage secrets (environment variables injected into sessions)
+    #[command(visible_alias = "sec")]
+    Secret {
+        #[command(subcommand)]
+        action: SecretAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SecretAction {
+    /// Set a secret
+    Set {
+        /// Secret name (will be the env var name, uppercase + underscores)
+        name: String,
+        /// Secret value
+        value: String,
+    },
+    /// List secret names
+    #[command(visible_alias = "ls")]
+    List,
+    /// Delete a secret
+    #[command(visible_alias = "rm")]
+    Delete {
+        /// Secret name
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -884,6 +911,74 @@ async fn execute_schedule(
     Ok(String::new())
 }
 
+// --- Secret API ---
+
+/// Format secret entries as a table.
+#[cfg_attr(coverage, allow(dead_code))]
+fn format_secrets(secrets: &[serde_json::Value]) -> String {
+    if secrets.is_empty() {
+        return "No secrets configured.".into();
+    }
+    let mut lines = vec![format!("{:<30} {}", "NAME", "CREATED")];
+    for s in secrets {
+        let name = s["name"].as_str().unwrap_or("?");
+        let created = s["created_at"]
+            .as_str()
+            .map_or("-", |t| if t.len() >= 16 { &t[..16] } else { t });
+        lines.push(format!("{name:<30} {created}"));
+    }
+    lines.join("\n")
+}
+
+/// Execute a secret subcommand via the secrets API.
+#[cfg(not(coverage))]
+async fn execute_secret(
+    client: &reqwest::Client,
+    action: &SecretAction,
+    base: &str,
+    token: Option<&str>,
+) -> Result<String> {
+    match action {
+        SecretAction::Set { name, value } => {
+            let body = serde_json::json!({ "value": value });
+            let resp = authed_put(client, format!("{base}/api/v1/secrets/{name}"), token)
+                .json(&body)
+                .send()
+                .await?;
+            ok_or_api_error(resp).await?;
+            Ok(format!("Secret \"{name}\" set."))
+        }
+        SecretAction::List => {
+            let resp = authed_get(client, format!("{base}/api/v1/secrets"), token)
+                .send()
+                .await?;
+            let text = ok_or_api_error(resp).await?;
+            let parsed: serde_json::Value = serde_json::from_str(&text)?;
+            let secrets = parsed["secrets"].as_array().map_or(&[][..], Vec::as_slice);
+            Ok(format_secrets(secrets))
+        }
+        SecretAction::Delete { name } => {
+            let resp = authed_delete(client, format!("{base}/api/v1/secrets/{name}"), token)
+                .send()
+                .await?;
+            ok_or_api_error(resp).await?;
+            Ok(format!("Secret \"{name}\" deleted."))
+        }
+    }
+}
+
+/// Coverage stub for secret execution.
+#[cfg(coverage)]
+#[allow(clippy::unnecessary_wraps)]
+async fn execute_secret(
+    _client: &reqwest::Client,
+    _action: &SecretAction,
+    _base: &str,
+    _token: Option<&str>,
+) -> Result<String> {
+    Ok(String::new())
+}
+
 /// Format a list of schedules as a table.
 #[cfg_attr(coverage, allow(dead_code))]
 fn format_schedules(schedules: &[serde_json::Value]) -> String {
@@ -1290,6 +1385,12 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             Ok(format!("Detached from session \"{}\".", session.name))
         }
         Commands::Schedule { action } => execute_schedule(&client, action, &url, token.as_deref())
+            .await
+            .map_err(|e| match e.downcast::<reqwest::Error>() {
+                Ok(re) => friendly_error(&re, node),
+                Err(other) => other,
+            }),
+        Commands::Secret { action } => execute_secret(&client, action, &url, token.as_deref())
             .await
             .map_err(|e| match e.downcast::<reqwest::Error>() {
                 Ok(re) => friendly_error(&re, node),
@@ -4181,5 +4282,96 @@ mod tests {
         // Online peer with no session_count (0) and no node_info (0 mem) → score = 0
         assert_eq!(name, "fresh");
         assert_eq!(addr, "fresh:7433");
+    }
+
+    // -- Secret CLI parse tests --
+
+    #[test]
+    fn test_cli_parse_secret_set() {
+        let cli = Cli::try_parse_from(["pulpo", "secret", "set", "MY_TOKEN", "abc123"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Secret { action: SecretAction::Set { name, value } })
+                if name == "MY_TOKEN" && value == "abc123"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_secret_list() {
+        let cli = Cli::try_parse_from(["pulpo", "secret", "list"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Secret {
+                action: SecretAction::List
+            })
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_secret_list_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "secret", "ls"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Secret {
+                action: SecretAction::List
+            })
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_secret_delete() {
+        let cli = Cli::try_parse_from(["pulpo", "secret", "delete", "MY_TOKEN"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Secret { action: SecretAction::Delete { name } })
+                if name == "MY_TOKEN"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_secret_delete_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "secret", "rm", "MY_TOKEN"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Secret { action: SecretAction::Delete { name } })
+                if name == "MY_TOKEN"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_secret_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "sec", "list"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Secret {
+                action: SecretAction::List
+            })
+        ));
+    }
+
+    #[test]
+    fn test_format_secrets_empty() {
+        let secrets: Vec<serde_json::Value> = vec![];
+        assert_eq!(format_secrets(&secrets), "No secrets configured.");
+    }
+
+    #[test]
+    fn test_format_secrets_with_entries() {
+        let secrets = vec![
+            serde_json::json!({"name": "GITHUB_TOKEN", "created_at": "2026-03-21T12:00:00Z"}),
+            serde_json::json!({"name": "NPM_TOKEN", "created_at": "2026-03-20T10:30:00Z"}),
+        ];
+        let output = format_secrets(&secrets);
+        assert!(output.contains("GITHUB_TOKEN"));
+        assert!(output.contains("NPM_TOKEN"));
+        assert!(output.contains("NAME"));
+        assert!(output.contains("CREATED"));
+    }
+
+    #[test]
+    fn test_format_secrets_short_timestamp() {
+        let secrets = vec![serde_json::json!({"name": "KEY", "created_at": "now"})];
+        let output = format_secrets(&secrets);
+        assert!(output.contains("now"));
     }
 }

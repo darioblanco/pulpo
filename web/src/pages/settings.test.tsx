@@ -13,6 +13,9 @@ vi.mock('@/api/client', () => ({
   getPeers: vi.fn(),
   addPeer: vi.fn(),
   removePeer: vi.fn(),
+  getSecrets: vi.fn().mockResolvedValue([]),
+  setSecret: vi.fn(),
+  deleteSecret: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
@@ -115,6 +118,7 @@ describe('SettingsPage', () => {
       expect(screen.getByTestId('ink-settings')).toBeInTheDocument();
       expect(screen.getByTestId('notifications-settings')).toBeInTheDocument();
       expect(screen.getByTestId('peer-settings')).toBeInTheDocument();
+      expect(screen.getByTestId('secret-settings')).toBeInTheDocument();
     });
   });
 

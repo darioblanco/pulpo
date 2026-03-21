@@ -200,6 +200,15 @@ export interface ScheduleInfo {
   created_at: string;
 }
 
+export interface SecretEntry {
+  name: string;
+  created_at: string;
+}
+
+export interface SecretListResponse {
+  secrets: SecretEntry[];
+}
+
 export interface CreateScheduleRequest {
   name: string;
   cron: string;
