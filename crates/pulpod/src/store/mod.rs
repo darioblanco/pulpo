@@ -803,6 +803,9 @@ impl Store {
         names: &[String],
     ) -> Result<std::collections::HashMap<String, String>> {
         let mut result = std::collections::HashMap::new();
+        // Track which secret name owns each env var to detect collisions
+        let mut env_owners: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         for name in names {
             let row: Option<(String, Option<String>)> =
                 sqlx::query_as("SELECT value, env FROM secrets WHERE name = ?")
@@ -811,6 +814,12 @@ impl Store {
                     .await?;
             if let Some((value, env)) = row {
                 let env_var = env.unwrap_or_else(|| name.clone());
+                if let Some(prev_name) = env_owners.get(&env_var) {
+                    anyhow::bail!(
+                        "secrets '{prev_name}' and '{name}' both map to env var '{env_var}' — use only one"
+                    );
+                }
+                env_owners.insert(env_var.clone(), name.clone());
                 result.insert(env_var, value);
             }
         }
@@ -2765,6 +2774,24 @@ mod tests {
         let store = test_store().await;
         let secrets = store.get_secrets_for_injection(&[]).await.unwrap();
         assert!(secrets.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_secrets_for_injection_env_collision() {
+        let store = test_store().await;
+        store
+            .set_secret_with_env("GH_WORK", "val1", Some("GITHUB_TOKEN"))
+            .await
+            .unwrap();
+        store
+            .set_secret_with_env("GH_PERSONAL", "val2", Some("GITHUB_TOKEN"))
+            .await
+            .unwrap();
+        let err = store
+            .get_secrets_for_injection(&["GH_WORK".into(), "GH_PERSONAL".into()])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("both map to env var"), "{err}");
     }
 
     #[tokio::test]
