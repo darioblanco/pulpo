@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.29](https://github.com/darioblanco/pulpo/compare/v0.0.28...v0.0.29) (2026-03-21)
+
+
+### Bug Fixes
+
+* actually wire vendored OpenSSL into pulpod crate ([13460db](https://github.com/darioblanco/pulpo/commit/13460dbbf686a3407f90f85ceb341f2cc87febc9))
+
 ## [0.0.28](https://github.com/darioblanco/pulpo/compare/v0.0.27...v0.0.28) (2026-03-21)
 
 
