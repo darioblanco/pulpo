@@ -347,7 +347,8 @@ fn format_sessions(sessions: &[Session]) -> String {
     )];
     for s in sessions {
         let cmd_display = if s.command.len() > 50 {
-            format!("{}...", &s.command[..47])
+            let truncated: String = s.command.chars().take(47).collect();
+            format!("{truncated}...")
         } else {
             s.command.clone()
         };
@@ -1038,7 +1039,9 @@ fn format_schedules(schedules: &[serde_json::Value]) -> String {
         } else {
             "no"
         };
-        let last_run = s["last_run_at"].as_str().map_or("-", |t| &t[..16]);
+        let last_run = s["last_run_at"]
+            .as_str()
+            .map_or("-", |t| if t.len() >= 16 { &t[..16] } else { t });
         let node = s["target_node"].as_str().unwrap_or("local");
         lines.push(format!(
             "{name:<20} {cron:<18} {enabled:<8} {last_run:<12} {node}"
@@ -4468,5 +4471,53 @@ mod tests {
         let secrets = vec![serde_json::json!({"name": "KEY", "created_at": "now"})];
         let output = format_secrets(&secrets);
         assert!(output.contains("now"));
+    }
+
+    #[test]
+    fn test_format_schedules_short_last_run_at() {
+        // Regression: last_run_at shorter than 16 chars must not panic
+        let schedules = vec![serde_json::json!({
+            "name": "test",
+            "cron": "* * * * *",
+            "enabled": true,
+            "last_run_at": "short",
+            "target_node": null
+        })];
+        let output = format_schedules(&schedules);
+        assert!(output.contains("short"));
+    }
+
+    #[test]
+    fn test_format_sessions_multibyte_command_truncation() {
+        use chrono::Utc;
+        use pulpo_common::session::SessionStatus;
+        use uuid::Uuid;
+
+        // Command with multi-byte chars exceeding 50 bytes; must not panic
+        let sessions = vec![Session {
+            id: Uuid::nil(),
+            name: "test".into(),
+            workdir: "/tmp".into(),
+            command: "echo '\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}'".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: None,
+            runtime: Runtime::Tmux,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_sessions(&sessions);
+        assert!(output.contains("..."));
     }
 }

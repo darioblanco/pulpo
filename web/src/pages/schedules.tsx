@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { Link } from 'react-router';
 import { AppHeader } from '@/components/layout/app-header';
 import { ScheduleDialog } from '@/components/schedules/schedule-dialog';
@@ -302,9 +302,8 @@ export function SchedulesPage() {
                     const isExpanded = expandedIds.has(s.id);
 
                     return (
-                      <>
+                      <Fragment key={s.id}>
                         <tr
-                          key={s.id}
                           className={`cursor-pointer border-b last:border-0 ${!s.enabled ? 'opacity-50' : ''}`}
                           data-testid={`schedule-row-${s.name}`}
                           onClick={() => toggleExpanded(s.id)}
@@ -460,12 +459,8 @@ export function SchedulesPage() {
                             </div>
                           </td>
                         </tr>
-                        <RunHistoryPanel
-                          key={`runs-${s.id}`}
-                          scheduleId={s.id}
-                          expanded={isExpanded}
-                        />
-                      </>
+                        <RunHistoryPanel scheduleId={s.id} expanded={isExpanded} />
+                      </Fragment>
                     );
                   })}
                 </tbody>

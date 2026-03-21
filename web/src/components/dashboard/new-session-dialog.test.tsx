@@ -490,6 +490,50 @@ describe('NewSessionDialog', () => {
     });
   });
 
+  it('deselects a secret by clicking it again', async () => {
+    mockGetSecrets.mockResolvedValue([{ name: 'KEY_A', created_at: '2026-01-01T00:00:00Z' }]);
+    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('secret-badge-KEY_A')).toBeInTheDocument();
+    });
+
+    // Select
+    await user.click(screen.getByTestId('secret-badge-KEY_A'));
+    await waitFor(() => {
+      expect(screen.getByTestId('secrets-selected-count')).toHaveTextContent('1 secret selected');
+    });
+
+    // Deselect
+    await user.click(screen.getByTestId('secret-badge-KEY_A'));
+    expect(screen.queryByTestId('secrets-selected-count')).not.toBeInTheDocument();
+  });
+
+  it('sends description when provided', async () => {
+    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await user.type(screen.getByLabelText('Name'), 'desc-test');
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+    await user.type(screen.getByLabelText('Description'), 'My task description');
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'desc-test',
+          workdir: '/repo',
+          description: 'My task description',
+        }),
+      );
+    });
+  });
+
   it('handles getSecrets failure gracefully', async () => {
     mockGetSecrets.mockRejectedValue(new Error('Network error'));
     render(<NewSessionDialog onCreated={vi.fn()} />);

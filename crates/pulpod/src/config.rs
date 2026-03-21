@@ -2521,6 +2521,61 @@ image = "my-image:v1"
     }
 
     #[test]
+    fn test_ink_config_with_secrets_and_runtime_roundtrip() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("ink-secrets-rt.toml");
+        let mut inks = HashMap::new();
+        inks.insert(
+            "my-ink".into(),
+            InkConfig {
+                description: Some("Custom ink with secrets".into()),
+                command: Some("claude -p 'build'".into()),
+                secrets: vec!["GITHUB_TOKEN".into(), "NPM_TOKEN".into()],
+                runtime: Some("docker".into()),
+            },
+        );
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks,
+            notifications: NotificationsConfig::default(),
+            docker: DockerConfig::default(),
+        };
+        save(&config, &path).unwrap();
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        let ink = &loaded.inks["my-ink"];
+        assert_eq!(ink.secrets, vec!["GITHUB_TOKEN", "NPM_TOKEN"]);
+        assert_eq!(ink.runtime.as_deref(), Some("docker"));
+        assert_eq!(ink.command.as_deref(), Some("claude -p 'build'"));
+    }
+
+    #[test]
+    fn test_load_old_config_without_docker_section_backward_compat() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "old-node"
+port = 7433
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        // Docker config should have defaults
+        assert_eq!(config.docker.image, "ubuntu:latest");
+        assert_eq!(config.docker.volumes.len(), 3);
+    }
+
+    #[test]
     fn test_docker_volumes_save_roundtrip() {
         let tmpdir = tempfile::tempdir().unwrap();
         let path = tmpdir.path().join("config.toml");

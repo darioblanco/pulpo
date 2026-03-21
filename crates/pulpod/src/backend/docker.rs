@@ -582,4 +582,92 @@ mod tests {
         let resolved = resolve_volumes(&volumes);
         assert!(resolved.is_empty());
     }
+
+    #[test]
+    fn test_resolve_tilde_other_user_path() {
+        // A path like "~otheruser/foo" doesn't start with "~/" and isn't exactly "~",
+        // so resolve_tilde treats it as a plain (relative) path.
+        let resolved = resolve_tilde("~otheruser/foo");
+        assert!(resolved.is_some());
+        assert_eq!(resolved.unwrap(), PathBuf::from("~otheruser/foo"));
+    }
+
+    #[test]
+    fn test_resolve_volumes_path_with_spaces() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let dir_with_spaces = tmpdir.path().join("path with spaces");
+        std::fs::create_dir_all(&dir_with_spaces).unwrap();
+        let host_path = dir_with_spaces.to_str().unwrap();
+        let volumes = vec![format!("{host_path}:/container:ro")];
+        let resolved = resolve_volumes(&volumes);
+        assert_eq!(resolved.len(), 1);
+        assert!(resolved[0].contains("path with spaces"));
+    }
+
+    #[test]
+    fn test_resolve_volumes_mixed_existent_and_nonexistent() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let host_path = tmpdir.path().to_str().unwrap();
+        let volumes = vec![
+            format!("{host_path}:/container1:ro"),
+            "/nonexistent/xyz:/container2:ro".to_owned(),
+            format!("{host_path}:/container3:rw"),
+        ];
+        let resolved = resolve_volumes(&volumes);
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved[0].contains("/container1"));
+        assert!(resolved[1].contains("/container3"));
+    }
+
+    #[test]
+    fn test_build_run_command_verifies_command_structure() {
+        let volumes = vec!["/host:/container:ro".to_owned()];
+        let cmd = build_run_command(
+            "my-image:v2",
+            "pulpo-my-session",
+            "/work/dir",
+            "claude -p 'do stuff'",
+            &volumes,
+        );
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+
+        // Verify exact structure: run -d --name <name> -v <vol> -v <workdir> -w /workspace <image> bash -l -c <cmd>
+        assert_eq!(args[0], "run");
+        assert_eq!(args[1], "-d");
+        assert_eq!(args[2], "--name");
+        assert_eq!(args[3], "pulpo-my-session");
+        assert_eq!(args[4], "-v");
+        assert_eq!(args[5], "/host:/container:ro");
+        assert_eq!(args[6], "-v");
+        assert_eq!(args[7], "/work/dir:/workspace");
+        assert_eq!(args[8], "-w");
+        assert_eq!(args[9], "/workspace");
+        assert_eq!(args[10], "my-image:v2");
+        assert_eq!(args[11], "bash");
+        assert_eq!(args[12], "-l");
+        assert_eq!(args[13], "-c");
+        assert_eq!(args[14], "claude -p 'do stuff'");
+    }
+
+    #[test]
+    fn test_is_docker_session_empty_string() {
+        assert!(!is_docker_session(""));
+    }
+
+    #[test]
+    fn test_docker_container_name_empty_string() {
+        assert_eq!(docker_container_name(""), "");
+    }
+
+    #[test]
+    fn test_docker_container_name_just_prefix() {
+        assert_eq!(docker_container_name("docker:"), "");
+    }
+
+    #[test]
+    fn test_resolve_tilde_empty_string() {
+        let resolved = resolve_tilde("");
+        assert!(resolved.is_some());
+        assert_eq!(resolved.unwrap(), PathBuf::from(""));
+    }
 }

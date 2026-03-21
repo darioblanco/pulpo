@@ -2170,6 +2170,96 @@ mod tests {
         std::fs::remove_file(&secrets_path).unwrap();
     }
 
+    #[test]
+    fn test_write_secrets_file_path_includes_session_id() {
+        let id = uuid::Uuid::new_v4();
+        let mut secrets = HashMap::new();
+        secrets.insert("KEY".to_owned(), "val".to_owned());
+        let path = write_secrets_file(&id, &secrets).unwrap().unwrap();
+        assert!(
+            path.contains(&id.to_string()),
+            "path should contain session ID: {path}"
+        );
+        assert_eq!(path, format!("/tmp/pulpo-secrets-{id}.sh"));
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_write_secrets_file_content_format() {
+        let id = uuid::Uuid::new_v4();
+        let mut secrets = HashMap::new();
+        secrets.insert("MY_VAR".to_owned(), "hello world".to_owned());
+        let path = write_secrets_file(&id, &secrets).unwrap().unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        // Each line should be: export KEY='VALUE'
+        assert!(content.contains("export MY_VAR='hello world'\n"));
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_write_secrets_file_escapes_multiple_single_quotes() {
+        let id = uuid::Uuid::new_v4();
+        let mut secrets = HashMap::new();
+        secrets.insert("K".to_owned(), "a'b'c".to_owned());
+        let path = write_secrets_file(&id, &secrets).unwrap().unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        // Each ' becomes '\'' in shell single-quote escaping
+        assert!(content.contains("export K='a'\\''b'\\''c'"));
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_wrap_command_secrets_source_before_env_vars() {
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("echo test", &id, "sess", Some("/tmp/secrets.sh"));
+        // The source-and-delete must come BEFORE the env var exports
+        let source_pos = cmd.find(". /tmp/secrets.sh").unwrap();
+        let env_pos = cmd.find("PULPO_SESSION_ID").unwrap();
+        assert!(
+            source_pos < env_pos,
+            "secrets should be sourced before env vars: {cmd}"
+        );
+    }
+
+    #[test]
+    fn test_wrap_command_secrets_source_and_delete_pattern() {
+        let id = uuid::Uuid::new_v4();
+        let path = "/tmp/pulpo-secrets-test.sh";
+        let cmd = wrap_command("my-agent", &id, "sess", Some(path));
+        // Pattern: `. <file> && rm -f <file>; `
+        assert!(cmd.contains(&format!(". {path} && rm -f {path}; ")));
+    }
+
+    #[tokio::test]
+    async fn test_create_session_with_missing_secret_names() {
+        // Requesting secrets that don't exist in store — should silently skip them
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let mut req = make_req("missing-secrets");
+        req.secrets = Some(vec!["NONEXISTENT_SECRET".into()]);
+        let session = mgr.create_session(req).await.unwrap();
+        assert_eq!(session.status, SessionStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn test_create_session_secret_env_collision() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        // Set up two secrets that both map to GITHUB_TOKEN
+        mgr.store()
+            .set_secret("GITHUB_TOKEN", "val1")
+            .await
+            .unwrap();
+        mgr.store()
+            .set_secret_with_env("GH_WORK", "val2", Some("GITHUB_TOKEN"))
+            .await
+            .unwrap();
+
+        let mut req = make_req("collision-test");
+        req.secrets = Some(vec!["GITHUB_TOKEN".into(), "GH_WORK".into()]);
+        let result = mgr.create_session(req).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("both map to env var"), "got: {err}");
+    }
+
     #[tokio::test]
     async fn test_create_session_no_command_no_default_falls_back_to_shell() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
@@ -2620,5 +2710,182 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(updated.0, "active");
+    }
+
+    // -- wrap_command edge cases --
+
+    #[test]
+    fn test_wrap_command_double_quotes() {
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("echo \"hello world\"", &id, "test", None);
+        assert!(cmd.contains("echo \"hello world\""));
+        assert!(cmd.contains("bash -l -c"));
+    }
+
+    #[test]
+    fn test_wrap_command_backticks() {
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("echo `date`", &id, "test", None);
+        assert!(cmd.contains("echo `date`"));
+    }
+
+    #[test]
+    fn test_wrap_command_dollar_variables() {
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("echo $HOME $USER", &id, "test", None);
+        assert!(cmd.contains("echo $HOME $USER"));
+    }
+
+    #[test]
+    fn test_wrap_command_empty_string() {
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("", &id, "test", None);
+        // Empty command is not a shell command, so gets agent wrapper
+        assert!(cmd.contains("bash -l -c"));
+        assert!(cmd.contains("[pulpo] Agent exited"));
+    }
+
+    #[test]
+    fn test_wrap_command_very_long() {
+        let id = uuid::Uuid::new_v4();
+        let long_cmd = "echo ".to_owned() + &"a".repeat(10_000);
+        let cmd = wrap_command(&long_cmd, &id, "test", None);
+        assert!(cmd.contains(&"a".repeat(10_000)));
+        assert!(cmd.contains("bash -l -c"));
+    }
+
+    #[test]
+    fn test_is_shell_command_with_whitespace() {
+        // Trailing whitespace in basename should be trimmed
+        assert!(is_shell_command("bash "));
+        assert!(is_shell_command("/bin/bash "));
+    }
+
+    #[test]
+    fn test_is_shell_command_bash_with_args_is_not_shell() {
+        // "bash -c 'cmd'" is not a bare shell — it's running a command
+        assert!(!is_shell_command("bash -c 'echo hello'"));
+    }
+
+    // -- create_session: ink secrets dedup --
+
+    #[tokio::test]
+    async fn test_ink_secrets_dedup_with_request_overlap() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "shared-secrets".into(),
+            InkConfig {
+                command: Some("claude".into()),
+                secrets: vec!["SHARED_SECRET".into(), "INK_ONLY".into()],
+                ..InkConfig::default()
+            },
+        );
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        store
+            .set_secret("SHARED_SECRET", "shared-val")
+            .await
+            .unwrap();
+        store.set_secret("INK_ONLY", "ink-val").await.unwrap();
+        store.set_secret("REQ_ONLY", "req-val").await.unwrap();
+        let backend = Arc::new(MockBackend::new());
+        let mgr = SessionManager::new(backend, store, inks, None).with_no_stale_grace();
+
+        let req = CreateSessionRequest {
+            name: "dedup-test".into(),
+            workdir: Some("/tmp".into()),
+            command: None,
+            ink: Some("shared-secrets".into()),
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            runtime: None,
+            // SHARED_SECRET overlaps with ink, REQ_ONLY is new
+            secrets: Some(vec!["SHARED_SECRET".into(), "REQ_ONLY".into()]),
+        };
+        let session = mgr.create_session(req).await.unwrap();
+
+        // Verify the secrets file contains all 3 secrets (no duplicates)
+        let secrets_path = format!("/tmp/pulpo-secrets-{}.sh", session.id);
+        let content = std::fs::read_to_string(&secrets_path).unwrap();
+        // Count occurrences of SHARED_SECRET — should appear exactly once
+        let shared_count = content.matches("SHARED_SECRET").count();
+        assert_eq!(
+            shared_count, 1,
+            "SHARED_SECRET should not be duplicated: {content}"
+        );
+        assert!(content.contains("INK_ONLY"));
+        assert!(content.contains("REQ_ONLY"));
+        std::fs::remove_file(&secrets_path).unwrap();
+    }
+
+    // -- delete_session edge cases --
+
+    #[tokio::test]
+    async fn test_delete_creating_session_fails() {
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+        // Force status to Creating
+        sqlx::query("UPDATE sessions SET status = 'creating' WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = mgr.delete_session(&id).await.unwrap_err();
+        assert!(err.to_string().contains("kill it first"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn test_delete_lost_session_succeeds() {
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+        sqlx::query("UPDATE sessions SET status = 'lost' WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        mgr.delete_session(&id).await.unwrap();
+        let fetched = mgr.get_session(&id).await.unwrap();
+        assert!(fetched.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_delete_ready_session_succeeds() {
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+        sqlx::query("UPDATE sessions SET status = 'ready' WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        mgr.delete_session(&id).await.unwrap();
+    }
+
+    // -- resume_session emits event --
+
+    #[tokio::test]
+    async fn test_resume_session_emits_event() {
+        let (mgr, _, pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let (event_tx, mut event_rx) = broadcast::channel(16);
+        let mgr = mgr.with_event_tx(event_tx, "test-node".into());
+        let session = mgr.create_session(make_req("resume-evt")).await.unwrap();
+        let _ = event_rx.recv().await; // drain create event
+        let id = session.id.to_string();
+        sqlx::query("UPDATE sessions SET status = 'lost' WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let _resumed = mgr.resume_session(&id).await.unwrap();
+        let event = event_rx.recv().await.unwrap();
+        let se = unwrap_session_event(event);
+        assert_eq!(se.status, "active");
+        assert_eq!(se.previous_status.as_deref(), Some("lost"));
     }
 }

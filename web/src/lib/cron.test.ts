@@ -46,6 +46,18 @@ describe('describeCron', () => {
     expect(describeCron('0 3 15 * *')).toBe('Monthly on the 15th at 3:00 AM');
   });
 
+  it('describes every 30 minutes', () => {
+    expect(describeCron('*/30 * * * *')).toBe('Every 30 minutes');
+  });
+
+  it('describes monthly on 31st', () => {
+    expect(describeCron('0 3 31 * *')).toBe('Monthly on the 31th at 3:00 AM');
+  });
+
+  it('falls back for out-of-range weekday', () => {
+    expect(describeCron('0 3 * * 9')).toBe('Every day 9 at 3:00 AM');
+  });
+
   it('returns raw expression for complex crons', () => {
     expect(describeCron('0 3 * * 1,3,5')).toBe('0 3 * * 1,3,5');
     expect(describeCron('0 3 1-15 * *')).toBe('0 3 1-15 * *');
@@ -122,6 +134,50 @@ describe('getNextRun', () => {
     expect(next!.getHours()).toBe(12);
     expect(next!.getMinutes()).toBe(0);
   });
+
+  it('handles every 30 minutes near end of hour', () => {
+    const nearEnd = new Date('2026-03-20T10:45:00');
+    const next = getNextRun('*/30 * * * *', nearEnd);
+    expect(next).not.toBeNull();
+    // Next 30-minute boundary after minute 45 would be 60, which wraps to next hour
+    expect(next!.getHours()).toBe(11);
+    expect(next!.getMinutes()).toBe(0);
+  });
+
+  it('handles daily cron near midnight', () => {
+    const nearMidnight = new Date('2026-03-20T23:59:00');
+    const next = getNextRun('0 0 * * *', nearMidnight);
+    expect(next).not.toBeNull();
+    expect(next!.getDate()).toBe(21);
+    expect(next!.getHours()).toBe(0);
+    expect(next!.getMinutes()).toBe(0);
+  });
+
+  it('handles weekly cron when today is the target day but time passed', () => {
+    // 2026-03-20 is Friday (day 5)
+    const fridayEvening = new Date('2026-03-20T23:00:00');
+    const next = getNextRun('0 9 * * 5', fridayEvening);
+    expect(next).not.toBeNull();
+    expect(next!.getDay()).toBe(5);
+    expect(next!.getDate()).toBe(27); // Next Friday
+  });
+
+  it('handles every N hours wrapping past midnight', () => {
+    const lateNight = new Date('2026-03-20T23:30:00');
+    const next = getNextRun('0 */6 * * *', lateNight);
+    expect(next).not.toBeNull();
+    // Next 6-hour boundary after 23 wraps to next day
+    expect(next!.getDate()).toBe(21);
+    expect(next!.getHours()).toBe(0);
+  });
+
+  it('handles every N hours when minute has not passed yet', () => {
+    const earlyInHour = new Date('2026-03-20T05:50:00');
+    const next = getNextRun('30 */6 * * *', earlyInHour);
+    expect(next).not.toBeNull();
+    expect(next!.getHours()).toBe(6);
+    expect(next!.getMinutes()).toBe(30);
+  });
 });
 
 describe('isValidCron', () => {
@@ -131,6 +187,18 @@ describe('isValidCron', () => {
     expect(isValidCron('*/15 * * * *')).toBe(true);
     expect(isValidCron('0 0 * * 1')).toBe(true);
     expect(isValidCron('0 */6 * * *')).toBe(true);
+  });
+
+  it('accepts comma-separated values', () => {
+    expect(isValidCron('0 3 * * 1,3,5')).toBe(true);
+  });
+
+  it('accepts ranges', () => {
+    expect(isValidCron('0 3 1-15 * *')).toBe(true);
+  });
+
+  it('accepts step with range-like syntax', () => {
+    expect(isValidCron('*/5 */2 * * *')).toBe(true);
   });
 
   it('rejects invalid expressions', () => {

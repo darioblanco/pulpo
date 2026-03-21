@@ -481,4 +481,138 @@ mod tests {
         // Either way, no panic
         let _ = result;
     }
+
+    // -- agent_provider_for_command edge cases --
+
+    #[test]
+    fn test_no_match_for_substring_codex() {
+        // "mycodex" should not match "codex"
+        assert_eq!(agent_provider_for_command("mycodex run"), None);
+    }
+
+    #[test]
+    fn test_agent_with_pipe() {
+        // "claude" appears after a pipe — the | is not in the boundary chars,
+        // but it's preceded by space: "| claude"
+        assert_eq!(
+            agent_provider_for_command("echo foo | claude -p 'fix'"),
+            Some("claude.ai")
+        );
+    }
+
+    #[test]
+    fn test_agent_case_insensitive() {
+        assert_eq!(
+            agent_provider_for_command("Claude -p 'test'"),
+            Some("claude.ai")
+        );
+        assert_eq!(agent_provider_for_command("CODEX run"), Some("openai"));
+        assert_eq!(agent_provider_for_command("GEMINI chat"), Some("google"));
+    }
+
+    #[test]
+    fn test_agent_after_tab() {
+        assert_eq!(
+            agent_provider_for_command("cd /repo\tclaude -p 'fix'"),
+            Some("claude.ai")
+        );
+    }
+
+    #[test]
+    fn test_agent_after_newline() {
+        assert_eq!(
+            agent_provider_for_command("export FOO=1\nclaude -p 'fix'"),
+            Some("claude.ai")
+        );
+    }
+
+    #[test]
+    fn test_agent_gemini_at_end() {
+        assert_eq!(agent_provider_for_command("exec gemini"), Some("google"));
+    }
+
+    #[test]
+    fn test_no_match_agent_in_middle_of_word() {
+        // "geminist" should not match "gemini"
+        assert_eq!(agent_provider_for_command("geminist run"), None);
+    }
+
+    // -- Parse credential edge cases --
+
+    #[test]
+    fn test_parse_claude_credentials_array_json() {
+        // JSON is an array, not an object — should return None
+        assert!(parse_claude_credentials("[1, 2, 3]").is_none());
+    }
+
+    #[test]
+    fn test_parse_claude_credentials_number_json() {
+        assert!(parse_claude_credentials("42").is_none());
+    }
+
+    #[test]
+    fn test_parse_claude_credentials_null() {
+        assert!(parse_claude_credentials("null").is_none());
+    }
+
+    #[test]
+    fn test_parse_codex_credentials_array_json() {
+        assert!(parse_codex_credentials("[\"a\", \"b\"]").is_none());
+    }
+
+    #[test]
+    fn test_parse_codex_credentials_empty_object() {
+        assert!(parse_codex_credentials("{}").is_none());
+    }
+
+    #[test]
+    fn test_parse_gemini_credentials_array_json() {
+        assert!(parse_gemini_credentials("[1]").is_none());
+    }
+
+    #[test]
+    fn test_parse_gemini_credentials_empty_object() {
+        assert!(parse_gemini_credentials("{}").is_none());
+    }
+
+    #[test]
+    fn test_parse_claude_email_only() {
+        let json = r#"{"email": "user@example.com"}"#;
+        let info = parse_claude_credentials(json).unwrap();
+        assert!(info.plan.is_none());
+        assert_eq!(info.email.as_deref(), Some("user@example.com"));
+    }
+
+    #[test]
+    fn test_parse_codex_email_only() {
+        let json = r#"{"email": "codex@example.com"}"#;
+        let info = parse_codex_credentials(json).unwrap();
+        assert!(info.plan.is_none());
+        assert_eq!(info.email.as_deref(), Some("codex@example.com"));
+    }
+
+    #[test]
+    fn test_parse_gemini_email_via_account_field() {
+        let json = r#"{"account": "user@gmail.com"}"#;
+        let info = parse_gemini_credentials(json).unwrap();
+        assert!(info.plan.is_none());
+        assert_eq!(info.email.as_deref(), Some("user@gmail.com"));
+    }
+
+    #[test]
+    fn test_parse_gemini_plan_via_tier_field() {
+        let json = r#"{"tier": "Enterprise"}"#;
+        let info = parse_gemini_credentials(json).unwrap();
+        assert_eq!(info.plan.as_deref(), Some("enterprise"));
+        assert!(info.email.is_none());
+    }
+
+    #[test]
+    fn test_parse_claude_oauth_with_non_string_fields() {
+        // subscriptionType is a number, not string — should be ignored
+        let json = r#"{"claudeAiOauth": {"subscriptionType": 42, "email": "user@test.com"}}"#;
+        let info = parse_claude_credentials(json).unwrap();
+        assert!(info.plan.is_none());
+        assert_eq!(info.email.as_deref(), Some("user@test.com"));
+    }
 }

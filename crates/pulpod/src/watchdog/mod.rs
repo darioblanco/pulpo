@@ -4014,4 +4014,84 @@ mod tests {
         // No metadata should be set
         assert!(fetched.metadata.is_none());
     }
+
+    #[tokio::test]
+    async fn test_rate_limit_not_cleared_after_recovery() {
+        let store = test_store().await;
+        let session = create_running_session(&store, "rate-recover").await;
+
+        // First: detect rate limit
+        let output1 = "Error: Rate limit exceeded\n";
+        detect_and_store_output_metadata(&store, &session, output1).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta = fetched.metadata.as_ref().unwrap();
+        assert!(meta.contains_key("rate_limit"));
+
+        // Second: output without rate limit — rate_limit key should persist
+        // (detect_and_store_output_metadata only writes, never deletes)
+        let output2 = "Working normally again...\n";
+        let session2 = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        detect_and_store_output_metadata(&store, &session2, output2).await;
+
+        let fetched2 = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta2 = fetched2.metadata.unwrap();
+        // rate_limit key still present — it was NOT cleared
+        assert!(
+            meta2.contains_key("rate_limit"),
+            "rate_limit should persist after recovery (by design)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_detect_gitlab_mr_in_output_metadata() {
+        let store = test_store().await;
+        let session = create_running_session(&store, "gitlab-detect").await;
+
+        let output = "Created: https://gitlab.com/group/project/-/merge_requests/42\n";
+        detect_and_store_output_metadata(&store, &session, output).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta = fetched.metadata.unwrap();
+        assert_eq!(
+            meta.get("pr_url").unwrap(),
+            "https://gitlab.com/group/project/-/merge_requests/42"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_detect_bitbucket_pr_in_output_metadata() {
+        let store = test_store().await;
+        let session = create_running_session(&store, "bitbucket-detect").await;
+
+        let output = "PR: https://bitbucket.org/owner/repo/pull-requests/7\n";
+        detect_and_store_output_metadata(&store, &session, output).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta = fetched.metadata.unwrap();
+        assert_eq!(
+            meta.get("pr_url").unwrap(),
+            "https://bitbucket.org/owner/repo/pull-requests/7"
+        );
+    }
 }

@@ -221,4 +221,27 @@ mod tests {
         assert!(b.send_input("n", "t").is_ok());
         assert!(b.setup_logging("n", "p").is_ok());
     }
+
+    #[test]
+    fn test_stub_backend_default_trait_methods() {
+        let b = StubBackend;
+        // session_id default returns name as-is
+        assert_eq!(b.session_id("my-session"), "my-session");
+        // check_version default returns "unknown"
+        assert_eq!(b.check_version().unwrap(), "unknown");
+        // resize default is no-op
+        assert!(b.resize("s", 120, 40).is_ok());
+        // spawn_attach default errors
+        assert!(b.spawn_attach("s").is_err());
+        // query_backend_id default returns name as-is
+        assert_eq!(b.query_backend_id("my-session").unwrap(), "my-session");
+        // pane_command_line default errors
+        assert!(b.pane_command_line("s").is_err());
+        // list_sessions default returns empty
+        assert!(b.list_sessions().unwrap().is_empty());
+        // pane_info default errors
+        assert!(b.pane_info("s").is_err());
+        // set_env default is no-op
+        assert!(b.set_env("s", "KEY", "VALUE").is_ok());
+    }
 }

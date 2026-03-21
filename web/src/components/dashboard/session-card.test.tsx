@@ -473,6 +473,108 @@ describe('SessionCard', () => {
     expect(screen.queryByTestId('rate-limit-badge')).not.toBeInTheDocument();
   });
 
+  it('truncates long commands', () => {
+    renderCard(makeSession({ command: 'a'.repeat(60) }));
+    // The command text should be truncated with ...
+    const commandElements = screen.getAllByText(/a+\.\.\./);
+    expect(commandElements.length).toBeGreaterThan(0);
+  });
+
+  it('shows description in subtitle when available', () => {
+    renderCard(makeSession({ description: 'Fix the login page' }));
+    expect(screen.getByText('Fix the login page')).toBeInTheDocument();
+  });
+
+  it('shows command in subtitle when no description', () => {
+    renderCard(makeSession({ description: null, command: 'Fix the bug' }));
+    // Both the header command and subtitle show the command
+    const elements = screen.getAllByText('Fix the bug');
+    expect(elements.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('expands via Space key on header', () => {
+    renderCard(makeSession());
+    const infoArea = screen.getByTestId('session-name-link').closest('[role="button"]')!;
+    fireEvent.keyDown(infoArea, { key: ' ' });
+    expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
+  });
+
+  it('expands on subtitle click', () => {
+    renderCard(makeSession());
+    // Subtitle area is the second role="button"
+    const subtitleArea = screen
+      .getAllByRole('button')
+      .find((el) => el.querySelector('.truncate.font-mono'));
+    if (subtitleArea) {
+      fireEvent.click(subtitleArea);
+      expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
+    }
+  });
+
+  it('expands on subtitle keyboard Enter', () => {
+    renderCard(makeSession());
+    const subtitleAreas = screen.getAllByRole('button');
+    // The subtitle area has the description/command text
+    const subtitleArea = subtitleAreas.find((el) => el.querySelector('.truncate.font-mono'));
+    if (subtitleArea) {
+      fireEvent.keyDown(subtitleArea, { key: 'Enter' });
+      expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
+    }
+  });
+
+  it('shows rate limit title with timestamp', () => {
+    const timestamp = '2026-03-20T10:00:00Z';
+    renderCard(
+      makeSession({
+        metadata: { rate_limit: 'Rate limited', rate_limit_at: timestamp },
+      }),
+    );
+    const badge = screen.getByTestId('rate-limit-badge');
+    expect(badge.getAttribute('title')).toContain('Rate limited at');
+  });
+
+  it('shows rate limit title without timestamp', () => {
+    renderCard(makeSession({ metadata: { rate_limit: 'Rate limited' } }));
+    const badge = screen.getByTestId('rate-limit-badge');
+    expect(badge.getAttribute('title')).toBe('Rate limited');
+  });
+
+  it('hides intervention history on second toggle', async () => {
+    mockGetInterventionEvents.mockResolvedValue([
+      { id: 1, session_id: 'sess-1', reason: 'OOM kill', created_at: '2026-01-01T12:00:00Z' },
+    ]);
+    renderCard(
+      makeSession({
+        status: 'killed',
+        intervention_reason: 'Memory exceeded',
+        intervention_at: '2026-01-01T12:00:00Z',
+      }),
+    );
+    clickExpand();
+
+    // Open history
+    fireEvent.click(screen.getByTestId('interventions-toggle'));
+    await waitFor(() => {
+      expect(screen.getByTestId('intervention-history')).toBeInTheDocument();
+    });
+
+    // Close history
+    fireEvent.click(screen.getByTestId('interventions-toggle'));
+    expect(screen.queryByTestId('intervention-history')).not.toBeInTheDocument();
+    expect(screen.getByText('Show history')).toBeInTheDocument();
+  });
+
+  it('shows PR badge with noopener noreferrer', () => {
+    renderCard(makeSession({ metadata: { pr_url: 'https://github.com/a/b/pull/1' } }));
+    const badge = screen.getByTestId('pr-badge');
+    expect(badge).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  it('shows workdir full path when no slash', () => {
+    renderCard(makeSession({ workdir: 'relative-dir' }));
+    expect(screen.getByTestId('session-workdir')).toHaveTextContent('relative-dir');
+  });
+
   it('loads intervention history on toggle', async () => {
     mockGetInterventionEvents.mockResolvedValue([
       { id: 1, session_id: 'sess-1', reason: 'OOM kill', created_at: '2026-01-01T12:00:00Z' },

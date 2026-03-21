@@ -427,4 +427,152 @@ mod tests {
     fn test_detect_rate_limit_empty() {
         assert!(detect_rate_limit("").is_none());
     }
+
+    // -- PR URL edge cases --
+
+    #[test]
+    fn test_extract_pr_url_with_query_params() {
+        let output = "https://github.com/owner/repo/pull/42?expand=1\n";
+        assert_eq!(
+            extract_pr_url(output),
+            Some("https://github.com/owner/repo/pull/42?expand=1".into())
+        );
+    }
+
+    #[test]
+    fn test_extract_pr_url_with_fragment() {
+        let output = "See https://github.com/owner/repo/pull/42#issuecomment-123\n";
+        assert_eq!(
+            extract_pr_url(output),
+            Some("https://github.com/owner/repo/pull/42#issuecomment-123".into())
+        );
+    }
+
+    #[test]
+    fn test_extract_pr_url_surrounded_by_ansi_heavy() {
+        // Multiple nested ANSI codes
+        let output =
+            "\x1b[1m\x1b[33m\x1b[4mhttps://github.com/owner/repo/pull/7\x1b[0m\x1b[0m\x1b[0m\n";
+        assert_eq!(
+            extract_pr_url(output),
+            Some("https://github.com/owner/repo/pull/7".into())
+        );
+    }
+
+    #[test]
+    fn test_extract_pr_url_in_angle_brackets() {
+        // Some terminals/tools wrap URLs in angle brackets
+        let output = "PR created: <https://github.com/owner/repo/pull/10>\n";
+        assert_eq!(
+            extract_pr_url(output),
+            Some("https://github.com/owner/repo/pull/10".into())
+        );
+    }
+
+    #[test]
+    fn test_extract_pr_url_in_parentheses() {
+        let output = "See PR (https://github.com/owner/repo/pull/3)\n";
+        assert_eq!(
+            extract_pr_url(output),
+            Some("https://github.com/owner/repo/pull/3".into())
+        );
+    }
+
+    #[test]
+    fn test_extract_pr_url_empty() {
+        assert_eq!(extract_pr_url(""), None);
+    }
+
+    // -- Branch edge cases --
+
+    #[test]
+    fn test_extract_branch_with_deep_slashes() {
+        let output = "remote: Create a pull request for 'feature/deep/nested/branch' on GitHub:\n";
+        assert_eq!(
+            extract_branch(output),
+            Some("feature/deep/nested/branch".into())
+        );
+    }
+
+    #[test]
+    fn test_extract_branch_empty() {
+        assert_eq!(extract_branch(""), None);
+    }
+
+    #[test]
+    fn test_extract_branch_empty_quotes() {
+        // Edge case: empty branch name in quotes
+        let output = "remote: Create a pull request for '' on GitHub:\n";
+        assert_eq!(extract_branch(output), None);
+    }
+
+    #[test]
+    fn test_extract_branch_set_up_to_track_with_slashes() {
+        let output =
+            "Branch 'feature/auth/oauth2' set up to track remote branch 'feature/auth/oauth2'.\n";
+        assert_eq!(extract_branch(output), Some("feature/auth/oauth2".into()));
+    }
+
+    // -- Rate limit edge cases --
+
+    #[test]
+    fn test_detect_rate_limit_429_in_url_is_false_positive() {
+        // Known limitation: "429" in a URL will trigger a false positive
+        let output = "See https://github.com/owner/repo/issues/429 for details\n";
+        // This IS detected as rate limit — documenting the false positive
+        let result = detect_rate_limit(output);
+        assert_eq!(result, Some("Rate limited (429)".into()));
+    }
+
+    #[test]
+    fn test_detect_rate_limit_mixed_case() {
+        let output = "Too Many Requests - slow down\n";
+        let result = detect_rate_limit(output);
+        assert_eq!(result, Some("Rate limited: too many requests".into()));
+    }
+
+    #[test]
+    fn test_detect_rate_limit_overloaded_uppercase() {
+        let output = "SERVICE OVERLOADED\n";
+        let result = detect_rate_limit(output);
+        assert_eq!(result, Some("Rate limited: overloaded".into()));
+    }
+
+    // -- strip_ansi edge cases --
+
+    #[test]
+    fn test_strip_ansi_non_csi_sequence() {
+        // ESC followed by non-'[' character (like OSC: ESC])
+        // The code skips ESC and the next char, then passes through the rest
+        let input = "\x1b]some title\x07normal text";
+        let result = strip_ansi(input);
+        // ESC consumed, then next char ']' consumed (non-'[' path),
+        // remaining "some title\x07normal text" passes through
+        assert_eq!(result, "some title\x07normal text");
+    }
+
+    #[test]
+    fn test_strip_ansi_esc_at_end() {
+        // ESC at the very end of string
+        let input = "hello\x1b";
+        let result = strip_ansi(input);
+        // ESC consumed, then chars.next() returns None, so nothing more consumed
+        assert_eq!(result, "hello");
+    }
+
+    // -- find_url_with_path edge cases --
+
+    #[test]
+    fn test_find_url_multiple_urls_on_same_line() {
+        let line = "Old: https://github.com/a/b/issues/1 New: https://github.com/a/b/pull/2";
+        let url = find_url_with_path(line, "github.com", "/pull/");
+        assert_eq!(url, Some("https://github.com/a/b/pull/2".into()));
+    }
+
+    #[test]
+    fn test_find_url_in_square_brackets() {
+        let line = "[https://github.com/a/b/pull/3]";
+        let url = find_url_with_path(line, "github.com", "/pull/");
+        assert_eq!(url, Some("https://github.com/a/b/pull/3".into()));
+    }
 }

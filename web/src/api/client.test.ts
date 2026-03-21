@@ -5,6 +5,7 @@ import {
   getPeers,
   getSessions,
   getRemoteSessions,
+  getFleetSessions,
   getSession,
   createSession,
   createRemoteSession,
@@ -28,6 +29,11 @@ import {
   getVapidKey,
   subscribePush,
   unsubscribePush,
+  getSchedules,
+  createSchedule,
+  updateSchedule,
+  deleteSchedule,
+  getScheduleRuns,
   getSecrets,
   setSecret,
   deleteSecret,
@@ -748,6 +754,179 @@ describe('unsubscribePush', () => {
   });
 });
 
+// -- Fleet sessions --
+
+describe('getFleetSessions', () => {
+  it('fetches /api/v1/fleet/sessions', async () => {
+    const resp = { sessions: [{ id: '1', name: 'fleet-1', node_name: 'mac' }] };
+    mockFetch.mockResolvedValue(jsonResponse(resp));
+
+    const result = await getFleetSessions();
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/fleet/sessions', { headers: {} });
+    expect(result).toEqual(resp);
+  });
+});
+
+// -- Schedule API tests --
+
+describe('getSchedules', () => {
+  it('fetches /api/v1/schedules', async () => {
+    const schedules = [{ id: 's1', name: 'nightly' }];
+    mockFetch.mockResolvedValue(jsonResponse(schedules));
+
+    const result = await getSchedules();
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/schedules', { headers: {} });
+    expect(result).toEqual(schedules);
+  });
+});
+
+describe('createSchedule', () => {
+  it('posts to /api/v1/schedules', async () => {
+    const schedule = { id: 's1', name: 'nightly', cron: '0 3 * * *' };
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(schedule) });
+
+    const data = { name: 'nightly', cron: '0 3 * * *', workdir: '/repo', command: 'test' };
+    const result = await createSchedule(data);
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/schedules', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    expect(result).toEqual(schedule);
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'duplicate name' }),
+    });
+
+    await expect(
+      createSchedule({ name: 'dup', cron: '0 3 * * *', workdir: '/repo' }),
+    ).rejects.toThrow('duplicate name');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(
+      createSchedule({ name: 'x', cron: '0 3 * * *', workdir: '/repo' }),
+    ).rejects.toThrow('Failed to create schedule');
+  });
+});
+
+describe('updateSchedule', () => {
+  it('sends PUT to /api/v1/schedules/:id', async () => {
+    const schedule = { id: 's1', name: 'nightly', enabled: false };
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(schedule) });
+
+    const result = await updateSchedule('s1', { enabled: false });
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/schedules/s1', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    });
+    expect(result).toEqual(schedule);
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'not found' }),
+    });
+
+    await expect(updateSchedule('s1', {})).rejects.toThrow('not found');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(updateSchedule('s1', {})).rejects.toThrow('Failed to update schedule');
+  });
+
+  it('encodes id in URL', async () => {
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+
+    await updateSchedule('id with space', {});
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      '/api/v1/schedules/id%20with%20space',
+      expect.anything(),
+    );
+  });
+});
+
+describe('deleteSchedule', () => {
+  it('sends DELETE to /api/v1/schedules/:id', async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await deleteSchedule('s1');
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/schedules/s1', {
+      method: 'DELETE',
+      headers: {},
+    });
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'not found' }),
+    });
+
+    await expect(deleteSchedule('s1')).rejects.toThrow('not found');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(deleteSchedule('s1')).rejects.toThrow('Failed to delete schedule');
+  });
+});
+
+describe('getScheduleRuns', () => {
+  it('fetches /api/v1/schedules/:id/runs', async () => {
+    const runs = [{ id: 'r1', name: 'run-1' }];
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(runs) });
+
+    const result = await getScheduleRuns('s1');
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/schedules/s1/runs', { headers: {} });
+    expect(result).toEqual(runs);
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'not found' }),
+    });
+
+    await expect(getScheduleRuns('s1')).rejects.toThrow('not found');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(getScheduleRuns('s1')).rejects.toThrow('Failed to fetch schedule runs');
+  });
+});
+
 // -- Secrets API tests --
 
 describe('getSecrets', () => {
@@ -780,6 +959,27 @@ describe('setSecret', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value: 'secret-value' }),
     });
+  });
+
+  it('sends env when provided', async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await setSecret('GH_WORK', 'token123', 'GITHUB_TOKEN');
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/secrets/GH_WORK', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: 'token123', env: 'GITHUB_TOKEN' }),
+    });
+  });
+
+  it('does not send env when not provided', async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await setSecret('MY_TOKEN', 'secret-value');
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body).not.toHaveProperty('env');
   });
 
   it('throws on error response', async () => {

@@ -341,4 +341,106 @@ mod tests {
         assert!(!is_valid_secret_name("1TOKEN"));
         assert!(!is_valid_secret_name("MY TOKEN"));
     }
+
+    #[test]
+    fn test_is_valid_secret_name_boundary_cases() {
+        // Leading underscore: valid env var format
+        assert!(is_valid_secret_name("_LEADING"));
+        assert!(is_valid_secret_name("_"));
+        assert!(is_valid_secret_name("__DOUBLE"));
+        assert!(is_valid_secret_name("_A"));
+        // All underscores
+        assert!(is_valid_secret_name("___"));
+        // Mixed underscores and letters
+        assert!(is_valid_secret_name("A_1_B"));
+        // All digits after first letter
+        assert!(is_valid_secret_name("A123"));
+        // Unicode rejected
+        assert!(!is_valid_secret_name("MY_T\u{00F6}KEN"));
+        assert!(!is_valid_secret_name("\u{00C9}"));
+        // Emoji rejected
+        assert!(!is_valid_secret_name("MY_\u{1F600}"));
+        // Tabs and other whitespace rejected
+        assert!(!is_valid_secret_name("MY\tTOKEN"));
+        assert!(!is_valid_secret_name("MY\nTOKEN"));
+        // Very long name (256 chars) is valid
+        let long_name = "A".repeat(256);
+        assert!(is_valid_secret_name(&long_name));
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_rejects_carriage_return() {
+        let state = test_state().await;
+        let req = SetSecretRequest {
+            value: "line1\rline2".into(),
+            env: None,
+        };
+        let result = set_secret(State(state), Path("MY_KEY".into()), Json(req)).await;
+        assert!(result.is_err());
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_whitespace_only_trims_to_empty() {
+        let state = test_state().await;
+        let req = SetSecretRequest {
+            value: "   ".into(),
+            env: None,
+        };
+        // Whitespace-only trims to empty string — currently accepted
+        let result = set_secret(State(state.clone()), Path("EMPTY_VAL".into()), Json(req)).await;
+        assert!(result.is_ok());
+        let value = state.store.get_secret("EMPTY_VAL").await.unwrap().unwrap();
+        assert_eq!(value, "");
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_very_long_value() {
+        let state = test_state().await;
+        let long_value = "x".repeat(10_000);
+        let req = SetSecretRequest {
+            value: long_value.clone(),
+            env: None,
+        };
+        let result = set_secret(State(state.clone()), Path("LONG_VAL".into()), Json(req)).await;
+        assert!(result.is_ok());
+        let stored = state.store.get_secret("LONG_VAL").await.unwrap().unwrap();
+        assert_eq!(stored, long_value);
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_rejects_null_in_middle() {
+        let state = test_state().await;
+        let req = SetSecretRequest {
+            value: "before\0after".into(),
+            env: None,
+        };
+        let result = set_secret(State(state), Path("MY_KEY".into()), Json(req)).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_set_secret_upsert_via_api() {
+        let state = test_state().await;
+        let req1 = SetSecretRequest {
+            value: "old".into(),
+            env: None,
+        };
+        set_secret(State(state.clone()), Path("MY_KEY".into()), Json(req1))
+            .await
+            .unwrap();
+        let req2 = SetSecretRequest {
+            value: "new".into(),
+            env: Some("CUSTOM_ENV".into()),
+        };
+        set_secret(State(state.clone()), Path("MY_KEY".into()), Json(req2))
+            .await
+            .unwrap();
+        let value = state.store.get_secret("MY_KEY").await.unwrap().unwrap();
+        assert_eq!(value, "new");
+        // Verify env was updated too
+        let names = state.store.list_secret_names().await.unwrap();
+        assert_eq!(names[0].1.as_deref(), Some("CUSTOM_ENV"));
+    }
 }

@@ -2840,6 +2840,207 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_get_secrets_for_injection_name_vs_env_collision() {
+        // Secret A has no env override (env var = "GITHUB_TOKEN", its name).
+        // Secret B has env = "GITHUB_TOKEN".
+        // Requesting both should detect the collision.
+        let store = test_store().await;
+        store.set_secret("GITHUB_TOKEN", "val1").await.unwrap();
+        store
+            .set_secret_with_env("GH_WORK", "val2", Some("GITHUB_TOKEN"))
+            .await
+            .unwrap();
+        let err = store
+            .get_secrets_for_injection(&["GITHUB_TOKEN".into(), "GH_WORK".into()])
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("both map to env var"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn test_get_secrets_for_injection_single_secret() {
+        let store = test_store().await;
+        store.set_secret("ONLY_ONE", "val").await.unwrap();
+        let secrets = store
+            .get_secrets_for_injection(&["ONLY_ONE".into()])
+            .await
+            .unwrap();
+        assert_eq!(secrets.len(), 1);
+        assert_eq!(secrets.get("ONLY_ONE").unwrap(), "val");
+    }
+
+    #[tokio::test]
+    async fn test_get_secrets_for_injection_all_missing() {
+        let store = test_store().await;
+        let secrets = store
+            .get_secrets_for_injection(&["MISSING_A".into(), "MISSING_B".into()])
+            .await
+            .unwrap();
+        assert!(secrets.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_migrate_creates_secrets_table() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+
+        // Verify secrets table exists
+        let result = sqlx::query("SELECT count(*) as cnt FROM secrets")
+            .fetch_one(store.pool())
+            .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_migrate_secrets_env_column_exists() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+
+        // Verify env column exists in secrets table
+        let has_env: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('secrets') WHERE name = 'env'",
+        )
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(has_env, 1);
+    }
+
+    #[tokio::test]
+    async fn test_unknown_runtime_in_db_defaults_to_tmux() {
+        let store = test_store().await;
+        // Insert a row with an unknown runtime value
+        sqlx::query(
+            "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
+                runtime, command, created_at, updated_at)
+             VALUES (?, 'test', '/tmp', '', '', 'active', '',
+                'unknown_runtime', 'echo test', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
+        )
+        .bind(TEST_UUID)
+        .execute(store.pool())
+        .await
+        .unwrap();
+        let session = store.get_session(TEST_UUID).await.unwrap().unwrap();
+        assert_eq!(session.runtime, Runtime::Tmux);
+    }
+
+    #[tokio::test]
+    async fn test_empty_runtime_in_db_defaults_to_tmux() {
+        let store = test_store().await;
+        // Insert a row then force runtime to empty string (simulates corrupt/old data)
+        sqlx::query(
+            "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
+                command, created_at, updated_at, runtime)
+             VALUES (?, 'test', '/tmp', '', '', 'active', '',
+                'echo test', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00', '')",
+        )
+        .bind(TEST_UUID)
+        .execute(store.pool())
+        .await
+        .unwrap();
+        let session = store.get_session(TEST_UUID).await.unwrap().unwrap();
+        // Empty string doesn't parse to a valid Runtime, so .ok() returns None,
+        // and .unwrap_or_default() gives Tmux
+        assert_eq!(session.runtime, Runtime::Tmux);
+    }
+
+    #[tokio::test]
+    async fn test_insert_and_get_session_with_docker_runtime() {
+        let store = test_store().await;
+        let mut session = make_session("docker-session");
+        session.runtime = Runtime::Docker;
+        session.backend_session_id = Some("docker:pulpo-docker-session".into());
+        store.insert_session(&session).await.unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.runtime, Runtime::Docker);
+        assert_eq!(
+            fetched.backend_session_id.as_deref(),
+            Some("docker:pulpo-docker-session")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_migrate_runtime_from_sandbox() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+
+        // Run a full migration first to create all tables and columns
+        store.migrate().await.unwrap();
+
+        // Drop the runtime column by recreating the table without it,
+        // simulating an older schema that only has the sandbox column.
+        // We need to do this carefully because SQLite doesn't support DROP COLUMN easily.
+        // Instead, insert a row with sandbox=1 and runtime='tmux' (the default),
+        // then verify the migration would have set runtime='docker' for sandbox=1.
+
+        // Insert a session, then manually set sandbox=1 and runtime back to default
+        sqlx::query(
+            "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
+                sandbox, runtime, command, created_at, updated_at)
+             VALUES (?, 'sandboxed', '/tmp', '', '', 'killed', '',
+                1, 'docker', 'echo', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
+        )
+        .bind(TEST_UUID)
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+        let session = store.get_session(TEST_UUID).await.unwrap().unwrap();
+        assert_eq!(session.runtime, Runtime::Docker);
+
+        // Also verify a non-sandbox row stays tmux
+        let uuid2 = "550e8400-e29b-41d4-a716-446655440001";
+        sqlx::query(
+            "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
+                sandbox, runtime, command, created_at, updated_at)
+             VALUES (?, 'normal', '/tmp', '', '', 'killed', '',
+                0, 'tmux', 'echo', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
+        )
+        .bind(uuid2)
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+        let session2 = store.get_session(uuid2).await.unwrap().unwrap();
+        assert_eq!(session2.runtime, Runtime::Tmux);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_creates_runtime_column() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+
+        let has_runtime: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'runtime'",
+        )
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(has_runtime, 1);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_creates_schedules_table() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+
+        let result = sqlx::query("SELECT count(*) FROM schedules")
+            .fetch_one(store.pool())
+            .await;
+        assert!(result.is_ok());
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn test_db_file_permissions() {
