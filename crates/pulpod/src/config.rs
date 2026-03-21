@@ -30,18 +30,31 @@ pub struct DockerConfig {
     /// Docker image for container sessions.
     #[serde(default = "default_docker_image")]
     pub image: String,
+    /// Volume mounts for Docker containers (host:container:mode format).
+    /// Default includes agent auth directories (Claude, Codex, Gemini) as read-only.
+    #[serde(default = "default_docker_volumes")]
+    pub volumes: Vec<String>,
 }
 
 impl Default for DockerConfig {
     fn default() -> Self {
         Self {
             image: default_docker_image(),
+            volumes: default_docker_volumes(),
         }
     }
 }
 
 fn default_docker_image() -> String {
     "ubuntu:latest".into()
+}
+
+fn default_docker_volumes() -> Vec<String> {
+    vec![
+        "~/.claude:/root/.claude:ro".to_owned(),
+        "~/.codex:/root/.codex:ro".to_owned(),
+        "~/.gemini:/root/.gemini:ro".to_owned(),
+    ]
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -2421,5 +2434,116 @@ port = 7433
     #[test]
     fn test_default_docker_image_fn() {
         assert_eq!(default_docker_image(), "ubuntu:latest");
+    }
+
+    #[test]
+    fn test_default_docker_volumes() {
+        let volumes = default_docker_volumes();
+        assert_eq!(volumes.len(), 3);
+        assert_eq!(volumes[0], "~/.claude:/root/.claude:ro");
+        assert_eq!(volumes[1], "~/.codex:/root/.codex:ro");
+        assert_eq!(volumes[2], "~/.gemini:/root/.gemini:ro");
+    }
+
+    #[test]
+    fn test_docker_config_default_has_volumes() {
+        let config = DockerConfig::default();
+        assert_eq!(config.volumes.len(), 3);
+        assert!(config.volumes[0].contains(".claude"));
+    }
+
+    #[test]
+    fn test_load_config_with_custom_docker_volumes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[docker]
+image = "my-image:v1"
+volumes = [
+    "~/.ssh:/root/.ssh:ro",
+    "~/.gitconfig:/root/.gitconfig:ro",
+]
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(config.docker.image, "my-image:v1");
+        assert_eq!(config.docker.volumes.len(), 2);
+        assert_eq!(config.docker.volumes[0], "~/.ssh:/root/.ssh:ro");
+        assert_eq!(config.docker.volumes[1], "~/.gitconfig:/root/.gitconfig:ro");
+    }
+
+    #[test]
+    fn test_load_config_with_empty_docker_volumes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[docker]
+volumes = []
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert!(config.docker.volumes.is_empty());
+    }
+
+    #[test]
+    fn test_load_config_without_docker_volumes_uses_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[docker]
+image = "my-image:v1"
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(config.docker.volumes.len(), 3);
+        assert!(config.docker.volumes[0].contains(".claude"));
+    }
+
+    #[test]
+    fn test_docker_volumes_save_roundtrip() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig::default(),
+            docker: DockerConfig {
+                image: "my-image:v1".into(),
+                volumes: vec!["~/.ssh:/root/.ssh:ro".into()],
+            },
+        };
+        save(&config, &path).unwrap();
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.docker.volumes.len(), 1);
+        assert_eq!(loaded.docker.volumes[0], "~/.ssh:/root/.ssh:ro");
     }
 }

@@ -145,6 +145,65 @@ pulpo --node mac-mini secret delete GITHUB_TOKEN
 
 All endpoints require authentication (inside the auth middleware).
 
+## Docker Authentication
+
+Docker sessions automatically mount agent authentication directories into containers. This allows agents running inside Docker to authenticate without manual token setup.
+
+### Default Volume Mounts
+
+By default, these directories are mounted read-only into every Docker container:
+
+| Host Path | Container Path | Description |
+|-----------|---------------|-------------|
+| `~/.claude` | `/root/.claude` | Claude Code auth and settings |
+| `~/.codex` | `/root/.codex` | OpenAI Codex auth |
+| `~/.gemini` | `/root/.gemini` | Google Gemini auth |
+
+Volumes are mounted as **read-only** (`:ro`) -- agents can read tokens but cannot modify your local credentials.
+
+If a host directory does not exist (e.g., you do not have Codex installed), that mount is silently skipped.
+
+### macOS Keychain Extraction (Claude Code)
+
+On macOS, Claude Code stores OAuth credentials in the system Keychain rather than on disk. When Docker sessions are created, pulpod automatically:
+
+1. Checks if `~/.claude/.credentials.json` exists on disk
+2. If not, extracts credentials from the macOS Keychain (`security find-generic-password -s "Claude Code-credentials" -w`)
+3. Writes the credentials to a temp file in `~/.pulpo/data/docker-creds/`
+4. Mounts that file as `/root/.claude/.credentials.json:ro` inside the container
+
+This is fully automatic -- no configuration needed.
+
+### Customizing Volume Mounts
+
+Override the default volumes in `config.toml`:
+
+```toml
+[docker]
+# Replace defaults with custom mounts
+volumes = [
+    "~/.claude:/root/.claude:ro",
+    "~/.codex:/root/.codex:ro",
+    "~/.gemini:/root/.gemini:ro",
+    # Add git/ssh access (use with caution -- grants container access to your keys)
+    # "~/.ssh:/root/.ssh:ro",
+    # "~/.gitconfig:/root/.gitconfig:ro",
+]
+```
+
+Set `volumes = []` to disable all default mounts.
+
+### Alternative: Environment Variable Tokens
+
+Instead of mounting auth directories, you can pass tokens via secrets:
+
+```bash
+pulpo secret set CLAUDE_TOKEN sk-ant-xxxx --env CLAUDE_CODE_OAUTH_TOKEN
+pulpo spawn my-task --runtime docker --secret CLAUDE_TOKEN -- claude -p "review code"
+```
+
+See [Secrets](#injecting-secrets-into-sessions) for details.
+
 ## Known Limitations
 
 - **Docker resume**: When a Docker session is resumed, the container is recreated without the original secrets. The secret names are not stored on the session itself, so they cannot be re-injected. tmux sessions do not have this limitation because secrets are baked into the wrapped command string.

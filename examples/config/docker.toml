@@ -14,3 +14,19 @@ image = "ubuntu:latest"
 
 # Example: GPU-enabled image for ML workloads
 # image = "nvidia/cuda:12.0-devel-ubuntu22.04"
+
+# Volume mounts for Docker containers (host:container:mode format).
+# Default mounts agent auth directories as read-only.
+# Nonexistent host paths are silently skipped.
+# On macOS, Claude Keychain credentials are auto-extracted if needed.
+volumes = [
+    "~/.claude:/root/.claude:ro",
+    "~/.codex:/root/.codex:ro",
+    "~/.gemini:/root/.gemini:ro",
+    # Uncomment to give containers git/ssh access (security risk!):
+    # "~/.ssh:/root/.ssh:ro",
+    # "~/.gitconfig:/root/.gitconfig:ro",
+]
+
+# Set to [] to disable all default volume mounts:
+# volumes = []

@@ -255,6 +255,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         {
             Some(Arc::new(backend::docker::DockerBackend::new(
                 &config.docker.image,
+                config.docker.volumes.clone(),
             )))
         }
         #[cfg(coverage)]
