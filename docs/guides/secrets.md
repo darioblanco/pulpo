@@ -66,8 +66,13 @@ pulpo spawn my-task --secret GH_WORK -- claude -p "review PRs"
 ```
 
 When injected:
-- **tmux sessions**: Secrets are exported as `export KEY='VALUE'` statements inside the `bash -l -c '...'` wrapper. They are baked into the command string, so they persist across resume.
-- **Docker sessions**: Secrets should be passed as `-e KEY=VALUE` flags (future enhancement). Currently only tmux injection is fully supported.
+- **tmux sessions**: Secrets are written to a temporary file (`/tmp/pulpo-secrets-<session-id>.sh`) with `0600` permissions. The session command sources and immediately deletes it — secret values never appear in the command string, `ps` output, or session logs.
+- **Docker sessions**: Secrets are passed as `-e KEY=VALUE` flags to `docker run`.
+
+### Validation rules
+
+- Secret values must **not contain newlines or null bytes** (rejected with 400 error)
+- If two `--secret` flags resolve to the **same env var** (e.g., both map to `GITHUB_TOKEN` via `--env`), spawn fails with a clear error — use only one
 
 ## Inks with Secrets and Runtime
 
@@ -133,7 +138,8 @@ pulpo --node mac-mini secret delete GITHUB_TOKEN
 - **File permissions**: Database file is set to mode `0600` (owner read/write only) on Unix systems
 - **API exposure**: The REST API never returns secret values. `GET /api/v1/secrets` returns only names, env mappings, and creation timestamps. `PUT /api/v1/secrets/{name}` accepts a value but never echoes it back
 - **Web UI**: The settings page shows secret names and env mappings but never fetches or displays values. The input field for adding secrets uses `type="password"` with a show/hide toggle
-- **Injection**: For tmux, secrets are baked into the shell command string (visible in `ps` output). For sensitive environments, consider Docker runtime which isolates the process.
+- **Injection (tmux)**: Secrets are written to a temp file with `0600` permissions, sourced by the shell, and immediately deleted. Secret values never appear in `ps` output, command strings, or session logs.
+- **Injection (Docker)**: Secrets are passed as `-e` flags to `docker run`. They're visible in `docker inspect` but not in pulpo's session logs.
 
 ## API Endpoints
 
@@ -206,5 +212,6 @@ See [Secrets](#injecting-secrets-into-sessions) for details.
 
 ## Known Limitations
 
-- **Docker resume**: When a Docker session is resumed, the container is recreated without the original secrets. The secret names are not stored on the session itself, so they cannot be re-injected. tmux sessions do not have this limitation because secrets are baked into the wrapped command string.
-- **`ps` visibility**: On tmux, exported secrets are visible in `ps` output as part of the shell command. Use Docker runtime for stronger isolation.
+- **Docker resume**: When a Docker session is resumed, the container is recreated without the original secrets. The secret names are not stored on the session itself, so they cannot be re-injected. tmux sessions are not affected because the secrets temp file is sourced at session start.
+- **tmux resume**: Secrets are sourced from a temp file that is deleted after the first session start. Resumed tmux sessions do not re-inject secrets — the running shell already has them in its environment from the original start.
+- **Env var collision**: If two secrets in a `--secret` list map to the same env var (via `--env`), spawn is rejected. Use only one secret per env var per session.
