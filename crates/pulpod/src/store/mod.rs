@@ -729,10 +729,12 @@ impl Store {
         schedule_name: &str,
         limit: usize,
     ) -> Result<Vec<Session>> {
-        let prefix = format!("{schedule_name}-%");
+        // Escape SQL LIKE wildcards in the schedule name to prevent unintended matches
+        let escaped = schedule_name.replace('%', "\\%").replace('_', "\\_");
+        let prefix = format!("{escaped}-%");
         let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
         let rows = sqlx::query(
-            "SELECT * FROM sessions WHERE name LIKE ? ORDER BY created_at DESC LIMIT ?",
+            "SELECT * FROM sessions WHERE name LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT ?",
         )
         .bind(&prefix)
         .bind(limit_i64)
