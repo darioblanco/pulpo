@@ -83,6 +83,8 @@ sha2 = "0.10"
 hex = "0.4"
 p256 = "0.13"
 web-push = "0.11"
+# Vendored OpenSSL for Windows builds (web-push depends on openssl via isahc/curl)
+openssl = { version = "0.10", features = ["vendored"] }
 
 # Service discovery
 mdns-sd = "0.18"
