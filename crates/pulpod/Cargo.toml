@@ -56,6 +56,7 @@ sha2.workspace = true
 hex.workspace = true
 p256.workspace = true
 web-push.workspace = true
+openssl.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 pty-process.workspace = true
