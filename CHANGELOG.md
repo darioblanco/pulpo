@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.0.27](https://github.com/darioblanco/pulpo/compare/v0.0.26...v0.0.27) (2026-03-21)
+
+
+### Features
+
+* detect PR URLs and branch names from agent output ([f2bd9ca](https://github.com/darioblanco/pulpo/commit/f2bd9cae93e62888b2c2f4139095b13d0beadff0))
+* Docker volume mounts for agent auth + macOS Keychain extraction ([73cb2bc](https://github.com/darioblanco/pulpo/commit/73cb2bc71918bcaf477248361e08864fb3e86634))
+* inks support secrets and runtime fields ([1deb3d6](https://github.com/darioblanco/pulpo/commit/1deb3d629e2950501b41e1091464a90ad98e65bd))
+* schedule dashboard with create/edit dialog and cron utilities ([6fc952b](https://github.com/darioblanco/pulpo/commit/6fc952b60afd05092f90187cf4aff863fdba82d3))
+* schedule run history — API endpoint and expandable UI panel ([172582b](https://github.com/darioblanco/pulpo/commit/172582b458903ef16ff1f66ba9be6ec845515a29))
+* secret env override and session injection via --secret flag ([55e9001](https://github.com/darioblanco/pulpo/commit/55e9001ad1c43de79ea84ee01b1519cbecb02e19))
+* secret store for session environment variables ([9987444](https://github.com/darioblanco/pulpo/commit/998744431ce58670fa44d5aadf3ee57fdba7cb37))
+* Windows support — Docker-only sessions, release pipeline ([1959e24](https://github.com/darioblanco/pulpo/commit/1959e2417b7e33bde483037805834a66a6b6e900))
+* worktree branch names, cleanup logging, and documentation ([4b59596](https://github.com/darioblanco/pulpo/commit/4b59596c0a01d656069e45e5641f04d74a91f873))
+* worktree UI indicators and improved workdir validation ([bf13fae](https://github.com/darioblanco/pulpo/commit/bf13fae5860246a5f569a538ec6e2b88a9015481))
+
+
+### Bug Fixes
+
+* CI clippy errors + update ROADMAP with shipped features ([3e53490](https://github.com/darioblanco/pulpo/commit/3e53490774ac6a890990837096a35f7516be2942))
+* CLI no-args spawning, resume self-collision, wrap_command quoting, and ls UX ([ea2c2b6](https://github.com/darioblanco/pulpo/commit/ea2c2b6f92b875b204ce2d036d42493d4558c60a))
+* detect instantly-dying sessions before attach on spawn/resume ([8180f33](https://github.com/darioblanco/pulpo/commit/8180f33ed92d9c002eff1231f35ecabdf9398a77))
+* Docker attach support and update --sandbox → --runtime docs ([9742216](https://github.com/darioblanco/pulpo/commit/974221633f556f831122e591291c2cf4617d23e5))
+* error on duplicate env var when injecting multiple secrets ([842eea0](https://github.com/darioblanco/pulpo/commit/842eea05b29b1c1bc34aa5de528bcb551246d655))
+* escape SQL wildcards in schedule run history LIKE query ([205b859](https://github.com/darioblanco/pulpo/commit/205b859d32138488b7fd3933c38a3b6cd6f9db71))
+* get_session prefers live sessions over terminal ones ([48146ce](https://github.com/darioblanco/pulpo/commit/48146ce1970189870b034b95dbbcbc89a2f2ae5b))
+* poll session liveness with retries instead of single 500ms sleep ([99ce1f0](https://github.com/darioblanco/pulpo/commit/99ce1f0f569b5837ad386805e6b9a09faa0855b9))
+* reject secret values containing newlines or null bytes ([7b76663](https://github.com/darioblanco/pulpo/commit/7b76663a0c7b0667f915e1ef83320b61283659e1))
+* show worktree info message when spawning with --worktree ([d60f37d](https://github.com/darioblanco/pulpo/commit/d60f37dfc61d2e1fbe395a067fd6850de4cad851))
+* suppress coverage-gated unused import warnings ([eb5ebe2](https://github.com/darioblanco/pulpo/commit/eb5ebe2cc81a30f02291da6fa7ed74b769c86cfb))
+* validate workdir exists before spawn/resume (tmux only) ([b8e67c7](https://github.com/darioblanco/pulpo/commit/b8e67c76815427d450e35093f7c9771682596ac8))
+
 ## [0.0.26](https://github.com/darioblanco/pulpo/compare/v0.0.25...v0.0.26) (2026-03-18)
 
 
