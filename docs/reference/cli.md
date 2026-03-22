@@ -3,13 +3,14 @@
 ## Commands
 
 ```text
-pulpo spawn <NAME> [OPTIONS] [-- <COMMAND...>]  Spawn a new session (auto-attaches)
+pulpo spawn [NAME] [OPTIONS] [-- <COMMAND...>]  Spawn a new session (auto-attaches)
 pulpo list                                List sessions (alias: ls)
 pulpo logs <NAME> [--follow]              Show session output
-pulpo attach <NAME>                       Attach to tmux session
+pulpo attach <NAME>                       Attach to a session terminal
 pulpo input <NAME> [TEXT]                 Send text input to a session
 pulpo kill <NAME>                         Kill a running session
 pulpo delete <NAME>                       Delete session record (alias: rm)
+pulpo cleanup                             Remove all killed and lost sessions
 pulpo resume <NAME>                       Resume a lost or ready session (auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions
 pulpo nodes                               List known nodes/peers
@@ -20,13 +21,13 @@ pulpo ui                                  Open web UI in browser
 
 ## Spawn Options
 
-The first positional argument is the session **name** (required). Everything after `--` is the **command** to run in the tmux session.
+The first positional argument is the session **name** (optional). Everything after `--` is the **command** to run in the session.
 
 ```bash
 pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests"
 ```
 
-By default, `spawn` auto-attaches to the tmux session. Use `--detach` / `-d` to skip attachment (useful in scripts and the web UI).
+By default, `spawn` auto-attaches to the session. Use `--detach` / `-d` to skip attachment (useful in scripts and the web UI).
 
 | Flag | Description |
 |------|-------------|
@@ -38,17 +39,21 @@ By default, `spawn` auto-attaches to the tmux session. Use `--detach` / `-d` to 
 | `--worktree` | Create an isolated git worktree for the session |
 | `--runtime <RUNTIME>` | Session runtime: `tmux` (default) or `docker` |
 | `--auto` | Auto-select the least loaded node |
+| `--secret <NAME>` | Inject a stored secret as an environment variable |
+
+If no name is provided, Pulpo derives one from the workdir/path context. If no command is provided, Pulpo falls back to the ink command, `node.default_command`, or finally `$SHELL`.
 
 The command is whatever you want to run — any agent CLI, script, or shell command. If `--ink` is specified and no command is given after `--`, the ink's command is used.
 
 ## Schedule Subcommands
 
 ```text
-pulpo schedule install <CRON> [SPAWN_ARGS]   Install a cron job
-pulpo schedule list                           List installed jobs
-pulpo schedule pause <ID>                     Pause a job
-pulpo schedule resume <ID>                    Resume a paused job
-pulpo schedule remove <ID>                    Remove a job
+pulpo schedule add <NAME> <CRON> [OPTIONS] [-- <COMMAND...>]   Add a cron job
+pulpo schedule install <NAME> <CRON> [OPTIONS] [-- <COMMAND...>]   Alias for add
+pulpo schedule list                                             List installed jobs
+pulpo schedule pause <ID>                                       Pause a job
+pulpo schedule resume <ID>                                      Resume a paused job
+pulpo schedule remove <ID>                                      Remove a job
 ```
 
 ## Secret Subcommands

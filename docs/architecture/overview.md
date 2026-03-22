@@ -1,8 +1,34 @@
 # Architecture Overview
 
-Pulpo is an agent session runtime — it runs coding agents in tmux sessions or Docker containers, with lifecycle management, crash recovery, watchdog supervision, and multi-node operations. Designed for coding agents but flexible enough for any long-running terminal work.
+Pulpo is an agent session runtime. The shortest accurate description is:
 
-**What makes it unique**: No other tool combines multi-node session orchestration with agent-aware lifecycle management and dual backends (tmux + Docker runtime). tmuxinator manages layouts, overmind runs Procfiles, cmux wraps Claude — Pulpo is the infrastructure layer that makes any session durable, observable, and manageable across machines.
+- `pulpod` runs and tracks sessions
+- each session is a command plus durable state
+- sessions run on a backend: `tmux` or `docker`
+- the watchdog drives lifecycle transitions and interventions
+
+Everything else in the project exists to operate that core more conveniently.
+
+## Start Here
+
+If you only remember one mental model, use this:
+
+```text
+command -> session -> backend -> lifecycle -> control surfaces
+```
+
+- You provide a **command**
+- Pulpo creates a managed **session**
+- The session runs on a **backend**
+- The watchdog and liveness checks maintain the **lifecycle**
+- CLI, web UI, API, scheduler, and fleet features are **control surfaces**
+
+This separation matters because Pulpo is not:
+
+- an agent framework
+- a prompt library
+- a workflow orchestrator
+- a special wrapper around one model vendor
 
 ## Components
 
@@ -20,10 +46,57 @@ Pulpo is an agent session runtime — it runs coding agents in tmux sessions or 
      └────────┘           └────────┘
 ```
 
-- **`pulpod`** — daemon runtime. Axum HTTP server, session manager, watchdog, peer discovery. Embeds the web UI via `rust-embed`.
-- **`pulpo`** — CLI client. Thin HTTP client that talks to `pulpod`'s REST API.
-- **`pulpo-common`** — shared types (Session, API types) used by both crates.
-- **`web/`** — React 19 + Vite + Tailwind v4 + shadcn/ui SPA. Includes an ocean-themed dashboard with pixel art octopus sprites.
+- **`pulpod`** — the daemon. Owns session state, backends, watchdog, API, and persistence.
+- **`pulpo`** — the CLI. A thin client over the daemon API.
+- **`pulpo-common`** — shared types for sessions, nodes, peers, and API payloads.
+- **`web/`** — the embedded web UI. Useful, but conceptually a client of the daemon, not the core runtime itself.
+
+## The Core Contract
+
+The project becomes understandable once these terms are fixed:
+
+### Session
+
+A session is one managed command plus metadata:
+
+- name
+- workdir
+- command
+- runtime
+- output snapshot
+- lifecycle state
+- timestamps and intervention history
+
+### Runtime
+
+A runtime is where that command executes:
+
+- `tmux` for native long-lived terminal sessions
+- `docker` for containerized execution
+
+The lifecycle model is shared across runtimes. That is the important abstraction.
+
+### Lifecycle
+
+Sessions move through explicit states:
+
+`creating -> active <-> idle -> ready`
+
+with failure or intervention paths to:
+
+`killed` or `lost`
+
+This is the most important behavior in the system. See [Session Lifecycle](/operations/session-lifecycle) for exact transitions.
+
+### Watchdog
+
+The watchdog is the supervision loop. It is responsible for:
+
+- detecting waiting-for-input and idle sessions
+- detecting exit markers
+- enforcing ready TTL cleanup
+- recording interventions
+- adopting external tmux sessions when enabled
 
 ## Control Surfaces
 
@@ -36,13 +109,7 @@ Pulpo is an agent session runtime — it runs coding agents in tmux sessions or 
 | MCP (`pulpod mcp`) | Agent-to-agent integration via Model Context Protocol |
 | Discord bot | Remote session control from Discord |
 
-## Session Lifecycle
-
-Sessions move through explicit states with clear transitions:
-
-**Creating** → **Active** ⇄ **Idle** → **Ready** → (TTL) → **Killed**
-
-The watchdog drives transitions by monitoring terminal output, detecting agent exit markers, and enforcing memory/idle policies. See [Session Lifecycle](/operations/session-lifecycle) for the full state machine.
+These are all clients of the same session model. If one surface disappears, the core runtime is still intact.
 
 ## Command-Based Sessions
 
@@ -56,7 +123,11 @@ pulpo spawn review -- gemini "review this code"
 
 Inks provide reusable command templates (see [Configuration Guide](/guides/configuration)).
 
-## Git Worktrees
+## Operational Layers
+
+These are important features, but they sit above the core runtime rather than defining it.
+
+### Git Worktrees
 
 `--worktree` creates an isolated git worktree for each session, so multiple agents can work on the same repo without conflicts:
 
@@ -67,7 +138,7 @@ pulpo spawn perf-fix --workdir ~/repo --worktree -- codex "optimize queries"
 
 Each session gets `<repo>/.pulpo/worktrees/<session-name>/` on branch `pulpo/<session-name>`. Worktrees are cleaned up when sessions are killed or deleted.
 
-## Built-in Scheduler
+### Built-in Scheduler
 
 Cron-based schedules run inside `pulpod` (no crontab manipulation). Schedules support multi-node targeting:
 
@@ -78,7 +149,7 @@ pulpo schedule add scan "0 0 * * 0" --node auto -- claude -p "security audit"
 
 `--node auto` picks the least-loaded online peer at fire time. Schedules are visible in the web UI dashboard at `/schedules`.
 
-## Multi-Node Architecture
+### Multi-Node Architecture
 
 Pulpo nodes discover each other and present a unified view:
 
@@ -103,9 +174,11 @@ Session spawn → resolve_ink → build_command → tmux create
   SSE events → web UI / Discord / webhooks
 ```
 
-## Docker Runtime
+## Runtime Details
 
-`--runtime docker` runs sessions in Docker containers instead of tmux. The workdir is mounted at `/workspace` — the agent can read and write code but can't touch the host system.
+### Docker Runtime
+
+`--runtime docker` runs sessions in Docker containers instead of tmux. The workdir is mounted at `/workspace`, and any configured Docker volumes are mounted too.
 
 ```bash
 # Safe for unrestricted agent execution
@@ -126,16 +199,39 @@ image = "my-agents-image:latest"  # must have agent tools installed
 
 Sessions are identified by `backend_session_id` prefix: `$N` for tmux, `docker:pulpo-<name>` for Docker. The session manager dispatches to the correct backend automatically.
 
-## tmux Session Adoption
+### tmux Session Adoption
 
 Pulpo doesn't require you to use `pulpo spawn`. Start tmux however you want — `tmux new-session`, scripts, other tools — and the watchdog discovers and adopts those sessions automatically:
 
-- Classifies running agents (claude, codex, gemini) as **Active**, shells as **Ready**
+- Classifies adopted sessions into Pulpo lifecycle states
 - Captures the full command line (not just process name) for accurate resume
 - Uses tmux's internal `$N` session IDs, so killing and re-creating sessions with the same name works correctly
 - Tags adopted sessions with `PULPO_SESSION_ID` and `PULPO_SESSION_NAME` env vars
 
 This is enabled by default (`adopt_tmux = true` in watchdog config).
+
+## Stable vs Experimental
+
+The most stable part of the project is:
+
+- daemon-managed sessions
+- tmux/docker runtimes
+- lifecycle states
+- watchdog supervision
+- CLI/API/web UI access to that state
+
+Useful but more secondary:
+
+- fleet discovery
+- schedules
+- worktrees
+- secrets and notifications
+
+Experimental or convenience-oriented:
+
+- Discord bot
+- MCP server
+- themed presentation surfaces
 
 ## Backend Abstraction
 
@@ -151,12 +247,12 @@ Adding a new backend means implementing ~10 methods (`create_session`, `kill_ses
 
 ## Design Principles
 
-- **Universal agent runtime** — run agents anywhere: tmux, Docker, or future backends. Same lifecycle, same controls.
-- **Infrastructure layer, not agent intelligence** — Pulpo manages the runtime, not the prompts
-- **Command-agnostic** — same lifecycle and controls regardless of which command you run
+- **Runtime first** — the session model matters more than any one surface
+- **Infrastructure layer, not agent intelligence** — Pulpo manages execution, not prompting strategy
+- **Command-agnostic** — the same lifecycle applies regardless of command
 - **Explicit failure states** — every session is in a known, auditable state
-- **Adopts existing work** — start tmux however you want, pulpo manages it
-- **Zero-config local start** — `pulpod` runs out of the box, progressive operational depth
+- **Adopts existing work** — Pulpo can manage sessions it did not originally spawn
+- **Zero-config local start** — `pulpod` runs out of the box, with optional operational depth
 - **No unsafe code** — `forbid(unsafe_code)` workspace-wide
 
 For the full architecture spec, see [SPEC.md](https://github.com/darioblanco/pulpo/blob/main/SPEC.md).

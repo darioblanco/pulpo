@@ -39,7 +39,8 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 ## Transitions
 
 ### Creating → Active
-- **Trigger**: Backend reports tmux session is alive after spawn.
+- **Trigger**: Session creation succeeds.
+- **Detection**: After the backend creates the session successfully, Pulpo marks it Active immediately. Separate liveness checks handle later Active/Idle → Lost transitions.
 
 ### Active → Idle
 - **Trigger**: Watchdog detects output unchanged — either via known waiting patterns (immediate) or sustained unchanged output (configurable, default 60 seconds).
@@ -53,7 +54,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 
 ### Active/Idle → Ready
 - **Trigger**: Watchdog detects `[pulpo] Agent exited` marker in captured output.
-- **Detection**: Every agent command is wrapped with `echo '[pulpo] Agent exited'; exec bash`. The watchdog checks for this marker before any idle logic. The `exec bash` keeps the tmux shell alive for inspection.
+- **Detection**: Non-shell tmux commands are wrapped with an exit marker and a fallback login shell. The watchdog checks for the marker before any idle logic. The fallback shell keeps the tmux session alive for inspection.
 - **Side effects**: SSE event emitted.
 
 ### Active/Idle → Killed

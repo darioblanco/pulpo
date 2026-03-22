@@ -120,7 +120,7 @@ Git hooks live in `.githooks/` and are activated via `git config core.hooksPath 
 4. Register the route in `crates/pulpod/src/api/routes.rs`
 5. Add integration tests in `routes.rs` using `axum-test::TestServer`
 6. Add the CLI subcommand in `crates/pulpo-cli/src/lib.rs`
-7. Add the API client function in `web/src/lib/api.ts`
+7. Add the API client function in `web/src/api/client.ts`
 8. Verify `make coverage` passes before committing.
 
 ### Adding a new backend feature (tmux/Docker)
@@ -184,7 +184,7 @@ describe('api', () => {
 
 - **Error handling**: Use `anyhow::Result` for application errors, `thiserror` for library errors in `pulpo-common`.
 - **Async**: All I/O is async via `tokio`. Backend trait methods are sync (tmux commands are fast) but called from async context via `tokio::task::spawn_blocking` when needed.
-- **Naming**: Session names are kebab-case and required (first positional argument to `pulpo spawn`). tmux sessions use the session name directly. Internally, `backend_session_id` stores the tmux `$N` session ID (monotonically increasing, never reused while tmux server runs). At startup, name-based IDs are upgraded to `$N` IDs.
+- **Naming**: Session names are kebab-case. `pulpo spawn` accepts an explicit name, but can derive one when omitted. tmux sessions use the session name directly. Internally, `backend_session_id` stores the tmux `$N` session ID (monotonically increasing, never reused while tmux server runs). At startup, name-based IDs are upgraded to `$N` IDs.
 - **Database**: SQLite via `sqlx`. Migrations are inline in `store/mod.rs` for now. Use `sqlx::query!` macro for compile-time checked queries when possible.
 - **Config**: TOML config at `~/.pulpo/config.toml`. All fields have sensible defaults — pulpod runs with zero config. Key watchdog config fields: `idle_threshold_secs` (seconds of unchanged output before Active→Idle, default 60), `waiting_patterns` (extra user-defined patterns appended to the 31 built-in waiting-for-input patterns).
 - **Per-session idle**: Sessions accept `idle_threshold_secs: Option<u32>` — `None` = use global, `Some(0)` = never idle, `Some(N)` = N seconds. CLI: `pulpo spawn <name> --idle-threshold <secs>`.
@@ -248,7 +248,7 @@ pulpo/
 │       │   │   ├── status.ts     # /status — show session(s)
 │       │   │   ├── logs.ts       # /logs — recent output
 │       │   │   ├── kill.ts       # /kill — terminate session
-│       │   │   ├── resume.ts     # /resume — resume stale session
+│       │   │   ├── resume.ts     # /resume — resume lost/ready session
 │       │   │   ├── inks.ts       # /inks — list inks
 │       │   │   └── input.ts      # /input — send text to session
 │       │   ├── listeners/sse.ts  # EventSource → Discord channel messages
@@ -331,7 +331,7 @@ pulpo/
     │   │   ├── ui/               # shadcn generated components
     │   │   ├── layout/           # Sidebar, header, app shell
     │   │   ├── dashboard/        # Status summary, node/session cards, new session
-    │   │   ├── session/          # Chat view, terminal view (xterm.js)
+    │   │   ├── session/          # Chat view, terminal view (ghostty-web)
     │   │   ├── history/          # Session filter, session list
     │   │   ├── settings/         # Node, peer settings
     │   │   └── connect/          # Connect form, saved connections

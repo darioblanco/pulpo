@@ -1,5 +1,9 @@
 # Discovery Guide
 
+::: warning Scope
+Discovery is an operational layer, not the core Pulpo contract. Learn sessions, runtimes, and lifecycle first, then add discovery when you need multi-node operation.
+:::
+
 Pulpo derives the discovery method from the `bind` mode in `[node]`. No separate `[discovery]` section is needed.
 
 ## Tailscale (recommended)

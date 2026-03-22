@@ -109,7 +109,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 **Views:**
 
 - **Dashboard**: all nodes, all sessions, at a glance
-- **Session detail**: live terminal output (xterm.js), input field, metadata
+- **Session detail**: live terminal output, input field, metadata
 - **History**: session history with search/filter
 - **Ocean**: gamified canvas view with animated session octopuses and node landmarks
 - **Settings**: node config, peer management
@@ -185,7 +185,7 @@ Stored in `~/.pulpo/state.db` (SQLite):
 
 ### Output Capture
 
-The daemon periodically (every 5s) runs `tmux capture-pane` to grab the
+The daemon periodically runs `tmux capture-pane` on watchdog ticks to grab the
 current terminal content and stores it in the DB. This means:
 
 - The web UI can show recent output even without a live WebSocket connection
@@ -216,27 +216,29 @@ The session itself also stores the most recent intervention in `intervention_rea
 
 Two recovery flows cover the common failure modes:
 
-#### 1. Reboot / crash → stale → resume
+#### 1. Reboot / crash → lost → resume
 
-When `pulpod` starts, it checks SQLite for sessions that were `running` or `creating`. For each one, it looks for a matching tmux session. If the tmux session is gone (machine rebooted, tmux crashed), it marks the session **stale**.
-
-```
-Machine reboots → pulpod starts → finds session in DB → no tmux → marks STALE
-                                                                        │
-User runs: pulpo resume <name> ─────────────────────────────────────────┘
-    → creates new tmux session
-    → passes --resume <conversation-id> to the agent
-    → session goes CREATING → RUNNING (conversation context preserved)
-```
-
-`resume` **only works for stale sessions**. Dead sessions require a fresh `spawn`.
-
-#### 2. Watchdog kill → dead → manual spawn
-
-The watchdog kills a session and records an intervention. The session stays dead — the user decides whether to `spawn` a new session.
+When `pulpod` starts, it attempts to auto-resume sessions that were `active` or `idle` before the restart. If the backend session is gone and Pulpo cannot recreate it immediately, later liveness checks mark the session **lost**.
 
 ```
-Watchdog detects issue → kills session → records intervention → session is DEAD
+Machine reboots → pulpod starts → tries to auto-resume prior active/idle sessions
+                                                      │
+                                                      └─ if backend is still gone, session becomes LOST
+                                                                                          │
+User runs: pulpo resume <name> ────────────────────────────────────────────────────────────┘
+    → recreates the backend session if needed
+    → re-executes the saved command
+    → session goes to ACTIVE
+```
+
+`resume` works for `lost` and `ready` sessions. `killed` sessions require a fresh `spawn`.
+
+#### 2. Watchdog kill → killed → manual spawn
+
+The watchdog kills a session and records an intervention. The session stays `killed` — the user decides whether to `spawn` a new session.
+
+```
+Watchdog detects issue → kills session → records intervention → session is KILLED
     └─ user runs: pulpo spawn ... (fresh session)
 ```
 
@@ -255,9 +257,9 @@ Watchdog detects issue → kills session → records intervention → session is
 | Symptom                                   | Likely cause                    | Fix                                                       |
 | ----------------------------------------- | ------------------------------- | --------------------------------------------------------- |
 | Session stuck in `creating`               | tmux failed to start            | Check `tmux -V` (need 3.2+), check logs                   |
-| Session is `stale` after reboot           | Expected — tmux session is gone | `pulpo resume <name>`                                     |
-| Session is `dead`, wasn't killed          | Agent crashed or OOM            | Check `pulpo interventions <name>`, then `spawn` new      |
-| `resume` fails with "not stale"           | Session is dead, not stale      | Use `pulpo spawn` to start fresh                          |
+| Session is `lost` after reboot            | Backend session is gone         | `pulpo resume <name>`                                     |
+| Session is `killed`, wasn't manual        | Watchdog or prior failure path  | Check `pulpo interventions <name>`, then `spawn` new      |
+| `resume` fails with "cannot be resumed"   | Session is still active/idle or was killed | Use `pulpo spawn` or wait for the running session |
 | Watchdog keeps killing sessions           | Memory threshold too low        | Raise `memory_threshold` or reduce concurrent sessions    |
 | No output in `pulpo logs`                 | Session just started            | Wait, or use `--follow` to stream: `pulpo logs -f <name>` |
 
@@ -331,9 +333,9 @@ Base URL: `http://<tailscale-hostname>:7433/api/v1`
 POST   /sessions              Create a new session
 GET    /sessions              List all sessions
 GET    /sessions/:id          Get session details
-POST   /sessions/:id/kill     Kill a session (status → dead)
+POST   /sessions/:id/kill     Kill a session (status → killed)
 DELETE /sessions/:id          Permanently remove a session from history
-POST   /sessions/:id/resume   Resume a stale session
+POST   /sessions/:id/resume   Resume a lost or ready session
 POST   /sessions/:id/input    Send input to the session terminal
 GET    /sessions/:id/output   Get recent output (polling)
 WS     /sessions/:id/stream   Stream terminal output (WebSocket)
@@ -412,9 +414,9 @@ GET    /events                SSE event stream
 | `GET`    | `/sessions`                     | List all sessions              |
 | `POST`   | `/sessions`                     | Create a new session           |
 | `GET`    | `/sessions/:id`                 | Get session details            |
-| `POST`   | `/sessions/:id/kill`            | Kill a session (status → dead) |
+| `POST`   | `/sessions/:id/kill`            | Kill a session (status → killed) |
 | `DELETE` | `/sessions/:id`                 | Permanently remove a session   |
-| `POST`   | `/sessions/:id/resume`          | Resume a stale session         |
+| `POST`   | `/sessions/:id/resume`          | Resume a lost or ready session |
 | `POST`   | `/sessions/:id/input`           | Send input to the terminal     |
 | `GET`    | `/sessions/:id/output`          | Get recent output              |
 | `GET`    | `/sessions/:id/output/download` | Download full output           |
@@ -563,7 +565,7 @@ Ship the smallest useful thing first.
 
 ### Out of Scope (Phase 2+)
 
-- [x] WebSocket streaming + live terminal (xterm.js attach)
+- [x] WebSocket streaming + live terminal
 - [x] Multi-node peer discovery
 - [x] Session resume after reboot
 - [x] In-app + desktop notifications (Notification API)
@@ -582,9 +584,9 @@ Ship the smallest useful thing first.
 
 ### Phase 2: Live Terminal + Persistence ✅
 
-- WebSocket streaming with xterm.js
+- WebSocket streaming with the embedded terminal view
 - Full interactive terminal in the web UI
-- Session resume after reboot (STALE -> RUNNING)
+- Session resume after reboot
 - Output log files via `tmux pipe-pane`
 
 ### Phase 3: Multi-Node ✅

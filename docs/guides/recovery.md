@@ -1,5 +1,9 @@
 # Recovery Guide
 
+::: tip Core Behavior
+Recovery is part of Pulpo's core runtime contract. If you want to understand what Pulpo guarantees, this guide matters more than optional layers like discovery, Discord, or MCP.
+:::
+
 ## Session States
 
 | State | Meaning | Terminal? |

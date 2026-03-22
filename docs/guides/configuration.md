@@ -17,8 +17,9 @@ name = "mac-mini"
 [node]
 name = "mac-mini"           # Node name (default: hostname)
 port = 7433                  # HTTP port (default: 7433)
-data_dir = "~/.pulpo/data"   # Data directory (default: ~/.pulpo/data)
+data_dir = "~/.pulpo"        # Data directory (default: ~/.pulpo)
 bind = "local"               # "local", "public", "tailscale", "container"
+default_command = "claude"   # Optional fallback when spawn has no command
 ```
 
 Bind modes:
@@ -57,6 +58,7 @@ idle_threshold_secs = 60       # Seconds of unchanged output before Active→Idl
 ready_ttl_secs = 0             # Seconds after Ready before kill (0 = disabled)
 memory_threshold = 90          # Memory % to trigger intervention (default: 90)
 breach_count = 3               # Consecutive breaches before kill (default: 3)
+adopt_tmux = true              # Auto-adopt external tmux sessions
 waiting_patterns = ["custom prompt>"]  # Extra waiting-for-input patterns (default: [])
 ```
 
@@ -69,9 +71,10 @@ See [Session Lifecycle](/operations/session-lifecycle) for how the watchdog driv
 ```toml
 [notifications.discord]
 webhook_url = "https://discord.com/api/webhooks/..."
-events = ["ready", "killed", "lost"]      # default: ["ready", "killed"]
+events = ["ready", "killed", "lost"]      # empty means all events
 
-[notifications.webhook]
+[[notifications.webhooks]]
+name = "primary"
 url = "https://example.com/hooks/pulpo"
 events = ["ready", "killed", "lost"]
 ```
@@ -109,6 +112,10 @@ Run agents in Docker containers for isolation:
 ```toml
 [docker]
 image = "my-agents-image:latest"   # Docker image with agent tools installed
+volumes = [
+  "~/.claude:/root/.claude:ro",
+  "~/.codex:/root/.codex:ro",
+]
 ```
 
 Use with `--runtime docker` flag:
@@ -117,7 +124,7 @@ Use with `--runtime docker` flag:
 pulpo spawn risky --runtime docker -- claude --dangerously-skip-permissions -p "refactor"
 ```
 
-The workdir is mounted at `/workspace` inside the container. The agent can read and write code but can't access the rest of the host system.
+The workdir is mounted at `/workspace` inside the container. The agent can read and write the session repo, plus any extra host paths you mount with `volumes`.
 
 ## Full Reference
 

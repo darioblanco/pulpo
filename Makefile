@@ -85,7 +85,7 @@ test-rust:
 	cargo test --workspace
 
 test-web:
-	cd web && npx vitest run
+	cd web && PATH=/usr/local/bin:$$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor npx vitest run
 
 # ─── Coverage ────────────────────────────────────────────────────────────────
 
@@ -97,7 +97,7 @@ coverage-rust:
 	cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$$" --fail-under-lines 99
 
 coverage-web:
-	cd web && npx vitest run --coverage
+	cd web && PATH=/usr/local/bin:$$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor npx vitest run --coverage
 
 # Generate HTML coverage report
 coverage-html:

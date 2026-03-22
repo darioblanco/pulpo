@@ -13,7 +13,7 @@ echo "==> Pre-commit: running ESLint + TypeScript check..."
 
 echo "==> Pre-commit: running tests..."
 cargo test --workspace
-(cd web && npx vitest run --passWithNoTests)
+(cd web && PATH=/usr/local/bin:$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor npx vitest run --passWithNoTests)
 
 echo "==> Pre-commit: checking coverage (100% line coverage required)..."
 # Note: --fail-under-lines uses region-aware line counts in cargo-llvm-cov 0.8+,

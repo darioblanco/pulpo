@@ -10,11 +10,12 @@ All sections are optional. Pulpo runs with zero config.
 |-------|------|---------|-------------|
 | `name` | string | hostname | Node display name |
 | `port` | u16 | `7433` | HTTP listen port |
-| `data_dir` | string | `~/.pulpo/data` | Data directory for SQLite, logs |
+| `data_dir` | string | `~/.pulpo` | Data directory for SQLite, logs |
 | `bind` | string | `"local"` | `"local"`, `"public"`, `"tailscale"`, `"container"` |
 | `tag` | string | — | Tailscale ACL tag for filtering (e.g. `"pulpo"`) |
 | `seed` | string | — | Seed peer address for gossip discovery (e.g. `"10.0.0.5:7433"`) |
 | `discovery_interval_secs` | u64 | `30` | How often to run peer discovery |
+| `default_command` | string | — | Default command when spawn has no explicit command or ink command |
 
 ## `[auth]`
 
@@ -35,6 +36,7 @@ Not needed for `local`, `tailscale`, or `container` modes.
 | `ready_ttl_secs` | u64 | `0` | Seconds after Ready before kill (0 = disabled) |
 | `memory_threshold` | u8 | `90` | Memory usage % to trigger intervention |
 | `breach_count` | u32 | `3` | Consecutive breaches before kill |
+| `adopt_tmux` | bool | `true` | Auto-adopt external tmux sessions |
 | `idle_threshold_secs` | u64 | `60` | Seconds of unchanged output before Active→Idle |
 | `waiting_patterns` | string[] | `[]` | Extra patterns for waiting-for-input detection (appended to 31 built-in patterns) |
 
@@ -44,6 +46,8 @@ Not needed for `local`, `tailscale`, or `container` modes.
 |-------|------|---------|-------------|
 | `description` | string | — | Human-readable ink description |
 | `command` | string | — | Shell command to run (e.g. `"claude -p 'review code'"`) |
+| `secrets` | string[] | `[]` | Stored secret names to inject when the ink is used |
+| `runtime` | string | — | Default runtime for this ink: `tmux` or `docker` |
 
 ## `[peers]` / `[peers.<name>]`
 
@@ -72,6 +76,7 @@ token = "secret"
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `image` | string | `"ubuntu:latest"` | Docker image for Docker runtime containers |
+| `volumes` | string[] | `["~/.claude:/root/.claude:ro", "~/.codex:/root/.codex:ro", "~/.gemini:/root/.gemini:ro"]` | Extra host mounts passed to Docker |
 
 ```toml
 [docker]
@@ -85,11 +90,13 @@ Use with `pulpo spawn --runtime docker` to run sessions in isolated Docker conta
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `webhook_url` | string | — | Discord webhook URL |
-| `events` | string[] | `["ready", "killed"]` | Events that trigger notifications |
+| `events` | string[] | `[]` | Event filter; empty means all events |
 
-## `[notifications.webhook]`
+## `[notifications.webhooks]`
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `name` | string | — | Human-readable endpoint name |
 | `url` | string | — | Webhook URL to POST events to |
-| `events` | string[] | `["ready", "killed"]` | Events that trigger notifications |
+| `events` | string[] | `[]` | Event filter; empty means all events |
+| `secret` | string | — | Optional HMAC signing secret |

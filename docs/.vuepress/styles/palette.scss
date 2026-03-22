@@ -1,36 +1,27 @@
-// Pulpo brand palette — matches web/src/index.css dark theme
-// Converted from OKLCh to hex
+// Pulpo docs palette — light-first for reference readability, with dark mode support
 
-// Brand primary: oklch(0.62 0.21 260) → vibrant purple-blue
-$accentColor: #2e7eff;
-$accentColorT10: rgba(46, 126, 255, 0.1);
-$accentColorLight: #5a9aff;
+$accentColor: #0d5bd7;
+$accentColorT10: rgba(13, 91, 215, 0.1);
+$accentColorLight: #2b76eb;
 
-// Text
-$textColor: #e3e8ee;
-$textColorLight: #657383;
+$textColor: #17212b;
+$textColorLight: #5f6f82;
 
-// Background
-$bgColor: #0a1018;
-$bgColorLight: #101a26;
-$bgColorBlur: rgba(10, 16, 24, 0.9);
+$bgColor: #f4f7fb;
+$bgColorLight: #ffffff;
+$bgColorBlur: rgba(244, 247, 251, 0.88);
 
-// Borders
-$borderColor: rgba(255, 255, 255, 0.1);
-$borderColorLight: rgba(255, 255, 255, 0.06);
+$borderColor: rgba(23, 33, 43, 0.12);
+$borderColorLight: rgba(23, 33, 43, 0.08);
 
-// Code
-$codeColor: #5a9aff;
-$codeBgColor: #091521;
+$codeColor: #0d5bd7;
+$codeBgColor: #edf4ff;
 
-// Sidebar
-$sidebarBgColor: #060e17;
+$sidebarBgColor: #eef3f9;
 $sidebarWidth: 18rem;
 
-// Badge / tip
-$badgeTipColor: #2e7eff;
-$badgeWarningColor: #f1b300;
-$badgeDangerColor: #ff6367;
+$badgeTipColor: #0d5bd7;
+$badgeWarningColor: #b7791f;
+$badgeDangerColor: #cc334f;
 
-// Code group tabs
-$codeGroupColor: #2e7eff;
+$codeGroupColor: #0d5bd7;

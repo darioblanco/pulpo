@@ -29,6 +29,29 @@ You have agents — Claude Code, Codex, Aider, Gemini CLI — and you want them 
 
 Pulpo is an **agent session runtime** — it runs coding agents in tmux sessions or Docker containers, with lifecycle management, crash recovery, and watchdog supervision. Designed for coding agents, flexible enough for any terminal work.
 
+## Core Idea
+
+Pulpo is easiest to understand as one core loop:
+
+1. You start a command as a **session**
+2. `pulpod` runs it on a **runtime** (`tmux` or `docker`)
+3. Pulpo tracks its **lifecycle** (`creating`, `active`, `idle`, `ready`, `killed`, `lost`)
+4. You control it from the CLI, web UI, or API
+
+That is the product. Worktrees, schedules, fleet discovery, push notifications, Discord, and MCP are all layers around that core session model.
+
+### What Pulpo Guarantees
+
+The strongest contract in the project is:
+
+- a session is a first-class object with durable state
+- sessions run on a named runtime (`tmux` or `docker`)
+- lifecycle states are explicit and inspectable
+- the watchdog and liveness checks drive recovery and intervention behavior
+- the CLI, web UI, and API all reflect the same underlying daemon-owned state
+
+Everything beyond that is either operational depth or a convenience surface.
+
 ```bash
 # Spawn an agent on a remote machine by name
 pulpo --node mac-mini spawn auth-fix --workdir ~/repos/api -- claude -p "fix auth tests"
@@ -57,11 +80,21 @@ open http://localhost:7433  # PWA with push notifications
 - **Watchdog supervision** — memory pressure kills, idle detection (31 built-in patterns for Claude Code, Codex, Gemini, Aider, Amazon Q), configurable per-session thresholds.
 - **Git worktrees** — `--worktree` isolates each agent in its own worktree. Multiple agents work on the same repo without conflicts. Works with any agent.
 - **Built-in scheduler** — cron-based schedules with multi-node targeting. Run nightly reviews on the beefy server, auto-select least loaded node.
-- **Docker runtime** — `--runtime docker` runs sessions in Docker containers. Safe for `--dangerously-skip-permissions` — the agent can't touch your host. Configure the image in `[docker]` config.
+- **Docker runtime** — `--runtime docker` runs sessions in Docker containers. Safe for `--dangerously-skip-permissions` while still mounting the session workdir (and any configured volumes). Configure the image in `[docker]` config.
 - **Adopts existing tmux** — start tmux however you want, pulpo discovers it and brings it under management. No migration needed.
 - **Command-agnostic** — Claude Code, Codex, Gemini CLI, Aider, shell scripts, anything. Same lifecycle, same controls.
 - **6 control surfaces** — CLI, web UI (PWA + push notifications), REST API, SSE events, MCP server, Discord bot.
 - **Self-hosted** — your machines, your data. MIT/Apache-2.0 licensed.
+
+### What To Learn First
+
+If you are new to the project, learn these in order:
+
+1. spawn a session
+2. inspect status and output
+3. understand `idle` vs `ready` vs `lost` vs `killed`
+4. learn the two runtimes: `tmux` and `docker`
+5. only then add multi-node, schedules, worktrees, and other operational features
 
 ### How It's Different
 

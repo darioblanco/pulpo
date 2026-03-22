@@ -1,5 +1,9 @@
 # Secrets
 
+::: warning Operational Layer
+Secrets are an operational feature for running real sessions safely. They are important in practice, but secondary to the core Pulpo model of sessions, runtimes, and lifecycle states.
+:::
+
 Secrets are environment variables that get injected into agent sessions. They provide a way to pass sensitive values (API keys, tokens, credentials) to your sessions without hardcoding them in commands or inks.
 
 ## Overview
@@ -134,7 +138,7 @@ pulpo --node mac-mini secret delete GITHUB_TOKEN
 
 ## Security Model
 
-- **Storage**: Plaintext in SQLite (`~/.pulpo/data/state.db`)
+- **Storage**: Plaintext in SQLite (`~/.pulpo/state.db` by default)
 - **File permissions**: Database file is set to mode `0600` (owner read/write only) on Unix systems
 - **API exposure**: The REST API never returns secret values. `GET /api/v1/secrets` returns only names, env mappings, and creation timestamps. `PUT /api/v1/secrets/{name}` accepts a value but never echoes it back
 - **Web UI**: The settings page shows secret names and env mappings but never fetches or displays values. The input field for adding secrets uses `type="password"` with a show/hide toggle
@@ -175,7 +179,7 @@ On macOS, Claude Code stores OAuth credentials in the system Keychain rather tha
 
 1. Checks if `~/.claude/.credentials.json` exists on disk
 2. If not, extracts credentials from the macOS Keychain (`security find-generic-password -s "Claude Code-credentials" -w`)
-3. Writes the credentials to a temp file in `~/.pulpo/data/docker-creds/`
+3. Writes the credentials to a temp file in `~/.pulpo/docker-creds/` by default
 4. Mounts that file as `/root/.claude/.credentials.json:ro` inside the container
 
 This is fully automatic -- no configuration needed.

@@ -1,5 +1,9 @@
 # Worktrees Guide
 
+::: warning Operational Layer
+Worktrees are a useful operational feature, but they are not required to understand or use Pulpo. The core model is still session -> runtime -> lifecycle.
+:::
+
 Run multiple agents on the same repository without conflicts. Each agent gets its own git worktree — an isolated checkout with its own branch and working directory.
 
 ## Why worktrees?

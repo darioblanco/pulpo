@@ -32,6 +32,6 @@ export default [
     },
   },
   {
-    ignores: ['build/', 'coverage/', 'node_modules/'],
+    ignores: ['build/', 'coverage/', 'node_modules/', 'vendor/'],
   },
 ];

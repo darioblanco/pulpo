@@ -10,9 +10,9 @@
     "lint": "eslint . && tsc --noEmit",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test": "PATH=/usr/local/bin:$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor vitest run",
+    "test:watch": "PATH=/usr/local/bin:$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor vitest",
+    "test:coverage": "PATH=/usr/local/bin:$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor vitest run --coverage"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.18",
