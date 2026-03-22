@@ -120,19 +120,24 @@ pub enum Commands {
         follow: bool,
     },
 
-    /// Kill a session
+    /// Kill one or more sessions
     #[command(visible_alias = "k")]
     Kill {
-        /// Session name or ID
-        name: String,
+        /// Session names or IDs
+        #[arg(required = true)]
+        names: Vec<String>,
     },
 
-    /// Permanently remove a session from history
+    /// Permanently remove one or more sessions from history
     #[command(visible_alias = "rm")]
     Delete {
-        /// Session name or ID
-        name: String,
+        /// Session names or IDs
+        #[arg(required = true)]
+        names: Vec<String>,
     },
+
+    /// Remove all killed and lost sessions
+    Cleanup,
 
     /// Resume a lost session
     #[command(visible_alias = "r")]
@@ -1334,29 +1339,59 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             Ok(msg)
         }
-        Commands::Kill { name } => {
+        Commands::Kill { names } => {
+            let mut results = Vec::new();
+            for name in names {
+                let resp = authed_post(
+                    &client,
+                    format!("{url}/api/v1/sessions/{name}/kill"),
+                    token.as_deref(),
+                )
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+                match ok_or_api_error(resp).await {
+                    Ok(_) => results.push(format!("Session {name} killed.")),
+                    Err(e) => results.push(format!("Error killing {name}: {e}")),
+                }
+            }
+            Ok(results.join("\n"))
+        }
+        Commands::Delete { names } => {
+            let mut results = Vec::new();
+            for name in names {
+                let resp = authed_delete(
+                    &client,
+                    format!("{url}/api/v1/sessions/{name}"),
+                    token.as_deref(),
+                )
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+                match ok_or_api_error(resp).await {
+                    Ok(_) => results.push(format!("Session {name} deleted.")),
+                    Err(e) => results.push(format!("Error deleting {name}: {e}")),
+                }
+            }
+            Ok(results.join("\n"))
+        }
+        Commands::Cleanup => {
             let resp = authed_post(
                 &client,
-                format!("{url}/api/v1/sessions/{name}/kill"),
+                format!("{url}/api/v1/sessions/cleanup"),
                 token.as_deref(),
             )
             .send()
             .await
             .map_err(|e| friendly_error(&e, node))?;
-            ok_or_api_error(resp).await?;
-            Ok(format!("Session {name} killed."))
-        }
-        Commands::Delete { name } => {
-            let resp = authed_delete(
-                &client,
-                format!("{url}/api/v1/sessions/{name}"),
-                token.as_deref(),
-            )
-            .send()
-            .await
-            .map_err(|e| friendly_error(&e, node))?;
-            ok_or_api_error(resp).await?;
-            Ok(format!("Session {name} deleted."))
+            let text = ok_or_api_error(resp).await?;
+            let result: serde_json::Value = serde_json::from_str(&text)?;
+            let count = result["deleted"].as_u64().unwrap_or(0);
+            if count == 0 {
+                Ok("No killed or lost sessions to clean up.".into())
+            } else {
+                Ok(format!("Cleaned up {count} session(s)."))
+            }
         }
         Commands::Logs {
             name,
@@ -1701,7 +1736,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "kill", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Some(Commands::Kill { name }) if name == "my-session"
+            Some(Commands::Kill { names }) if names == &["my-session"]
         ));
     }
 
@@ -1710,7 +1745,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "delete", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Some(Commands::Delete { name }) if name == "my-session"
+            Some(Commands::Delete { names }) if names == &["my-session"]
         ));
     }
 
@@ -2071,7 +2106,7 @@ mod tests {
             node,
             token: None,
             command: Some(Commands::Kill {
-                name: "test-session".into(),
+                names: vec!["test-session".into()],
             }),
             path: None,
         };
@@ -2086,7 +2121,7 @@ mod tests {
             node,
             token: None,
             command: Some(Commands::Delete {
-                name: "test-session".into(),
+                names: vec!["test-session".into()],
             }),
             path: None,
         };
@@ -2163,12 +2198,12 @@ mod tests {
             node,
             token: None,
             command: Some(Commands::Kill {
-                name: "test-session".into(),
+                names: vec!["test-session".into()],
             }),
             path: None,
         };
-        let err = execute(&cli).await.unwrap_err();
-        assert_eq!(err.to_string(), "session not found: test-session");
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Error killing test-session"), "{result}");
     }
 
     #[tokio::test]
@@ -2193,12 +2228,12 @@ mod tests {
             node,
             token: None,
             command: Some(Commands::Delete {
-                name: "test-session".into(),
+                names: vec!["test-session".into()],
             }),
             path: None,
         };
-        let err = execute(&cli).await.unwrap_err();
-        assert_eq!(err.to_string(), "cannot delete session in 'running' state");
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Error deleting test-session"), "{result}");
     }
 
     #[tokio::test]
@@ -2826,7 +2861,7 @@ mod tests {
             node: "localhost:1".into(),
             token: None,
             command: Some(Commands::Kill {
-                name: "test".into(),
+                names: vec!["test".into()],
             }),
             path: None,
         };
@@ -2841,7 +2876,7 @@ mod tests {
             node: "localhost:1".into(),
             token: None,
             command: Some(Commands::Delete {
-                name: "test".into(),
+                names: vec!["test".into()],
             }),
             path: None,
         };
@@ -3403,7 +3438,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "k", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Some(Commands::Kill { name }) if name == "my-session"
+            Some(Commands::Kill { names }) if names == &["my-session"]
         ));
     }
 
@@ -3412,7 +3447,7 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "rm", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Some(Commands::Delete { name }) if name == "my-session"
+            Some(Commands::Delete { names }) if names == &["my-session"]
         ));
     }
 

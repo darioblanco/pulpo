@@ -61,6 +61,7 @@ pub fn build(state: Arc<AppState>) -> Router {
             "/api/v1/sessions/{id}",
             get(sessions::get).delete(sessions::delete),
         )
+        .route("/api/v1/sessions/cleanup", post(sessions::cleanup))
         .route("/api/v1/sessions/{id}/kill", post(sessions::kill))
         .route("/api/v1/sessions/{id}/output", get(sessions::output))
         .route(

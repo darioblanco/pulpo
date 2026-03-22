@@ -473,6 +473,14 @@ impl Store {
         Ok(())
     }
 
+    /// Delete all sessions with killed or lost status. Returns the count deleted.
+    pub async fn cleanup_dead_sessions(&self) -> Result<u64> {
+        let result = sqlx::query("DELETE FROM sessions WHERE status IN ('killed', 'lost')")
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     pub const fn pool(&self) -> &SqlitePool {
         &self.pool
     }

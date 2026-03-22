@@ -118,6 +118,17 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+pub async fn cleanup(
+    State(state): State<Arc<super::AppState>>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let count = state
+        .store
+        .cleanup_dead_sessions()
+        .await
+        .map_err(|e| internal_error(&e.to_string()))?;
+    Ok(Json(serde_json::json!({ "deleted": count })))
+}
+
 pub async fn output(
     State(state): State<Arc<super::AppState>>,
     Path(id): Path<String>,
