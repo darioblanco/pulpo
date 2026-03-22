@@ -2,6 +2,7 @@ import { Outlet } from 'react-router';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { AppSidebar } from './app-sidebar';
 import { DisconnectedBanner } from './disconnected-banner';
+import { MobileNav } from './mobile-nav';
 
 export function AppLayout() {
   return (
@@ -9,8 +10,11 @@ export function AppLayout() {
       <AppSidebar />
       <SidebarInset>
         <DisconnectedBanner />
-        <Outlet />
+        <div className="pb-16 md:pb-0">
+          <Outlet />
+        </div>
       </SidebarInset>
+      <MobileNav />
     </SidebarProvider>
   );
 }
