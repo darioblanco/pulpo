@@ -38,11 +38,13 @@ vi.mock('@/components/session/terminal-view', () => ({
 const mockKillSession = vi.mocked(api.killSession);
 const mockResumeSession = vi.mocked(api.resumeSession);
 const mockGetInterventionEvents = vi.mocked(api.getInterventionEvents);
+const mockSendInput = vi.mocked(api.sendInput);
 
 beforeEach(() => {
   mockKillSession.mockReset();
   mockResumeSession.mockReset();
   mockGetInterventionEvents.mockReset();
+  mockSendInput.mockReset();
 });
 
 function makeSession(overrides: Partial<Session> = {}): Session {
@@ -131,17 +133,17 @@ describe('SessionCard', () => {
 
   it('toggles expanded state on green dot click', () => {
     renderCard(makeSession());
-    expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('mock-output-view')).not.toBeInTheDocument();
     clickExpand();
-    expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
+    expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
   });
 
   it('collapses on second green dot click', () => {
     renderCard(makeSession());
     clickExpand();
-    expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
+    expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     clickExpand();
-    expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('mock-output-view')).not.toBeInTheDocument();
   });
 
   it('expands on title bar click', () => {
@@ -154,16 +156,39 @@ describe('SessionCard', () => {
     renderCard(makeSession());
     const infoArea = screen.getByTestId('session-name-link').closest('[role="button"]')!;
     fireEvent.keyDown(infoArea, { key: 'Enter' });
-    expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
+    expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
   });
 
   // View switching
 
-  it('shows TerminalView for active session', () => {
+  it('shows OutputView by default for active session', () => {
     renderCard(makeSession());
     clickExpand();
+    expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
+  });
+
+  it('shows view toggle button for active sessions', () => {
+    renderCard(makeSession());
+    clickExpand();
+    expect(screen.getByTestId('btn-view-toggle')).toBeInTheDocument();
+    expect(screen.getByTestId('btn-view-toggle')).toHaveTextContent('Terminal');
+  });
+
+  it('toggles to TerminalView when toggle button clicked', () => {
+    renderCard(makeSession());
+    clickExpand();
+    fireEvent.click(screen.getByTestId('btn-view-toggle'));
     expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-output-view')).not.toBeInTheDocument();
+    expect(screen.getByTestId('btn-view-toggle')).toHaveTextContent('Output');
+  });
+
+  it('shows OutputView for idle session when expanded', () => {
+    renderCard(makeSession({ status: 'idle' }));
+    clickExpand();
+    expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
+    expect(screen.getByTestId('btn-view-toggle')).toBeInTheDocument();
   });
 
   it('shows OutputView for ready session', () => {
@@ -254,9 +279,13 @@ describe('SessionCard', () => {
 
   // Fullscreen
 
-  it('shows fullscreen button when expanded for active session', () => {
+  it('shows fullscreen button when expanded in terminal mode', () => {
     renderCard(makeSession());
     clickExpand();
+    // Default is output mode — no fullscreen button
+    expect(screen.queryByTestId('btn-fullscreen')).not.toBeInTheDocument();
+    // Switch to terminal
+    fireEvent.click(screen.getByTestId('btn-view-toggle'));
     expect(screen.getByTestId('btn-fullscreen')).toBeInTheDocument();
   });
 
@@ -269,6 +298,7 @@ describe('SessionCard', () => {
   it('opens fullscreen terminal overlay on click', () => {
     renderCard(makeSession());
     clickExpand();
+    fireEvent.click(screen.getByTestId('btn-view-toggle'));
     fireEvent.click(screen.getByTestId('btn-fullscreen'));
     expect(screen.getByTestId('fullscreen-terminal')).toBeInTheDocument();
     expect(screen.getByText('Close')).toBeInTheDocument();
@@ -277,6 +307,7 @@ describe('SessionCard', () => {
   it('closes fullscreen terminal overlay on close click', () => {
     renderCard(makeSession());
     clickExpand();
+    fireEvent.click(screen.getByTestId('btn-view-toggle'));
     fireEvent.click(screen.getByTestId('btn-fullscreen'));
     expect(screen.getByTestId('fullscreen-terminal')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('btn-fullscreen-close'));
@@ -496,7 +527,7 @@ describe('SessionCard', () => {
     renderCard(makeSession());
     const infoArea = screen.getByTestId('session-name-link').closest('[role="button"]')!;
     fireEvent.keyDown(infoArea, { key: ' ' });
-    expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
+    expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
   });
 
   it('expands on subtitle click', () => {
@@ -507,7 +538,7 @@ describe('SessionCard', () => {
       .find((el) => el.querySelector('.truncate.font-mono'));
     if (subtitleArea) {
       fireEvent.click(subtitleArea);
-      expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
+      expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     }
   });
 
@@ -518,7 +549,7 @@ describe('SessionCard', () => {
     const subtitleArea = subtitleAreas.find((el) => el.querySelector('.truncate.font-mono'));
     if (subtitleArea) {
       fireEvent.keyDown(subtitleArea, { key: 'Enter' });
-      expect(screen.getByTestId('mock-terminal-view')).toBeInTheDocument();
+      expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     }
   });
 
@@ -573,6 +604,65 @@ describe('SessionCard', () => {
   it('shows workdir full path when no slash', () => {
     renderCard(makeSession({ workdir: 'relative-dir' }));
     expect(screen.getByTestId('session-workdir')).toHaveTextContent('relative-dir');
+  });
+
+  // Quick-reply bar
+
+  it('shows quick-reply bar for idle session with output_snippet', () => {
+    renderCard(
+      makeSession({
+        status: 'idle',
+        output_snippet: 'Do you trust this file? (Y/N)',
+      } as Partial<Session>),
+    );
+    expect(screen.getByTestId('quick-reply-bar')).toBeInTheDocument();
+    expect(screen.getByTestId('quick-reply-yes')).toBeInTheDocument();
+    expect(screen.getByTestId('quick-reply-no')).toBeInTheDocument();
+    expect(screen.getByTestId('quick-reply-1')).toBeInTheDocument();
+  });
+
+  it('shows output_snippet in subtitle for idle sessions', () => {
+    renderCard(
+      makeSession({
+        status: 'idle',
+        output_snippet: 'Building...\nDo you trust this file?',
+      } as Partial<Session>),
+    );
+    expect(screen.getByTestId('idle-snippet')).toBeInTheDocument();
+    expect(screen.getByTestId('idle-snippet')).toHaveTextContent('Do you trust this file?');
+  });
+
+  it('sends input when quick-reply button clicked', () => {
+    mockSendInput.mockResolvedValue(undefined);
+    const onRefresh = vi.fn();
+    renderCard(
+      makeSession({
+        status: 'idle',
+        output_snippet: 'Continue? [Y/n]',
+      } as Partial<Session>),
+      onRefresh,
+    );
+    fireEvent.click(screen.getByTestId('quick-reply-yes'));
+    expect(mockSendInput).toHaveBeenCalledWith('sess-1', 'yes\n');
+    expect(onRefresh).toHaveBeenCalled();
+  });
+
+  it('does not show quick-reply bar for active sessions', () => {
+    renderCard(makeSession({ status: 'active' }));
+    expect(screen.queryByTestId('quick-reply-bar')).not.toBeInTheDocument();
+  });
+
+  it('does not show quick-reply bar for idle sessions without output_snippet', () => {
+    renderCard(makeSession({ status: 'idle' }));
+    expect(screen.queryByTestId('quick-reply-bar')).not.toBeInTheDocument();
+  });
+
+  // View toggle for non-active
+
+  it('does not show view toggle for ready sessions', () => {
+    renderCard(makeSession({ status: 'ready' }));
+    clickExpand();
+    expect(screen.queryByTestId('btn-view-toggle')).not.toBeInTheDocument();
   });
 
   it('loads intervention history on toggle', async () => {

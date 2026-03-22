@@ -211,6 +211,95 @@ describe('useSSE', () => {
     expect(result.current.sessions).toHaveLength(1);
   });
 
+  it('stores output_snippet from session events', async () => {
+    const sessions = [
+      {
+        id: 'sess-1',
+        name: 'my-api',
+        status: 'active',
+        command: 'Fix',
+        description: null,
+        workdir: '/repo',
+        metadata: null,
+        ink: null,
+        intervention_reason: null,
+        intervention_at: null,
+        last_output_at: null,
+
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ];
+    mockFetch.mockResolvedValue({ json: () => Promise.resolve(sessions) });
+    const { result } = renderHook(() => useSSE(), { wrapper });
+
+    act(() => lastES().onopen?.());
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    const es = lastES();
+    act(() => {
+      es._fireEvent(
+        'session',
+        JSON.stringify({
+          session_id: 'sess-1',
+          session_name: 'my-api',
+          status: 'idle',
+          output_snippet: 'Do you trust this file? (Y/N)',
+        }),
+      );
+    });
+
+    expect(result.current.sessions[0].status).toBe('idle');
+    expect(result.current.sessions[0].output_snippet).toBe('Do you trust this file? (Y/N)');
+  });
+
+  it('preserves output_snippet when event has no snippet', async () => {
+    const sessions = [
+      {
+        id: 'sess-1',
+        name: 'my-api',
+        status: 'idle',
+        command: 'Fix',
+        description: null,
+        workdir: '/repo',
+        metadata: null,
+        ink: null,
+        intervention_reason: null,
+        intervention_at: null,
+        last_output_at: null,
+        output_snippet: 'Existing snippet',
+
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ];
+    mockFetch.mockResolvedValue({ json: () => Promise.resolve(sessions) });
+    const { result } = renderHook(() => useSSE(), { wrapper });
+
+    act(() => lastES().onopen?.());
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    const es = lastES();
+    act(() => {
+      es._fireEvent(
+        'session',
+        JSON.stringify({
+          session_id: 'sess-1',
+          session_name: 'my-api',
+          status: 'active',
+          output_snippet: null,
+        }),
+      );
+    });
+
+    expect(result.current.sessions[0].status).toBe('active');
+    expect(result.current.sessions[0].output_snippet).toBe('Existing snippet');
+  });
+
   it('ignores malformed session events', async () => {
     const sessions = [
       {
@@ -403,6 +492,86 @@ describe('useSSE', () => {
     const secondES = lastES();
     expect(secondES).not.toBe(firstES);
     expect(secondES.closed).toBe(false);
+  });
+
+  it('reconnects immediately on visibilitychange when SSE is dead', () => {
+    vi.useFakeTimers();
+    mockFetch.mockResolvedValue({ json: () => Promise.resolve([]) });
+    renderHook(() => useSSE(), { wrapper });
+
+    const es = lastES();
+    // Simulate SSE dying (error closes it, backoff timer scheduled at 1s)
+    act(() => es.onerror?.());
+    expect(es.closed).toBe(true);
+
+    const countBefore = MockEventSource.instances.length;
+
+    // Page becomes visible — should reconnect immediately without waiting for backoff
+    act(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    // New EventSource created without advancing timers
+    expect(MockEventSource.instances.length).toBeGreaterThan(countBefore);
+  });
+
+  it('hydrates on visibilitychange when SSE is still connected', async () => {
+    mockFetch.mockResolvedValue({ json: () => Promise.resolve([]) });
+    const { result } = renderHook(() => useSSE(), { wrapper });
+
+    act(() => lastES().onopen?.());
+    expect(result.current.connected).toBe(true);
+
+    mockFetch.mockClear();
+    mockFetch.mockResolvedValue({
+      json: () =>
+        Promise.resolve([
+          {
+            id: 'sess-1',
+            name: 'refreshed',
+            status: 'active',
+            command: 'Fix',
+            description: null,
+            workdir: '/repo',
+            metadata: null,
+            ink: null,
+            intervention_reason: null,
+            intervention_at: null,
+            last_output_at: null,
+            created_at: '2025-01-01T00:00:00Z',
+          },
+        ]),
+    });
+
+    // Page becomes visible — should re-hydrate sessions
+    act(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled();
+    });
+  });
+
+  it('does nothing on visibilitychange when hidden', () => {
+    vi.useFakeTimers();
+    mockFetch.mockResolvedValue({ json: () => Promise.resolve([]) });
+    renderHook(() => useSSE(), { wrapper });
+
+    const es = lastES();
+    act(() => es.onerror?.());
+
+    const countBefore = MockEventSource.instances.length;
+
+    act(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    // Should NOT reconnect when going hidden
+    expect(MockEventSource.instances.length).toBe(countBefore);
   });
 
   it('disconnect clears reconnect timer', () => {

@@ -417,7 +417,7 @@ async fn check_session_idle(
     let output_changed = session.output_snapshot.as_deref() != Some(current_output.as_str());
 
     if output_changed {
-        handle_active_session(store, session).await;
+        handle_active_session(store, session, ready_ctx).await;
     } else {
         // Output unchanged since last tick — transition Active → Idle.
         // Known waiting-for-input patterns trigger immediate transition on the
@@ -447,6 +447,17 @@ async fn check_session_idle(
                         "Idle check: failed to transition {} to idle: {e}",
                         session.name
                     );
+                } else if let Some(tx) = &ready_ctx.event_tx {
+                    let event = SessionEvent {
+                        session_id: session.id.to_string(),
+                        session_name: session.name.clone(),
+                        status: SessionStatus::Idle.to_string(),
+                        previous_status: Some(SessionStatus::Active.to_string()),
+                        node_name: ready_ctx.node_name.clone(),
+                        output_snippet: Some(current_output.clone()),
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    };
+                    let _ = tx.send(PulpoEvent::Session(event));
                 }
                 return;
             }
@@ -488,7 +499,11 @@ async fn handle_session_ready(store: &Store, session: &Session, ctx: &ReadyConte
     }
 }
 
-async fn handle_active_session(store: &Store, session: &pulpo_common::session::Session) {
+async fn handle_active_session(
+    store: &Store,
+    session: &pulpo_common::session::Session,
+    ready_ctx: &ReadyContext,
+) {
     // If session was Idle and output changed, transition back to Active
     if session.status == SessionStatus::Idle {
         info!(
@@ -503,6 +518,17 @@ async fn handle_active_session(store: &Store, session: &pulpo_common::session::S
                 "Idle check: failed to transition {} back to active: {e}",
                 session.name
             );
+        } else if let Some(tx) = &ready_ctx.event_tx {
+            let event = SessionEvent {
+                session_id: session.id.to_string(),
+                session_name: session.name.clone(),
+                status: SessionStatus::Active.to_string(),
+                previous_status: Some(SessionStatus::Idle.to_string()),
+                node_name: ready_ctx.node_name.clone(),
+                output_snippet: session.output_snapshot.clone(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            };
+            let _ = tx.send(PulpoEvent::Session(event));
         }
     }
     if session.idle_since.is_none() {
@@ -2417,7 +2443,7 @@ mod tests {
             .unwrap();
 
         // Should not panic — logs warning and returns
-        handle_active_session(&store, &session).await;
+        handle_active_session(&store, &session, &test_ready_ctx()).await;
     }
 
     #[tokio::test]
@@ -2449,7 +2475,109 @@ mod tests {
         };
 
         // idle_since is None — early return, no store call
-        handle_active_session(&store, &session).await;
+        handle_active_session(&store, &session, &test_ready_ctx()).await;
+    }
+
+    #[tokio::test]
+    async fn test_idle_transition_emits_sse_event() {
+        let backend =
+            Arc::new(MockBackend::new().with_output("Building...\nDo you trust this file?"));
+        let store = test_store().await;
+
+        let mut session = create_running_session(&store, "idle-sse").await;
+        // Set output_snapshot to match mock output (unchanged → triggers idle check)
+        let output = "Building...\nDo you trust this file?";
+        store
+            .update_session_output_snapshot(&session.id.to_string(), output)
+            .await
+            .unwrap();
+        session.output_snapshot = Some(output.into());
+
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
+        let ctx = ReadyContext {
+            event_tx: Some(tx),
+            node_name: "test-node".into(),
+        };
+
+        let idle_config = IdleConfig {
+            enabled: true,
+            threshold_secs: 60,
+            action: IdleAction::Alert,
+            timeout_secs: 600,
+        };
+
+        let dyn_backend: Arc<dyn Backend> = backend;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &ctx, &[]).await;
+
+        // Session should be idle (waiting pattern detected immediately)
+        let updated = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.status, SessionStatus::Idle);
+
+        // SSE event should have been emitted
+        let event = rx.try_recv().expect("should receive idle SSE event");
+        match event {
+            PulpoEvent::Session(se) => {
+                assert_eq!(se.status, "idle");
+                assert_eq!(se.previous_status, Some("active".into()));
+                assert_eq!(se.session_name, "idle-sse");
+                assert!(se.output_snippet.is_some());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_active_transition_emits_sse_event() {
+        // Backend returns new output (different from stored snapshot)
+        let backend = Arc::new(MockBackend::new().with_output("New output line"));
+        let store = test_store().await;
+
+        let mut session = create_running_session(&store, "active-sse").await;
+        // Mark as Idle with stale snapshot
+        store
+            .update_session_status(&session.id.to_string(), SessionStatus::Idle)
+            .await
+            .unwrap();
+        session.status = SessionStatus::Idle;
+        session.output_snapshot = Some("Old output".into());
+        session.idle_since = Some(chrono::Utc::now());
+
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
+        let ctx = ReadyContext {
+            event_tx: Some(tx),
+            node_name: "test-node".into(),
+        };
+
+        let idle_config = IdleConfig {
+            enabled: true,
+            threshold_secs: 60,
+            action: IdleAction::Alert,
+            timeout_secs: 600,
+        };
+
+        let dyn_backend: Arc<dyn Backend> = backend;
+        check_idle_sessions(&dyn_backend, &store, &idle_config, &ctx, &[]).await;
+
+        // Session should be active again
+        let updated = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.status, SessionStatus::Active);
+
+        // SSE event should have been emitted
+        let event = rx.try_recv().expect("should receive active SSE event");
+        match event {
+            PulpoEvent::Session(se) => {
+                assert_eq!(se.status, "active");
+                assert_eq!(se.previous_status, Some("idle".into()));
+                assert_eq!(se.session_name, "active-sse");
+            }
+        }
     }
 
     #[tokio::test]

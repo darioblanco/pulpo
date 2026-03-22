@@ -6,15 +6,17 @@ import { MobileNav } from './mobile-nav';
 
 export function AppLayout() {
   return (
-    <SidebarProvider>
-      <AppSidebar />
-      <SidebarInset>
-        <DisconnectedBanner />
-        <div className="pb-16 md:pb-0">
-          <Outlet />
-        </div>
-      </SidebarInset>
+    <div className="flex h-[100dvh] flex-col md:h-auto md:min-h-svh md:flex-row">
+      <SidebarProvider>
+        <AppSidebar />
+        <SidebarInset>
+          <DisconnectedBanner />
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <Outlet />
+          </div>
+        </SidebarInset>
+      </SidebarProvider>
       <MobileNav />
-    </SidebarProvider>
+    </div>
   );
 }

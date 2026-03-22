@@ -37,6 +37,7 @@ export interface Session {
   worktree_path?: string | null;
   runtime?: 'tmux' | 'docker';
   last_output_at: string | null;
+  output_snippet?: string | null;
   created_at: string;
   updated_at?: string;
 }

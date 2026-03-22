@@ -154,6 +154,35 @@ describe('OutputView', () => {
     );
   });
 
+  it('shows input field for idle sessions', () => {
+    mockGetSessionOutput.mockResolvedValue({ output: '' });
+    render(<OutputView sessionId="sess-1" sessionStatus="idle" />);
+    expect(screen.getByTestId('output-input')).toBeInTheDocument();
+    expect(screen.getByText('Send')).toBeInTheDocument();
+  });
+
+  it('polls output for idle sessions', async () => {
+    let callCount = 0;
+    mockGetSessionOutput.mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) return { output: 'Waiting' };
+      return { output: 'Waiting\nDo you trust?' };
+    });
+
+    render(<OutputView sessionId="sess-1" sessionStatus="idle" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Waiting')).toBeInTheDocument();
+    });
+
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Do you trust/)).toBeInTheDocument();
+      },
+      { timeout: 4000 },
+    );
+  });
+
   it('handles fetch errors silently', async () => {
     mockGetSessionOutput.mockRejectedValue(new Error('Network error'));
     render(<OutputView sessionId="sess-1" sessionStatus="ready" />);

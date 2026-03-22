@@ -14,7 +14,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { killSession, resumeSession, getInterventionEvents } from '@/api/client';
+import { killSession, resumeSession, getInterventionEvents, sendInput } from '@/api/client';
 import type { Session, InterventionEvent } from '@/api/types';
 import { OutputView } from '@/components/session/output-view';
 import { TerminalView } from '@/components/session/terminal-view';
@@ -33,6 +33,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [viewMode, setViewMode] = useState<'output' | 'terminal'>('output');
   const [interventionEvents, setInterventionEvents] = useState<InterventionEvent[]>([]);
   const [interventionsExpanded, setInterventionsExpanded] = useState(false);
 
@@ -252,13 +253,38 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
         }}
         className="cursor-pointer border-t border-[#1e2d3d] bg-[#0d1f33]/60 px-3 py-1"
       >
-        <p className="truncate font-mono text-xs text-[#5a7a9a]">
-          {session.description || session.command}
-        </p>
+        {session.status === 'idle' && session.output_snippet ? (
+          <div>
+            <p data-testid="idle-snippet" className="truncate font-mono text-xs text-[#febc2e]">
+              {session.output_snippet.split('\n').filter(Boolean).slice(-2).join(' | ')}
+            </p>
+            <div data-testid="quick-reply-bar" className="mt-1 flex flex-wrap gap-1">
+              {['yes', 'no', '1', '2', '3'].map((label) => (
+                <button
+                  key={label}
+                  data-testid={`quick-reply-${label}`}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    sendInput(session.id, label + '\n');
+                    onRefresh();
+                  }}
+                  className="cursor-pointer rounded bg-[#1e2d3d] px-2 py-0.5 font-mono text-xs text-[#c0d0e0] hover:bg-[#2a3d4d]"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="truncate font-mono text-xs text-[#5a7a9a]">
+            {session.description || session.command}
+          </p>
+        )}
       </div>
 
       {/* Fullscreen terminal overlay (mobile only) */}
-      {fullscreen && expanded && session.status === 'active' && (
+      {fullscreen && expanded && (session.status === 'active' || session.status === 'idle') && (
         <div
           data-testid="fullscreen-terminal"
           className="fixed inset-0 z-50 flex flex-col bg-[#0a1628]"
@@ -286,17 +312,33 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
       {/* Expanded body */}
       {expanded && (
         <div className="bg-[#0a1628]">
-          {session.status === 'active' && (
+          {(session.status === 'active' || session.status === 'idle') && (
             <div className="relative">
-              <TerminalView sessionId={session.id} />
-              <button
-                data-testid="btn-fullscreen"
-                type="button"
-                onClick={() => setFullscreen(true)}
-                className="absolute right-2 top-2 cursor-pointer rounded bg-[#1e2d3d] px-2 py-1 text-xs text-[#c0d0e0] hover:bg-[#2a3d4d] sm:hidden"
-              >
-                Fullscreen
-              </button>
+              <div className="flex justify-end px-2 pt-1">
+                <button
+                  data-testid="btn-view-toggle"
+                  type="button"
+                  onClick={() => setViewMode(viewMode === 'output' ? 'terminal' : 'output')}
+                  className="cursor-pointer rounded bg-[#1e2d3d] px-2 py-0.5 text-[0.6rem] text-[#7a9aba] hover:bg-[#2a3d4d]"
+                >
+                  {viewMode === 'output' ? 'Terminal' : 'Output'}
+                </button>
+              </div>
+              {viewMode === 'terminal' ? (
+                <>
+                  <TerminalView sessionId={session.id} />
+                  <button
+                    data-testid="btn-fullscreen"
+                    type="button"
+                    onClick={() => setFullscreen(true)}
+                    className="absolute right-2 top-8 cursor-pointer rounded bg-[#1e2d3d] px-2 py-1 text-xs text-[#c0d0e0] hover:bg-[#2a3d4d] sm:hidden"
+                  >
+                    Fullscreen
+                  </button>
+                </>
+              ) : (
+                <OutputView sessionId={session.id} sessionStatus={session.status} />
+              )}
             </div>
           )}
 
