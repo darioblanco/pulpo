@@ -12,8 +12,11 @@ export function AppHeader({ title, children }: AppHeaderProps) {
       className="flex h-12 items-center gap-3 border-b border-border px-4"
       data-testid="app-header"
     >
-      <SidebarTrigger />
-      <Separator orientation="vertical" className="h-5" />
+      {/* Sidebar trigger hidden on mobile — bottom tab bar handles navigation */}
+      <span className="hidden md:inline-flex">
+        <SidebarTrigger />
+      </span>
+      <Separator orientation="vertical" className="hidden h-5 md:block" />
       <h1 className="text-sm font-medium">{title}</h1>
       {children && <div className="ml-auto flex items-center gap-2">{children}</div>}
     </header>
