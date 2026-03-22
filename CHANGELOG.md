@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.0.32](https://github.com/darioblanco/pulpo/compare/v0.0.31...v0.0.32) (2026-03-22)
+
+
+### Features
+
+* mobile PWA session orchestration and connectivity fixes ([a71c971](https://github.com/darioblanco/pulpo/commit/a71c971c627cb0c0942cbb70a9e98cb34d0a893f))
+
+
+### Bug Fixes
+
+* add bottom tab bar for mobile PWA navigation ([833d071](https://github.com/darioblanco/pulpo/commit/833d071939c923593e10c25f54bfdaf25ca2e561))
+* hide sidebar trigger on mobile (bottom tab bar handles navigation) ([3038cf6](https://github.com/darioblanco/pulpo/commit/3038cf6060cc047bbfb6fb96d7411f1b312119cd))
+* use $SHELL instead of hardcoded bash for wrap_command ([5cfd1a9](https://github.com/darioblanco/pulpo/commit/5cfd1a97e6adaeb70be7bbb59d55b2d2338a0e9a))
+
 ## [0.0.31](https://github.com/darioblanco/pulpo/compare/v0.0.30...v0.0.31) (2026-03-22)
 
 
