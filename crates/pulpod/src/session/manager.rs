@@ -636,7 +636,7 @@ fn validate_workdir(workdir: &str) -> Result<()> {
     Ok(())
 }
 
-/// Wrap a command for tmux: escape single quotes, wrap in bash -l -c with agent exit marker.
+/// Wrap a command for tmux: escape single quotes, wrap in $SHELL -l -c with agent exit marker.
 /// Prepends `PULPO_SESSION_ID` and `PULPO_SESSION_NAME` env vars so tools inside
 /// sessions can identify their pulpo context.
 /// Known shell binaries — when the command is a bare shell, skip the agent exit wrapper.
@@ -742,9 +742,13 @@ fn write_secrets_file(
     Ok(Some(path))
 }
 
-/// Uses `bash -l -c` (login shell) so that `.bash_profile` / `.zprofile` are sourced,
-/// ensuring PATH includes Homebrew, nvm, and other tools — critical when pulpod runs
-/// as a launchd/systemd service where the environment is minimal.
+/// Wraps a command for execution in a tmux session, using the user's login shell
+/// to ensure PATH includes tools installed via Homebrew, nvm, pyenv, etc.
+///
+/// Uses `$SHELL -l -c` (login shell) rather than hardcoded `bash -l -c` because
+/// users often configure PATH in shell-specific files (`.zshrc`, `.zprofile`).
+/// When pulpod runs as a launchd/systemd service, the environment is minimal,
+/// so the login shell profile sourcing is critical for finding agent binaries.
 ///
 /// If `secrets_file` is provided, the command will source the file and delete it
 /// immediately — secrets never appear in the command string itself.
@@ -754,6 +758,9 @@ fn wrap_command(
     session_name: &str,
     secrets_file: Option<&str>,
 ) -> String {
+    // Detect the user's preferred shell. Falls back to bash if $SHELL is unset.
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_owned());
+
     // Build the secrets-sourcing prefix: source the file and delete it immediately.
     // Uses `. <file>` (POSIX source) for compatibility.
     let secrets_source =
@@ -764,14 +771,13 @@ fn wrap_command(
         // No exit marker, no fallback bash — exiting the shell kills the tmux session.
         let escaped = command.replace('\'', "'\\''");
         return format!(
-            "bash -l -c '{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
+            "{shell} -l -c '{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
         );
     }
     let escaped = command.replace('\'', "'\\''");
-    // Use $SHELL for the fallback shell so the user gets their preferred shell (zsh, fish, etc.)
-    // after the agent exits. Falls back to bash if $SHELL is unset.
+    // After the agent exits, fall back to the user's shell so they can inspect the workdir.
     format!(
-        "bash -l -c '{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec ${{SHELL:-bash}} -l'"
+        "{shell} -l -c '{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec {shell} -l'"
     )
 }
 
@@ -942,7 +948,7 @@ mod tests {
 
         let calls = backend.calls.lock().unwrap();
         // All commands wrapped in bash -l -c for session survival
-        assert!(calls[0].contains("create:fix-the-bug:/tmp:bash -l -c"));
+        assert!(calls[0].contains("-l -c"));
         assert!(calls[0].contains("echo hello"));
         assert!(calls[1].starts_with("setup_logging:fix-the-bug:"));
         assert_eq!(calls.len(), 2);
@@ -968,7 +974,7 @@ mod tests {
         // Should fall back to $SHELL or /bin/sh
         assert!(!session.command.is_empty());
         let calls = backend.calls.lock().unwrap();
-        assert!(calls[0].contains("create:test:/tmp:bash -l -c"));
+        assert!(calls[0].contains("-l -c"));
         drop(calls);
     }
 
@@ -1570,14 +1576,13 @@ mod tests {
     fn test_wrap_command_basic() {
         let id = uuid::Uuid::new_v4();
         let cmd = wrap_command("echo hello", &id, "test-session", None);
-        assert!(cmd.contains("bash -l -c"));
+        assert!(cmd.contains("-l -c"));
         assert!(cmd.contains("echo hello"));
         assert!(cmd.contains("[pulpo] Agent exited (session: test-session)"));
         assert!(cmd.contains("Run: pulpo resume test-session"));
-        // Fallback shell uses $SHELL with bash as default, run as login shell
-        #[allow(clippy::literal_string_with_formatting_args)]
-        let expected_fallback = "exec ${SHELL:-bash} -l";
-        assert!(cmd.contains(expected_fallback));
+        // Fallback shell uses $SHELL (or /bin/bash), run as login shell
+        assert!(cmd.contains("exec "));
+        assert!(cmd.contains(" -l'"));
         assert!(cmd.contains(&format!("PULPO_SESSION_ID={id}")));
         assert!(cmd.contains("PULPO_SESSION_NAME=test-session"));
     }
@@ -1586,7 +1591,7 @@ mod tests {
     fn test_wrap_command_single_quotes() {
         let id = uuid::Uuid::new_v4();
         let cmd = wrap_command("claude -p 'Fix the bug'", &id, "my-task", None);
-        assert!(cmd.contains("bash -l -c"));
+        assert!(cmd.contains("-l -c"));
         // Single quotes should be properly escaped
         assert!(cmd.contains("claude -p"));
         assert!(cmd.contains("Fix the bug"));
@@ -2279,7 +2284,7 @@ mod tests {
         // Should fall back to $SHELL or /bin/sh
         assert!(!session.command.is_empty());
         let calls = backend.calls.lock().unwrap();
-        assert!(calls[0].contains("create:no-fallback:/tmp:bash -l -c"));
+        assert!(calls[0].contains("-l -c"));
         drop(calls);
     }
 
@@ -2572,7 +2577,7 @@ mod tests {
         let calls: Vec<_> = docker.calls.lock().unwrap().clone();
         let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
         assert!(
-            !create_call.contains("bash -l -c"),
+            !create_call.contains("-l -c"),
             "docker command should not be wrapped: {create_call}"
         );
         assert!(
@@ -2719,7 +2724,7 @@ mod tests {
         let id = uuid::Uuid::new_v4();
         let cmd = wrap_command("echo \"hello world\"", &id, "test", None);
         assert!(cmd.contains("echo \"hello world\""));
-        assert!(cmd.contains("bash -l -c"));
+        assert!(cmd.contains("-l -c"));
     }
 
     #[test]
@@ -2741,7 +2746,7 @@ mod tests {
         let id = uuid::Uuid::new_v4();
         let cmd = wrap_command("", &id, "test", None);
         // Empty command is not a shell command, so gets agent wrapper
-        assert!(cmd.contains("bash -l -c"));
+        assert!(cmd.contains("-l -c"));
         assert!(cmd.contains("[pulpo] Agent exited"));
     }
 
@@ -2751,7 +2756,7 @@ mod tests {
         let long_cmd = "echo ".to_owned() + &"a".repeat(10_000);
         let cmd = wrap_command(&long_cmd, &id, "test", None);
         assert!(cmd.contains(&"a".repeat(10_000)));
-        assert!(cmd.contains("bash -l -c"));
+        assert!(cmd.contains("-l -c"));
     }
 
     #[test]
