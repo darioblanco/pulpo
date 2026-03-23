@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.0.34](https://github.com/darioblanco/pulpo/compare/v0.0.33...v0.0.34) (2026-03-23)
+
+
+### Bug Fixes
+
+* move PATH injection from shell string to tmux process env ([71a32b1](https://github.com/darioblanco/pulpo/commit/71a32b1eaab8c6d563eff7ef4079af6da8ee6441))
+* override VuePress default green accent with Pulpo blue ([9bfaba6](https://github.com/darioblanco/pulpo/commit/9bfaba6d5bdb580e13597b1c1694f03bebe09d4d))
+* revert VuePress to default theme, only override accent color and fonts ([03e2864](https://github.com/darioblanco/pulpo/commit/03e2864d5f4f82b9b0c85483d315e5f50c1d888a))
+* update README session status from killed to stopped ([695f703](https://github.com/darioblanco/pulpo/commit/695f703ba48a4489382aea77d6c8246995929372))
+* use double quotes for PATH export in wrapped tmux commands ([0b19017](https://github.com/darioblanco/pulpo/commit/0b19017961a6bef0f8e54ede6f9e30e402083b40))
+
 ## [0.0.33](https://github.com/darioblanco/pulpo/compare/v0.0.32...v0.0.33) (2026-03-23)
 
 
