@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.33](https://github.com/darioblanco/pulpo/compare/v0.0.32...v0.0.33) (2026-03-23)
+
+
+### Features
+
+* rename kill→stop, fix worktree paths, fix PATH resolution for service mode ([7443c11](https://github.com/darioblanco/pulpo/commit/7443c1139bdb5657d016dd9389412a92fec774d7))
+
 ## [0.0.32](https://github.com/darioblanco/pulpo/compare/v0.0.31...v0.0.32) (2026-03-22)
 
 
