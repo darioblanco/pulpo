@@ -55,8 +55,15 @@ fn build_create_command(
     session_name: &str,
     working_dir: &str,
     command: &str,
+    user_path: Option<&str>,
 ) -> Command {
     let mut cmd = Command::new(tmux);
+    // Set the user's full PATH on the tmux process so the tmux server (and all
+    // sessions it spawns) inherit it. This avoids quoting issues with embedding
+    // PATH inside the shell command string, and works regardless of shell type.
+    if let Some(path) = user_path {
+        cmd.env("PATH", path);
+    }
     cmd.args([
         "new-session",
         "-d",
@@ -265,6 +272,12 @@ fn check_tmux_version(tmux_path: &str) -> anyhow::Result<String> {
 pub struct TmuxBackend {
     /// Absolute path to the tmux binary, resolved at construction time.
     tmux_path: String,
+    /// The user's full login-shell PATH, probed at construction time.
+    /// When pulpod runs as a launchd/systemd service the inherited PATH is
+    /// minimal and may not include directories like `~/.local/bin` or
+    /// `~/.cargo/bin`. We resolve the real PATH once and set it on every
+    /// tmux command so sessions can find tools like `claude`.
+    user_path: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -279,8 +292,31 @@ impl TmuxBackend {
     pub fn new() -> Self {
         Self {
             tmux_path: resolve_tmux_path(),
+            user_path: resolve_user_path(),
         }
     }
+}
+
+/// Probe the user's full PATH by spawning their login shell.
+///
+/// Runs `$SHELL -lic 'printf %s "$PATH"'` which sources both login profiles
+/// (`.zprofile`/`.bash_profile`) and interactive rc files (`.zshrc`/`.bashrc`).
+/// This is shell-agnostic: works with zsh, bash, fish, nu, etc.
+/// Returns `None` if the probe fails (e.g. `$SHELL` is unset or broken).
+#[cfg_attr(coverage, allow(dead_code))]
+fn resolve_user_path() -> Option<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_owned());
+    let output = Command::new(&shell)
+        .args(["-lic", r#"printf '%s' "$PATH""#])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if path.is_empty() { None } else { Some(path) }
 }
 
 #[cfg(not(coverage))]
@@ -310,7 +346,13 @@ impl Backend for TmuxBackend {
 
     fn create_session(&self, backend_id: &str, working_dir: &str, command: &str) -> Result<()> {
         run_tmux(
-            build_create_command(&self.tmux_path, backend_id, working_dir, command),
+            build_create_command(
+                &self.tmux_path,
+                backend_id,
+                working_dir,
+                command,
+                self.user_path.as_deref(),
+            ),
             "create tmux session",
         )?;
         // Best-effort session options — if the command exits instantly and kills
@@ -477,7 +519,7 @@ mod tests {
 
     #[test]
     fn test_build_create_command() {
-        let cmd = build_create_command(T, "pulpo-test", "/tmp/repo", "claude");
+        let cmd = build_create_command(T, "pulpo-test", "/tmp/repo", "claude", None);
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
@@ -491,6 +533,26 @@ mod tests {
                 "/tmp/repo",
                 "claude"
             ]
+        );
+    }
+
+    #[test]
+    fn test_build_create_command_with_user_path() {
+        let cmd = build_create_command(
+            T,
+            "test",
+            "/tmp",
+            "claude",
+            Some("/usr/local/bin:/usr/bin:/home/user/.local/bin"),
+        );
+        let envs: Vec<_> = cmd.get_envs().collect();
+        let path_env = envs
+            .iter()
+            .find(|(k, _)| *k == "PATH")
+            .expect("PATH should be set");
+        assert_eq!(
+            path_env.1.unwrap().to_str().unwrap(),
+            "/usr/local/bin:/usr/bin:/home/user/.local/bin"
         );
     }
 
@@ -679,7 +741,7 @@ mod tests {
 
     #[test]
     fn test_build_create_command_with_absolute_path() {
-        let cmd = build_create_command("/opt/homebrew/bin/tmux", "sess", "/tmp", "echo hi");
+        let cmd = build_create_command("/opt/homebrew/bin/tmux", "sess", "/tmp", "echo hi", None);
         assert_eq!(cmd.get_program(), "/opt/homebrew/bin/tmux");
     }
 

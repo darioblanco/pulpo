@@ -738,28 +738,6 @@ fn write_secrets_file(
 ///
 /// If `secrets_file` is provided, the command will source the file and delete it
 /// immediately — secrets never appear in the command string itself.
-/// The user's full login-shell PATH, resolved once at first use.
-///
-/// When pulpod runs as a launchd/systemd service it inherits a minimal PATH
-/// that may not include directories like `~/.local/bin` or `~/.cargo/bin`.
-/// We probe the real PATH by running the user's login shell (`$SHELL -lic ...`)
-/// which sources all profile/rc files regardless of shell type. The result is
-/// injected into every tmux session command so tools like `claude` are found.
-static USER_PATH: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_owned());
-    let output = std::process::Command::new(&shell)
-        .args(["-lic", r#"printf '%s' "$PATH""#])
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if path.is_empty() { None } else { Some(path) }
-});
-
 fn wrap_command(
     command: &str,
     session_id: &uuid::Uuid,
@@ -774,29 +752,18 @@ fn wrap_command(
     let secrets_source =
         secrets_file.map_or_else(String::new, |path| format!(". {path} && rm -f {path}; "));
 
-    // Inject the user's full PATH (probed once at first use via LazyLock) so
-    // commands like `claude` are found even when pulpod runs as a service with
-    // a minimal inherited PATH.
-    let path_export = USER_PATH.as_deref().map_or_else(String::new, |p| {
-        // Use double quotes — the PATH value lives inside the outer single-quoted
-        // -c '...' argument, so single quotes would break the shell parsing.
-        // Double quotes are literal characters inside single quotes.
-        let escaped_path = p.replace('"', r#"\""#);
-        format!(r#"export PATH="{escaped_path}"; "#)
-    });
-
     if is_shell_command(command) {
         // Shell session: set env vars and exec the shell directly.
         // No exit marker, no fallback bash — exiting the shell kills the tmux session.
         let escaped = command.replace('\'', "'\\''");
         return format!(
-            "{shell} -l -c '{path_export}{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
+            "{shell} -l -c '{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
         );
     }
     let escaped = command.replace('\'', "'\\''");
     // After the agent exits, fall back to the user's shell so they can inspect the workdir.
     format!(
-        "{shell} -l -c '{path_export}{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec {shell} -l'"
+        "{shell} -l -c '{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec {shell} -l'"
     )
 }
 
@@ -1650,6 +1617,44 @@ mod tests {
             quote_count % 2,
             0,
             "unbalanced single quotes in wrapped command: {cmd}"
+        );
+    }
+
+    #[test]
+    fn test_wrap_command_executes_without_parse_error() {
+        // Run the entire wrapped command through `sh -n` (parse-only) to catch
+        // quoting bugs. The wrapped command is a complete shell invocation like
+        // `/bin/zsh -l -c '...'`, so we parse it as a whole.
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("true", &id, "test-session", None);
+
+        let output = std::process::Command::new("sh")
+            .args(["-n", "-c", &cmd])
+            .output()
+            .expect("failed to spawn shell");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "wrapped command has shell syntax errors:\n  command: {cmd}\n  stderr: {stderr}"
+        );
+    }
+
+    #[test]
+    fn test_wrap_command_with_quotes_executes_without_parse_error() {
+        // Same test but with a command containing single quotes (common with claude -p).
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("echo 'hello world'", &id, "quoted-session", None);
+
+        let output = std::process::Command::new("sh")
+            .args(["-n", "-c", &cmd])
+            .output()
+            .expect("failed to spawn shell");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "wrapped command with quotes has shell syntax errors:\n  command: {cmd}\n  stderr: {stderr}"
         );
     }
 
@@ -2799,20 +2804,6 @@ mod tests {
     fn test_is_shell_command_bash_with_args_is_not_shell() {
         // "bash -c 'cmd'" is not a bare shell — it's running a command
         assert!(!is_shell_command("bash -c 'echo hello'"));
-    }
-
-    #[test]
-    fn test_wrap_command_includes_path_export() {
-        let id = uuid::Uuid::new_v4();
-        // USER_PATH is probed from the user's login shell. If available, the
-        // wrapped command should contain an `export PATH=` prefix.
-        let cmd = wrap_command("claude", &id, "test", None);
-        if USER_PATH.is_some() {
-            assert!(
-                cmd.contains("export PATH="),
-                "should inject user PATH: {cmd}"
-            );
-        }
     }
 
     // -- create_session: ink secrets dedup --
