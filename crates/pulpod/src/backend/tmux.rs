@@ -891,6 +891,119 @@ mod tests {
         assert_eq!(parse_tmux_version("tmux abc"), None);
     }
 
+    // -- Integration tests: actually spawn tmux sessions --
+    // These tests create real tmux sessions, run commands, and verify
+    // the output. They catch bugs that unit tests miss (quoting issues,
+    // PATH inheritance, tmux server crashes). Excluded from coverage
+    // because they require a real tmux installation.
+
+    /// Helper: create a tmux session, wait for the command to produce output,
+    /// capture it, and kill the session. Returns the captured output.
+    #[cfg(not(coverage))]
+    fn tmux_run_and_capture(session_name: &str, command: &str, user_path: Option<&str>) -> String {
+        let tmux = resolve_tmux_path();
+
+        // Kill any leftover session with this name (best-effort)
+        let _ = run_tmux(build_kill_command(&tmux, session_name), "cleanup");
+
+        // Create the session
+        run_tmux(
+            build_create_command(&tmux, session_name, "/tmp", command, user_path),
+            "create test session",
+        )
+        .unwrap_or_else(|e| panic!("failed to create tmux session '{session_name}': {e}"));
+
+        // Wait for the command to produce output (up to 3 seconds)
+        let mut output = String::new();
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if let Ok(o) = run_tmux(
+                build_capture_command(&tmux, session_name, 50),
+                "capture output",
+            ) {
+                output = String::from_utf8_lossy(&o.stdout).trim().to_owned();
+                if !output.is_empty() {
+                    break;
+                }
+            }
+        }
+
+        // Kill the session
+        let _ = run_tmux(build_kill_command(&tmux, session_name), "cleanup");
+
+        output
+    }
+
+    #[cfg(not(coverage))]
+    #[test]
+    fn test_tmux_session_runs_simple_command() {
+        // Use `sh -c` with sleep so the session stays alive long enough to capture
+        let output =
+            tmux_run_and_capture("pulpo-integ-simple", "sh -c 'echo PULPO_OK; sleep 5'", None);
+        assert!(
+            output.contains("PULPO_OK"),
+            "tmux session should run the command: {output}"
+        );
+    }
+
+    #[cfg(not(coverage))]
+    #[test]
+    fn test_tmux_session_inherits_user_path() {
+        // Set a custom PATH and verify the session can see it
+        let custom_path = format!(
+            "/tmp/pulpo-test-fake-bin:{}",
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let output = tmux_run_and_capture(
+            "pulpo-integ-path",
+            "sh -c 'echo PATH_CHECK=$PATH; sleep 5'",
+            Some(&custom_path),
+        );
+        assert!(
+            output.contains("PATH_CHECK=/tmp/pulpo-test-fake-bin"),
+            "tmux session should inherit user_path: {output}"
+        );
+    }
+
+    #[cfg(not(coverage))]
+    #[test]
+    fn test_tmux_session_runs_wrapped_command() {
+        // Test the full wrap_command flow: create a wrapped command and run it
+        // through tmux, just like pulpod does in production.
+        let id = uuid::Uuid::new_v4();
+        let wrapped = crate::session::manager::wrap_command_for_test(
+            "echo WRAPPED_OK",
+            &id,
+            "integ-wrapped",
+            None,
+        );
+        // wrap_command adds `exec $SHELL -l` fallback, so the session stays alive
+        let output = tmux_run_and_capture("pulpo-integ-wrapped", &wrapped, None);
+        assert!(
+            output.contains("WRAPPED_OK"),
+            "tmux should execute wrapped command: {output}"
+        );
+    }
+
+    #[cfg(not(coverage))]
+    #[test]
+    fn test_tmux_session_wrapped_command_with_single_quotes() {
+        // Single-quoted arguments (e.g. claude -p 'fix the bug') are the most
+        // common source of quoting bugs. Verify they survive the wrapping.
+        let id = uuid::Uuid::new_v4();
+        let wrapped = crate::session::manager::wrap_command_for_test(
+            "echo 'QUOTED_OK'",
+            &id,
+            "integ-quotes",
+            None,
+        );
+        let output = tmux_run_and_capture("pulpo-integ-quotes", &wrapped, None);
+        assert!(
+            output.contains("QUOTED_OK"),
+            "tmux should handle single-quoted args: {output}"
+        );
+    }
+
     #[cfg(not(coverage))]
     #[test]
     fn test_check_tmux_version_succeeds_if_installed() {

@@ -736,6 +736,18 @@ fn write_secrets_file(
 /// When pulpod runs as a launchd/systemd service, the environment is minimal,
 /// so the login shell profile sourcing is critical for finding agent binaries.
 ///
+/// Test-only public wrapper for `wrap_command`, used by tmux integration tests
+/// to verify the full command survives shell parsing and tmux execution.
+#[cfg(test)]
+pub(crate) fn wrap_command_for_test(
+    command: &str,
+    session_id: &uuid::Uuid,
+    session_name: &str,
+    secrets_file: Option<&str>,
+) -> String {
+    wrap_command(command, session_id, session_name, secrets_file)
+}
+
 /// If `secrets_file` is provided, the command will source the file and delete it
 /// immediately — secrets never appear in the command string itself.
 fn wrap_command(
