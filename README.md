@@ -35,7 +35,7 @@ Pulpo is easiest to understand as one core loop:
 
 1. You start a command as a **session**
 2. `pulpod` runs it on a **runtime** (`tmux` or `docker`)
-3. Pulpo tracks its **lifecycle** (`creating`, `active`, `idle`, `ready`, `killed`, `lost`)
+3. Pulpo tracks its **lifecycle** (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`)
 4. You control it from the CLI, web UI, or API
 
 That is the product. Worktrees, schedules, fleet discovery, push notifications, Discord, and MCP are all layers around that core session model.
@@ -75,7 +75,7 @@ open http://localhost:7433  # PWA with push notifications
 
 ### Key Features
 
-- **Session lifecycle** — explicit states (`active`, `idle`, `ready`, `killed`, `lost`) with resume semantics. Agents survive reboots.
+- **Session lifecycle** — explicit states (`active`, `idle`, `ready`, `stopped`, `lost`) with resume semantics. Agents survive reboots.
 - **Multi-node fleet** — spawn and manage sessions across machines. Tailscale, mDNS, or seed discovery. Fleet dashboard shows all sessions across all nodes.
 - **Watchdog supervision** — memory pressure kills, idle detection (31 built-in patterns for Claude Code, Codex, Gemini, Aider, Amazon Q), configurable per-session thresholds.
 - **Git worktrees** — `--worktree` isolates each agent in its own worktree. Multiple agents work on the same repo without conflicts. Works with any agent.
@@ -92,7 +92,7 @@ If you are new to the project, learn these in order:
 
 1. spawn a session
 2. inspect status and output
-3. understand `idle` vs `ready` vs `lost` vs `killed`
+3. understand `idle` vs `ready` vs `lost` vs `stopped`
 4. learn the two runtimes: `tmux` and `docker`
 5. only then add multi-node, schedules, worktrees, and other operational features
 
