@@ -1,28 +1,11 @@
-// Pulpo docs palette — light-first for reference readability, with dark mode support
-// Colors aligned with web UI's deep navy dark theme (OKLch-derived)
+// Pulpo docs palette — swap VuePress default green accent for our blue
 
 $accentColor: #2563eb;
-$accentColorT10: rgba(37, 99, 235, 0.1);
 $accentColorLight: #3b82f6;
-
-$textColor: #17212b;
-$textColorLight: #5f6f82;
-
-$bgColor: #f4f7fb;
-$bgColorLight: #ffffff;
-$bgColorBlur: rgba(244, 247, 251, 0.88);
-
-$borderColor: rgba(23, 33, 43, 0.12);
-$borderColorLight: rgba(23, 33, 43, 0.08);
-
-$codeColor: #2563eb;
-$codeBgColor: #edf4ff;
-
-$sidebarBgColor: #eef3f9;
-$sidebarWidth: 18rem;
 
 $badgeTipColor: #2563eb;
 $badgeWarningColor: #d97706;
 $badgeDangerColor: #ef4444;
 
+$codeColor: #2563eb;
 $codeGroupColor: #2563eb;

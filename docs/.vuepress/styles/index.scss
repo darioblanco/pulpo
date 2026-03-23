@@ -1,115 +1,17 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap');
 
-html {
-  --pulpo-bg: #f4f7fb;
-  --pulpo-bg-elevated: #ffffff;
-  --pulpo-bg-muted: #eef3f9;
-  --pulpo-bg-code: #edf4ff;
-  --pulpo-text: #17212b;
-  --pulpo-text-muted: #5f6f82;
-  --pulpo-border: rgba(23, 33, 43, 0.12);
-  --pulpo-border-soft: rgba(23, 33, 43, 0.08);
-  --pulpo-accent: #2563eb;
-  --pulpo-accent-soft: #3b82f6;
-  --pulpo-accent-wash: rgba(37, 99, 235, 0.08);
-  --pulpo-warning: #d97706;
-  --pulpo-warning-wash: rgba(217, 119, 6, 0.1);
-  --pulpo-danger: #ef4444;
-  --pulpo-danger-wash: rgba(239, 68, 68, 0.1);
-  color-scheme: light;
-}
-
-html.dark {
-  --pulpo-bg: #0d141c;
-  --pulpo-bg-elevated: #121b24;
-  --pulpo-bg-muted: #0b1219;
-  --pulpo-bg-code: #0a1a2a;
-  --pulpo-text: #e6edf5;
-  --pulpo-text-muted: #8b9bb0;
-  --pulpo-border: rgba(255, 255, 255, 0.12);
-  --pulpo-border-soft: rgba(255, 255, 255, 0.08);
-  --pulpo-accent: #3b82f6;
-  --pulpo-accent-soft: #60a5fa;
-  --pulpo-accent-wash: rgba(59, 130, 246, 0.12);
-  --pulpo-warning: #f59e0b;
-  --pulpo-warning-wash: rgba(245, 158, 11, 0.14);
-  --pulpo-danger: #ef4444;
-  --pulpo-danger-wash: rgba(239, 68, 68, 0.14);
-  color-scheme: dark;
-}
-
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
-  background:
-    radial-gradient(circle at top, rgba(37, 99, 235, 0.06), transparent 30%),
-    var(--pulpo-bg);
-  color: var(--pulpo-text);
 }
 
-.vp-navbar {
-  background-color: color-mix(in srgb, var(--pulpo-bg-elevated) 86%, transparent) !important;
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--pulpo-border-soft) !important;
-
-  .site-name {
-    font-family: 'Space Grotesk', sans-serif;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    color: var(--pulpo-text) !important;
-  }
-
-  a {
-    color: var(--pulpo-text) !important;
-
-    &:hover,
-    &.router-link-active {
-      color: var(--pulpo-accent) !important;
-    }
-  }
-}
-
-.vp-sidebar {
-  background-color: var(--pulpo-bg-muted) !important;
-  border-right: 1px solid var(--pulpo-border-soft) !important;
-
-  .sidebar-item {
-    color: var(--pulpo-text-muted);
-
-    &:hover {
-      color: var(--pulpo-text);
-    }
-
-    &.active {
-      color: var(--pulpo-accent);
-      border-left-color: var(--pulpo-accent);
-    }
-  }
-
-  .sidebar-heading {
-    color: var(--pulpo-text);
-    font-weight: 700;
-  }
-
-  a {
-    color: var(--pulpo-text-muted) !important;
-
-    &:hover {
-      color: var(--pulpo-text) !important;
-    }
-
-    &.active,
-    &.router-link-active {
-      color: var(--pulpo-accent) !important;
-      font-weight: 600;
-    }
-  }
+.vp-navbar .site-name {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .theme-default-content {
-  color: var(--pulpo-text);
-  line-height: 1.75;
-
   h1,
   h2,
   h3,
@@ -117,263 +19,21 @@ body {
   h5,
   h6 {
     font-family: 'Space Grotesk', sans-serif;
-    color: var(--pulpo-text);
-    border-bottom-color: var(--pulpo-border-soft);
     letter-spacing: -0.02em;
   }
 
-  a {
-    color: var(--pulpo-accent);
-    text-underline-offset: 0.14em;
-
-    &:hover {
-      color: var(--pulpo-accent-soft);
-    }
-  }
-
-  strong {
-    color: var(--pulpo-text);
-  }
-
-  table {
-    border-collapse: collapse;
-    display: table;
-    width: 100%;
-    overflow: hidden;
-    border-radius: 10px;
-    background-color: var(--pulpo-bg-elevated);
-
-    tr {
-      border-top-color: var(--pulpo-border-soft);
-
-      &:nth-child(2n) {
-        background-color: color-mix(in srgb, var(--pulpo-bg-muted) 70%, transparent);
-      }
-    }
-
-    th,
-    td {
-      border-color: var(--pulpo-border-soft);
-      color: var(--pulpo-text);
-    }
-
-    th {
-      background-color: var(--pulpo-bg-muted);
-      font-weight: 700;
-    }
-  }
-
   code {
-    color: var(--pulpo-accent);
-    background-color: var(--pulpo-bg-code);
-    border-radius: 6px;
-    padding: 0.15em 0.4em;
     font-family: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', monospace;
     font-size: 0.875em;
   }
-
-  div[class*='language-'] {
-    background-color: var(--pulpo-bg-code) !important;
-    border-radius: 12px;
-    border: 1px solid var(--pulpo-border);
-    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
-
-    pre {
-      background-color: transparent !important;
-    }
-
-    code {
-      color: var(--pulpo-text);
-      background-color: transparent;
-      padding: 0;
-    }
-
-    .line-number {
-      color: var(--pulpo-text-muted);
-    }
-  }
-
-  blockquote {
-    border-left-color: var(--pulpo-accent);
-    color: var(--pulpo-text-muted);
-    background-color: var(--pulpo-accent-wash);
-    border-radius: 0 10px 10px 0;
-    padding: 0.8rem 1rem;
-  }
-
-  hr {
-    border-color: var(--pulpo-border-soft);
-  }
-
-  li {
-    color: var(--pulpo-text);
-  }
 }
 
-.custom-container {
-  border-radius: 12px;
-  border-width: 1px;
-
-  &.tip {
-    background-color: var(--pulpo-accent-wash);
-    border-color: var(--pulpo-accent);
-    color: var(--pulpo-text);
-
-    .custom-container-title {
-      color: var(--pulpo-accent);
-    }
-
-    a {
-      color: var(--pulpo-accent);
-    }
-  }
-
-  &.warning {
-    background-color: var(--pulpo-warning-wash);
-    border-color: var(--pulpo-warning);
-    color: var(--pulpo-text);
-
-    .custom-container-title {
-      color: var(--pulpo-warning);
-    }
-  }
-
-  &.danger {
-    background-color: var(--pulpo-danger-wash);
-    border-color: var(--pulpo-danger);
-    color: var(--pulpo-text);
-
-    .custom-container-title {
-      color: var(--pulpo-danger);
-    }
-  }
-
-  &.details {
-    background-color: color-mix(in srgb, var(--pulpo-bg-muted) 76%, transparent);
-    border-color: var(--pulpo-border-soft);
-    color: var(--pulpo-text);
-  }
+.home .hero h1 {
+  font-family: 'Space Grotesk', sans-serif;
+  letter-spacing: -0.03em;
 }
 
 .badge {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.75em;
-}
-
-.page-nav {
-  border-top-color: var(--pulpo-border-soft) !important;
-
-  a {
-    color: var(--pulpo-accent) !important;
-
-    &:hover {
-      color: var(--pulpo-accent-soft) !important;
-    }
-  }
-}
-
-.page-meta {
-  border-top-color: var(--pulpo-border-soft) !important;
-  color: var(--pulpo-text-muted);
-
-  a {
-    color: var(--pulpo-accent) !important;
-  }
-}
-
-.search-box {
-  input {
-    background-color: var(--pulpo-bg-elevated) !important;
-    border-color: var(--pulpo-border) !important;
-    color: var(--pulpo-text) !important;
-    border-radius: 10px;
-
-    &::placeholder {
-      color: var(--pulpo-text-muted);
-    }
-  }
-}
-
-.home {
-  .hero {
-    h1 {
-      font-family: 'Space Grotesk', sans-serif;
-      color: var(--pulpo-text);
-      letter-spacing: -0.03em;
-    }
-
-    .description {
-      color: var(--pulpo-text-muted);
-    }
-
-    .action-button {
-      background-color: var(--pulpo-accent);
-      border-color: var(--pulpo-accent);
-      color: #fff;
-      border-radius: 10px;
-      font-weight: 600;
-      transition: all 0.2s ease;
-      box-shadow: 0 10px 24px rgba(37, 99, 235, 0.18);
-
-      &:hover {
-        background-color: var(--pulpo-accent-soft);
-        border-color: var(--pulpo-accent-soft);
-      }
-
-      &.action-button-secondary {
-        background-color: var(--pulpo-bg-elevated);
-        border-color: var(--pulpo-border);
-        color: var(--pulpo-accent);
-        box-shadow: none;
-
-        &:hover {
-          background-color: var(--pulpo-bg-muted);
-        }
-      }
-    }
-  }
-
-  .features {
-    border-top-color: var(--pulpo-border-soft);
-  }
-
-  .feature {
-    background: color-mix(in srgb, var(--pulpo-bg-elevated) 92%, transparent);
-    border: 1px solid var(--pulpo-border-soft);
-    border-radius: 14px;
-    padding: 1rem 1.1rem;
-    box-shadow: 0 12px 30px rgba(15, 23, 42, 0.05);
-
-    h2 {
-      font-family: 'Space Grotesk', sans-serif;
-      color: var(--pulpo-text);
-      border-bottom: none;
-    }
-
-    p {
-      color: var(--pulpo-text-muted);
-    }
-  }
-}
-
-.external-link-icon {
-  color: var(--pulpo-text-muted);
-}
-
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background-color: color-mix(in srgb, var(--pulpo-text-muted) 35%, transparent);
-  border-radius: 3px;
-
-  &:hover {
-    background-color: color-mix(in srgb, var(--pulpo-text-muted) 55%, transparent);
-  }
 }
