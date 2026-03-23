@@ -778,8 +778,11 @@ fn wrap_command(
     // commands like `claude` are found even when pulpod runs as a service with
     // a minimal inherited PATH.
     let path_export = USER_PATH.as_deref().map_or_else(String::new, |p| {
-        let escaped_path = p.replace('\'', "'\\''");
-        format!("export PATH='{escaped_path}'; ")
+        // Use double quotes — the PATH value lives inside the outer single-quoted
+        // -c '...' argument, so single quotes would break the shell parsing.
+        // Double quotes are literal characters inside single quotes.
+        let escaped_path = p.replace('"', r#"\""#);
+        format!(r#"export PATH="{escaped_path}"; "#)
     });
 
     if is_shell_command(command) {
