@@ -35,7 +35,7 @@ Development commands: `make setup` | `make fmt` | `make lint` | `make test` | `m
 When working on roadmap items, prioritize:
 
 1. Correct failure detection behavior (watchdog and session state transitions).
-2. Safe intervention semantics (no false `dead` state on failed kill).
+2. Safe intervention semantics (no false `dead` state on failed stop).
 3. Clear auditability (intervention reasons/events).
 4. Bounded, explicit recovery behavior.
 

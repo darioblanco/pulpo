@@ -37,7 +37,7 @@ struct DiscordPayload {
 ///
 /// - active   → green  (`0x2ecc71`)
 /// - ready    → blue   (`0x3498db`)
-/// - killed   → red    (`0xe74c3c`)
+/// - stopped  → red    (`0xe74c3c`)
 /// - lost     → orange (`0xe67e22`)
 /// - other    → gray   (`0x95a5a6`)
 pub const fn status_color(status: &str) -> u32 {
@@ -45,7 +45,7 @@ pub const fn status_color(status: &str) -> u32 {
     match status.as_bytes() {
         b"active" => 0x2e_cc71,
         b"ready" => 0x34_98db,
-        b"killed" => 0xe7_4c3c,
+        b"stopped" => 0xe7_4c3c,
         b"lost" => 0xe6_7e22,
         _ => 0x95_a5a6,
     }
@@ -198,8 +198,8 @@ mod tests {
     }
 
     #[test]
-    fn test_status_color_dead() {
-        assert_eq!(status_color("killed"), 0xe7_4c3c);
+    fn test_status_color_stopped() {
+        assert_eq!(status_color("stopped"), 0xe7_4c3c);
     }
 
     #[test]
@@ -222,7 +222,7 @@ mod tests {
             events: vec![],
         };
         assert!(should_notify(&config, "active"));
-        assert!(should_notify(&config, "killed"));
+        assert!(should_notify(&config, "stopped"));
         assert!(should_notify(&config, "ready"));
     }
 
@@ -230,10 +230,10 @@ mod tests {
     fn test_should_notify_with_filter() {
         let config = DiscordWebhookConfig {
             webhook_url: "https://example.com".into(),
-            events: vec!["ready".into(), "killed".into()],
+            events: vec!["ready".into(), "stopped".into()],
         };
         assert!(!should_notify(&config, "active"));
-        assert!(should_notify(&config, "killed"));
+        assert!(should_notify(&config, "stopped"));
         assert!(should_notify(&config, "ready"));
         assert!(!should_notify(&config, "lost"));
     }
@@ -304,8 +304,8 @@ mod tests {
     }
 
     #[test]
-    fn test_build_payload_dead_color() {
-        let event = test_event("killed");
+    fn test_build_payload_stopped_color() {
+        let event = test_event("stopped");
         let payload = build_discord_payload(&event);
         assert_eq!(payload["embeds"][0]["color"], 0xe7_4c3c);
     }
@@ -427,7 +427,7 @@ mod tests {
     async fn test_notification_loop_filtered_event() {
         let config = DiscordWebhookConfig {
             webhook_url: "https://example.com/webhook".into(),
-            events: vec!["killed".into()], // Only dead events
+            events: vec!["stopped".into()], // Only stopped events
         };
         let notifier = DiscordNotifier::new(config);
         let (event_tx, rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
@@ -484,7 +484,7 @@ mod tests {
         // Filter everything so the loop doesn't attempt HTTP after processing lag
         let config = DiscordWebhookConfig {
             webhook_url: "https://example.com/webhook".into(),
-            events: vec!["killed".into()],
+            events: vec!["stopped".into()],
         };
         let notifier = DiscordNotifier::new(config);
         // Tiny buffer to force lag

@@ -50,7 +50,7 @@ The important statuses to know early are:
 - `idle`: the command is waiting for input or has gone quiet
 - `ready`: the command finished, but the session is still resumable
 - `lost`: the backend disappeared and the session may need resume
-- `killed`: the session was terminated and is not resumable
+- `stopped`: the session was terminated and is not resumable
 
 ## 4. Resume after a crash or reboot
 
@@ -61,7 +61,7 @@ pulpo list
 pulpo resume my-api
 ```
 
-`ready` sessions are also resumable. `killed` sessions are not.
+`ready` sessions are also resumable. `stopped` sessions are not.
 
 ## 5. Parallel agents with worktrees
 
@@ -72,7 +72,7 @@ pulpo spawn frontend --workdir ~/repo --worktree -- claude -p "redesign sidebar"
 pulpo spawn backend  --workdir ~/repo --worktree -- codex "optimize queries"
 ```
 
-Each agent gets an isolated git worktree at `<repo>/.pulpo/worktrees/<name>/`. See the [Worktrees Guide](/guides/worktrees) for details.
+Each agent gets an isolated git worktree at `~/.pulpo/worktrees/<name>/`. See the [Worktrees Guide](/guides/worktrees) for details.
 
 ## 6. Schedule recurring runs
 

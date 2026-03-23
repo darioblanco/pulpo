@@ -202,17 +202,17 @@ mod tests {
     fn test_should_notify_empty_filter_allows_all() {
         let config = test_config();
         assert!(should_notify(&config, "active"));
-        assert!(should_notify(&config, "killed"));
+        assert!(should_notify(&config, "stopped"));
     }
 
     #[test]
     fn test_should_notify_with_filter() {
         let config = WebhookEndpointConfig {
-            events: vec!["ready".into(), "killed".into()],
+            events: vec!["ready".into(), "stopped".into()],
             ..test_config()
         };
         assert!(!should_notify(&config, "active"));
-        assert!(should_notify(&config, "killed"));
+        assert!(should_notify(&config, "stopped"));
         assert!(should_notify(&config, "ready"));
     }
 
@@ -365,7 +365,7 @@ mod tests {
     #[tokio::test]
     async fn test_notification_loop_filtered_event() {
         let config = WebhookEndpointConfig {
-            events: vec!["killed".into()],
+            events: vec!["stopped".into()],
             ..test_config()
         };
         let notifier = WebhookNotifier::new(config);
@@ -415,7 +415,7 @@ mod tests {
     #[tokio::test]
     async fn test_notification_loop_lagged() {
         let config = WebhookEndpointConfig {
-            events: vec!["killed".into()],
+            events: vec!["stopped".into()],
             ..test_config()
         };
         let notifier = WebhookNotifier::new(config);

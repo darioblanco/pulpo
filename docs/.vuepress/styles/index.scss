@@ -9,13 +9,13 @@ html {
   --pulpo-text-muted: #5f6f82;
   --pulpo-border: rgba(23, 33, 43, 0.12);
   --pulpo-border-soft: rgba(23, 33, 43, 0.08);
-  --pulpo-accent: #0d5bd7;
-  --pulpo-accent-soft: #2b76eb;
-  --pulpo-accent-wash: rgba(13, 91, 215, 0.08);
-  --pulpo-warning: #b7791f;
-  --pulpo-warning-wash: rgba(183, 121, 31, 0.1);
-  --pulpo-danger: #cc334f;
-  --pulpo-danger-wash: rgba(204, 51, 79, 0.1);
+  --pulpo-accent: #2563eb;
+  --pulpo-accent-soft: #3b82f6;
+  --pulpo-accent-wash: rgba(37, 99, 235, 0.08);
+  --pulpo-warning: #d97706;
+  --pulpo-warning-wash: rgba(217, 119, 6, 0.1);
+  --pulpo-danger: #ef4444;
+  --pulpo-danger-wash: rgba(239, 68, 68, 0.1);
   color-scheme: light;
 }
 
@@ -25,16 +25,16 @@ html.dark {
   --pulpo-bg-muted: #0b1219;
   --pulpo-bg-code: #0a1a2a;
   --pulpo-text: #e6edf5;
-  --pulpo-text-muted: #9aa8b8;
+  --pulpo-text-muted: #8b9bb0;
   --pulpo-border: rgba(255, 255, 255, 0.12);
   --pulpo-border-soft: rgba(255, 255, 255, 0.08);
-  --pulpo-accent: #66a4ff;
-  --pulpo-accent-soft: #8ab8ff;
-  --pulpo-accent-wash: rgba(102, 164, 255, 0.12);
-  --pulpo-warning: #e6b24d;
-  --pulpo-warning-wash: rgba(230, 178, 77, 0.14);
-  --pulpo-danger: #ff7d92;
-  --pulpo-danger-wash: rgba(255, 125, 146, 0.14);
+  --pulpo-accent: #3b82f6;
+  --pulpo-accent-soft: #60a5fa;
+  --pulpo-accent-wash: rgba(59, 130, 246, 0.12);
+  --pulpo-warning: #f59e0b;
+  --pulpo-warning-wash: rgba(245, 158, 11, 0.14);
+  --pulpo-danger: #ef4444;
+  --pulpo-danger-wash: rgba(239, 68, 68, 0.14);
   color-scheme: dark;
 }
 
@@ -42,7 +42,7 @@ body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   background:
-    radial-gradient(circle at top, rgba(13, 91, 215, 0.06), transparent 30%),
+    radial-gradient(circle at top, rgba(37, 99, 235, 0.06), transparent 30%),
     var(--pulpo-bg);
   color: var(--pulpo-text);
 }
@@ -313,7 +313,7 @@ body {
       border-radius: 10px;
       font-weight: 600;
       transition: all 0.2s ease;
-      box-shadow: 0 10px 24px rgba(13, 91, 215, 0.18);
+      box-shadow: 0 10px 24px rgba(37, 99, 235, 0.18);
 
       &:hover {
         background-color: var(--pulpo-accent-soft);

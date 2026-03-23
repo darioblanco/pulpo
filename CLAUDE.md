@@ -247,7 +247,7 @@ pulpo/
 │       │   │   ├── spawn.ts      # /spawn — create a new session
 │       │   │   ├── status.ts     # /status — show session(s)
 │       │   │   ├── logs.ts       # /logs — recent output
-│       │   │   ├── kill.ts       # /kill — terminate session
+│       │   │   ├── stop.ts       # /stop — terminate session
 │       │   │   ├── resume.ts     # /resume — resume lost/ready session
 │       │   │   ├── inks.ts       # /inks — list inks
 │       │   │   └── input.ts      # /input — send text to session
@@ -281,7 +281,7 @@ pulpo/
 │   │   │   └── tmux.rs           # tmux backend (macOS/Linux)
 │   │   ├── session/              # Session lifecycle
 │   │   │   ├── mod.rs            # Session module
-│   │   │   ├── manager.rs        # Orchestration (spawn, kill, resume)
+│   │   │   ├── manager.rs        # Orchestration (spawn, stop, resume)
 │   │   │   └── pty_bridge.rs     # PTY bridge for WebSocket streaming
 │   │   ├── store/                # Persistence
 │   │   │   └── mod.rs            # SQLite store + migrations

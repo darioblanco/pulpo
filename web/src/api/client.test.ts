@@ -9,8 +9,7 @@ import {
   getSession,
   createSession,
   createRemoteSession,
-  killSession,
-  deleteSession,
+  stopSession,
   getSessionOutput,
   downloadSessionOutput,
   sendInput,
@@ -279,13 +278,24 @@ describe('createRemoteSession', () => {
   });
 });
 
-describe('killSession', () => {
-  it('sends POST to /api/v1/sessions/:id/kill', async () => {
+describe('stopSession', () => {
+  it('sends POST to /api/v1/sessions/:id/stop', async () => {
     mockFetch.mockResolvedValue({ ok: true });
 
-    await killSession('abc');
+    await stopSession('abc');
 
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions/abc/kill', {
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions/abc/stop', {
+      method: 'POST',
+      headers: {},
+    });
+  });
+
+  it('appends purge=true when purge is true', async () => {
+    mockFetch.mockResolvedValue({ ok: true });
+
+    await stopSession('abc', true);
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions/abc/stop?purge=true', {
       method: 'POST',
       headers: {},
     });
@@ -297,7 +307,7 @@ describe('killSession', () => {
       json: () => Promise.resolve({ error: 'session not found' }),
     });
 
-    await expect(killSession('abc')).rejects.toThrow('session not found');
+    await expect(stopSession('abc')).rejects.toThrow('session not found');
   });
 
   it('throws generic message when no error field', async () => {
@@ -306,20 +316,7 @@ describe('killSession', () => {
       json: () => Promise.resolve({}),
     });
 
-    await expect(killSession('abc')).rejects.toThrow('Failed to kill session');
-  });
-});
-
-describe('deleteSession', () => {
-  it('sends DELETE to /api/v1/sessions/:id', async () => {
-    mockFetch.mockResolvedValue({});
-
-    await deleteSession('abc');
-
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions/abc', {
-      method: 'DELETE',
-      headers: {},
-    });
+    await expect(stopSession('abc')).rejects.toThrow('Failed to stop session');
   });
 });
 

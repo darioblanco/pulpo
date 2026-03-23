@@ -66,7 +66,7 @@ describe('sessionEmbed', () => {
   it('uses correct colors for different statuses', () => {
     expect(sessionEmbed(mockSession({ status: 'active' })).toJSON().color).toBe(0x2ecc71);
     expect(sessionEmbed(mockSession({ status: 'ready' })).toJSON().color).toBe(0x3498db);
-    expect(sessionEmbed(mockSession({ status: 'killed' })).toJSON().color).toBe(0xe74c3c);
+    expect(sessionEmbed(mockSession({ status: 'stopped' })).toJSON().color).toBe(0xe74c3c);
     expect(sessionEmbed(mockSession({ status: 'lost' })).toJSON().color).toBe(0xe67e22);
     expect(sessionEmbed(mockSession({ status: 'idle' })).toJSON().color).toBe(0xf59e0b);
     expect(sessionEmbed(mockSession({ status: 'creating' })).toJSON().color).toBe(0x95a5a6);
@@ -110,8 +110,8 @@ describe('eventEmbed', () => {
     expect(outputField!.value.length).toBeLessThan(1020);
   });
 
-  it('uses killed color for killed events', () => {
-    const embed = eventEmbed(mockEvent({ status: 'killed' }));
+  it('uses stopped color for stopped events', () => {
+    const embed = eventEmbed(mockEvent({ status: 'stopped' }));
     expect(embed.toJSON().color).toBe(0xe74c3c);
   });
 });

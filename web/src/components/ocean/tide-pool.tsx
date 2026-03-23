@@ -27,8 +27,8 @@ interface TidePoolProps {
   sprites: Sprites | null;
   expanded?: boolean;
   onToggleExpand?: () => void;
-  onKillSession?: (sessionName: string) => void;
-  onDeleteSession?: (sessionName: string) => void;
+  onStopSession?: (sessionName: string) => void;
+  onPurgeSession?: (sessionName: string) => void;
 }
 
 export function TidePool({
@@ -40,8 +40,8 @@ export function TidePool({
   sprites,
   expanded,
   onToggleExpand,
-  onKillSession,
-  onDeleteSession,
+  onStopSession,
+  onPurgeSession,
 }: TidePoolProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -188,20 +188,20 @@ export function TidePool({
     [selectedOctopus],
   );
 
-  const handleKill = useCallback(
+  const handleStop = useCallback(
     (sessionName: string) => {
       setSelectedOctopus(null);
-      onKillSession?.(sessionName);
+      onStopSession?.(sessionName);
     },
-    [onKillSession],
+    [onStopSession],
   );
 
-  const handleDelete = useCallback(
+  const handlePurge = useCallback(
     (sessionName: string) => {
       setSelectedOctopus(null);
-      onDeleteSession?.(sessionName);
+      onPurgeSession?.(sessionName);
     },
-    [onDeleteSession],
+    [onPurgeSession],
   );
 
   const statusColor =
@@ -271,8 +271,8 @@ export function TidePool({
             screenY={selectedOctopus.screenY}
             onClose={() => setSelectedOctopus(null)}
             onAttach={handleAttach}
-            onKill={onKillSession ? handleKill : undefined}
-            onDelete={onDeleteSession ? handleDelete : undefined}
+            onStop={onStopSession ? handleStop : undefined}
+            onPurge={onPurgeSession ? handlePurge : undefined}
           />
         )}
         {selectedNode && (

@@ -9,7 +9,7 @@ export const STATUS_LABEL_COLORS: Record<string, string> = {
   idle: '#d4a030', // amber/orange
   lost: '#c87533', // darker orange
   ready: '#34d399', // green
-  killed: '#f87171', // red
+  stopped: '#f87171', // red
 };
 
 // --- Ambient effects (seeded per pool, deterministic from seed) ---
@@ -407,8 +407,8 @@ function drawOctopus(
   const drawW = size;
   const drawH = size;
 
-  const bobSpeed = oct.status === 'killed' ? 0.5 : oct.status === 'lost' ? 1.0 : 1.5;
-  const bobAmount = oct.status === 'killed' ? 1 : 2;
+  const bobSpeed = oct.status === 'stopped' ? 0.5 : oct.status === 'lost' ? 1.0 : 1.5;
+  const bobAmount = oct.status === 'stopped' ? 1 : 2;
   const bob = Math.sin(time * 0.002 * bobSpeed + oct.x * 0.3) * bobAmount * camera.zoom;
 
   const breathe = Math.sin(time * 0.003 + oct.y * 0.2) * 0.03;

@@ -27,7 +27,7 @@ import type { ScheduleInfo, Session } from '@/api/types';
 type StatusFilter = 'all' | 'active' | 'paused';
 
 function isTerminal(status: string): boolean {
-  return status === 'killed' || status === 'ready' || status === 'lost';
+  return status === 'stopped' || status === 'ready' || status === 'lost';
 }
 
 function RunHistoryPanel({ scheduleId, expanded }: { scheduleId: string; expanded: boolean }) {

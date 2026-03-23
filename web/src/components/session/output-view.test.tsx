@@ -68,9 +68,9 @@ describe('OutputView', () => {
     expect(screen.queryByTestId('output-input')).not.toBeInTheDocument();
   });
 
-  it('hides input field for killed sessions', () => {
+  it('hides input field for stopped sessions', () => {
     mockGetSessionOutput.mockResolvedValue({ output: '' });
-    render(<OutputView sessionId="sess-1" sessionStatus="killed" />);
+    render(<OutputView sessionId="sess-1" sessionStatus="stopped" />);
     expect(screen.queryByTestId('output-input')).not.toBeInTheDocument();
   });
 

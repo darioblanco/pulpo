@@ -8,9 +8,8 @@ pulpo list                                List sessions (alias: ls)
 pulpo logs <NAME> [--follow]              Show session output
 pulpo attach <NAME>                       Attach to a session terminal
 pulpo input <NAME> [TEXT]                 Send text input to a session
-pulpo kill <NAME>                         Kill a running session
-pulpo delete <NAME>                       Delete session record (alias: rm)
-pulpo cleanup                             Remove all killed and lost sessions
+pulpo stop <NAME>                         Stop a running session
+pulpo cleanup                             Remove all stopped and lost sessions
 pulpo resume <NAME>                       Resume a lost or ready session (auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions
 pulpo nodes                               List known nodes/peers
@@ -96,10 +95,10 @@ pulpo spawn my-task --auto -- claude -p "fix bug"
 pulpo list | grep idle | awk '{print $1}' | xargs -I{} pulpo input {} "y"
 ```
 
-### Kill all active sessions
+### Stop all active sessions
 
 ```bash
-pulpo list | grep active | awk '{print $1}' | xargs -I{} pulpo kill {}
+pulpo list | grep active | awk '{print $1}' | xargs -I{} pulpo stop {}
 ```
 
 ### Spawn agents across multiple repos

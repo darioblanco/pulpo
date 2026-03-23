@@ -29,7 +29,7 @@ describe('StatusSummary', () => {
     expect(screen.getByTestId('count-idle').textContent).toBe('0');
     expect(screen.getByTestId('count-lost').textContent).toBe('0');
     expect(screen.getByTestId('count-ready').textContent).toBe('0');
-    expect(screen.getByTestId('count-killed').textContent).toBe('0');
+    expect(screen.getByTestId('count-stopped').textContent).toBe('0');
   });
 
   it('counts sessions by status', () => {
@@ -41,7 +41,7 @@ describe('StatusSummary', () => {
       makeSession({ id: '5', status: 'ready' }),
       makeSession({ id: '6', status: 'ready' }),
       makeSession({ id: '7', status: 'ready' }),
-      makeSession({ id: '8', status: 'killed' }),
+      makeSession({ id: '8', status: 'stopped' }),
       makeSession({ id: '9', status: 'idle' }),
     ];
     render(<StatusSummary sessions={sessions} />);
@@ -49,7 +49,7 @@ describe('StatusSummary', () => {
     expect(screen.getByTestId('count-idle').textContent).toBe('1');
     expect(screen.getByTestId('count-lost').textContent).toBe('1');
     expect(screen.getByTestId('count-ready').textContent).toBe('3');
-    expect(screen.getByTestId('count-killed').textContent).toBe('1');
+    expect(screen.getByTestId('count-stopped').textContent).toBe('1');
   });
 
   it('renders the summary container', () => {
@@ -63,6 +63,6 @@ describe('StatusSummary', () => {
     expect(screen.getByText('idle')).toBeInTheDocument();
     expect(screen.getByText('lost')).toBeInTheDocument();
     expect(screen.getByText('done')).toBeInTheDocument();
-    expect(screen.getByText('killed')).toBeInTheDocument();
+    expect(screen.getByText('stopped')).toBeInTheDocument();
   });
 });

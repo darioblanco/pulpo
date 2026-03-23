@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import { GitBranch } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { deleteSession, downloadSessionOutput } from '@/api/client';
+import { stopSession, downloadSessionOutput } from '@/api/client';
 import type { Session } from '@/api/types';
 import { statusColors } from '@/lib/utils';
 
@@ -30,8 +30,8 @@ export function SessionList({ sessions, onRefresh }: SessionListProps) {
     URL.revokeObjectURL(url);
   }
 
-  async function handleDelete(id: string) {
-    await deleteSession(id);
+  async function handlePurge(id: string) {
+    await stopSession(id, true);
     onRefresh();
   }
 
@@ -127,10 +127,10 @@ export function SessionList({ sessions, onRefresh }: SessionListProps) {
                   variant="outline"
                   size="sm"
                   className="text-destructive"
-                  data-testid={`delete-${session.id}`}
-                  onClick={() => handleDelete(session.id)}
+                  data-testid={`purge-${session.id}`}
+                  onClick={() => handlePurge(session.id)}
                 >
-                  Delete
+                  Stop &amp; Purge
                 </Button>
               </div>
             </div>

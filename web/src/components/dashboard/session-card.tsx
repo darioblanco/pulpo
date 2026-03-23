@@ -14,7 +14,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { killSession, resumeSession, getInterventionEvents, sendInput } from '@/api/client';
+import { stopSession, resumeSession, getInterventionEvents, sendInput } from '@/api/client';
 import type { Session, InterventionEvent } from '@/api/types';
 import { OutputView } from '@/components/session/output-view';
 import { TerminalView } from '@/components/session/terminal-view';
@@ -37,15 +37,15 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
   const [interventionEvents, setInterventionEvents] = useState<InterventionEvent[]>([]);
   const [interventionsExpanded, setInterventionsExpanded] = useState(false);
 
-  const canKill = session.status === 'active' || session.status === 'lost';
+  const canStop = session.status === 'active' || session.status === 'lost';
   const canResume = session.status === 'lost';
 
-  async function handleKill() {
+  async function handleStop() {
     try {
-      await killSession(session.id);
+      await stopSession(session.id);
       onRefresh();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to kill session');
+      toast.error(e instanceof Error ? e.message : 'Failed to stop session');
     }
   }
 
@@ -78,20 +78,20 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
           <AlertDialog>
             <AlertDialogTrigger asChild>
               <button
-                data-testid="btn-kill"
+                data-testid="btn-stop"
                 type="button"
-                title={canKill ? 'Kill session' : 'Session not active'}
-                disabled={!canKill}
-                className={`flex items-center justify-center p-2 -m-1 ${canKill ? 'cursor-pointer' : ''}`}
+                title={canStop ? 'Stop session' : 'Session not active'}
+                disabled={!canStop}
+                className={`flex items-center justify-center p-2 -m-1 ${canStop ? 'cursor-pointer' : ''}`}
               >
                 <span
-                  className={`block h-3 w-3 rounded-full ${canKill ? 'bg-[#ff5f57] hover:brightness-110' : 'bg-[#ff5f57]/30'}`}
+                  className={`block h-3 w-3 rounded-full ${canStop ? 'bg-[#ff5f57] hover:brightness-110' : 'bg-[#ff5f57]/30'}`}
                 />
               </button>
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>Kill session &quot;{session.name}&quot;?</AlertDialogTitle>
+                <AlertDialogTitle>Stop session &quot;{session.name}&quot;?</AlertDialogTitle>
                 <AlertDialogDescription>
                   This will terminate the session and stop the active agent. This action cannot be
                   undone.
@@ -100,11 +100,11 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
                 <AlertDialogAction
-                  data-testid="btn-kill-confirm"
-                  onClick={handleKill}
+                  data-testid="btn-stop-confirm"
+                  onClick={handleStop}
                   className="bg-destructive text-white hover:bg-destructive/90"
                 >
-                  Kill Session
+                  Stop Session
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -215,7 +215,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
           <span className="truncate max-w-[120px] sm:max-w-[200px] lg:max-w-none text-[0.6rem] uppercase text-[#5a7a9a]">
             {truncateCommand(session.command)}
           </span>
-          {session.status === 'killed' && session.intervention_reason && (
+          {session.status === 'stopped' && session.intervention_reason && (
             <Badge
               data-testid="intervention-badge"
               variant="destructive"
@@ -344,11 +344,11 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
 
           {(session.status === 'lost' ||
             session.status === 'ready' ||
-            session.status === 'killed') && (
+            session.status === 'stopped') && (
             <OutputView sessionId={session.id} sessionStatus={session.status} />
           )}
 
-          {(session.status === 'killed' || session.status === 'lost') && session.worktree_path && (
+          {(session.status === 'stopped' || session.status === 'lost') && session.worktree_path && (
             <p
               data-testid="worktree-cleaned"
               className="mx-3 mb-2 font-mono text-xs text-muted-foreground"
@@ -357,7 +357,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
             </p>
           )}
 
-          {session.status === 'killed' && session.intervention_reason && (
+          {session.status === 'stopped' && session.intervention_reason && (
             <div className="mx-3 mb-2 rounded-md border border-destructive/30 p-3">
               <p className="mb-1 text-sm font-medium text-destructive">
                 Intervention: {session.intervention_reason}

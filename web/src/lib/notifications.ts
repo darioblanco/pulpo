@@ -8,7 +8,7 @@ export interface StatusChange {
 }
 
 /** Interesting transitions that warrant notification */
-const INTERESTING_TRANSITIONS = new Set(['active→ready', 'active→killed', 'lost→active']);
+const INTERESTING_TRANSITIONS = new Set(['active→ready', 'active→stopped', 'lost→active']);
 
 /**
  * Compare previous and current session lists to detect interesting status changes.
@@ -38,7 +38,7 @@ export function detectStatusChanges(previous: Session[], current: Session[]): St
 
 /** Format a status change into a human-readable toast label. */
 export function formatStatusLabel(change: StatusChange): string {
-  const label = change.to === 'ready' ? 'ready' : change.to === 'killed' ? 'killed' : 'resumed';
+  const label = change.to === 'ready' ? 'ready' : change.to === 'stopped' ? 'stopped' : 'resumed';
   return `${change.sessionName} ${label}`;
 }
 
@@ -83,9 +83,9 @@ export function showDesktopNotification(change: StatusChange): void {
   if (to === 'ready') {
     title = `Session ready: ${sessionName}`;
     body = `${sessionName} is ready`;
-  } else if (to === 'killed') {
-    title = `Session killed: ${sessionName}`;
-    body = `${sessionName} has been killed`;
+  } else if (to === 'stopped') {
+    title = `Session stopped: ${sessionName}`;
+    body = `${sessionName} has been stopped`;
   } else {
     title = `Session resumed: ${sessionName}`;
     body = `${sessionName} is now active`;

@@ -257,7 +257,7 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
         }
         // Clean up worktree if this was a worktree session
         if let Some(ref wt_path) = session.worktree_path {
-            crate::session::manager::cleanup_worktree(wt_path);
+            crate::session::manager::cleanup_worktree(wt_path, &session.workdir);
         }
         let usage = snapshot.usage_percent();
         warn!(
@@ -266,7 +266,7 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
             usage,
             available_mb = snapshot.available_mb,
             total_mb = snapshot.total_mb,
-            "Watchdog intervention: killed session due to memory pressure"
+            "Watchdog intervention: stopped session due to memory pressure"
         );
     }
 }
@@ -687,10 +687,10 @@ async fn handle_idle_session(
             }
             // Clean up worktree if this was a worktree session
             if let Some(ref wt_path) = session.worktree_path {
-                crate::session::manager::cleanup_worktree(wt_path);
+                crate::session::manager::cleanup_worktree(wt_path, &session.workdir);
             }
             warn!(
-                "Idle check: killed idle session {} after {minutes} minutes",
+                "Idle check: stopped idle session {} after {minutes} minutes",
                 session.name
             );
         }
@@ -724,18 +724,18 @@ async fn cleanup_ready_sessions(backend: &Arc<dyn Backend>, store: &Store, ready
             );
         }
         if let Err(e) = store
-            .update_session_status(&session.id.to_string(), SessionStatus::Killed)
+            .update_session_status(&session.id.to_string(), SessionStatus::Stopped)
             .await
         {
             warn!(
                 session_name = %session.name,
-                "Ready cleanup: failed to mark killed: {e}"
+                "Ready cleanup: failed to mark stopped: {e}"
             );
         } else {
             info!(
                 session_name = %session.name,
                 age_secs = age.num_seconds(),
-                "Ready cleanup: killed tmux shell after TTL"
+                "Ready cleanup: stopped tmux shell after TTL"
             );
         }
     }
@@ -792,7 +792,7 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
         SessionStatus::Idle,
         SessionStatus::Ready,
     ];
-    // Ghost fix: only consider backend IDs from live sessions, so killed sessions
+    // Ghost fix: only consider backend IDs from live sessions, so stopped sessions
     // with old backend_session_ids don't block re-adoption of new tmux sessions.
     let known_ids: std::collections::HashSet<String> = pulpo_sessions
         .iter()
@@ -1306,7 +1306,7 @@ mod tests {
         shutdown_tx.send(true).unwrap();
         handle.await.unwrap();
 
-        // Session should have been killed
+        // Session should have been stopped
         assert!(
             backend
                 .kill_calls
@@ -1321,7 +1321,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
+        assert_eq!(fetched.status, SessionStatus::Stopped);
         assert!(fetched.intervention_reason.is_some());
         assert!(fetched.intervention_at.is_some());
         assert!(fetched.output_snapshot.is_some());
@@ -1466,7 +1466,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
+        assert_eq!(fetched.status, SessionStatus::Stopped);
         assert!(fetched.intervention_reason.is_some());
         // No snapshot since capture failed
         assert!(fetched.output_snapshot.is_none());
@@ -1953,7 +1953,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
+        assert_eq!(fetched.status, SessionStatus::Stopped);
         assert!(fetched.intervention_reason.unwrap().contains("Idle"));
 
         // Kill should have been called
@@ -2806,7 +2806,7 @@ mod tests {
     #[tokio::test]
     async fn test_intervene_partial_kill_failure() {
         // When multiple sessions are running and one kill fails, the other
-        // should still be killed and recorded as an intervention.
+        // should still be stopped and recorded as an intervention.
         let backend = Arc::new(SelectiveKillBackend::new(vec!["fail-session"]));
         let store = test_store().await;
 
@@ -2826,7 +2826,7 @@ mod tests {
 
         // success-session should be Dead with intervention reason
         let success = store.get_session("success-session").await.unwrap().unwrap();
-        assert_eq!(success.status, SessionStatus::Killed);
+        assert_eq!(success.status, SessionStatus::Stopped);
         assert!(success.intervention_reason.is_some());
 
         // fail-session should remain Running (kill failed)
@@ -2855,7 +2855,7 @@ mod tests {
 
         intervene(&(backend.clone() as Arc<dyn Backend>), &store, &snapshot).await;
 
-        // Only running-one should be killed
+        // Only running-one should be stopped
         let kills: Vec<String> = backend.kill_calls.lock().unwrap().clone();
         assert_eq!(kills.len(), 1);
         assert_eq!(kills[0], "running-one");
@@ -2866,7 +2866,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(r.status, SessionStatus::Killed);
+        assert_eq!(r.status, SessionStatus::Stopped);
 
         let s = store
             .get_session(&stale.id.to_string())
@@ -3013,7 +3013,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
+        assert_eq!(fetched.status, SessionStatus::Stopped);
     }
 
     #[tokio::test]
@@ -3266,7 +3266,7 @@ mod tests {
         let active_session = make_idle_test_session("active-one", SessionStatus::Active, None);
         let idle_since = Some(chrono::Utc::now() - chrono::Duration::seconds(100));
         let idle_session = make_idle_test_session("idle-one", SessionStatus::Idle, idle_since);
-        let dead_session = make_idle_test_session("dead-one", SessionStatus::Killed, None);
+        let dead_session = make_idle_test_session("dead-one", SessionStatus::Stopped, None);
 
         store.insert_session(&active_session).await.unwrap();
         store.insert_session(&idle_session).await.unwrap();
@@ -3420,7 +3420,7 @@ mod tests {
         let dyn_backend: Arc<dyn Backend> = backend;
         check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
 
-        // Should be Ready, NOT Killed
+        // Should be Ready, NOT Stopped
         let fetched = store
             .get_session(&session.id.to_string())
             .await
@@ -3499,13 +3499,13 @@ mod tests {
         let dyn_backend: Arc<dyn Backend> = backend.clone();
         cleanup_ready_sessions(&dyn_backend, &store, 3600).await; // TTL = 1 hour
 
-        // Should be Killed now
+        // Should be Stopped now
         let fetched = store
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
+        assert_eq!(fetched.status, SessionStatus::Stopped);
         // Backend kill should have been called
         assert!(
             backend
@@ -3555,7 +3555,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cleanup_ready_kill_failure_still_marks_killed() {
+    async fn test_cleanup_ready_kill_failure_still_marks_stopped() {
         // Even if backend.kill_session fails (tmux already gone), status should update
         let backend = Arc::new(MockBackend::failing_kill());
         let store = test_store().await;
@@ -3576,13 +3576,13 @@ mod tests {
         let dyn_backend: Arc<dyn Backend> = backend;
         cleanup_ready_sessions(&dyn_backend, &store, 3600).await;
 
-        // Should still be marked as Killed even though backend.kill failed
+        // Should still be marked as Stopped even though backend.kill failed
         let fetched = store
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
+        assert_eq!(fetched.status, SessionStatus::Stopped);
     }
 
     #[test]
@@ -3877,8 +3877,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_adopt_ghost_fix_killed_session_does_not_block() {
-        // A killed session with old backend_session_id should NOT block adoption
+    async fn test_adopt_ghost_fix_stopped_session_does_not_block() {
+        // A stopped session with old backend_session_id should NOT block adoption
         // of a new tmux session with the same name.
         let mut backend = MockBackend::new();
         backend.tmux_sessions = vec![("$5".into(), "reused-name".into())];
@@ -3888,14 +3888,14 @@ mod tests {
         let backend = Arc::new(backend);
         let store = test_store().await;
 
-        // Create a killed session with the same name and old backend_session_id
-        let killed_session = Session {
+        // Create a stopped session with the same name and old backend_session_id
+        let stopped_session = Session {
             id: uuid::Uuid::new_v4(),
             name: "reused-name".into(),
             workdir: "/old".into(),
             command: "old-command".into(),
             description: None,
-            status: SessionStatus::Killed,
+            status: SessionStatus::Stopped,
             exit_code: None,
             backend_session_id: Some("reused-name".into()),
             output_snapshot: None,
@@ -3912,13 +3912,13 @@ mod tests {
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
-        store.insert_session(&killed_session).await.unwrap();
+        store.insert_session(&stopped_session).await.unwrap();
 
         let ctx = test_ready_ctx();
         let dyn_backend: Arc<dyn Backend> = backend;
         adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
 
-        // Should have 2 sessions: the old killed one + the newly adopted one
+        // Should have 2 sessions: the old stopped one + the newly adopted one
         let sessions = store.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 2);
         let adopted = sessions.iter().find(|s| s.status == SessionStatus::Active);

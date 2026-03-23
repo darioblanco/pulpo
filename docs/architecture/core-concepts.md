@@ -58,7 +58,7 @@ Sessions move through explicit states:
 
 ```text
 creating -> active <-> idle -> ready
-                       \-> killed
+                       \-> stopped
 active/idle ----------> lost
 ```
 
@@ -68,7 +68,7 @@ The most important meanings:
 - `idle`: the session appears to be waiting for input or has gone quiet long enough to be treated as waiting
 - `ready`: the command exited and the session is resumable
 - `lost`: the backend disappeared unexpectedly
-- `killed`: the session was terminated and is not resumable
+- `stopped`: the session was terminated and is not resumable
 
 See [Session Lifecycle](/operations/session-lifecycle) for exact transition rules.
 

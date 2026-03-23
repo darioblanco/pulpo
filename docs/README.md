@@ -15,7 +15,7 @@ features:
   - title: 1. Run Sessions
     details: "`pulpod` runs commands as managed sessions in tmux or Docker. Pulpo is command-agnostic: Claude Code, Codex, Gemini CLI, shell scripts, or any other terminal command."
   - title: 2. Track State
-    details: "Sessions move through explicit states: `creating`, `active`, `idle`, `ready`, `killed`, `lost`. This lifecycle is the core product contract."
+    details: "Sessions move through explicit states: `creating`, `active`, `idle`, `ready`, `stopped`, `lost`. This lifecycle is the core product contract."
   - title: 3. Recover and Supervise
     details: "The watchdog detects waiting-for-input, idle sessions, memory pressure, and lost backends. Sessions can be resumed from `lost` and `ready` states."
   - title: 4. Operate Across Machines
@@ -48,7 +48,7 @@ Everything else is a control surface or an operational convenience around that c
 - spawn a session
 - inspect status and output
 - send input
-- kill or delete it
+- stop it
 - resume from `lost` or `ready`
 - watchdog-driven lifecycle transitions
 

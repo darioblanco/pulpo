@@ -1,8 +1,9 @@
 // Pulpo docs palette — light-first for reference readability, with dark mode support
+// Colors aligned with web UI's deep navy dark theme (OKLch-derived)
 
-$accentColor: #0d5bd7;
-$accentColorT10: rgba(13, 91, 215, 0.1);
-$accentColorLight: #2b76eb;
+$accentColor: #2563eb;
+$accentColorT10: rgba(37, 99, 235, 0.1);
+$accentColorLight: #3b82f6;
 
 $textColor: #17212b;
 $textColorLight: #5f6f82;
@@ -14,14 +15,14 @@ $bgColorBlur: rgba(244, 247, 251, 0.88);
 $borderColor: rgba(23, 33, 43, 0.12);
 $borderColorLight: rgba(23, 33, 43, 0.08);
 
-$codeColor: #0d5bd7;
+$codeColor: #2563eb;
 $codeBgColor: #edf4ff;
 
 $sidebarBgColor: #eef3f9;
 $sidebarWidth: 18rem;
 
-$badgeTipColor: #0d5bd7;
-$badgeWarningColor: #b7791f;
-$badgeDangerColor: #cc334f;
+$badgeTipColor: #2563eb;
+$badgeWarningColor: #d97706;
+$badgeDangerColor: #ef4444;
 
-$codeGroupColor: #0d5bd7;
+$codeGroupColor: #2563eb;

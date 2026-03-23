@@ -79,7 +79,7 @@ function makeRun(overrides: Partial<Session> = {}): Session {
   return {
     id: 'run-1',
     name: 'nightly-review-001',
-    status: 'killed',
+    status: 'stopped',
     command: 'claude -p "review code"',
     description: null,
     workdir: '/repo',

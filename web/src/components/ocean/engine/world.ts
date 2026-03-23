@@ -111,7 +111,7 @@ const BEHAVIOR: Record<string, BehaviorConfig> = {
   idle: { radius: 8, speed: 5, intervalMin: 4, intervalMax: 8 },
   lost: { radius: 8, speed: 5, intervalMin: 4, intervalMax: 8 },
   ready: { radius: 40, speed: 10, intervalMin: 3, intervalMax: 6 },
-  killed: { radius: 5, speed: 2, intervalMin: 5, intervalMax: 10 },
+  stopped: { radius: 5, speed: 2, intervalMin: 5, intervalMax: 10 },
 };
 
 function randomBetween(min: number, max: number): number {
@@ -281,7 +281,7 @@ const STATUS_ZONES: Record<string, StatusZone> = {
   idle: { xOffset: 130, yBase: SWIM_ZONE_TOP + 50, cols: 2, spacingX: 60, spacingY: 85 },
   lost: { xOffset: 80, yBase: SWIM_ZONE_BOTTOM - 30, cols: 2, spacingX: 60, spacingY: 80 },
   ready: { xOffset: -80, yBase: SWIM_ZONE_TOP + 15, cols: 2, spacingX: 60, spacingY: 85 },
-  killed: { xOffset: 30, yBase: SWIM_ZONE_BOTTOM - 10, cols: 2, spacingX: 55, spacingY: 75 },
+  stopped: { xOffset: 30, yBase: SWIM_ZONE_BOTTOM - 10, cols: 2, spacingX: 55, spacingY: 75 },
 };
 
 /** Minimum world-unit distance between octopuses before repulsion kicks in. */
@@ -543,7 +543,7 @@ export function update(world: WorldState, dt: number): void {
     // Special status overrides
     if (oct.status === 'ready') {
       oct.wanderTargetY = Math.max(SWIM_ZONE_TOP - 20, oct.homeY - 30);
-    } else if (oct.status === 'killed') {
+    } else if (oct.status === 'stopped') {
       oct.wanderTargetY = SWIM_ZONE_BOTTOM + 10;
     }
 

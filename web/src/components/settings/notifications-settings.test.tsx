@@ -207,13 +207,13 @@ describe('NotificationsSettings', () => {
     );
     const webhookSection = screen.getByTestId('webhook-0');
     fireEvent.change(within(webhookSection).getByLabelText('Events'), {
-      target: { value: 'killed, ready' },
+      target: { value: 'stopped, ready' },
     });
     expect(onWebhooksChange).toHaveBeenCalledWith([
       {
         name: 'hook',
         url: 'https://a.com',
-        events: ['killed', 'ready'],
+        events: ['stopped', 'ready'],
         has_secret: false,
         secret: '',
       },
@@ -266,7 +266,7 @@ describe('NotificationsSettings', () => {
           {
             name: 'ci-hook',
             url: 'https://ci.example.com',
-            events: ['killed'],
+            events: ['stopped'],
             has_secret: true,
             secret: '',
           },

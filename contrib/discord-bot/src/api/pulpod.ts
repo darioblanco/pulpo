@@ -83,20 +83,12 @@ export class PulpodClient {
     return res.json() as Promise<Session>;
   }
 
-  async killSession(id: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/v1/sessions/${encodeURIComponent(id)}/kill`, {
+  async stopSession(id: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/v1/sessions/${encodeURIComponent(id)}/stop`, {
       method: 'POST',
       headers: this.headers(),
     });
-    if (!res.ok) throw new Error(`Failed to kill session: ${res.status}`);
-  }
-
-  async deleteSession(id: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/v1/sessions/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers: this.headers(),
-    });
-    if (!res.ok) throw new Error(`Failed to delete session: ${res.status}`);
+    if (!res.ok) throw new Error(`Failed to stop session: ${res.status}`);
   }
 
   async resumeSession(id: string): Promise<Session> {

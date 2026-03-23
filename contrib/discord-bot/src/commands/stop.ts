@@ -6,8 +6,8 @@ import {
 import type { PulpodClient } from '../api/pulpod.js';
 
 export const data: SlashCommandOptionsOnlyBuilder = new SlashCommandBuilder()
-  .setName('kill')
-  .setDescription('Kill a running session')
+  .setName('stop')
+  .setDescription('Stop a running session')
   .addStringOption((opt) =>
     opt
       .setName('session')
@@ -25,10 +25,10 @@ export async function execute(
   const sessionId = interaction.options.getString('session', true);
 
   try {
-    await client.killSession(sessionId);
-    await interaction.editReply(`Session \`${sessionId}\` killed.`);
+    await client.stopSession(sessionId);
+    await interaction.editReply(`Session \`${sessionId}\` stopped.`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await interaction.editReply(`Failed to kill session: ${msg}`);
+    await interaction.editReply(`Failed to stop session: ${msg}`);
   }
 }

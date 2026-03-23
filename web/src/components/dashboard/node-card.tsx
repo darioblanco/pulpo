@@ -5,7 +5,7 @@ import { formatMemory } from '@/lib/utils';
 
 const statusDotColors: Record<string, string> = {
   online: 'bg-status-ready',
-  offline: 'bg-status-killed',
+  offline: 'bg-status-stopped',
   unknown: 'bg-muted-foreground',
 };
 

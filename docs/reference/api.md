@@ -39,15 +39,14 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | GET | `/api/v1/sessions` | List sessions (supports `?status=active`) |
 | POST | `/api/v1/sessions` | Create (spawn) a new session |
 | GET | `/api/v1/sessions/:id` | Get session details |
-| DELETE | `/api/v1/sessions/:id` | Delete session record |
-| POST | `/api/v1/sessions/:id/kill` | Kill a running session |
+| POST | `/api/v1/sessions/:id/stop` | Stop a running session (add ?purge=true to also remove record) |
 | POST | `/api/v1/sessions/:id/resume` | Resume a lost or ready session |
 | GET | `/api/v1/sessions/:id/output` | Get captured terminal output |
 | GET | `/api/v1/sessions/:id/output/download` | Download full output as file |
 | POST | `/api/v1/sessions/:id/input` | Send text input to a session |
 | GET | `/api/v1/sessions/:id/interventions` | List watchdog interventions |
 | GET | `/api/v1/sessions/:id/stream` | WebSocket terminal stream |
-| POST | `/api/v1/sessions/cleanup` | Delete all killed and lost sessions |
+| POST | `/api/v1/sessions/cleanup` | Remove all stopped and lost sessions |
 | GET | `/api/v1/fleet/sessions` | Aggregate sessions across peers |
 
 ### Create Session (POST /api/v1/sessions)
@@ -109,7 +108,7 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | GET | `/api/v1/events` | Server-Sent Events stream |
 
 Event types:
-- **Session events**: `created`, `active`, `idle`, `ready`, `killed`, `lost`, `resumed`
+- **Session events**: `created`, `active`, `idle`, `ready`, `stopped`, `lost`, `resumed`
 
 ```bash
 curl -N http://localhost:7433/api/v1/events

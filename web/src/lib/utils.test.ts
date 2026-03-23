@@ -120,7 +120,7 @@ describe('statusColors', () => {
   it('has entries for all statuses', () => {
     expect(statusColors.active).toBe('bg-status-active');
     expect(statusColors.ready).toBe('bg-status-ready');
-    expect(statusColors.killed).toBe('bg-status-killed');
+    expect(statusColors.stopped).toBe('bg-status-stopped');
     expect(statusColors.lost).toBe('bg-status-lost');
     expect(statusColors.creating).toBe('bg-status-creating');
     expect(statusColors.idle).toBe('bg-status-idle');

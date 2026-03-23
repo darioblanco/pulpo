@@ -161,7 +161,7 @@ impl SessionManager {
         // Reject duplicate names among live sessions
         if self.store.has_active_session_by_name(&req.name).await? {
             bail!(
-                "a session named '{}' is already active — kill it first or use a different name",
+                "a session named '{}' is already active — stop it first or use a different name",
                 req.name
             );
         }
@@ -215,7 +215,7 @@ impl SessionManager {
         let session = Session {
             id,
             name: name.clone(),
-            workdir: effective_workdir,
+            workdir: workdir.clone(),
             command,
             description,
             status: SessionStatus::Creating,
@@ -239,10 +239,11 @@ impl SessionManager {
         self.store.insert_session(&session).await?;
 
         let active_backend = self.backend_for_id(&backend_id);
-        if let Err(e) = active_backend.create_session(&backend_id, &session.workdir, &final_command)
+        if let Err(e) =
+            active_backend.create_session(&backend_id, &effective_workdir, &final_command)
         {
             self.store
-                .update_session_status(&id.to_string(), SessionStatus::Killed)
+                .update_session_status(&id.to_string(), SessionStatus::Stopped)
                 .await?;
             return Err(e);
         }
@@ -422,7 +423,7 @@ impl SessionManager {
         Ok(true)
     }
 
-    pub async fn kill_session(&self, id: &str) -> Result<()> {
+    pub async fn stop_session(&self, id: &str, purge: bool) -> Result<()> {
         let session = self
             .store
             .get_session(id)
@@ -432,52 +433,27 @@ impl SessionManager {
         let backend_id = self.resolve_backend_id(&session);
         let backend = self.backend_for_id(&backend_id);
         if let Err(e) = backend.kill_session(&backend_id) {
-            bail!("failed to kill session: {e}");
+            bail!("failed to stop session: {e}");
         }
 
         let previous = session.status;
         let session_id = session.id.to_string();
         self.store
-            .update_session_status(&session_id, SessionStatus::Killed)
+            .update_session_status(&session_id, SessionStatus::Stopped)
             .await?;
-        let mut dead_session = session;
-        dead_session.status = SessionStatus::Killed;
+        let mut stopped_session = session;
+        stopped_session.status = SessionStatus::Stopped;
         // Clean up worktree if this was a worktree session
-        if let Some(ref wt_path) = dead_session.worktree_path {
-            tracing::info!(session = %dead_session.name, path = %wt_path, "Cleaning up worktree after kill");
-            cleanup_worktree(wt_path);
+        if let Some(ref wt_path) = stopped_session.worktree_path {
+            tracing::info!(session = %stopped_session.name, path = %wt_path, "Cleaning up worktree after stop");
+            cleanup_worktree(wt_path, &stopped_session.workdir);
         }
-        self.emit_event(&dead_session, Some(previous));
-        Ok(())
-    }
+        self.emit_event(&stopped_session, Some(previous));
 
-    pub async fn delete_session(&self, id: &str) -> Result<()> {
-        let session = self
-            .store
-            .get_session(id)
-            .await?
-            .ok_or_else(|| anyhow!("session not found: {id}"))?;
-
-        match session.status {
-            SessionStatus::Active | SessionStatus::Creating => {
-                bail!(
-                    "cannot delete session in '{}' state — kill it first",
-                    session.status
-                );
-            }
-            _ => {}
+        if purge {
+            self.store.delete_session(&session_id).await?;
         }
 
-        // Best-effort cleanup of any lingering backend session
-        let backend_id = self.resolve_backend_id(&session);
-        let _ = self.backend_for_id(&backend_id).kill_session(&backend_id);
-
-        self.store.delete_session(&session.id.to_string()).await?;
-        // Clean up worktree if this was a worktree session
-        if let Some(ref wt_path) = session.worktree_path {
-            tracing::info!(session = %session.name, path = %wt_path, "Cleaning up worktree after delete");
-            cleanup_worktree(wt_path);
-        }
         Ok(())
     }
 
@@ -518,7 +494,7 @@ impl SessionManager {
             .await?
         {
             bail!(
-                "another session named '{}' is already active — kill it first before resuming",
+                "another session named '{}' is already active — stop it first before resuming",
                 session.name
             );
         }
@@ -652,17 +628,25 @@ fn is_shell_command(command: &str) -> bool {
 /// Shell commands are run directly (no exit marker or fallback bash).
 ///
 /// Create a git worktree for a session.
+/// Worktrees are created under `~/.pulpo/worktrees/<session-name>` to avoid
+/// polluting the project repository with a `.pulpo/` directory.
 /// Returns the worktree path on success.
 #[cfg(not(coverage))]
 fn create_worktree(repo_dir: &str, session_name: &str) -> Result<String> {
-    let worktree_dir = format!("{repo_dir}/.pulpo/worktrees/{session_name}");
+    let home = dirs::home_dir().context("cannot determine home directory")?;
+    let worktree_base = home.join(".pulpo").join("worktrees");
+    let worktree_dir = worktree_base.join(session_name);
+    let worktree_dir_str = worktree_dir
+        .to_str()
+        .context("worktree path contains invalid UTF-8")?
+        .to_owned();
     let branch_name = format!("pulpo/{session_name}");
 
     // Ensure parent directory exists
-    std::fs::create_dir_all(format!("{repo_dir}/.pulpo/worktrees"))?;
+    std::fs::create_dir_all(&worktree_base)?;
 
     let output = std::process::Command::new("git")
-        .args(["worktree", "add", "-b", &branch_name, &worktree_dir])
+        .args(["worktree", "add", "-b", &branch_name, &worktree_dir_str])
         .current_dir(repo_dir)
         .output()
         .context("failed to run git worktree add")?;
@@ -672,20 +656,24 @@ fn create_worktree(repo_dir: &str, session_name: &str) -> Result<String> {
         bail!("git worktree add failed: {}", stderr.trim());
     }
 
-    Ok(worktree_dir)
+    Ok(worktree_dir_str)
 }
 
 /// Remove a git worktree and prune stale entries.
-pub(crate) fn cleanup_worktree(worktree_path: &str) {
+///
+/// `repo_dir` is the original repository directory where the worktree was
+/// created from — needed to run `git worktree prune` in the correct repo.
+pub(crate) fn cleanup_worktree(worktree_path: &str, repo_dir: &str) {
     if !std::path::Path::new(worktree_path).exists() {
         tracing::info!(path = %worktree_path, "Worktree path does not exist, skipping cleanup");
+        // Still prune — the directory may have been manually removed but git
+        // metadata could linger.
+        let _ = std::process::Command::new("git")
+            .args(["worktree", "prune"])
+            .current_dir(repo_dir)
+            .output();
         return;
     }
-    // Worktree path is <repo>/.pulpo/worktrees/<session-name>
-    let repo_root = std::path::Path::new(worktree_path)
-        .parent() // .pulpo/worktrees/
-        .and_then(|p| p.parent()) // .pulpo/
-        .and_then(|p| p.parent()); // <repo>/
 
     match std::fs::remove_dir_all(worktree_path) {
         Ok(()) => tracing::info!(path = %worktree_path, "Worktree directory removed"),
@@ -694,12 +682,10 @@ pub(crate) fn cleanup_worktree(worktree_path: &str) {
         }
     }
 
-    if let Some(root) = repo_root {
-        let _ = std::process::Command::new("git")
-            .args(["worktree", "prune"])
-            .current_dir(root)
-            .output();
-    }
+    let _ = std::process::Command::new("git")
+        .args(["worktree", "prune"])
+        .current_dir(repo_dir)
+        .output();
 }
 
 /// Write secrets to a temporary file that will be sourced and immediately deleted
@@ -752,6 +738,28 @@ fn write_secrets_file(
 ///
 /// If `secrets_file` is provided, the command will source the file and delete it
 /// immediately — secrets never appear in the command string itself.
+/// The user's full login-shell PATH, resolved once at first use.
+///
+/// When pulpod runs as a launchd/systemd service it inherits a minimal PATH
+/// that may not include directories like `~/.local/bin` or `~/.cargo/bin`.
+/// We probe the real PATH by running the user's login shell (`$SHELL -lic ...`)
+/// which sources all profile/rc files regardless of shell type. The result is
+/// injected into every tmux session command so tools like `claude` are found.
+static USER_PATH: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_owned());
+    let output = std::process::Command::new(&shell)
+        .args(["-lic", r#"printf '%s' "$PATH""#])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if path.is_empty() { None } else { Some(path) }
+});
+
 fn wrap_command(
     command: &str,
     session_id: &uuid::Uuid,
@@ -766,18 +774,26 @@ fn wrap_command(
     let secrets_source =
         secrets_file.map_or_else(String::new, |path| format!(". {path} && rm -f {path}; "));
 
+    // Inject the user's full PATH (probed once at first use via LazyLock) so
+    // commands like `claude` are found even when pulpod runs as a service with
+    // a minimal inherited PATH.
+    let path_export = USER_PATH.as_deref().map_or_else(String::new, |p| {
+        let escaped_path = p.replace('\'', "'\\''");
+        format!("export PATH='{escaped_path}'; ")
+    });
+
     if is_shell_command(command) {
         // Shell session: set env vars and exec the shell directly.
         // No exit marker, no fallback bash — exiting the shell kills the tmux session.
         let escaped = command.replace('\'', "'\\''");
         return format!(
-            "{shell} -l -c '{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
+            "{shell} -l -c '{path_export}{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
         );
     }
     let escaped = command.replace('\'', "'\\''");
     // After the agent exits, fall back to the user's shell so they can inspect the workdir.
     format!(
-        "{shell} -l -c '{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec {shell} -l'"
+        "{shell} -l -c '{path_export}{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec {shell} -l'"
     )
 }
 
@@ -1147,7 +1163,7 @@ mod tests {
         // Session should be marked Dead in store
         let sessions = mgr.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
-        assert_eq!(sessions[0].status, SessionStatus::Killed);
+        assert_eq!(sessions[0].status, SessionStatus::Stopped);
     }
 
     #[tokio::test]
@@ -1162,11 +1178,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_session_reuse_name_after_kill() {
+    async fn test_create_session_reuse_name_after_stop() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         mgr.create_session(make_req("reuse")).await.unwrap();
-        mgr.kill_session("reuse").await.unwrap();
-        // Should succeed — the old session is killed
+        mgr.stop_session("reuse", false).await.unwrap();
+        // Should succeed — the old session is stopped
         mgr.create_session(make_req("reuse")).await.unwrap();
     }
 
@@ -1269,24 +1285,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_kill_session() {
+    async fn test_stop_session() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let session = mgr.create_session(make_req("test")).await.unwrap();
 
-        mgr.kill_session(&session.id.to_string()).await.unwrap();
+        mgr.stop_session(&session.id.to_string(), false)
+            .await
+            .unwrap();
 
         let fetched = mgr
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
+        assert_eq!(fetched.status, SessionStatus::Stopped);
     }
 
     #[tokio::test]
-    async fn test_kill_session_not_found() {
+    async fn test_stop_session_with_purge() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let result = mgr.kill_session("nonexistent").await;
+        let session = mgr.create_session(make_req("test")).await.unwrap();
+        let id = session.id.to_string();
+
+        mgr.stop_session(&id, true).await.unwrap();
+
+        let fetched = mgr.get_session(&id).await.unwrap();
+        assert!(fetched.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_stop_session_not_found() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let result = mgr.stop_session("nonexistent", false).await;
         assert!(result.is_err());
         assert!(
             result
@@ -1297,13 +1327,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_kill_session_backend_error() {
+    async fn test_stop_session_backend_error() {
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_kill_error()).await;
         let session = mgr.create_session(make_req("test")).await.unwrap();
 
-        let result = mgr.kill_session(&session.id.to_string()).await;
+        let result = mgr.stop_session(&session.id.to_string(), false).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("failed to kill"));
+        assert!(result.unwrap_err().to_string().contains("failed to stop"));
     }
 
     #[tokio::test]
@@ -1412,13 +1442,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_kill_session_store_failure() {
+    async fn test_stop_session_store_failure() {
         let (mgr, _, pool) = test_manager(MockBackend::new()).await;
         sqlx::query("DROP TABLE sessions")
             .execute(&pool)
             .await
             .unwrap();
-        let result = mgr.kill_session("test").await;
+        let result = mgr.stop_session("test", false).await;
         assert!(result.is_err());
     }
 
@@ -1808,46 +1838,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_kill_session_emits_event() {
+    async fn test_stop_session_emits_event() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let (event_tx, mut event_rx) = broadcast::channel(16);
         let mgr = mgr.with_event_tx(event_tx, "test-node".into());
-        let session = mgr.create_session(make_req("kill-event")).await.unwrap();
+        let session = mgr.create_session(make_req("stop-event")).await.unwrap();
         // Drain the create event
         let _ = event_rx.recv().await;
 
-        mgr.kill_session(&session.id.to_string()).await.unwrap();
+        mgr.stop_session(&session.id.to_string(), false)
+            .await
+            .unwrap();
         let event = event_rx.recv().await.unwrap();
         let se = unwrap_session_event(event);
-        assert_eq!(se.status, "killed");
+        assert_eq!(se.status, "stopped");
     }
 
     #[tokio::test]
-    async fn test_delete_session_active_fails() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let session = mgr.create_session(make_req("test")).await.unwrap();
-
-        let result = mgr.delete_session(&session.id.to_string()).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("kill it first"));
-    }
-
-    #[tokio::test]
-    async fn test_delete_session_killed_succeeds() {
+    async fn test_stop_session_purge_active_succeeds() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let session = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
-        mgr.kill_session(&id).await.unwrap();
-        mgr.delete_session(&id).await.unwrap();
 
+        // stop_session with purge handles active sessions fine — stops then purges
+        mgr.stop_session(&id, true).await.unwrap();
         let fetched = mgr.get_session(&id).await.unwrap();
         assert!(fetched.is_none());
     }
 
     #[tokio::test]
-    async fn test_delete_session_not_found() {
+    async fn test_stop_session_purge_not_found() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let result = mgr.delete_session("nonexistent").await;
+        let result = mgr.stop_session("nonexistent", true).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
@@ -2314,10 +2336,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resume_lost_sessions_skips_killed_sessions() {
+    async fn test_resume_lost_sessions_skips_stopped_sessions() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        mgr.create_session(make_req("killed-sess")).await.unwrap();
-        mgr.kill_session("killed-sess").await.unwrap();
+        mgr.create_session(make_req("stopped-sess")).await.unwrap();
+        mgr.stop_session("stopped-sess", false).await.unwrap();
 
         *backend.alive.lock().unwrap() = false;
         let resumed = mgr.resume_lost_sessions().await.unwrap();
@@ -2610,12 +2632,12 @@ mod tests {
     #[test]
     fn test_cleanup_worktree_nonexistent_path() {
         // Should not panic on nonexistent path
-        cleanup_worktree("/tmp/nonexistent-worktree-path-for-test");
+        cleanup_worktree("/tmp/nonexistent-worktree-path-for-test", "/tmp");
     }
 
     #[test]
     fn test_cleanup_worktree_existing_path() {
-        // Create a temporary directory structure: repo/.pulpo/worktrees/session
+        // Create a temporary directory structure simulating ~/.pulpo/worktrees/session
         let tmpdir = tempfile::tempdir().unwrap();
         let wt_path = tmpdir
             .path()
@@ -2625,40 +2647,44 @@ mod tests {
         std::fs::create_dir_all(&wt_path).unwrap();
         let wt_str = wt_path.to_str().unwrap();
         assert!(wt_path.exists());
-        cleanup_worktree(wt_str);
+        // repo_dir doesn't need to be a real git repo for this test — prune is best-effort
+        cleanup_worktree(wt_str, "/tmp");
         // The worktree directory should be removed
         assert!(!wt_path.exists());
     }
 
     #[tokio::test]
-    async fn test_kill_session_with_worktree() {
+    async fn test_stop_session_with_worktree() {
         let (mgr, _, pool) = test_manager(MockBackend::new()).await;
-        let session = mgr.create_session(make_req("wt-kill")).await.unwrap();
+        let session = mgr.create_session(make_req("wt-stop")).await.unwrap();
         let id = session.id.to_string();
         // Simulate a session with a worktree path (nonexistent — cleanup is best-effort)
         sqlx::query("UPDATE sessions SET worktree_path = ? WHERE id = ?")
-            .bind("/tmp/nonexistent-wt-kill-test")
+            .bind("/tmp/nonexistent-wt-stop-test")
             .bind(&id)
             .execute(&pool)
             .await
             .unwrap();
-        // Kill should succeed even with a worktree path
-        mgr.kill_session(&id).await.unwrap();
+        // Stop should succeed even with a worktree path
+        mgr.stop_session(&id, false).await.unwrap();
     }
 
     #[tokio::test]
-    async fn test_delete_session_with_worktree() {
+    async fn test_stop_session_purge_with_worktree() {
         let (mgr, _, pool) = test_manager(MockBackend::new()).await;
-        let session = mgr.create_session(make_req("wt-del")).await.unwrap();
+        let session = mgr.create_session(make_req("wt-purge")).await.unwrap();
         let id = session.id.to_string();
-        // Mark as killed so we can delete
-        sqlx::query("UPDATE sessions SET status = 'killed', worktree_path = ? WHERE id = ?")
-            .bind("/tmp/nonexistent-wt-del-test")
+        // Simulate a session with a worktree path (nonexistent — cleanup is best-effort)
+        sqlx::query("UPDATE sessions SET worktree_path = ? WHERE id = ?")
+            .bind("/tmp/nonexistent-wt-purge-test")
             .bind(&id)
             .execute(&pool)
             .await
             .unwrap();
-        mgr.delete_session(&id).await.unwrap();
+        // Stop with purge should stop, clean up worktree, and delete from DB
+        mgr.stop_session(&id, true).await.unwrap();
+        let fetched = mgr.get_session(&id).await.unwrap();
+        assert!(fetched.is_none());
     }
 
     #[tokio::test]
@@ -2772,6 +2798,20 @@ mod tests {
         assert!(!is_shell_command("bash -c 'echo hello'"));
     }
 
+    #[test]
+    fn test_wrap_command_includes_path_export() {
+        let id = uuid::Uuid::new_v4();
+        // USER_PATH is probed from the user's login shell. If available, the
+        // wrapped command should contain an `export PATH=` prefix.
+        let cmd = wrap_command("claude", &id, "test", None);
+        if USER_PATH.is_some() {
+            assert!(
+                cmd.contains("export PATH="),
+                "should inject user PATH: {cmd}"
+            );
+        }
+    }
+
     // -- create_session: ink secrets dedup --
 
     #[tokio::test]
@@ -2827,10 +2867,10 @@ mod tests {
         std::fs::remove_file(&secrets_path).unwrap();
     }
 
-    // -- delete_session edge cases --
+    // -- stop_session with purge on various statuses --
 
     #[tokio::test]
-    async fn test_delete_creating_session_fails() {
+    async fn test_stop_purge_creating_session_succeeds() {
         let (mgr, _, pool) = test_manager(MockBackend::new()).await;
         let session = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
@@ -2840,12 +2880,14 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let err = mgr.delete_session(&id).await.unwrap_err();
-        assert!(err.to_string().contains("kill it first"), "{err}");
+        // stop_session handles any status — stops backend then optionally purges
+        mgr.stop_session(&id, true).await.unwrap();
+        let fetched = mgr.get_session(&id).await.unwrap();
+        assert!(fetched.is_none());
     }
 
     #[tokio::test]
-    async fn test_delete_lost_session_succeeds() {
+    async fn test_stop_purge_lost_session_succeeds() {
         let (mgr, _, pool) = test_manager(MockBackend::new()).await;
         let session = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
@@ -2854,13 +2896,13 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        mgr.delete_session(&id).await.unwrap();
+        mgr.stop_session(&id, true).await.unwrap();
         let fetched = mgr.get_session(&id).await.unwrap();
         assert!(fetched.is_none());
     }
 
     #[tokio::test]
-    async fn test_delete_ready_session_succeeds() {
+    async fn test_stop_purge_ready_session_succeeds() {
         let (mgr, _, pool) = test_manager(MockBackend::new()).await;
         let session = mgr.create_session(make_req("test")).await.unwrap();
         let id = session.id.to_string();
@@ -2869,7 +2911,9 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        mgr.delete_session(&id).await.unwrap();
+        mgr.stop_session(&id, true).await.unwrap();
+        let fetched = mgr.get_session(&id).await.unwrap();
+        assert!(fetched.is_none());
     }
 
     // -- resume_session emits event --

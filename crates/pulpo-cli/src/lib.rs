@@ -100,7 +100,7 @@ pub enum Commands {
     /// List sessions (live only by default)
     #[command(visible_alias = "ls")]
     List {
-        /// Show all sessions including killed and lost
+        /// Show all sessions including stopped and lost
         #[arg(short, long)]
         all: bool,
     },
@@ -120,23 +120,19 @@ pub enum Commands {
         follow: bool,
     },
 
-    /// Kill one or more sessions
-    #[command(visible_alias = "k")]
-    Kill {
+    /// Stop one or more sessions
+    #[command(visible_alias = "k", alias = "kill")]
+    Stop {
         /// Session names or IDs
         #[arg(required = true)]
         names: Vec<String>,
+
+        /// Also purge the session from history
+        #[arg(long, short = 'p')]
+        purge: bool,
     },
 
-    /// Permanently remove one or more sessions from history
-    #[command(visible_alias = "rm")]
-    Delete {
-        /// Session names or IDs
-        #[arg(required = true)]
-        names: Vec<String>,
-    },
-
-    /// Remove all killed and lost sessions
+    /// Remove all stopped and lost sessions
     Cleanup,
 
     /// Resume a lost session
@@ -734,8 +730,8 @@ async fn fetch_session_status(
 }
 
 /// Wait for the session to leave "creating" state, then check if it died instantly.
-/// Uses the session ID (not name) to avoid matching old killed sessions with the same name.
-/// Returns an error with a helpful message if the session is lost/killed.
+/// Uses the session ID (not name) to avoid matching old stopped sessions with the same name.
+/// Returns an error with a helpful message if the session is lost/stopped.
 async fn check_session_alive(
     client: &reqwest::Client,
     base: &str,
@@ -759,7 +755,7 @@ async fn check_session_alive(
         {
             match session.status.to_string().as_str() {
                 "creating" => continue,
-                "lost" | "killed" => {
+                "lost" | "stopped" => {
                     anyhow::bail!(
                         "Session \"{}\" exited immediately — the command may have failed.\n  Check logs: pulpo logs {}",
                         session.name,
@@ -856,7 +852,7 @@ async fn follow_logs(
         // Only check session status when output has been unchanged for 3+ ticks
         if unchanged_ticks >= 3 {
             let status = fetch_session_status(client, base, name, token).await?;
-            let is_terminal = status == "ready" || status == "killed" || status == "lost";
+            let is_terminal = status == "ready" || status == "stopped" || status == "lost";
             if is_terminal {
                 break;
             }
@@ -1190,9 +1186,9 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                         "Session \"{name}\" is lost (agent process died). Resume it first:\n  pulpo resume {name}"
                     );
                 }
-                "killed" => {
+                "stopped" => {
                     anyhow::bail!(
-                        "Session \"{name}\" is {} — cannot attach to a killed session.",
+                        "Session \"{name}\" is {} — cannot attach to a stopped session.",
                         session.status
                     );
                 }
@@ -1289,7 +1285,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             if *worktree {
                 body["worktree"] = serde_json::json!(true);
                 eprintln!(
-                    "Worktree: branch pulpo/{resolved_name} in {resolved_workdir}/.pulpo/worktrees/{resolved_name}/"
+                    "Worktree: branch pulpo/{resolved_name} in ~/.pulpo/worktrees/{resolved_name}/"
                 );
             }
             if let Some(rt) = runtime {
@@ -1329,7 +1325,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                     .unwrap_or(&resp.session.name);
                 eprintln!("{msg}");
                 // Only check liveness for explicit commands — shell sessions (no command)
-                // may be immediately marked idle/killed by the watchdog, which is expected
+                // may be immediately marked idle/stopped by the watchdog, which is expected
                 if cmd.is_some() {
                     let sid = resp.session.id.to_string();
                     check_session_alive(&client, &url, &sid, token.as_deref()).await?;
@@ -1339,38 +1335,26 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             Ok(msg)
         }
-        Commands::Kill { names } => {
+        Commands::Stop { names, purge } => {
             let mut results = Vec::new();
             for name in names {
+                let query = if *purge { "?purge=true" } else { "" };
                 let resp = authed_post(
                     &client,
-                    format!("{url}/api/v1/sessions/{name}/kill"),
+                    format!("{url}/api/v1/sessions/{name}/stop{query}"),
                     token.as_deref(),
                 )
                 .send()
                 .await
                 .map_err(|e| friendly_error(&e, node))?;
+                let action = if *purge {
+                    "stopped and purged"
+                } else {
+                    "stopped"
+                };
                 match ok_or_api_error(resp).await {
-                    Ok(_) => results.push(format!("Session {name} killed.")),
-                    Err(e) => results.push(format!("Error killing {name}: {e}")),
-                }
-            }
-            Ok(results.join("\n"))
-        }
-        Commands::Delete { names } => {
-            let mut results = Vec::new();
-            for name in names {
-                let resp = authed_delete(
-                    &client,
-                    format!("{url}/api/v1/sessions/{name}"),
-                    token.as_deref(),
-                )
-                .send()
-                .await
-                .map_err(|e| friendly_error(&e, node))?;
-                match ok_or_api_error(resp).await {
-                    Ok(_) => results.push(format!("Session {name} deleted.")),
-                    Err(e) => results.push(format!("Error deleting {name}: {e}")),
+                    Ok(_) => results.push(format!("Session {name} {action}.")),
+                    Err(e) => results.push(format!("Error stopping {name}: {e}")),
                 }
             }
             Ok(results.join("\n"))
@@ -1388,7 +1372,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let result: serde_json::Value = serde_json::from_str(&text)?;
             let count = result["deleted"].as_u64().unwrap_or(0);
             if count == 0 {
-                Ok("No killed or lost sessions to clean up.".into())
+                Ok("No stopped or lost sessions to clean up.".into())
             } else {
                 Ok(format!("Cleaned up {count} session(s)."))
             }
@@ -1732,20 +1716,35 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_kill() {
-        let cli = Cli::try_parse_from(["pulpo", "kill", "my-session"]).unwrap();
+    fn test_cli_parse_stop() {
+        let cli = Cli::try_parse_from(["pulpo", "stop", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Some(Commands::Kill { names }) if names == &["my-session"]
+            Some(Commands::Stop { names, purge }) if names == &["my-session"] && !purge
         ));
     }
 
     #[test]
-    fn test_cli_parse_delete() {
-        let cli = Cli::try_parse_from(["pulpo", "delete", "my-session"]).unwrap();
+    fn test_cli_parse_stop_purge() {
+        let cli = Cli::try_parse_from(["pulpo", "stop", "my-session", "--purge"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Some(Commands::Delete { names }) if names == &["my-session"]
+            Some(Commands::Stop { names, purge }) if names == &["my-session"] && *purge
+        ));
+
+        let cli = Cli::try_parse_from(["pulpo", "stop", "my-session", "-p"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Stop { names, purge }) if names == &["my-session"] && *purge
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_kill_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "kill", "my-session"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Stop { names, purge }) if names == &["my-session"] && !purge
         ));
     }
 
@@ -1848,11 +1847,10 @@ mod tests {
             )
             .route(
                 "/api/v1/sessions/{id}",
-                get(|| async { TEST_SESSION_JSON.to_owned() })
-                    .delete(|| async { StatusCode::NO_CONTENT }),
+                get(|| async { TEST_SESSION_JSON.to_owned() }),
             )
             .route(
-                "/api/v1/sessions/{id}/kill",
+                "/api/v1/sessions/{id}/stop",
                 post(|| async { StatusCode::NO_CONTENT }),
             )
             .route(
@@ -2100,33 +2098,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_kill_success() {
+    async fn test_execute_stop_success() {
         let node = start_test_server().await;
         let cli = Cli {
             node,
             token: None,
-            command: Some(Commands::Kill {
+            command: Some(Commands::Stop {
                 names: vec!["test-session".into()],
+                purge: false,
             }),
             path: None,
         };
         let result = execute(&cli).await.unwrap();
-        assert!(result.contains("killed"));
+        assert!(result.contains("stopped"));
+        assert!(!result.contains("purged"));
     }
 
     #[tokio::test]
-    async fn test_execute_delete_success() {
+    async fn test_execute_stop_with_purge() {
         let node = start_test_server().await;
         let cli = Cli {
             node,
             token: None,
-            command: Some(Commands::Delete {
+            command: Some(Commands::Stop {
                 names: vec!["test-session".into()],
+                purge: true,
             }),
             path: None,
         };
         let result = execute(&cli).await.unwrap();
-        assert!(result.contains("deleted"));
+        assert!(result.contains("stopped and purged"));
     }
 
     #[tokio::test]
@@ -2177,11 +2178,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_kill_error_response() {
+    async fn test_execute_stop_error_response() {
         use axum::{Router, http::StatusCode, routing::post};
 
         let app = Router::new().route(
-            "/api/v1/sessions/{id}/kill",
+            "/api/v1/sessions/{id}/stop",
             post(|| async {
                 (
                     StatusCode::NOT_FOUND,
@@ -2197,43 +2198,14 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Some(Commands::Kill {
+            command: Some(Commands::Stop {
                 names: vec!["test-session".into()],
+                purge: false,
             }),
             path: None,
         };
         let result = execute(&cli).await.unwrap();
-        assert!(result.contains("Error killing test-session"), "{result}");
-    }
-
-    #[tokio::test]
-    async fn test_execute_delete_error_response() {
-        use axum::{Router, http::StatusCode, routing::delete};
-
-        let app = Router::new().route(
-            "/api/v1/sessions/{id}",
-            delete(|| async {
-                (
-                    StatusCode::CONFLICT,
-                    "{\"error\":\"cannot delete session in 'running' state\"}",
-                )
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
-        let node = format!("127.0.0.1:{}", addr.port());
-
-        let cli = Cli {
-            node,
-            token: None,
-            command: Some(Commands::Delete {
-                names: vec!["test-session".into()],
-            }),
-            path: None,
-        };
-        let result = execute(&cli).await.unwrap();
-        assert!(result.contains("Error deleting test-session"), "{result}");
+        assert!(result.contains("Error stopping test-session"), "{result}");
     }
 
     #[tokio::test]
@@ -2610,7 +2582,7 @@ mod tests {
         let sessions = vec![Session {
             id: Uuid::nil(),
             name: "wt-task".into(),
-            workdir: "/repo/.pulpo/worktrees/wt-task".into(),
+            workdir: "/repo".into(),
             command: "claude".into(),
             description: None,
             status: SessionStatus::Active,
@@ -2625,7 +2597,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
-            worktree_path: Some("/repo/.pulpo/worktrees/wt-task".into()),
+            worktree_path: Some("/home/user/.pulpo/worktrees/wt-task".into()),
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2705,7 +2677,7 @@ mod tests {
             last_output_at: None,
             idle_since: None,
             idle_threshold_secs: None,
-            worktree_path: Some("/repo/.pulpo/worktrees/both-task".into()),
+            worktree_path: Some("/home/user/.pulpo/worktrees/both-task".into()),
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2856,27 +2828,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_kill_connection_refused() {
+    async fn test_execute_stop_connection_refused() {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Some(Commands::Kill {
+            command: Some(Commands::Stop {
                 names: vec!["test".into()],
-            }),
-            path: None,
-        };
-        let result = execute(&cli).await;
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Could not connect to pulpod"));
-    }
-
-    #[tokio::test]
-    async fn test_execute_delete_connection_refused() {
-        let cli = Cli {
-            node: "localhost:1".into(),
-            token: None,
-            command: Some(Commands::Delete {
-                names: vec!["test".into()],
+                purge: false,
             }),
             path: None,
         };
@@ -3378,7 +3336,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_dead_session() {
         use axum::{Router, routing::get};
-        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","command":"echo test","description":null,"status":"killed","exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session_json = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"dead-sess","workdir":"/tmp","command":"echo test","description":null,"status":"stopped","exit_code":null,"backend_session_id":"dead-sess","output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
         let app = Router::new().route(
             "/api/v1/sessions/{id}",
             get(move || async move { session_json.to_owned() }),
@@ -3397,7 +3355,7 @@ mod tests {
         };
         let result = execute(&cli).await;
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("killed"));
+        assert!(err.contains("stopped"));
         assert!(err.contains("cannot attach"));
     }
 
@@ -3434,20 +3392,11 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_alias_kill() {
+    fn test_cli_parse_alias_stop() {
         let cli = Cli::try_parse_from(["pulpo", "k", "my-session"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Some(Commands::Kill { names }) if names == &["my-session"]
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_alias_delete() {
-        let cli = Cli::try_parse_from(["pulpo", "rm", "my-session"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Delete { names }) if names == &["my-session"]
+            Some(Commands::Stop { names, purge }) if names == &["my-session"] && !purge
         ));
     }
 
@@ -3658,7 +3607,7 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|_path: Path<String>| async {
-                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"killed","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
+                    r#"{"id":"00000000-0000-0000-0000-000000000001","name":"test","workdir":"/tmp","command":"echo test","description":null,"status":"stopped","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#.to_owned()
                 }),
             );
 

@@ -44,12 +44,13 @@ impl FromStr for Runtime {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InterventionCode {
-    /// Killed due to system memory pressure exceeding threshold.
+    /// Stopped due to system memory pressure exceeding threshold.
     MemoryPressure,
-    /// Killed due to session idle timeout.
+    /// Stopped due to session idle timeout.
     IdleTimeout,
-    /// Manually killed by user via API/CLI.
-    UserKill,
+    /// Manually stopped by user via API/CLI.
+    #[serde(alias = "user_kill")]
+    UserStop,
 }
 
 impl fmt::Display for InterventionCode {
@@ -57,7 +58,7 @@ impl fmt::Display for InterventionCode {
         match self {
             Self::MemoryPressure => write!(f, "memory_pressure"),
             Self::IdleTimeout => write!(f, "idle_timeout"),
-            Self::UserKill => write!(f, "user_kill"),
+            Self::UserStop => write!(f, "user_stop"),
         }
     }
 }
@@ -69,7 +70,7 @@ impl FromStr for InterventionCode {
         match s {
             "memory_pressure" => Ok(Self::MemoryPressure),
             "idle_timeout" => Ok(Self::IdleTimeout),
-            "user_kill" => Ok(Self::UserKill),
+            "user_stop" | "user_kill" => Ok(Self::UserStop),
             other => Err(format!("unknown intervention code: {other}")),
         }
     }
@@ -82,7 +83,8 @@ pub enum SessionStatus {
     Active,
     Idle,
     Ready,
-    Killed,
+    #[serde(alias = "killed")]
+    Stopped,
     Lost,
 }
 
@@ -93,7 +95,7 @@ impl fmt::Display for SessionStatus {
             Self::Active => write!(f, "active"),
             Self::Idle => write!(f, "idle"),
             Self::Ready => write!(f, "ready"),
-            Self::Killed => write!(f, "killed"),
+            Self::Stopped => write!(f, "stopped"),
             Self::Lost => write!(f, "lost"),
         }
     }
@@ -108,7 +110,7 @@ impl FromStr for SessionStatus {
             "active" => Ok(Self::Active),
             "idle" => Ok(Self::Idle),
             "ready" => Ok(Self::Ready),
-            "killed" => Ok(Self::Killed),
+            "stopped" | "killed" => Ok(Self::Stopped),
             "lost" => Ok(Self::Lost),
             other => Err(format!("unknown session status: {other}")),
         }
@@ -137,7 +139,7 @@ pub struct Session {
     /// `None` = use global, `Some(0)` = never idle, `Some(N)` = N seconds.
     pub idle_threshold_secs: Option<u32>,
     /// Path to the git worktree created for this session, if any.
-    /// When set, the worktree is cleaned up when the session is killed or deleted.
+    /// When set, the worktree is cleaned up when the session is stopped.
     pub worktree_path: Option<String>,
     /// The runtime environment for this session (tmux or docker).
     #[serde(default)]
@@ -196,8 +198,8 @@ mod tests {
             "\"ready\""
         );
         assert_eq!(
-            serde_json::to_string(&SessionStatus::Killed).unwrap(),
-            "\"killed\""
+            serde_json::to_string(&SessionStatus::Stopped).unwrap(),
+            "\"stopped\""
         );
         assert_eq!(
             serde_json::to_string(&SessionStatus::Lost).unwrap(),
@@ -224,8 +226,8 @@ mod tests {
             SessionStatus::Ready
         );
         assert_eq!(
-            serde_json::from_str::<SessionStatus>("\"killed\"").unwrap(),
-            SessionStatus::Killed
+            serde_json::from_str::<SessionStatus>("\"stopped\"").unwrap(),
+            SessionStatus::Stopped
         );
         assert_eq!(
             serde_json::from_str::<SessionStatus>("\"lost\"").unwrap(),
@@ -244,7 +246,7 @@ mod tests {
         assert_eq!(SessionStatus::Active.to_string(), "active");
         assert_eq!(SessionStatus::Idle.to_string(), "idle");
         assert_eq!(SessionStatus::Ready.to_string(), "ready");
-        assert_eq!(SessionStatus::Killed.to_string(), "killed");
+        assert_eq!(SessionStatus::Stopped.to_string(), "stopped");
         assert_eq!(SessionStatus::Lost.to_string(), "lost");
     }
 
@@ -267,8 +269,8 @@ mod tests {
             SessionStatus::Ready
         );
         assert_eq!(
-            "killed".parse::<SessionStatus>().unwrap(),
-            SessionStatus::Killed
+            "stopped".parse::<SessionStatus>().unwrap(),
+            SessionStatus::Stopped
         );
         assert_eq!(
             "lost".parse::<SessionStatus>().unwrap(),
@@ -450,8 +452,8 @@ mod tests {
             "\"idle_timeout\""
         );
         assert_eq!(
-            serde_json::to_string(&InterventionCode::UserKill).unwrap(),
-            "\"user_kill\""
+            serde_json::to_string(&InterventionCode::UserStop).unwrap(),
+            "\"user_stop\""
         );
     }
 
@@ -466,8 +468,8 @@ mod tests {
             InterventionCode::IdleTimeout
         );
         assert_eq!(
-            serde_json::from_str::<InterventionCode>("\"user_kill\"").unwrap(),
-            InterventionCode::UserKill
+            serde_json::from_str::<InterventionCode>("\"user_stop\"").unwrap(),
+            InterventionCode::UserStop
         );
     }
 
@@ -483,7 +485,7 @@ mod tests {
             "memory_pressure"
         );
         assert_eq!(InterventionCode::IdleTimeout.to_string(), "idle_timeout");
-        assert_eq!(InterventionCode::UserKill.to_string(), "user_kill");
+        assert_eq!(InterventionCode::UserStop.to_string(), "user_stop");
     }
 
     #[test]
@@ -497,8 +499,8 @@ mod tests {
             InterventionCode::IdleTimeout
         );
         assert_eq!(
-            "user_kill".parse::<InterventionCode>().unwrap(),
-            InterventionCode::UserKill
+            "user_stop".parse::<InterventionCode>().unwrap(),
+            InterventionCode::UserStop
         );
     }
 
@@ -528,7 +530,7 @@ mod tests {
             format!("{:?}", InterventionCode::IdleTimeout),
             "IdleTimeout"
         );
-        assert_eq!(format!("{:?}", InterventionCode::UserKill), "UserKill");
+        assert_eq!(format!("{:?}", InterventionCode::UserStop), "UserStop");
     }
 
     #[test]

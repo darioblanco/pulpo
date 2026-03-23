@@ -57,12 +57,9 @@ pub fn build(state: Arc<AppState>) -> Router {
             "/api/v1/sessions",
             get(sessions::list).post(sessions::create),
         )
-        .route(
-            "/api/v1/sessions/{id}",
-            get(sessions::get).delete(sessions::delete),
-        )
+        .route("/api/v1/sessions/{id}", get(sessions::get))
         .route("/api/v1/sessions/cleanup", post(sessions::cleanup))
-        .route("/api/v1/sessions/{id}/kill", post(sessions::kill))
+        .route("/api/v1/sessions/{id}/stop", post(sessions::stop))
         .route("/api/v1/sessions/{id}/output", get(sessions::output))
         .route(
             "/api/v1/sessions/{id}/output/download",
@@ -322,12 +319,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_kill_session_via_post() {
+    async fn test_stop_session_via_post() {
         let server = test_server().await;
         let create_resp = server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
-                "name": "kill-test",
+                "name": "stop-test",
                 "workdir": "/tmp",
                 "command": "test"
             }))
@@ -335,24 +332,24 @@ mod tests {
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
         let id = created["session"]["id"].as_str().unwrap();
 
-        let resp = server.post(&format!("/api/v1/sessions/{id}/kill")).await;
+        let resp = server.post(&format!("/api/v1/sessions/{id}/stop")).await;
         resp.assert_status(StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]
-    async fn test_kill_session_not_found() {
+    async fn test_stop_session_not_found() {
         let server = test_server().await;
-        let resp = server.post("/api/v1/sessions/nonexistent/kill").await;
+        let resp = server.post("/api/v1/sessions/nonexistent/stop").await;
         resp.assert_status(StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn test_delete_session() {
+    async fn test_stop_session_with_purge() {
         let server = test_server().await;
         let create_resp = server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
-                "name": "del-test",
+                "name": "stop-purge-test",
                 "workdir": "/tmp",
                 "command": "test"
             }))
@@ -360,40 +357,14 @@ mod tests {
         let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
         let id = created["session"]["id"].as_str().unwrap();
 
-        // Kill first (status → dead), then delete
-        server.post(&format!("/api/v1/sessions/{id}/kill")).await;
-
-        let resp = server.delete(&format!("/api/v1/sessions/{id}")).await;
+        let resp = server
+            .post(&format!("/api/v1/sessions/{id}/stop?purge=true"))
+            .await;
         resp.assert_status(StatusCode::NO_CONTENT);
 
         // Verify it's gone
         let get_resp = server.get(&format!("/api/v1/sessions/{id}")).await;
         get_resp.assert_status(StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_delete_running_session_rejected() {
-        let server = test_server().await;
-        let create_resp = server
-            .post("/api/v1/sessions")
-            .json(&serde_json::json!({
-                "name": "delrun-test",
-                "workdir": "/tmp",
-                "command": "test"
-            }))
-            .await;
-        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
-        let id = created["session"]["id"].as_str().unwrap();
-
-        let resp = server.delete(&format!("/api/v1/sessions/{id}")).await;
-        resp.assert_status(StatusCode::CONFLICT);
-    }
-
-    #[tokio::test]
-    async fn test_delete_session_not_found() {
-        let server = test_server().await;
-        let resp = server.delete("/api/v1/sessions/nonexistent").await;
-        resp.assert_status(StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -415,38 +386,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_kill_session_by_name() {
+    async fn test_stop_session_by_name() {
         let server = test_server().await;
         server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
-                "name": "kill-name-test",
+                "name": "stop-name-test",
                 "workdir": "/tmp",
                 "command": "test"
             }))
             .await;
 
-        let resp = server.post("/api/v1/sessions/kill-name-test/kill").await;
+        let resp = server.post("/api/v1/sessions/stop-name-test/stop").await;
         resp.assert_status(StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]
-    async fn test_delete_session_by_name() {
+    async fn test_stop_session_by_name_with_purge() {
         let server = test_server().await;
         server
             .post("/api/v1/sessions")
             .json(&serde_json::json!({
-                "name": "del-name-test",
+                "name": "stop-purge-name",
                 "workdir": "/tmp",
                 "command": "test"
             }))
             .await;
 
-        // Kill first, then delete by name
-        server.post("/api/v1/sessions/del-name-test/kill").await;
-
-        let resp = server.delete("/api/v1/sessions/del-name-test").await;
+        let resp = server
+            .post("/api/v1/sessions/stop-purge-name/stop?purge=true")
+            .await;
         resp.assert_status(StatusCode::NO_CONTENT);
+
+        // Verify it's gone
+        let get_resp = server.get("/api/v1/sessions/stop-purge-name").await;
+        get_resp.assert_status(StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -806,7 +780,7 @@ mod tests {
         use pulpo_common::session::SessionStatus;
 
         let (addr, state) = ws_test_server().await;
-        // Create a session, then kill it so it's not running
+        // Create a session, then stop it so it's not running
         let req = pulpo_common::api::CreateSessionRequest {
             name: "ws-dead".into(),
             workdir: Some("/tmp".into()),
@@ -822,18 +796,18 @@ mod tests {
         let session = state.session_manager.create_session(req).await.unwrap();
         state
             .session_manager
-            .kill_session(&session.id.to_string())
+            .stop_session(&session.id.to_string(), false)
             .await
             .unwrap();
 
-        // Verify session is dead
+        // Verify session is stopped
         let fetched = state
             .session_manager
             .get_session(&session.id.to_string())
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
+        assert_eq!(fetched.status, SessionStatus::Stopped);
 
         // WebSocket should fail (session not running)
         let result = tokio_tungstenite::connect_async(format!(

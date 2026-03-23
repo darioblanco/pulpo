@@ -11,7 +11,7 @@ vi.mock('sonner', () => ({
 }));
 
 vi.mock('@/api/client', () => ({
-  killSession: vi.fn(),
+  stopSession: vi.fn(),
   resumeSession: vi.fn(),
   getInterventionEvents: vi.fn(),
   getSessionOutput: vi.fn(),
@@ -35,13 +35,13 @@ vi.mock('@/components/session/terminal-view', () => ({
   ),
 }));
 
-const mockKillSession = vi.mocked(api.killSession);
+const mockStopSession = vi.mocked(api.stopSession);
 const mockResumeSession = vi.mocked(api.resumeSession);
 const mockGetInterventionEvents = vi.mocked(api.getInterventionEvents);
 const mockSendInput = vi.mocked(api.sendInput);
 
 beforeEach(() => {
-  mockKillSession.mockReset();
+  mockStopSession.mockReset();
   mockResumeSession.mockReset();
   mockGetInterventionEvents.mockReset();
   mockSendInput.mockReset();
@@ -104,19 +104,19 @@ describe('SessionCard', () => {
 
   // Traffic light buttons
 
-  it('enables kill dot for active sessions', () => {
+  it('enables stop dot for active sessions', () => {
     renderCard(makeSession());
-    expect(screen.getByTestId('btn-kill')).not.toBeDisabled();
+    expect(screen.getByTestId('btn-stop')).not.toBeDisabled();
   });
 
-  it('enables kill dot for lost sessions', () => {
+  it('enables stop dot for lost sessions', () => {
     renderCard(makeSession({ status: 'lost' }));
-    expect(screen.getByTestId('btn-kill')).not.toBeDisabled();
+    expect(screen.getByTestId('btn-stop')).not.toBeDisabled();
   });
 
-  it('disables kill dot for ready sessions', () => {
+  it('disables stop dot for ready sessions', () => {
     renderCard(makeSession({ status: 'ready' }));
-    expect(screen.getByTestId('btn-kill')).toBeDisabled();
+    expect(screen.getByTestId('btn-stop')).toBeDisabled();
   });
 
   it('enables resume dot only for lost sessions', () => {
@@ -198,8 +198,8 @@ describe('SessionCard', () => {
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
   });
 
-  it('shows OutputView for killed session', () => {
-    renderCard(makeSession({ status: 'killed' }));
+  it('shows OutputView for stopped session', () => {
+    renderCard(makeSession({ status: 'stopped' }));
     clickExpand();
     expect(screen.getByTestId('mock-output-view')).toBeInTheDocument();
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
@@ -212,43 +212,43 @@ describe('SessionCard', () => {
     expect(screen.queryByTestId('mock-terminal-view')).not.toBeInTheDocument();
   });
 
-  // Kill action
+  // Stop action
 
   it('shows confirmation dialog on red dot click', async () => {
     renderCard(makeSession());
-    fireEvent.click(screen.getByTestId('btn-kill'));
+    fireEvent.click(screen.getByTestId('btn-stop'));
     await waitFor(() => {
-      expect(screen.getByText(/Kill session "my-api"/)).toBeInTheDocument();
+      expect(screen.getByText(/Stop session "my-api"/)).toBeInTheDocument();
       expect(screen.getByText('Cancel')).toBeInTheDocument();
     });
   });
 
-  it('calls killSession after confirming dialog', async () => {
-    mockKillSession.mockResolvedValue(undefined);
+  it('calls stopSession after confirming dialog', async () => {
+    mockStopSession.mockResolvedValue(undefined);
     const onRefresh = vi.fn();
     renderCard(makeSession(), onRefresh);
-    fireEvent.click(screen.getByTestId('btn-kill'));
+    fireEvent.click(screen.getByTestId('btn-stop'));
     await waitFor(() => {
-      expect(screen.getByTestId('btn-kill-confirm')).toBeInTheDocument();
+      expect(screen.getByTestId('btn-stop-confirm')).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByTestId('btn-kill-confirm'));
+    fireEvent.click(screen.getByTestId('btn-stop-confirm'));
     await waitFor(() => {
-      expect(mockKillSession).toHaveBeenCalledWith('sess-1');
+      expect(mockStopSession).toHaveBeenCalledWith('sess-1');
       expect(onRefresh).toHaveBeenCalled();
     });
   });
 
-  it('shows toast on kill error', async () => {
-    mockKillSession.mockRejectedValue(new Error('Kill failed'));
+  it('shows toast on stop error', async () => {
+    mockStopSession.mockRejectedValue(new Error('Stop failed'));
     const onRefresh = vi.fn();
     renderCard(makeSession(), onRefresh);
-    fireEvent.click(screen.getByTestId('btn-kill'));
+    fireEvent.click(screen.getByTestId('btn-stop'));
     await waitFor(() => {
-      expect(screen.getByTestId('btn-kill-confirm')).toBeInTheDocument();
+      expect(screen.getByTestId('btn-stop-confirm')).toBeInTheDocument();
     });
-    fireEvent.click(screen.getByTestId('btn-kill-confirm'));
+    fireEvent.click(screen.getByTestId('btn-stop-confirm'));
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Kill failed');
+      expect(toast.error).toHaveBeenCalledWith('Stop failed');
     });
     expect(onRefresh).not.toHaveBeenCalled();
   });
@@ -335,8 +335,8 @@ describe('SessionCard', () => {
     expect(screen.queryByTestId('worktree-badge')).not.toBeInTheDocument();
   });
 
-  it('shows worktree cleanup note for killed session with worktree', () => {
-    renderCard(makeSession({ status: 'killed', worktree_path: '/repo/.pulpo/worktrees/my-task' }));
+  it('shows worktree cleanup note for stopped session with worktree', () => {
+    renderCard(makeSession({ status: 'stopped', worktree_path: '/repo/.pulpo/worktrees/my-task' }));
     clickExpand();
     expect(screen.getByTestId('worktree-cleaned')).toHaveTextContent('Worktree cleaned up');
   });
@@ -355,10 +355,10 @@ describe('SessionCard', () => {
 
   // Intervention
 
-  it('shows intervention badge for killed sessions', () => {
+  it('shows intervention badge for stopped sessions', () => {
     renderCard(
       makeSession({
-        status: 'killed',
+        status: 'stopped',
         intervention_reason: 'Memory exceeded',
         intervention_at: '2026-01-01T12:00:00Z',
       }),
@@ -368,11 +368,11 @@ describe('SessionCard', () => {
   });
 
   it('does not show intervention badge without reason', () => {
-    renderCard(makeSession({ status: 'killed' }));
+    renderCard(makeSession({ status: 'stopped' }));
     expect(screen.queryByTestId('intervention-badge')).not.toBeInTheDocument();
   });
 
-  it('shows intervention badge for killed sessions only', () => {
+  it('shows intervention badge for stopped sessions only', () => {
     renderCard(makeSession({ status: 'ready', intervention_reason: 'test' }));
     expect(screen.queryByTestId('intervention-badge')).not.toBeInTheDocument();
   });
@@ -380,7 +380,7 @@ describe('SessionCard', () => {
   it('shows intervention details when expanded', () => {
     renderCard(
       makeSession({
-        status: 'killed',
+        status: 'stopped',
         intervention_reason: 'Memory exceeded',
         intervention_at: '2026-01-01T12:00:00Z',
       }),
@@ -576,7 +576,7 @@ describe('SessionCard', () => {
     ]);
     renderCard(
       makeSession({
-        status: 'killed',
+        status: 'stopped',
         intervention_reason: 'Memory exceeded',
         intervention_at: '2026-01-01T12:00:00Z',
       }),
@@ -671,7 +671,7 @@ describe('SessionCard', () => {
     ]);
     renderCard(
       makeSession({
-        status: 'killed',
+        status: 'stopped',
         intervention_reason: 'Memory exceeded',
         intervention_at: '2026-01-01T12:00:00Z',
       }),

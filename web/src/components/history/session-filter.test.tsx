@@ -7,7 +7,7 @@ describe('SessionFilter', () => {
     render(<SessionFilter onFilter={vi.fn()} />);
     expect(screen.getByTestId('search-input')).toBeInTheDocument();
     expect(screen.getByTestId('status-chip-ready')).toBeInTheDocument();
-    expect(screen.getByTestId('status-chip-killed')).toBeInTheDocument();
+    expect(screen.getByTestId('status-chip-stopped')).toBeInTheDocument();
   });
 
   it('emits filter on search input', () => {

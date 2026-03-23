@@ -39,7 +39,7 @@ export function formatMemory(mb: number): string {
 
 export const statusColors: Record<string, string> = {
   ready: 'bg-status-ready',
-  killed: 'bg-status-killed',
+  stopped: 'bg-status-stopped',
   active: 'bg-status-active',
   lost: 'bg-status-lost',
   creating: 'bg-status-creating',

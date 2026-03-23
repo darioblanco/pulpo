@@ -47,7 +47,7 @@ mod tests {
         let event = SessionEvent {
             session_id: "id".into(),
             session_name: "name".into(),
-            status: "killed".into(),
+            status: "stopped".into(),
             previous_status: None,
             node_name: "n".into(),
             output_snippet: None,

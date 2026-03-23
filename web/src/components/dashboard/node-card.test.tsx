@@ -5,7 +5,7 @@ import { NodeCard } from './node-card';
 import type { NodeInfo, Session } from '@/api/types';
 
 vi.mock('@/api/client', () => ({
-  killSession: vi.fn(),
+  stopSession: vi.fn(),
   resumeSession: vi.fn(),
   getInterventionEvents: vi.fn(),
   getSessionOutput: vi.fn(),

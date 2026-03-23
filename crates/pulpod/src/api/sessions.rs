@@ -10,6 +10,7 @@ use pulpo_common::api::{
     SendInputRequest,
 };
 use pulpo_common::session::{Session, SessionStatus};
+use serde::Deserialize;
 
 type ApiError = (StatusCode, Json<ErrorResponse>);
 
@@ -82,35 +83,24 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(CreateSessionResponse { session })))
 }
 
-pub async fn kill(
-    State(state): State<Arc<super::AppState>>,
-    Path(id): Path<String>,
-) -> Result<StatusCode, ApiError> {
-    state.session_manager.kill_session(&id).await.map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("not found") {
-            (StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg }))
-        } else {
-            internal_error(&msg)
-        }
-    })?;
-    Ok(StatusCode::NO_CONTENT)
+#[derive(Deserialize)]
+pub struct StopQuery {
+    pub purge: Option<bool>,
 }
 
-pub async fn delete(
+pub async fn stop(
     State(state): State<Arc<super::AppState>>,
     Path(id): Path<String>,
+    Query(query): Query<StopQuery>,
 ) -> Result<StatusCode, ApiError> {
     state
         .session_manager
-        .delete_session(&id)
+        .stop_session(&id, query.purge.unwrap_or(false))
         .await
         .map_err(|e| {
             let msg = e.to_string();
             if msg.contains("not found") {
                 (StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg }))
-            } else if msg.contains("cannot delete") {
-                (StatusCode::CONFLICT, Json(ErrorResponse { error: msg }))
             } else {
                 internal_error(&msg)
             }
@@ -453,19 +443,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_kill_not_found() {
+    async fn test_stop_not_found() {
         let state = test_state().await;
-        let result = kill(State(state), Path("nonexistent".into())).await;
+        let query = StopQuery { purge: None };
+        let result = stop(State(state), Path("nonexistent".into()), Query(query)).await;
         assert!(result.is_err());
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn test_kill_returns_no_content() {
+    async fn test_stop_returns_no_content() {
         let state = test_state().await;
         let req = CreateSessionRequest {
-            name: "kill-test".into(),
+            name: "stop-test".into(),
             workdir: Some("/tmp".into()),
             metadata: None,
             command: Some("echo test".into()),
@@ -478,9 +469,44 @@ mod tests {
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
-        let result = kill(State(state), Path(session.id.to_string())).await;
+        let query = StopQuery { purge: None };
+        let result = stop(State(state), Path(session.id.to_string()), Query(query)).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn test_stop_with_purge() {
+        let state = test_state().await;
+        let req = CreateSessionRequest {
+            name: "stop-purge".into(),
+            workdir: Some("/tmp".into()),
+            metadata: None,
+            command: Some("echo test".into()),
+            description: None,
+            ink: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            runtime: None,
+            secrets: None,
+        };
+        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+        let session = resp.session;
+        let query = StopQuery { purge: Some(true) };
+        let result = stop(
+            State(state.clone()),
+            Path(session.id.to_string()),
+            Query(query),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
+
+        // Session should be purged (not found)
+        let get_result = get(State(state), Path(session.id.to_string())).await;
+        assert!(get_result.is_err());
+        let (status, _) = get_result.unwrap_err();
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -685,10 +711,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_kill_internal_error() {
+    async fn test_stop_internal_error() {
         let state = failing_state().await;
         let req = CreateSessionRequest {
-            name: "kill-err".into(),
+            name: "stop-err".into(),
             workdir: Some("/tmp".into()),
             metadata: None,
             command: Some("echo test".into()),
@@ -702,9 +728,10 @@ mod tests {
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
 
-        // kill() finds session, calls backend.kill_session → Err("backend exploded")
+        // stop() finds session, calls backend.kill_session → Err("backend exploded")
         // Error message doesn't contain "not found" → 500
-        let result = kill(State(state), Path(session.id.to_string())).await;
+        let query = StopQuery { purge: None };
+        let result = stop(State(state), Path(session.id.to_string()), Query(query)).await;
         assert!(result.is_err());
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
@@ -994,7 +1021,7 @@ mod tests {
             id,
             name: "snap-test".into(),
             workdir: "/tmp".into(),
-            status: SessionStatus::Killed,
+            status: SessionStatus::Stopped,
             exit_code: None,
             backend_session_id: None,
             output_snapshot: Some("saved output from snapshot".into()),
@@ -1045,8 +1072,14 @@ mod tests {
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
 
-        // Kill the session so it becomes Dead
-        let _ = kill(State(state.clone()), Path(session.id.to_string())).await;
+        // Stop the session so it becomes Dead
+        let query = StopQuery { purge: None };
+        let _ = stop(
+            State(state.clone()),
+            Path(session.id.to_string()),
+            Query(query),
+        )
+        .await;
 
         let result = download_output(State(state), Path(session.id.to_string())).await;
         assert!(result.is_ok());
@@ -1475,73 +1508,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_dead_session() {
+    async fn test_stop_purge_not_found() {
         let state = test_state().await;
-        let req = CreateSessionRequest {
-            name: "del-test".into(),
-            workdir: Some("/tmp".into()),
-            metadata: None,
-            command: Some("echo test".into()),
-            description: None,
-            ink: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            runtime: None,
-            secrets: None,
-        };
-        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
-        let session = resp.session;
-
-        // Kill first, then delete
-        let _ = kill(State(state.clone()), Path(session.id.to_string())).await;
-        let result = delete(State(state), Path(session.id.to_string())).await;
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), StatusCode::NO_CONTENT);
-    }
-
-    #[tokio::test]
-    async fn test_delete_running_session_rejected() {
-        let state = test_state().await;
-        let req = CreateSessionRequest {
-            name: "del-run".into(),
-            workdir: Some("/tmp".into()),
-            metadata: None,
-            command: Some("echo test".into()),
-            description: None,
-            ink: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            runtime: None,
-            secrets: None,
-        };
-        let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
-        let session = resp.session;
-
-        let result = delete(State(state), Path(session.id.to_string())).await;
-        assert!(result.is_err());
-        let (status, _) = result.unwrap_err();
-        assert_eq!(status, StatusCode::CONFLICT);
-    }
-
-    #[tokio::test]
-    async fn test_delete_not_found() {
-        let state = test_state().await;
-        let result = delete(State(state), Path("nonexistent".into())).await;
+        let query = StopQuery { purge: Some(true) };
+        let result = stop(State(state), Path("nonexistent".into()), Query(query)).await;
         assert!(result.is_err());
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_delete_internal_error() {
-        let (state, pool) = test_state_with_pool().await;
-        sqlx::query("DROP TABLE sessions")
-            .execute(&pool)
-            .await
-            .unwrap();
-        let result = delete(State(state), Path("test".into())).await;
-        assert!(result.is_err());
-        let (status, _) = result.unwrap_err();
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

@@ -44,14 +44,14 @@ describe('detectStatusChanges', () => {
     });
   });
 
-  it('detects active → killed transition', () => {
+  it('detects active → stopped transition', () => {
     const prev = [makeSession({ id: '1', status: 'active' })];
-    const curr = [makeSession({ id: '1', status: 'killed' })];
+    const curr = [makeSession({ id: '1', status: 'stopped' })];
 
     const changes = detectStatusChanges(prev, curr);
 
     expect(changes).toHaveLength(1);
-    expect(changes[0].to).toBe('killed');
+    expect(changes[0].to).toBe('stopped');
   });
 
   it('detects lost → active transition', () => {
@@ -94,7 +94,7 @@ describe('detectStatusChanges', () => {
     ];
     const curr = [
       makeSession({ id: '1', name: 'api-fix', status: 'ready' }),
-      makeSession({ id: '2', name: 'refactor', status: 'killed' }),
+      makeSession({ id: '2', name: 'refactor', status: 'stopped' }),
     ];
 
     const changes = detectStatusChanges(prev, curr);
@@ -141,10 +141,10 @@ describe('formatStatusLabel', () => {
     ).toBe('my-api ready');
   });
 
-  it('returns killed label', () => {
+  it('returns stopped label', () => {
     expect(
-      formatStatusLabel({ sessionId: '1', sessionName: 'my-api', from: 'active', to: 'killed' }),
-    ).toBe('my-api killed');
+      formatStatusLabel({ sessionId: '1', sessionName: 'my-api', from: 'active', to: 'stopped' }),
+    ).toBe('my-api stopped');
   });
 
   it('returns resumed label for other transitions', () => {
@@ -181,15 +181,15 @@ describe('processSessionChanges', () => {
     );
   });
 
-  it('triggers killed label for killed sessions', () => {
+  it('triggers stopped label for stopped sessions', () => {
     const toast = vi.fn();
     const notify = vi.fn();
     const prev = [makeSession({ id: '1', status: 'active' })];
-    const current = [makeSession({ id: '1', status: 'killed' })];
+    const current = [makeSession({ id: '1', status: 'stopped' })];
 
     processSessionChanges(prev, current, toast, notify);
 
-    expect(toast).toHaveBeenCalledWith('my-api killed');
+    expect(toast).toHaveBeenCalledWith('my-api stopped');
   });
 
   it('triggers resumed label for lost to active', () => {
@@ -291,18 +291,18 @@ describe('showDesktopNotification', () => {
     });
   });
 
-  it('creates notification for killed session', () => {
+  it('creates notification for stopped session', () => {
     const change: StatusChange = {
       sessionId: '1',
       sessionName: 'my-api',
       from: 'active',
-      to: 'killed',
+      to: 'stopped',
     };
 
     showDesktopNotification(change);
 
-    expect(NotificationConstructor).toHaveBeenCalledWith('Session killed: my-api', {
-      body: 'my-api has been killed',
+    expect(NotificationConstructor).toHaveBeenCalledWith('Session stopped: my-api', {
+      body: 'my-api has been stopped',
     });
   });
 

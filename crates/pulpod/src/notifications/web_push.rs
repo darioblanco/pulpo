@@ -200,12 +200,12 @@ mod tests {
     }
 
     #[test]
-    fn test_build_payload_killed() {
-        let event = test_event("killed");
+    fn test_build_payload_stopped() {
+        let event = test_event("stopped");
         let payload_str = build_payload(&event);
         let payload: serde_json::Value = serde_json::from_str(&payload_str).unwrap();
-        assert_eq!(payload["status"], "killed");
-        assert!(payload["body"].as_str().unwrap().contains("killed"));
+        assert_eq!(payload["status"], "stopped");
+        assert!(payload["body"].as_str().unwrap().contains("stopped"));
     }
 
     #[test]

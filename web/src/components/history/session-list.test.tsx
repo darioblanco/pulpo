@@ -6,18 +6,18 @@ import * as api from '@/api/client';
 import type { Session } from '@/api/types';
 
 vi.mock('@/api/client', () => ({
-  deleteSession: vi.fn(),
+  stopSession: vi.fn(),
   downloadSessionOutput: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
 }));
 
-const mockDeleteSession = vi.mocked(api.deleteSession);
+const mockStopSession = vi.mocked(api.stopSession);
 const mockDownloadSessionOutput = vi.mocked(api.downloadSessionOutput);
 
 beforeEach(() => {
-  mockDeleteSession.mockReset();
+  mockStopSession.mockReset();
   mockDownloadSessionOutput.mockReset();
 });
 
@@ -111,11 +111,11 @@ describe('SessionList', () => {
   });
 
   it('shows branch name and worktree path in expanded detail when set', () => {
-    renderList([makeSession({ worktree_path: '/repo/.pulpo/worktrees/feature-x' })]);
+    renderList([makeSession({ worktree_path: '/home/user/.pulpo/worktrees/feature-x' })]);
     fireEvent.click(screen.getByTestId('history-item-sess-1'));
     expect(screen.getByText('Branch:')).toBeInTheDocument();
     expect(screen.getByText('pulpo/feature-x')).toBeInTheDocument();
-    expect(screen.getByText('Worktree: /repo/.pulpo/worktrees/feature-x')).toBeInTheDocument();
+    expect(screen.getByText('Worktree: /home/user/.pulpo/worktrees/feature-x')).toBeInTheDocument();
   });
 
   it('hides worktree info in expanded detail when not set', () => {
@@ -124,15 +124,15 @@ describe('SessionList', () => {
     expect(screen.queryByText('Branch:')).not.toBeInTheDocument();
   });
 
-  it('deletes session and refreshes', async () => {
-    mockDeleteSession.mockResolvedValue(undefined);
+  it('purges session and refreshes', async () => {
+    mockStopSession.mockResolvedValue(undefined);
     const onRefresh = vi.fn();
     renderList([makeSession()], onRefresh);
     fireEvent.click(screen.getByTestId('history-item-sess-1'));
-    fireEvent.click(screen.getByTestId('delete-sess-1'));
+    fireEvent.click(screen.getByTestId('purge-sess-1'));
 
     await waitFor(() => {
-      expect(mockDeleteSession).toHaveBeenCalledWith('sess-1');
+      expect(mockStopSession).toHaveBeenCalledWith('sess-1', true);
       expect(onRefresh).toHaveBeenCalled();
     });
   });

@@ -84,7 +84,7 @@ Sessions move through explicit states:
 
 with failure or intervention paths to:
 
-`killed` or `lost`
+`stopped` or `lost`
 
 This is the most important behavior in the system. See [Session Lifecycle](/operations/session-lifecycle) for exact transitions.
 
@@ -136,7 +136,7 @@ pulpo spawn auth-fix --workdir ~/repo --worktree -- claude -p "fix auth"
 pulpo spawn perf-fix --workdir ~/repo --worktree -- codex "optimize queries"
 ```
 
-Each session gets `<repo>/.pulpo/worktrees/<session-name>/` on branch `pulpo/<session-name>`. Worktrees are cleaned up when sessions are killed or deleted.
+Each session gets `~/.pulpo/worktrees/<session-name>/` on branch `pulpo/<session-name>`. Worktrees are cleaned up when sessions are stopped.
 
 ### Built-in Scheduler
 
@@ -169,7 +169,7 @@ Session spawn → resolve_ink → build_command → tmux create
        ↓                                                                           ↓
    Watchdog ←── check output ──────────────────────────────────────────── terminal output
        ↓
-  State transitions (active ⇄ idle → ready/killed/lost)
+  State transitions (active ⇄ idle → ready/stopped/lost)
        ↓
   SSE events → web UI / Discord / webhooks
 ```

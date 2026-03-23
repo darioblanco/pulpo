@@ -138,16 +138,13 @@ export async function createRemoteSession(
   return res.json();
 }
 
-export async function killSession(id: string): Promise<void> {
-  const res = await authFetch(`${resolveBaseUrl()}/sessions/${id}/kill`, { method: 'POST' });
+export async function stopSession(id: string, purge?: boolean): Promise<void> {
+  const url = `${resolveBaseUrl()}/sessions/${id}/stop${purge ? '?purge=true' : ''}`;
+  const res = await authFetch(url, { method: 'POST' });
   if (!res.ok) {
     const err = await res.json();
-    throw new Error(err.error || 'Failed to kill session');
+    throw new Error(err.error || 'Failed to stop session');
   }
-}
-
-export async function deleteSession(id: string): Promise<void> {
-  await authFetch(`${resolveBaseUrl()}/sessions/${id}`, { method: 'DELETE' });
 }
 
 export async function getSessionOutput(

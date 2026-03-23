@@ -11,9 +11,8 @@ import { OutputView } from '@/components/session/output-view';
 import {
   getSession,
   getInterventionEvents,
-  killSession,
+  stopSession,
   resumeSession,
-  deleteSession,
   downloadSessionOutput,
 } from '@/api/client';
 import { formatRelativeTime, statusColors } from '@/lib/utils';
@@ -55,14 +54,14 @@ export function SessionDetailPage() {
     fetchInterventions();
   }, [fetchSession, fetchInterventions]);
 
-  async function handleKill() {
+  async function handleStop() {
     if (!id) return;
     try {
-      await killSession(id);
-      toast.success('Session killed');
+      await stopSession(id);
+      toast.success('Session stopped');
       fetchSession();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to kill session');
+      toast.error(e instanceof Error ? e.message : 'Failed to stop session');
     }
   }
 
@@ -77,14 +76,14 @@ export function SessionDetailPage() {
     }
   }
 
-  async function handleDelete() {
+  async function handlePurge() {
     if (!id) return;
     try {
-      await deleteSession(id);
-      toast.success('Session deleted');
+      await stopSession(id, true);
+      toast.success('Session purged');
       navigate('/sessions');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete session');
+      toast.error(e instanceof Error ? e.message : 'Failed to purge session');
     }
   }
 
@@ -103,13 +102,13 @@ export function SessionDetailPage() {
     }
   }
 
-  const canKill =
+  const canStop =
     session?.status === 'active' || session?.status === 'idle' || session?.status === 'lost';
   const canResume = session?.status === 'ready' || session?.status === 'lost';
-  const canDelete = session?.status === 'killed' || session?.status === 'lost';
+  const canPurge = session?.status === 'stopped' || session?.status === 'lost';
   const showTerminal = session?.status === 'active' || session?.status === 'idle';
   const showOutput =
-    session?.status === 'ready' || session?.status === 'killed' || session?.status === 'lost';
+    session?.status === 'ready' || session?.status === 'stopped' || session?.status === 'lost';
 
   return (
     <div data-testid="session-detail-page">
@@ -143,14 +142,14 @@ export function SessionDetailPage() {
                 </Badge>
               </div>
               <div className="ml-auto flex flex-wrap gap-2">
-                {canKill && (
+                {canStop && (
                   <Button
                     variant="destructive"
                     size="sm"
-                    data-testid="btn-kill"
-                    onClick={handleKill}
+                    data-testid="btn-stop"
+                    onClick={handleStop}
                   >
-                    Kill
+                    Stop
                   </Button>
                 )}
                 {canResume && (
@@ -163,15 +162,15 @@ export function SessionDetailPage() {
                     Resume
                   </Button>
                 )}
-                {canDelete && (
+                {canPurge && (
                   <Button
                     variant="outline"
                     size="sm"
                     className="text-destructive"
-                    data-testid="btn-delete"
-                    onClick={handleDelete}
+                    data-testid="btn-purge"
+                    onClick={handlePurge}
                   >
-                    Delete
+                    Stop &amp; Purge
                   </Button>
                 )}
                 <Button

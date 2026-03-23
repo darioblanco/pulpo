@@ -55,9 +55,9 @@ check_interval_secs = 10      # How often to check (default: 10)
 idle_timeout_secs = 600        # Seconds idle before action (default: 600)
 idle_action = "alert"          # "alert" (mark idle) or "kill" (default: "alert")
 idle_threshold_secs = 60       # Seconds of unchanged output before Active→Idle (default: 60)
-ready_ttl_secs = 0             # Seconds after Ready before kill (0 = disabled)
+ready_ttl_secs = 0             # Seconds after Ready before stop (0 = disabled)
 memory_threshold = 90          # Memory % to trigger intervention (default: 90)
-breach_count = 3               # Consecutive breaches before kill (default: 3)
+breach_count = 3               # Consecutive breaches before stop (default: 3)
 adopt_tmux = true              # Auto-adopt external tmux sessions
 waiting_patterns = ["custom prompt>"]  # Extra waiting-for-input patterns (default: [])
 ```
@@ -71,12 +71,12 @@ See [Session Lifecycle](/operations/session-lifecycle) for how the watchdog driv
 ```toml
 [notifications.discord]
 webhook_url = "https://discord.com/api/webhooks/..."
-events = ["ready", "killed", "lost"]      # empty means all events
+events = ["ready", "stopped", "lost"]      # empty means all events
 
 [[notifications.webhooks]]
 name = "primary"
 url = "https://example.com/hooks/pulpo"
-events = ["ready", "killed", "lost"]
+events = ["ready", "stopped", "lost"]
 ```
 
 ## Peers

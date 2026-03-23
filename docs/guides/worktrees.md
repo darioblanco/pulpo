@@ -20,7 +20,7 @@ pulpo spawn fix-auth --workdir ~/repos/my-api --worktree -- claude -p "fix the a
 
 This:
 1. Creates branch `pulpo/fix-auth` from the current HEAD
-2. Checks out a worktree at `~/repos/my-api/.pulpo/worktrees/fix-auth/`
+2. Checks out a worktree at `~/.pulpo/worktrees/fix-auth/`
 3. Runs the command inside that worktree
 
 The session's working directory is set to the worktree path, so the agent sees a normal git checkout.
@@ -36,27 +36,21 @@ Worktree branches follow the pattern `pulpo/<session-name>`:
 
 ## Worktree location
 
-All worktrees live under the repo's `.pulpo/worktrees/` directory:
+All worktrees live under `~/.pulpo/worktrees/`:
 
 ```
-~/repos/my-api/
-├── .pulpo/
-│   └── worktrees/
-│       ├── fix-auth/          # full checkout
-│       └── refactor-db/       # full checkout
-├── src/
-└── ...
+~/.pulpo/
+└── worktrees/
+    ├── fix-auth/          # full checkout
+    └── refactor-db/       # full checkout
 ```
-
-Add `.pulpo/` to your `.gitignore` — it's a local workspace directory, not something to commit.
 
 ## Cleanup
 
-Worktrees are removed automatically when you kill or delete the session:
+Worktrees are removed automatically when you stop the session:
 
 ```bash
-pulpo kill fix-auth    # removes worktree + prunes git references
-pulpo delete fix-auth  # same cleanup if the session was already killed
+pulpo stop fix-auth    # removes worktree + prunes git references
 ```
 
 The cleanup runs `git worktree prune` on the parent repo to keep git's worktree list clean.

@@ -12,9 +12,8 @@ import type { Session, InterventionEvent } from '@/api/types';
 vi.mock('@/api/client', () => ({
   getSession: vi.fn(),
   getInterventionEvents: vi.fn(),
-  killSession: vi.fn(),
+  stopSession: vi.fn(),
   resumeSession: vi.fn(),
-  deleteSession: vi.fn(),
   downloadSessionOutput: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   resolveWsUrl: vi.fn().mockReturnValue('ws://localhost/test'),
@@ -64,9 +63,8 @@ vi.stubGlobal('EventSource', MockEventSource);
 
 const mockGetSession = vi.mocked(api.getSession);
 const mockGetInterventions = vi.mocked(api.getInterventionEvents);
-const mockKillSession = vi.mocked(api.killSession);
+const mockStopSession = vi.mocked(api.stopSession);
 const mockResumeSession = vi.mocked(api.resumeSession);
-const mockDeleteSession = vi.mocked(api.deleteSession);
 
 function makeSession(overrides: Partial<Session> = {}): Session {
   return {
@@ -108,9 +106,8 @@ vi.mock('react-router', async () => {
 beforeEach(() => {
   mockGetSession.mockReset();
   mockGetInterventions.mockReset();
-  mockKillSession.mockReset();
+  mockStopSession.mockReset();
   mockResumeSession.mockReset();
-  mockDeleteSession.mockReset();
   mockNavigate.mockReset();
   mockGetInterventions.mockResolvedValue([]);
 });
@@ -188,8 +185,8 @@ describe('SessionDetailPage', () => {
     expect(screen.queryByTestId('terminal-section')).not.toBeInTheDocument();
   });
 
-  it('shows output view for killed sessions', async () => {
-    mockGetSession.mockResolvedValue(makeSession({ status: 'killed' }));
+  it('shows output view for stopped sessions', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'stopped' }));
     renderDetail();
 
     await waitFor(() => {
@@ -209,7 +206,7 @@ describe('SessionDetailPage', () => {
   it('shows intervention history when present', async () => {
     mockGetSession.mockResolvedValue(
       makeSession({
-        status: 'killed',
+        status: 'stopped',
         intervention_reason: 'Memory threshold exceeded',
         intervention_at: '2025-01-01T01:00:00Z',
       }),
@@ -239,18 +236,18 @@ describe('SessionDetailPage', () => {
     expect(screen.getByTestId('no-interventions')).toHaveTextContent('No interventions');
   });
 
-  it('kill button calls killSession', async () => {
+  it('stop button calls stopSession', async () => {
     mockGetSession.mockResolvedValue(makeSession({ status: 'active' }));
-    mockKillSession.mockResolvedValue(undefined);
+    mockStopSession.mockResolvedValue(undefined);
     renderDetail();
 
     await waitFor(() => {
-      expect(screen.getByTestId('btn-kill')).toBeInTheDocument();
+      expect(screen.getByTestId('btn-stop')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByTestId('btn-kill'));
+    fireEvent.click(screen.getByTestId('btn-stop'));
     await waitFor(() => {
-      expect(mockKillSession).toHaveBeenCalledWith('sess-123');
+      expect(mockStopSession).toHaveBeenCalledWith('sess-123');
     });
   });
 
@@ -269,18 +266,18 @@ describe('SessionDetailPage', () => {
     });
   });
 
-  it('delete button calls deleteSession and navigates', async () => {
-    mockGetSession.mockResolvedValue(makeSession({ status: 'killed' }));
-    mockDeleteSession.mockResolvedValue(undefined);
+  it('purge button calls stopSession with purge and navigates', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ status: 'stopped' }));
+    mockStopSession.mockResolvedValue(undefined);
     renderDetail();
 
     await waitFor(() => {
-      expect(screen.getByTestId('btn-delete')).toBeInTheDocument();
+      expect(screen.getByTestId('btn-purge')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByTestId('btn-delete'));
+    fireEvent.click(screen.getByTestId('btn-purge'));
     await waitFor(() => {
-      expect(mockDeleteSession).toHaveBeenCalledWith('sess-123');
+      expect(mockStopSession).toHaveBeenCalledWith('sess-123', true);
     });
     await waitFor(() => {
       expect(mockNavigate).toHaveBeenCalledWith('/sessions');
@@ -308,14 +305,14 @@ describe('SessionDetailPage', () => {
     });
   });
 
-  it('does not show kill button for ready sessions', async () => {
+  it('does not show stop button for ready sessions', async () => {
     mockGetSession.mockResolvedValue(makeSession({ status: 'ready' }));
     renderDetail();
 
     await waitFor(() => {
       expect(screen.getByTestId('session-name')).toBeInTheDocument();
     });
-    expect(screen.queryByTestId('btn-kill')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('btn-stop')).not.toBeInTheDocument();
   });
 
   it('does not show resume button for active sessions', async () => {
@@ -337,12 +334,12 @@ describe('SessionDetailPage', () => {
     });
   });
 
-  it('shows delete button for lost sessions', async () => {
+  it('shows purge button for lost sessions', async () => {
     mockGetSession.mockResolvedValue(makeSession({ status: 'lost' }));
     renderDetail();
 
     await waitFor(() => {
-      expect(screen.getByTestId('btn-delete')).toBeInTheDocument();
+      expect(screen.getByTestId('btn-purge')).toBeInTheDocument();
     });
   });
 

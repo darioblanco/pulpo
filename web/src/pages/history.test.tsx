@@ -10,7 +10,7 @@ import type { Session } from '@/api/types';
 
 vi.mock('@/api/client', () => ({
   getSessions: vi.fn(),
-  deleteSession: vi.fn(),
+  stopSession: vi.fn(),
   downloadSessionOutput: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
@@ -94,12 +94,12 @@ describe('HistoryPage', () => {
     });
   });
 
-  it('fetches with default filter (ready,killed)', async () => {
+  it('fetches with default filter (ready,stopped)', async () => {
     mockGetSessions.mockResolvedValue([]);
     renderHistory();
     await waitFor(() => {
       expect(mockGetSessions).toHaveBeenCalledWith({
-        status: 'ready,killed',
+        status: 'ready,stopped',
       });
     });
   });
@@ -112,18 +112,18 @@ describe('HistoryPage', () => {
     });
 
     // Click a status filter
-    fireEvent.click(screen.getByTestId('status-chip-killed'));
+    fireEvent.click(screen.getByTestId('status-chip-stopped'));
     await waitFor(() => {
       expect(mockGetSessions).toHaveBeenCalledWith({
         search: undefined,
-        status: 'killed',
+        status: 'stopped',
       });
     });
   });
 
-  it('refreshes after session deletion', async () => {
-    const deleteSession = vi.mocked(api.deleteSession);
-    deleteSession.mockResolvedValue(undefined);
+  it('refreshes after session purge', async () => {
+    const stopSession = vi.mocked(api.stopSession);
+    stopSession.mockResolvedValue(undefined);
     mockGetSessions.mockResolvedValue([makeSession()]);
     renderHistory();
 
@@ -131,9 +131,9 @@ describe('HistoryPage', () => {
       expect(screen.getByText('my-api')).toBeInTheDocument();
     });
 
-    // Expand and delete
+    // Expand and purge
     fireEvent.click(screen.getByTestId('history-item-sess-1'));
-    fireEvent.click(screen.getByTestId('delete-sess-1'));
+    fireEvent.click(screen.getByTestId('purge-sess-1'));
 
     await waitFor(() => {
       // onRefresh calls fetchSessions(filter) again

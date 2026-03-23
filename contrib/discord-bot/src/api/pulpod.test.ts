@@ -123,44 +123,23 @@ describe('PulpodClient', () => {
     );
   });
 
-  it('killSession sends POST to /kill', async () => {
+  it('stopSession sends POST to /stop', async () => {
     mockFetch.mockResolvedValue({ ok: true });
 
     const client = new PulpodClient(config);
-    await client.killSession('abc');
+    await client.stopSession('abc');
 
-    expect(mockFetch).toHaveBeenCalledWith('http://localhost:7433/api/v1/sessions/abc/kill', {
+    expect(mockFetch).toHaveBeenCalledWith('http://localhost:7433/api/v1/sessions/abc/stop', {
       method: 'POST',
       headers: expect.any(Object),
     });
   });
 
-  it('killSession throws on non-ok response', async () => {
+  it('stopSession throws on non-ok response', async () => {
     mockFetch.mockResolvedValue({ ok: false, status: 404 });
 
     const client = new PulpodClient(config);
-    await expect(client.killSession('missing')).rejects.toThrow('Failed to kill session: 404');
-  });
-
-  it('deleteSession sends DELETE', async () => {
-    mockFetch.mockResolvedValue({ ok: true });
-
-    const client = new PulpodClient(config);
-    await client.deleteSession('abc');
-
-    expect(mockFetch).toHaveBeenCalledWith('http://localhost:7433/api/v1/sessions/abc', {
-      method: 'DELETE',
-      headers: expect.any(Object),
-    });
-  });
-
-  it('deleteSession throws on non-ok response', async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 404 });
-
-    const client = new PulpodClient(config);
-    await expect(client.deleteSession('missing')).rejects.toThrow(
-      'Failed to delete session: 404',
-    );
+    await expect(client.stopSession('missing')).rejects.toThrow('Failed to stop session: 404');
   });
 
   it('getOutput returns text', async () => {

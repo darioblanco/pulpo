@@ -12,7 +12,7 @@ Recovery is part of Pulpo's core runtime contract. If you want to understand wha
 | **Active** | Agent is working — terminal output is changing | No |
 | **Idle** | Agent needs attention — waiting for input or at its prompt | No |
 | **Ready** | Agent process exited — task is done | Yes (resumable) |
-| **Killed** | Session was terminated by user, watchdog, or TTL cleanup | Yes (not resumable) |
+| **Stopped** | Session was terminated by user, watchdog, or TTL cleanup | Yes (not resumable) |
 | **Lost** | tmux process disappeared unexpectedly (crash, reboot) | Yes (resumable) |
 
 ## Common Recovery Path
@@ -28,7 +28,7 @@ pulpo resume my-api
 
 It works for **lost** (tmux gone after crash/reboot) and **ready** (agent exited normally) sessions. The session command is re-executed in a new tmux session.
 
-**Killed** sessions cannot be resumed — start a new session with `pulpo spawn`.
+**Stopped** sessions cannot be resumed — start a new session with `pulpo spawn`.
 
 ## Recovery After Daemon Restart
 
@@ -40,7 +40,7 @@ If auto-resume fails, sessions are marked **lost** and appear in `pulpo list` fo
 
 ## Interventions
 
-Inspect intervention history to understand why a session was killed:
+Inspect intervention history to understand why a session was stopped:
 
 ```bash
 pulpo interventions <name>

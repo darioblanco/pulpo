@@ -306,6 +306,11 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
+        // Idempotent migration: rename 'killed' status to 'stopped'
+        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE status = 'killed'")
+            .execute(&self.pool)
+            .await?;
+
         Ok(())
     }
 
@@ -366,7 +371,7 @@ impl Store {
              ORDER BY CASE status \
                WHEN 'active' THEN 0 WHEN 'idle' THEN 1 \
                WHEN 'creating' THEN 2 WHEN 'ready' THEN 3 \
-               WHEN 'lost' THEN 4 WHEN 'killed' THEN 5 \
+               WHEN 'lost' THEN 4 WHEN 'stopped' THEN 5 \
                ELSE 6 END \
              LIMIT 1",
         )
@@ -473,9 +478,9 @@ impl Store {
         Ok(())
     }
 
-    /// Delete all sessions with killed or lost status. Returns the count deleted.
+    /// Delete all sessions with stopped or lost status. Returns the count deleted.
     pub async fn cleanup_dead_sessions(&self) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM sessions WHERE status IN ('killed', 'lost')")
+        let result = sqlx::query("DELETE FROM sessions WHERE status IN ('stopped', 'lost')")
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected())
@@ -498,7 +503,7 @@ impl Store {
         let now = Utc::now().to_rfc3339();
         let code_str = code.to_string();
         sqlx::query(
-            "UPDATE sessions SET intervention_code = ?, intervention_reason = ?, intervention_at = ?, status = 'killed', updated_at = ? WHERE id = ?",
+            "UPDATE sessions SET intervention_code = ?, intervention_reason = ?, intervention_at = ?, status = 'stopped', updated_at = ? WHERE id = ?",
         )
         .bind(&code_str)
         .bind(reason)
@@ -1096,12 +1101,12 @@ mod tests {
     async fn test_get_session_prefers_live_over_terminal() {
         let store = test_store().await;
 
-        // Insert a killed session with name "dup"
-        let mut killed = make_session("dup");
-        killed.id = uuid::Uuid::new_v4();
-        killed.status = SessionStatus::Killed;
-        // Remove from unique index by marking killed before insert
-        store.insert_session(&killed).await.unwrap();
+        // Insert a stopped session with name "dup"
+        let mut stopped = make_session("dup");
+        stopped.id = uuid::Uuid::new_v4();
+        stopped.status = SessionStatus::Stopped;
+        // Remove from unique index by marking stopped before insert
+        store.insert_session(&stopped).await.unwrap();
 
         // Insert a ready session with the same name "dup"
         let mut ready = make_session("dup-ready");
@@ -1109,10 +1114,10 @@ mod tests {
         ready.name = "dup".into();
         ready.status = SessionStatus::Ready;
         // The unique index only covers creating/active/idle/ready,
-        // and killed is excluded, so this insert should work
+        // and stopped is excluded, so this insert should work
         store.insert_session(&ready).await.unwrap();
 
-        // get_session by name should return the ready one, not the killed one
+        // get_session by name should return the ready one, not the stopped one
         let fetched = store.get_session("dup").await.unwrap().unwrap();
         assert_eq!(fetched.status, SessionStatus::Ready);
         assert_eq!(fetched.id, ready.id);
@@ -1144,15 +1149,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_has_active_session_by_name_false_killed() {
+    async fn test_has_active_session_by_name_false_stopped() {
         let store = test_store().await;
-        let mut session = make_session("killed-session");
-        session.status = SessionStatus::Killed;
+        let mut session = make_session("stopped-session");
+        session.status = SessionStatus::Stopped;
         store.insert_session(&session).await.unwrap();
 
         assert!(
             !store
-                .has_active_session_by_name("killed-session")
+                .has_active_session_by_name("stopped-session")
                 .await
                 .unwrap()
         );
@@ -1254,15 +1259,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_unique_index_allows_reuse_after_kill() {
+    async fn test_unique_index_allows_reuse_after_stop() {
         let store = test_store().await;
         let s1 = make_session("reuse-name");
         store.insert_session(&s1).await.unwrap();
         store
-            .update_session_status(&s1.id.to_string(), SessionStatus::Killed)
+            .update_session_status(&s1.id.to_string(), SessionStatus::Stopped)
             .await
             .unwrap();
-        // New session with same name should succeed — old one is killed
+        // New session with same name should succeed — old one is stopped
         let mut s2 = make_session("reuse-name");
         s2.id = uuid::Uuid::new_v4();
         store.insert_session(&s2).await.unwrap();
@@ -1452,7 +1457,7 @@ mod tests {
             .await
             .unwrap();
         let result = store
-            .update_session_status("test-id", SessionStatus::Killed)
+            .update_session_status("test-id", SessionStatus::Stopped)
             .await;
         assert!(result.is_err());
     }
@@ -1511,7 +1516,7 @@ mod tests {
         let mut s2 = make_session("completed-2");
         s2.status = SessionStatus::Ready;
         let mut s3 = make_session("dead-1");
-        s3.status = SessionStatus::Killed;
+        s3.status = SessionStatus::Stopped;
         store.insert_session(&s1).await.unwrap();
         store.insert_session(&s2).await.unwrap();
         store.insert_session(&s3).await.unwrap();
@@ -1692,7 +1697,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(fetched.status, SessionStatus::Killed);
+        assert_eq!(fetched.status, SessionStatus::Stopped);
         assert_eq!(
             fetched.intervention_code,
             Some(InterventionCode::MemoryPressure)
@@ -1712,7 +1717,7 @@ mod tests {
             .await
             .unwrap();
         let result = store
-            .update_session_intervention("test-id", InterventionCode::UserKill, "reason")
+            .update_session_intervention("test-id", InterventionCode::UserStop, "reason")
             .await;
         assert!(result.is_err());
     }
@@ -1727,7 +1732,7 @@ mod tests {
         store
             .update_session_intervention(
                 &session.id.to_string(),
-                InterventionCode::UserKill,
+                InterventionCode::UserStop,
                 "test reason",
             )
             .await
@@ -2262,22 +2267,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_intervention_event_user_kill_code() {
+    async fn test_intervention_event_user_stop_code() {
         let store = test_store().await;
-        let session = make_session("user-kill");
+        let session = make_session("user-stop");
         store.insert_session(&session).await.unwrap();
         let sid = session.id.to_string();
 
         store
-            .update_session_intervention(&sid, InterventionCode::UserKill, "Manual kill")
+            .update_session_intervention(&sid, InterventionCode::UserStop, "Manual stop")
             .await
             .unwrap();
 
         let fetched = store.get_session(&sid).await.unwrap().unwrap();
-        assert_eq!(fetched.intervention_code, Some(InterventionCode::UserKill));
+        assert_eq!(fetched.intervention_code, Some(InterventionCode::UserStop));
 
         let events = store.list_intervention_events(&sid).await.unwrap();
-        assert_eq!(events[0].code, Some(InterventionCode::UserKill));
+        assert_eq!(events[0].code, Some(InterventionCode::UserStop));
     }
 
     #[tokio::test]
@@ -2994,7 +2999,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
                 sandbox, runtime, command, created_at, updated_at)
-             VALUES (?, 'sandboxed', '/tmp', '', '', 'killed', '',
+             VALUES (?, 'sandboxed', '/tmp', '', '', 'stopped', '',
                 1, 'docker', 'echo', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
         )
         .bind(TEST_UUID)
@@ -3010,7 +3015,7 @@ mod tests {
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
                 sandbox, runtime, command, created_at, updated_at)
-             VALUES (?, 'normal', '/tmp', '', '', 'killed', '',
+             VALUES (?, 'normal', '/tmp', '', '', 'stopped', '',
                 0, 'tmux', 'echo', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')",
         )
         .bind(uuid2)

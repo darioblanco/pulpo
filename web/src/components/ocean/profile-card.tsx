@@ -9,8 +9,8 @@ interface ProfileCardProps {
   screenY: number;
   onClose: () => void;
   onAttach?: (sessionName: string) => void;
-  onKill?: (sessionName: string) => void;
-  onDelete?: (sessionName: string) => void;
+  onStop?: (sessionName: string) => void;
+  onPurge?: (sessionName: string) => void;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -19,14 +19,14 @@ const STATUS_COLORS: Record<string, string> = {
   idle: '#fbbf24',
   lost: '#fbbf24',
   ready: '#34d399',
-  killed: '#f87171',
+  stopped: '#f87171',
 };
 
-const ENDED_STATUSES = ['ready', 'killed'];
+const ENDED_STATUSES = ['ready', 'stopped'];
 const LIVE_STATUSES = ['active', 'idle', 'creating'];
 const RESUMABLE_STATUSES = ['lost', 'ready'];
-const KILLABLE_STATUSES = ['active', 'creating'];
-const DELETABLE_STATUSES = ['ready', 'killed', 'lost', 'idle'];
+const STOPPABLE_STATUSES = ['active', 'creating'];
+const PURGEABLE_STATUSES = ['ready', 'stopped', 'lost', 'idle'];
 
 function truncateCommand(command: string, maxLen = 40): string {
   if (command.length <= maxLen) return command;
@@ -54,8 +54,8 @@ export function ProfileCard({
   screenY,
   onClose,
   onAttach,
-  onKill,
-  onDelete,
+  onStop,
+  onPurge,
 }: ProfileCardProps) {
   const navigate = useNavigate();
   const color = STATUS_COLORS[octopus.status] ?? '#94a3b8';
@@ -176,24 +176,24 @@ export function ProfileCard({
                 Resume
               </button>
             )}
-            {onKill && KILLABLE_STATUSES.includes(octopus.status) && (
+            {onStop && STOPPABLE_STATUSES.includes(octopus.status) && (
               <button
-                onClick={() => onKill(octopus.name)}
+                onClick={() => onStop(octopus.name)}
                 className="min-h-[44px] min-w-[44px] rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
                 style={{ backgroundColor: '#dc2626' }}
-                data-testid="kill-button"
+                data-testid="stop-button"
               >
-                Kill
+                Stop
               </button>
             )}
-            {onDelete && DELETABLE_STATUSES.includes(octopus.status) && (
+            {onPurge && PURGEABLE_STATUSES.includes(octopus.status) && (
               <button
-                onClick={() => onDelete(octopus.name)}
+                onClick={() => onPurge(octopus.name)}
                 className="min-h-[44px] min-w-[44px] rounded px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
                 style={{ backgroundColor: '#6b7280' }}
-                data-testid="delete-button"
+                data-testid="purge-button"
               >
-                Delete
+                Stop &amp; Purge
               </button>
             )}
           </div>

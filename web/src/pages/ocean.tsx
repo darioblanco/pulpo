@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { AppHeader } from '@/components/layout/app-header';
 import { TidePool } from '@/components/ocean/tide-pool';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getPeers, getRemoteSessions, killSession, deleteSession } from '@/api/client';
+import { getPeers, getRemoteSessions, stopSession } from '@/api/client';
 import { loadAllSprites, type Sprites } from '@/components/ocean/engine/sprites';
 import { NODE_COLORS } from '@/components/ocean/engine/world';
 import { useSSE } from '@/hooks/use-sse';
@@ -83,12 +83,12 @@ export function OceanPage() {
     }
   }
 
-  const handleKill = useCallback(
+  const handleStop = useCallback(
     async (sessionName: string) => {
       const session = sessions.find((s) => s.name === sessionName);
       if (!session) return;
       try {
-        await killSession(session.id);
+        await stopSession(session.id);
       } catch {
         /* ignore — SSE will update status */
       }
@@ -96,12 +96,12 @@ export function OceanPage() {
     [sessions],
   );
 
-  const handleDelete = useCallback(
+  const handlePurge = useCallback(
     async (sessionName: string) => {
       const session = sessions.find((s) => s.name === sessionName);
       if (!session) return;
       try {
-        await deleteSession(session.id);
+        await stopSession(session.id, true);
       } catch {
         /* ignore — SSE will update */
       }
@@ -150,8 +150,8 @@ export function OceanPage() {
                           setFocusedNode((prev) => (prev === pool.nodeName ? null : pool.nodeName))
                       : undefined
                   }
-                  onKillSession={pool.isLocal ? handleKill : undefined}
-                  onDeleteSession={pool.isLocal ? handleDelete : undefined}
+                  onStopSession={pool.isLocal ? handleStop : undefined}
+                  onPurgeSession={pool.isLocal ? handlePurge : undefined}
                 />
               ))}
             </div>

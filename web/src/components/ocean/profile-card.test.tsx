@@ -366,9 +366,9 @@ describe('ProfileCard', () => {
 
   // non-claude model test removed — model field no longer on Session
 
-  // --- Kill / Delete action tests ---
+  // --- Stop / Purge action tests ---
 
-  it('shows Kill button for active sessions when onKill provided', () => {
+  it('shows Stop button for active sessions when onStop provided', () => {
     render(
       <MemoryRouter>
         <ProfileCard
@@ -376,14 +376,14 @@ describe('ProfileCard', () => {
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
-          onKill={vi.fn()}
+          onStop={vi.fn()}
         />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('kill-button')).toBeInTheDocument();
+    expect(screen.getByTestId('stop-button')).toBeInTheDocument();
   });
 
-  it('shows Kill button for creating sessions', () => {
+  it('shows Stop button for creating sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
@@ -391,14 +391,14 @@ describe('ProfileCard', () => {
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
-          onKill={vi.fn()}
+          onStop={vi.fn()}
         />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('kill-button')).toBeInTheDocument();
+    expect(screen.getByTestId('stop-button')).toBeInTheDocument();
   });
 
-  it('does not show Kill button for ready sessions', () => {
+  it('does not show Stop button for ready sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
@@ -406,14 +406,14 @@ describe('ProfileCard', () => {
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
-          onKill={vi.fn()}
+          onStop={vi.fn()}
         />
       </MemoryRouter>,
     );
-    expect(screen.queryByTestId('kill-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('stop-button')).not.toBeInTheDocument();
   });
 
-  it('does not show Kill button when onKill not provided', () => {
+  it('does not show Stop button when onStop not provided', () => {
     render(
       <MemoryRouter>
         <ProfileCard
@@ -424,11 +424,11 @@ describe('ProfileCard', () => {
         />
       </MemoryRouter>,
     );
-    expect(screen.queryByTestId('kill-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('stop-button')).not.toBeInTheDocument();
   });
 
-  it('calls onKill with session name when Kill clicked', () => {
-    const onKill = vi.fn();
+  it('calls onStop with session name when Stop clicked', () => {
+    const onStop = vi.fn();
     render(
       <MemoryRouter>
         <ProfileCard
@@ -436,15 +436,15 @@ describe('ProfileCard', () => {
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
-          onKill={onKill}
+          onStop={onStop}
         />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByTestId('kill-button'));
-    expect(onKill).toHaveBeenCalledWith('worker-alpha');
+    fireEvent.click(screen.getByTestId('stop-button'));
+    expect(onStop).toHaveBeenCalledWith('worker-alpha');
   });
 
-  it('shows Delete button for lost sessions when onDelete provided', () => {
+  it('shows Purge button for lost sessions when onPurge provided', () => {
     render(
       <MemoryRouter>
         <ProfileCard
@@ -452,29 +452,29 @@ describe('ProfileCard', () => {
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
-          onDelete={vi.fn()}
+          onPurge={vi.fn()}
         />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('delete-button')).toBeInTheDocument();
+    expect(screen.getByTestId('purge-button')).toBeInTheDocument();
   });
 
-  it('shows Delete button for killed sessions', () => {
+  it('shows Purge button for stopped sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'killed' })}
+          octopus={makeOctopus({ status: 'stopped' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
-          onDelete={vi.fn()}
+          onPurge={vi.fn()}
         />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('delete-button')).toBeInTheDocument();
+    expect(screen.getByTestId('purge-button')).toBeInTheDocument();
   });
 
-  it('shows Delete button for ready sessions', () => {
+  it('shows Purge button for ready sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
@@ -482,14 +482,14 @@ describe('ProfileCard', () => {
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
-          onDelete={vi.fn()}
+          onPurge={vi.fn()}
         />
       </MemoryRouter>,
     );
-    expect(screen.getByTestId('delete-button')).toBeInTheDocument();
+    expect(screen.getByTestId('purge-button')).toBeInTheDocument();
   });
 
-  it('does not show Delete button for active sessions', () => {
+  it('does not show Purge button for active sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
@@ -497,14 +497,14 @@ describe('ProfileCard', () => {
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
-          onDelete={vi.fn()}
+          onPurge={vi.fn()}
         />
       </MemoryRouter>,
     );
-    expect(screen.queryByTestId('delete-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('purge-button')).not.toBeInTheDocument();
   });
 
-  it('does not show Delete button when onDelete not provided', () => {
+  it('does not show Purge button when onPurge not provided', () => {
     render(
       <MemoryRouter>
         <ProfileCard
@@ -515,7 +515,7 @@ describe('ProfileCard', () => {
         />
       </MemoryRouter>,
     );
-    expect(screen.queryByTestId('delete-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('purge-button')).not.toBeInTheDocument();
   });
 
   it('shows Resume button for lost sessions instead of Open Session', () => {
@@ -550,11 +550,11 @@ describe('ProfileCard', () => {
     expect(screen.queryByTestId('attach-button')).not.toBeInTheDocument();
   });
 
-  it('shows no attach or resume button for killed sessions', () => {
+  it('shows no attach or resume button for stopped sessions', () => {
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'killed' })}
+          octopus={makeOctopus({ status: 'stopped' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
@@ -581,20 +581,20 @@ describe('ProfileCard', () => {
     expect(screen.getByTestId('attach-button')).toBeInTheDocument();
   });
 
-  it('calls onDelete with session name when Delete clicked', () => {
-    const onDelete = vi.fn();
+  it('calls onPurge with session name when Purge clicked', () => {
+    const onPurge = vi.fn();
     render(
       <MemoryRouter>
         <ProfileCard
-          octopus={makeOctopus({ status: 'killed' })}
+          octopus={makeOctopus({ status: 'stopped' })}
           screenX={400}
           screenY={300}
           onClose={vi.fn()}
-          onDelete={onDelete}
+          onPurge={onPurge}
         />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByTestId('delete-button'));
-    expect(onDelete).toHaveBeenCalledWith('worker-alpha');
+    fireEvent.click(screen.getByTestId('purge-button'));
+    expect(onPurge).toHaveBeenCalledWith('worker-alpha');
   });
 });

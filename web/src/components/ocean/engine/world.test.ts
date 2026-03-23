@@ -396,9 +396,9 @@ describe('world', () => {
       expect(world.bubbles).toHaveLength(0);
     });
 
-    it('makes killed octopuses sink', () => {
+    it('makes stopped octopuses sink', () => {
       const world = createWorld(800, 600);
-      syncData(world, makeNode(), [makeSession({ id: 's1', status: 'killed' })], [], {});
+      syncData(world, makeNode(), [makeSession({ id: 's1', status: 'stopped' })], [], {});
 
       const oct = world.octopuses[0];
       const startY = oct.y;
@@ -434,17 +434,17 @@ describe('world', () => {
       expect(idle.homeX).toBeGreaterThan(active.homeX);
     });
 
-    it('assigns killed sessions to lower zone than active', () => {
+    it('assigns stopped sessions to lower zone than active', () => {
       const world = createWorld(800, 600);
       const sessions = [
         makeSession({ id: 's1', status: 'active' }),
-        makeSession({ id: 's2', status: 'killed' }),
+        makeSession({ id: 's2', status: 'stopped' }),
       ];
       syncData(world, makeNode(), sessions, [], {});
 
       const active = world.octopuses.find((o) => o.status === 'active')!;
-      const killed = world.octopuses.find((o) => o.status === 'killed')!;
-      expect(killed.homeY).toBeGreaterThan(active.homeY);
+      const stopped = world.octopuses.find((o) => o.status === 'stopped')!;
+      expect(stopped.homeY).toBeGreaterThan(active.homeY);
     });
 
     it('assigns ready sessions to upper zone', () => {
@@ -512,13 +512,13 @@ describe('world', () => {
         'mac-studio',
         true,
         'online',
-        [makeSession({ id: 's1', status: 'killed' })],
+        [makeSession({ id: 's1', status: 'stopped' })],
         '#f472b6',
       );
       expect(world.octopuses[0].homeY).toBeGreaterThan(originalHomeY);
     });
 
-    it('assigns lost sessions to lower zone like killed', () => {
+    it('assigns lost sessions to lower zone like stopped', () => {
       const world = createWorld(800, 600);
       const sessions = [
         makeSession({ id: 's1', status: 'active' }),

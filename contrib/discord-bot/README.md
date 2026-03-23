@@ -34,7 +34,7 @@ All `session` options support **autocomplete** — type a few characters and mat
 | `/spawn` | Spawn a new agent session | `workdir` (required), `prompt` (required), `ink`, `model`, `name` |
 | `/status` | Show session status | `session` (optional, omit for all) |
 | `/logs` | Show recent session output | `session` (required), `lines` (1-500, default 50) |
-| `/kill` | Kill a running session | `session` (required) |
+| `/stop` | Stop a running session | `session` (required) |
 | `/resume` | Resume a stale session after reboot | `session` (required) |
 | `/inks` | List available ink configurations | — |
 | `/input` | Send text input to a running session | `session` (required), `text` (required) |
@@ -69,7 +69,7 @@ src/
 │   ├── spawn.ts          # /spawn — create a new session
 │   ├── status.ts         # /status — show session(s)
 │   ├── logs.ts           # /logs — recent output
-│   ├── kill.ts           # /kill — terminate session
+│   ├── stop.ts           # /stop — terminate session
 │   ├── resume.ts         # /resume — resume stale session
 │   ├── inks.ts           # /inks — list inks
 │   └── input.ts          # /input — send text to session

@@ -43,9 +43,9 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 ## Shipped
 
 - `pulpod` daemon + REST API + embedded web UI
-- `pulpo` CLI with attach, spawn, resume, kill, logs, schedule
+- `pulpo` CLI with attach, spawn, resume, stop, logs, schedule
 - SQLite-backed session persistence with full lifecycle state machine
-- Session statuses: `creating`, `active`, `idle`, `ready`, `killed`, `lost`
+- Session statuses: `creating`, `active`, `idle`, `ready`, `stopped`, `lost`
 - Resume from `lost` and `ready` states (with workdir validation)
 - Watchdog: memory pressure intervention, idle detection, ready TTL cleanup
 - Auto-adopt: discovers external tmux sessions and brings them under management
@@ -56,7 +56,7 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - Ocean gamification UI with canvas rendering
 - Homebrew distribution (`brew install darioblanco/tap/pulpo`)
 - PWA: installable app with service worker, offline shell caching
-- Web Push notifications for session events (ready, killed, intervention)
+- Web Push notifications for session events (ready, stopped, intervention)
 - Configurable idle threshold (default 60s) + per-session `--idle-threshold`
 - Expanded waiting patterns (31 built-in for Claude Code, Codex, Gemini, Aider, Amazon Q, SSH, sudo) + user-configurable extras
 - tmux `$N` session ID rework (ghost fix, startup migration)
@@ -70,7 +70,7 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - Fleet sessions endpoint (`GET /api/v1/fleet/sessions`) — server-side aggregation
 - Fleet dashboard: "All" tab showing sessions across all nodes in a unified table
 - Smart node selection: `pulpo spawn --auto` picks least-loaded online peer
-- Git worktrees: `pulpo spawn --worktree` creates isolated `pulpo/<name>` branch in `<repo>/.pulpo/worktrees/<name>/`. Auto-cleanup on kill/delete with logging. Branch badge in CLI (`[wt]`) and dashboard.
+- Git worktrees: `pulpo spawn --worktree` creates isolated `pulpo/<name>` branch in `~/.pulpo/worktrees/<name>/`. Auto-cleanup on stop with logging. Branch badge in CLI (`[wt]`) and dashboard.
 - Built-in scheduler: DB-backed schedules with cron expressions, CRUD API (`/api/v1/schedules`), CLI (`pulpo schedule add/list/pause/resume/remove`), scheduler loop firing every 60s
 - Schedule dashboard: create/edit dialog with cron presets, next-run calculation, status filtering, expandable run history per schedule (`/api/v1/schedules/{id}/runs`)
 - PR/branch detection: watchdog scans session output for GitHub/GitLab/Bitbucket PR URLs and git branch pushes, stores in session metadata, surfaces as clickable badges in dashboard and `[PR]` marker in CLI
@@ -119,7 +119,7 @@ When it's not just you anymore.
 **P6.2 — Resource policies**
 - Per-node session limits (max 5 concurrent agents)
 - Memory reservation per session
-- Auto-kill sessions exceeding time limits
+- Auto-stop sessions exceeding time limits
 
 **P6.3 — Shared ink library**
 - Sync inks across nodes automatically

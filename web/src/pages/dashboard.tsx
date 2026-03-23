@@ -78,7 +78,7 @@ export function DashboardPage() {
       const changes = detectStatusChanges(previousSessionsRef.current, sessions);
       for (const change of changes) {
         const label =
-          change.to === 'ready' ? 'ready' : change.to === 'killed' ? 'killed' : 'resumed';
+          change.to === 'ready' ? 'ready' : change.to === 'stopped' ? 'stopped' : 'resumed';
         toast(`${change.sessionName} ${label}`);
         showDesktopNotification(change);
       }
@@ -161,7 +161,7 @@ export function DashboardPage() {
                               peer.status === 'online'
                                 ? 'bg-status-ready'
                                 : peer.status === 'offline'
-                                  ? 'bg-status-killed'
+                                  ? 'bg-status-stopped'
                                   : 'bg-muted-foreground'
                             }`}
                           />
@@ -225,7 +225,7 @@ export function DashboardPage() {
                                           : s.status === 'idle'
                                             ? 'text-status-idle'
                                             : s.status === 'lost'
-                                              ? 'text-status-killed'
+                                              ? 'text-status-stopped'
                                               : 'text-muted-foreground'
                                       }`}
                                     >
@@ -236,7 +236,7 @@ export function DashboardPage() {
                                             : s.status === 'idle'
                                               ? 'bg-status-idle'
                                               : s.status === 'lost'
-                                                ? 'bg-status-killed'
+                                                ? 'bg-status-stopped'
                                                 : 'bg-muted-foreground'
                                         }`}
                                       />

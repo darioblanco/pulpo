@@ -53,7 +53,7 @@ pub struct SpawnSessionParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListSessionsParams {
-    /// Filter by status (creating, active, ready, killed, lost).
+    /// Filter by status (creating, active, ready, stopped, lost).
     pub status: Option<String>,
     /// Target node name. If omitted, queries locally.
     pub node: Option<String>,
@@ -68,10 +68,12 @@ pub struct GetSessionParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct KillSessionParams {
+pub struct StopSessionParams {
     /// Session ID (UUID).
     pub id: String,
-    /// Target node name. If omitted, kills locally.
+    /// Whether to purge (delete) the session after stopping.
+    pub purge: Option<bool>,
+    /// Target node name. If omitted, stops locally.
     pub node: Option<String>,
 }
 
@@ -288,18 +290,6 @@ impl PulpoMcp {
         Ok(resp.json().await?)
     }
 
-    async fn remote_delete(&self, node: &str, path: &str) -> Result<()> {
-        let (address, token) = self.peer_address(node).await?;
-        let url = format!("{}{path}", crate::peers::health::base_url(&address));
-        let client = reqwest::Client::new();
-        let mut req = client.delete(&url);
-        if let Some(tok) = &token {
-            req = req.bearer_auth(tok);
-        }
-        req.send().await?.error_for_status()?;
-        Ok(())
-    }
-
     fn build_node_info(&self) -> NodeInfo {
         NodeInfo {
             name: self.config.node.name.clone(),
@@ -373,7 +363,7 @@ impl PulpoMcp {
                 Ok(Some(session)) => {
                     let is_terminal = matches!(
                         session.status,
-                        SessionStatus::Ready | SessionStatus::Killed | SessionStatus::Lost
+                        SessionStatus::Ready | SessionStatus::Stopped | SessionStatus::Lost
                     );
                     if is_terminal {
                         let output = self.fetch_output(session_id, node, output_lines).await;
@@ -516,7 +506,7 @@ impl PulpoMcp {
 
     #[tool(
         name = "list_sessions",
-        description = "List all sessions, optionally filtered by status (active, ready, killed, lost)."
+        description = "List all sessions, optionally filtered by status (active, ready, stopped, lost)."
     )]
     async fn list_sessions(&self, Parameters(params): Parameters<ListSessionsParams>) -> String {
         let result = if self.is_local(params.node.as_deref()) {
@@ -559,19 +549,22 @@ impl PulpoMcp {
     }
 
     #[tool(
-        name = "kill_session",
-        description = "Kill an active session. Terminates the terminal process and marks the session as killed."
+        name = "stop_session",
+        description = "Stop an active session. Terminates the terminal process and marks the session as stopped."
     )]
-    async fn kill_session(&self, Parameters(params): Parameters<KillSessionParams>) -> String {
+    async fn stop_session(&self, Parameters(params): Parameters<StopSessionParams>) -> String {
+        let purge = params.purge.unwrap_or(false);
         let result = if self.is_local(params.node.as_deref()) {
-            self.session_manager.kill_session(&params.id).await
+            self.session_manager.stop_session(&params.id, purge).await
         } else {
             let node = params.node.as_deref().unwrap_or_default();
-            let path = format!("/api/v1/sessions/{}", params.id);
-            self.remote_delete(node, &path).await
+            let path = format!("/api/v1/sessions/{}/stop?purge={purge}", params.id);
+            self.remote_post::<serde_json::Value, _>(node, &path, &serde_json::json!({}))
+                .await
+                .map(|_| ())
         };
         match result {
-            Ok(()) => format!("Session {} killed", params.id),
+            Ok(()) => format!("Session {} stopped", params.id),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -664,7 +657,7 @@ impl PulpoMcp {
 
     #[tool(
         name = "wait_for_session",
-        description = "Poll a session until it reaches a terminal status (ready, killed, lost) or times out. Returns the final session state, last output lines, and whether it timed out. Useful for autonomous workflows that need to wait for a session to finish."
+        description = "Poll a session until it reaches a terminal status (ready, stopped, lost) or times out. Returns the final session state, last output lines, and whether it timed out. Useful for autonomous workflows that need to wait for a session to finish."
     )]
     async fn wait_for_session(
         &self,
@@ -1215,10 +1208,10 @@ mod tests {
         assert!(result.contains("Error"));
     }
 
-    // -- kill_session tests --
+    // -- stop_session tests --
 
     #[tokio::test]
-    async fn test_kill_session_local() {
+    async fn test_stop_session_local() {
         let mcp = test_mcp(MockBackend::new()).await;
         // Create a session
         let spawn_params = SpawnSessionParams {
@@ -1232,33 +1225,59 @@ mod tests {
         let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
         let session: Session = serde_json::from_str(&spawn_result).unwrap();
 
-        let params = KillSessionParams {
+        let params = StopSessionParams {
             id: session.id.to_string(),
+            purge: None,
             node: None,
         };
-        let result = mcp.kill_session(Parameters(params)).await;
-        assert!(result.contains("killed"));
+        let result = mcp.stop_session(Parameters(params)).await;
+        assert!(result.contains("stopped"));
     }
 
     #[tokio::test]
-    async fn test_kill_session_not_found() {
+    async fn test_stop_session_local_with_purge() {
         let mcp = test_mcp(MockBackend::new()).await;
-        let params = KillSessionParams {
-            id: "nonexistent".into(),
+        let spawn_params = SpawnSessionParams {
+            workdir: Some("/tmp".into()),
+            name: "test".into(),
+            command: Some("echo test".into()),
+            description: None,
+            ink: None,
             node: None,
         };
-        let result = mcp.kill_session(Parameters(params)).await;
+        let spawn_result = mcp.spawn_session(Parameters(spawn_params)).await;
+        let session: Session = serde_json::from_str(&spawn_result).unwrap();
+
+        let params = StopSessionParams {
+            id: session.id.to_string(),
+            purge: Some(true),
+            node: None,
+        };
+        let result = mcp.stop_session(Parameters(params)).await;
+        assert!(result.contains("stopped"));
+    }
+
+    #[tokio::test]
+    async fn test_stop_session_not_found() {
+        let mcp = test_mcp(MockBackend::new()).await;
+        let params = StopSessionParams {
+            id: "nonexistent".into(),
+            purge: None,
+            node: None,
+        };
+        let result = mcp.stop_session(Parameters(params)).await;
         assert!(result.contains("Error"));
     }
 
     #[tokio::test]
-    async fn test_kill_session_remote_unknown() {
+    async fn test_stop_session_remote_unknown() {
         let mcp = test_mcp(MockBackend::new()).await;
-        let params = KillSessionParams {
+        let params = StopSessionParams {
             id: "some-id".into(),
+            purge: None,
             node: Some("unknown".into()),
         };
-        let result = mcp.kill_session(Parameters(params)).await;
+        let result = mcp.stop_session(Parameters(params)).await;
         assert!(result.contains("Error"));
     }
 
@@ -1624,9 +1643,10 @@ mod tests {
     }
 
     #[test]
-    fn test_kill_session_params_debug() {
-        let params = KillSessionParams {
+    fn test_stop_session_params_debug() {
+        let params = StopSessionParams {
             id: "test-id".into(),
+            purge: None,
             node: None,
         };
         let debug = format!("{params:?}");
@@ -1767,10 +1787,11 @@ mod tests {
     }
 
     #[test]
-    fn test_kill_session_params_deserialize() {
-        let json = r#"{"id":"abc-123","node":"remote"}"#;
-        let params: KillSessionParams = serde_json::from_str(json).unwrap();
+    fn test_stop_session_params_deserialize() {
+        let json = r#"{"id":"abc-123","purge":true,"node":"remote"}"#;
+        let params: StopSessionParams = serde_json::from_str(json).unwrap();
         assert_eq!(params.id, "abc-123");
+        assert_eq!(params.purge, Some(true));
         assert_eq!(params.node, Some("remote".into()));
     }
 
@@ -2084,7 +2105,7 @@ mod tests {
     /// Start a mock HTTP server that mimics pulpod's REST API.
     /// Returns the address (host:port) of the running server and the session used.
     async fn start_mock_remote_server() -> (String, Session) {
-        use axum::{Router, routing::delete, routing::get, routing::post};
+        use axum::{Router, routing::get, routing::post};
 
         let session = make_test_session();
         let session_json = serde_json::to_string(&session).unwrap();
@@ -2095,6 +2116,7 @@ mod tests {
 
         let session_json2 = session_json.clone();
         let session_json3 = session_json.clone();
+        let session_json4 = session_json.clone();
 
         let app = Router::new()
             .route(
@@ -2119,8 +2141,11 @@ mod tests {
                 }),
             )
             .route(
-                "/api/v1/sessions/{id}",
-                delete(|| async { axum::http::StatusCode::OK }),
+                "/api/v1/sessions/{id}/stop",
+                post(move || {
+                    let body = session_json3.clone();
+                    async move { ([("content-type", "application/json")], body) }
+                }),
             )
             .route(
                 "/api/v1/sessions/{id}/resume",
@@ -2148,7 +2173,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
 
-        let session2: Session = serde_json::from_str(&session_json3).unwrap();
+        let session2: Session = serde_json::from_str(&session_json4).unwrap();
         (format!("127.0.0.1:{}", addr.port()), session2)
     }
 
@@ -2278,18 +2303,19 @@ mod tests {
         assert!(result.contains(&session.id.to_string()));
     }
 
-    // -- Remote kill_session tests (lines 214-221 remote_delete) --
+    // -- Remote stop_session tests --
 
     #[tokio::test]
-    async fn test_kill_session_remote() {
+    async fn test_stop_session_remote() {
         let (addr, session) = start_mock_remote_server().await;
         let mcp = test_mcp_with_remote(&addr).await;
-        let params = KillSessionParams {
+        let params = StopSessionParams {
             id: session.id.to_string(),
+            purge: None,
             node: Some("remote".into()),
         };
-        let result = mcp.kill_session(Parameters(params)).await;
-        assert!(result.contains("killed"));
+        let result = mcp.stop_session(Parameters(params)).await;
+        assert!(result.contains("stopped"));
     }
 
     // -- Remote resume_session tests --
@@ -2392,15 +2418,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_kill_session_remote_with_token() {
+    async fn test_stop_session_remote_with_token() {
         let (addr, session) = start_mock_remote_server().await;
         let mcp = test_mcp_with_remote_and_token(&addr).await;
-        let params = KillSessionParams {
+        let params = StopSessionParams {
             id: session.id.to_string(),
+            purge: None,
             node: Some("remote".into()),
         };
-        let result = mcp.kill_session(Parameters(params)).await;
-        assert!(result.contains("killed"));
+        let result = mcp.stop_session(Parameters(params)).await;
+        assert!(result.contains("stopped"));
     }
 
     #[tokio::test]
