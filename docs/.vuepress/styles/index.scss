@@ -1,5 +1,21 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap');
 
+// Override default green accent with Pulpo blue (matches web UI primary)
+:root {
+  --vp-c-accent: #2563eb;
+  --vp-c-accent-bg: #2563eb;
+  --vp-c-accent-hover: #3b82f6;
+  --vp-c-accent-text: var(--vp-c-white);
+  --vp-c-accent-soft: rgba(37, 99, 235, 0.14);
+}
+
+[data-theme='dark'] {
+  --vp-c-accent: #3b82f6;
+  --vp-c-accent-bg: #2563eb;
+  --vp-c-accent-hover: #60a5fa;
+  --vp-c-accent-soft: rgba(59, 130, 246, 0.16);
+}
+
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
