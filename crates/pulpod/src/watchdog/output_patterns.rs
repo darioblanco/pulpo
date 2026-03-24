@@ -165,6 +165,166 @@ pub fn detect_rate_limit(output: &str) -> Option<String> {
     None
 }
 
+/// Patterns that indicate errors/failures in agent output.
+/// Each entry is (pattern, human-readable label).
+const ERROR_PATTERNS: &[(&str, &str)] = &[
+    ("error[e", "Compile error"),
+    ("panicked at", "Panic"),
+    ("npm err!", "npm error"),
+    ("typeerror:", "TypeError"),
+    ("syntaxerror:", "SyntaxError"),
+    ("referenceerror:", "ReferenceError"),
+    ("build failed", "Build failed"),
+    ("fatal:", "Fatal error"),
+];
+
+/// Detect compilation errors, test failures, and panics in agent output.
+/// Checks the last 30 lines for known error patterns.
+/// Returns a short label like "Compile error", "Test failed", etc.
+pub fn detect_error(output: &str) -> Option<String> {
+    let cleaned = strip_ansi(output);
+    let last_lines: Vec<&str> = cleaned.lines().rev().take(30).collect();
+
+    for line in &last_lines {
+        let lower = line.to_lowercase();
+
+        // Check for test failures with specific patterns (line-start for `error:`)
+        let trimmed = lower.trim_start();
+        if trimmed.starts_with("error:") {
+            return Some("Compile error".to_owned());
+        }
+
+        // FAILED at line start or as standalone word for test failures
+        if trimmed.starts_with("failed") || trimmed.contains("test failed") {
+            return Some("Test failed".to_owned());
+        }
+
+        // FAIL with space (vitest/jest)
+        if trimmed.starts_with("fail ") {
+            return Some("Test failed".to_owned());
+        }
+
+        for &(pattern, label) in ERROR_PATTERNS {
+            if lower.contains(pattern) {
+                return Some(label.to_owned());
+            }
+        }
+    }
+    None
+}
+
+/// Extract token usage from agent output.
+/// Looks for patterns in the last 50 lines.
+/// Returns `(input_tokens, output_tokens)` if found.
+pub fn extract_token_usage(output: &str) -> Option<(u64, u64)> {
+    let cleaned = strip_ansi(output);
+    let last_lines: Vec<&str> = cleaned.lines().rev().take(50).collect();
+
+    let mut input_tokens: Option<u64> = None;
+    let mut output_tokens: Option<u64> = None;
+    let mut total_tokens: Option<u64> = None;
+
+    for line in &last_lines {
+        let lower = line.to_lowercase();
+
+        // Try to extract input/output tokens
+        if input_tokens.is_none() {
+            if let Some(n) = extract_number_after(&lower, "input tokens:") {
+                input_tokens = Some(n);
+            } else if let Some(n) = extract_number_after(&lower, "input_tokens:") {
+                input_tokens = Some(n);
+            }
+        }
+        if output_tokens.is_none() {
+            if let Some(n) = extract_number_after(&lower, "output tokens:") {
+                output_tokens = Some(n);
+            } else if let Some(n) = extract_number_after(&lower, "output_tokens:") {
+                output_tokens = Some(n);
+            }
+        }
+        if total_tokens.is_none() {
+            if let Some(n) = extract_number_after(&lower, "total tokens:") {
+                total_tokens = Some(n);
+            } else if let Some(n) = extract_number_after(&lower, "total_tokens:") {
+                total_tokens = Some(n);
+            } else if let Some(n) = extract_number_after(&lower, "tokens used:") {
+                total_tokens = Some(n);
+            }
+        }
+    }
+
+    // If we have input and output, return those
+    if let (Some(inp), Some(out)) = (input_tokens, output_tokens) {
+        return Some((inp, out));
+    }
+
+    // If we have total tokens, split roughly (we can't know the split, use total as input)
+    if let Some(total) = total_tokens {
+        return Some((total, 0));
+    }
+
+    None
+}
+
+/// Extract a number that follows a keyword in a line.
+/// Handles comma-separated numbers like "12,345".
+fn extract_number_after(line: &str, keyword: &str) -> Option<u64> {
+    let idx = line.find(keyword)?;
+    let rest = &line[idx + keyword.len()..];
+    // Skip whitespace and find the number
+    let trimmed = rest.trim_start();
+    // Collect digits and commas
+    let num_str: String = trimmed
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == ',')
+        .filter(char::is_ascii_digit)
+        .collect();
+    if num_str.is_empty() {
+        return None;
+    }
+    num_str.parse().ok()
+}
+
+/// Parse `git diff --shortstat` output into (files, insertions, deletions).
+/// Input looks like: ` 3 files changed, 42 insertions(+), 7 deletions(-)`
+/// Any of the three parts may be missing.
+pub fn parse_git_shortstat(output: &str) -> (Option<u32>, Option<u32>, Option<u32>) {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        return (None, None, None);
+    }
+
+    let mut files: Option<u32> = None;
+    let mut insertions: Option<u32> = None;
+    let mut deletions: Option<u32> = None;
+
+    for part in trimmed.split(',') {
+        let part = part.trim();
+        if part.contains("file") {
+            files = extract_leading_number(part);
+        } else if part.contains("insertion") {
+            insertions = extract_leading_number(part);
+        } else if part.contains("deletion") {
+            deletions = extract_leading_number(part);
+        }
+    }
+
+    (files, insertions, deletions)
+}
+
+/// Extract the first number from a string.
+fn extract_leading_number(s: &str) -> Option<u32> {
+    let num_str: String = s
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(char::is_ascii_digit)
+        .collect();
+    if num_str.is_empty() {
+        return None;
+    }
+    num_str.parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -574,5 +734,247 @@ mod tests {
         let line = "[https://github.com/a/b/pull/3]";
         let url = find_url_with_path(line, "github.com", "/pull/");
         assert_eq!(url, Some("https://github.com/a/b/pull/3".into()));
+    }
+
+    // -- detect_error tests --
+
+    #[test]
+    fn test_detect_error_rust_compiler() {
+        let output = "Compiling my-crate v0.1.0\nerror[E0308]: mismatched types\n";
+        assert_eq!(detect_error(output), Some("Compile error".into()));
+    }
+
+    #[test]
+    fn test_detect_error_error_at_line_start() {
+        let output = "running build\nerror: could not compile `foo`\n";
+        assert_eq!(detect_error(output), Some("Compile error".into()));
+    }
+
+    #[test]
+    fn test_detect_error_test_failed() {
+        let output = "running 5 tests\nFAILED tests/integration.rs\n";
+        assert_eq!(detect_error(output), Some("Test failed".into()));
+    }
+
+    #[test]
+    fn test_detect_error_panic() {
+        let output = "thread 'main' panicked at 'index out of bounds'\n";
+        assert_eq!(detect_error(output), Some("Panic".into()));
+    }
+
+    #[test]
+    fn test_detect_error_npm_err() {
+        let output = "npm ERR! code ELIFECYCLE\nnpm ERR! errno 1\n";
+        assert_eq!(detect_error(output), Some("npm error".into()));
+    }
+
+    #[test]
+    fn test_detect_error_typeerror() {
+        let output = "TypeError: Cannot read property 'foo' of undefined\n";
+        assert_eq!(detect_error(output), Some("TypeError".into()));
+    }
+
+    #[test]
+    fn test_detect_error_syntaxerror() {
+        let output = "SyntaxError: Unexpected token }\n";
+        assert_eq!(detect_error(output), Some("SyntaxError".into()));
+    }
+
+    #[test]
+    fn test_detect_error_referenceerror() {
+        let output = "ReferenceError: foo is not defined\n";
+        assert_eq!(detect_error(output), Some("ReferenceError".into()));
+    }
+
+    #[test]
+    fn test_detect_error_build_failed() {
+        let output = "Build failed with 2 errors\n";
+        assert_eq!(detect_error(output), Some("Build failed".into()));
+    }
+
+    #[test]
+    fn test_detect_error_git_fatal() {
+        let output = "fatal: not a git repository\n";
+        assert_eq!(detect_error(output), Some("Fatal error".into()));
+    }
+
+    #[test]
+    fn test_detect_error_vitest_fail() {
+        let output = " FAIL  src/utils.test.ts > should work\n";
+        assert_eq!(detect_error(output), Some("Test failed".into()));
+    }
+
+    #[test]
+    fn test_detect_error_no_match() {
+        let output = "$ cargo build\nCompiling my-crate v0.1.0\nFinished dev\n";
+        assert!(detect_error(output).is_none());
+    }
+
+    #[test]
+    fn test_detect_error_only_last_30_lines() {
+        let mut output = String::from("error[E0308]: old error\n");
+        for _ in 0..35 {
+            output.push_str("normal output line\n");
+        }
+        assert!(detect_error(&output).is_none());
+    }
+
+    #[test]
+    fn test_detect_error_with_ansi() {
+        let output = "\x1b[31merror[E0308]: mismatched types\x1b[0m\n";
+        assert_eq!(detect_error(output), Some("Compile error".into()));
+    }
+
+    #[test]
+    fn test_detect_error_empty() {
+        assert!(detect_error("").is_none());
+    }
+
+    #[test]
+    fn test_detect_error_test_failed_keyword() {
+        let output = "1 test failed out of 42\n";
+        assert_eq!(detect_error(output), Some("Test failed".into()));
+    }
+
+    // -- extract_token_usage tests --
+
+    #[test]
+    fn test_extract_token_usage_input_output() {
+        let output = "Input tokens: 1234\nOutput tokens: 5678\n";
+        assert_eq!(extract_token_usage(output), Some((1234, 5678)));
+    }
+
+    #[test]
+    fn test_extract_token_usage_underscore_format() {
+        let output = "input_tokens: 1000\noutput_tokens: 2000\n";
+        assert_eq!(extract_token_usage(output), Some((1000, 2000)));
+    }
+
+    #[test]
+    fn test_extract_token_usage_total_only() {
+        let output = "Total tokens: 12345\n";
+        assert_eq!(extract_token_usage(output), Some((12345, 0)));
+    }
+
+    #[test]
+    fn test_extract_token_usage_total_underscore() {
+        let output = "total_tokens: 9999\n";
+        assert_eq!(extract_token_usage(output), Some((9999, 0)));
+    }
+
+    #[test]
+    fn test_extract_token_usage_tokens_used() {
+        let output = "tokens used: 5000\n";
+        assert_eq!(extract_token_usage(output), Some((5000, 0)));
+    }
+
+    #[test]
+    fn test_extract_token_usage_with_commas() {
+        let output = "Input tokens: 12,345\nOutput tokens: 67,890\n";
+        assert_eq!(extract_token_usage(output), Some((12345, 67890)));
+    }
+
+    #[test]
+    fn test_extract_token_usage_no_match() {
+        let output = "$ cargo build\nCompiling...\nDone.\n";
+        assert!(extract_token_usage(output).is_none());
+    }
+
+    #[test]
+    fn test_extract_token_usage_empty() {
+        assert!(extract_token_usage("").is_none());
+    }
+
+    #[test]
+    fn test_extract_token_usage_only_last_50_lines() {
+        let mut output = String::from("Total tokens: 9999\n");
+        for _ in 0..55 {
+            output.push_str("normal line\n");
+        }
+        assert!(extract_token_usage(&output).is_none());
+    }
+
+    #[test]
+    fn test_extract_token_usage_with_ansi() {
+        let output = "\x1b[33mInput tokens: 100\x1b[0m\n\x1b[33mOutput tokens: 200\x1b[0m\n";
+        assert_eq!(extract_token_usage(output), Some((100, 200)));
+    }
+
+    // -- extract_number_after tests --
+
+    #[test]
+    fn test_extract_number_after_basic() {
+        assert_eq!(extract_number_after("total: 42", "total:"), Some(42));
+    }
+
+    #[test]
+    fn test_extract_number_after_with_commas() {
+        assert_eq!(
+            extract_number_after("count: 1,234,567", "count:"),
+            Some(1_234_567)
+        );
+    }
+
+    #[test]
+    fn test_extract_number_after_not_found() {
+        assert_eq!(extract_number_after("nothing here", "total:"), None);
+    }
+
+    #[test]
+    fn test_extract_number_after_no_number() {
+        assert_eq!(extract_number_after("total: abc", "total:"), None);
+    }
+
+    // -- parse_git_shortstat tests --
+
+    #[test]
+    fn test_parse_git_shortstat_full() {
+        let output = " 3 files changed, 42 insertions(+), 7 deletions(-)";
+        assert_eq!(parse_git_shortstat(output), (Some(3), Some(42), Some(7)));
+    }
+
+    #[test]
+    fn test_parse_git_shortstat_insertions_only() {
+        let output = " 1 file changed, 10 insertions(+)";
+        assert_eq!(parse_git_shortstat(output), (Some(1), Some(10), None));
+    }
+
+    #[test]
+    fn test_parse_git_shortstat_deletions_only() {
+        let output = " 2 files changed, 5 deletions(-)";
+        assert_eq!(parse_git_shortstat(output), (Some(2), None, Some(5)));
+    }
+
+    #[test]
+    fn test_parse_git_shortstat_empty() {
+        assert_eq!(parse_git_shortstat(""), (None, None, None));
+    }
+
+    #[test]
+    fn test_parse_git_shortstat_whitespace() {
+        assert_eq!(parse_git_shortstat("  \n  "), (None, None, None));
+    }
+
+    #[test]
+    fn test_parse_git_shortstat_one_file() {
+        let output = " 1 file changed, 1 insertion(+), 1 deletion(-)";
+        assert_eq!(parse_git_shortstat(output), (Some(1), Some(1), Some(1)));
+    }
+
+    // -- extract_leading_number tests --
+
+    #[test]
+    fn test_extract_leading_number_basic() {
+        assert_eq!(extract_leading_number("42 files changed"), Some(42));
+    }
+
+    #[test]
+    fn test_extract_leading_number_empty() {
+        assert_eq!(extract_leading_number("no numbers"), None);
+    }
+
+    #[test]
+    fn test_extract_leading_number_with_prefix() {
+        assert_eq!(extract_leading_number("abc 123 def"), Some(123));
     }
 }

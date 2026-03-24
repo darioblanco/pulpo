@@ -38,6 +38,10 @@ export interface Session {
   worktree_branch?: string | null;
   git_branch?: string | null;
   git_commit?: string | null;
+  git_files_changed?: number | null;
+  git_insertions?: number | null;
+  git_deletions?: number | null;
+  git_ahead?: number | null;
   runtime?: 'tmux' | 'docker';
   last_output_at: string | null;
   output_snippet?: string | null;

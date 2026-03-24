@@ -526,6 +526,80 @@ describe('SessionCard', () => {
     expect(screen.queryByTestId('rate-limit-badge')).not.toBeInTheDocument();
   });
 
+  // Error status badge
+
+  it('shows error status badge when error_status is set', () => {
+    renderCard(
+      makeSession({
+        metadata: { error_status: 'Compile error', error_status_at: '2025-01-01T00:00:00Z' },
+      }),
+    );
+    const badge = screen.getByTestId('error-status-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('Compile error');
+  });
+
+  it('does not show error status badge when absent', () => {
+    renderCard(makeSession({ metadata: null }));
+    expect(screen.queryByTestId('error-status-badge')).not.toBeInTheDocument();
+  });
+
+  // Git diff stats badge
+
+  it('shows git diff badge when insertions/deletions present', () => {
+    renderCard(makeSession({ git_insertions: 42, git_deletions: 7, git_files_changed: 3 }));
+    const badge = screen.getByTestId('git-diff-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('+42');
+    expect(badge).toHaveTextContent('-7');
+    expect(badge).toHaveTextContent('3f');
+  });
+
+  it('does not show git diff badge when both zero', () => {
+    renderCard(makeSession({ git_insertions: 0, git_deletions: 0 }));
+    expect(screen.queryByTestId('git-diff-badge')).not.toBeInTheDocument();
+  });
+
+  it('does not show git diff badge when null', () => {
+    renderCard(makeSession());
+    expect(screen.queryByTestId('git-diff-badge')).not.toBeInTheDocument();
+  });
+
+  // Git ahead badge
+
+  it('shows git ahead badge when ahead > 0', () => {
+    renderCard(makeSession({ git_ahead: 3 }));
+    const badge = screen.getByTestId('git-ahead-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('3');
+  });
+
+  it('does not show git ahead badge when 0', () => {
+    renderCard(makeSession({ git_ahead: 0 }));
+    expect(screen.queryByTestId('git-ahead-badge')).not.toBeInTheDocument();
+  });
+
+  it('does not show git ahead badge when null', () => {
+    renderCard(makeSession());
+    expect(screen.queryByTestId('git-ahead-badge')).not.toBeInTheDocument();
+  });
+
+  // Token usage badge
+
+  it('shows token usage badge when total_input_tokens set', () => {
+    renderCard(
+      makeSession({ metadata: { total_input_tokens: '12345', total_output_tokens: '6789' } }),
+    );
+    const badge = screen.getByTestId('token-usage-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('12,345');
+  });
+
+  it('does not show token usage badge when absent', () => {
+    renderCard(makeSession({ metadata: null }));
+    expect(screen.queryByTestId('token-usage-badge')).not.toBeInTheDocument();
+  });
+
   it('truncates long commands', () => {
     renderCard(makeSession({ command: 'a'.repeat(60) }));
     // The command text should be truncated with ...

@@ -1,7 +1,16 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
-import { GitBranch, GitCommit, GitPullRequest, ExternalLink, AlertTriangle } from 'lucide-react';
+import {
+  GitBranch,
+  GitCommit,
+  GitPullRequest,
+  ExternalLink,
+  AlertTriangle,
+  ArrowUp,
+  Coins,
+  XCircle,
+} from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -221,6 +230,52 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
             >
               <AlertTriangle className="h-3 w-3" />
               {session.metadata.rate_limit}
+            </span>
+          )}
+          {session.metadata?.error_status && (
+            <span
+              data-testid="error-status-badge"
+              title={
+                session.metadata.error_status_at
+                  ? `${session.metadata.error_status} at ${new Date(session.metadata.error_status_at).toLocaleString()}`
+                  : session.metadata.error_status
+              }
+              className="flex shrink-0 items-center gap-0.5 rounded bg-[#3d0d0d] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#f87171]"
+            >
+              <XCircle className="h-3 w-3" />
+              {session.metadata.error_status}
+            </span>
+          )}
+          {(session.git_insertions != null || session.git_deletions != null) &&
+            ((session.git_insertions ?? 0) > 0 || (session.git_deletions ?? 0) > 0) && (
+              <span
+                data-testid="git-diff-badge"
+                className="flex shrink-0 items-center gap-0.5 rounded bg-[#1e2d3d] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#7a9aba]"
+              >
+                <span className="text-[#4ade80]">+{session.git_insertions ?? 0}</span>/
+                <span className="text-[#f87171]">-{session.git_deletions ?? 0}</span>
+                {session.git_files_changed != null && (
+                  <span className="text-[#5a7a9a]"> {session.git_files_changed}f</span>
+                )}
+              </span>
+            )}
+          {session.git_ahead != null && session.git_ahead > 0 && (
+            <span
+              data-testid="git-ahead-badge"
+              className="flex shrink-0 items-center gap-0.5 rounded bg-[#1e2d3d] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#7a9aba]"
+            >
+              <ArrowUp className="h-3 w-3" />
+              {session.git_ahead}
+            </span>
+          )}
+          {session.metadata?.total_input_tokens && (
+            <span
+              data-testid="token-usage-badge"
+              className="flex shrink-0 items-center gap-0.5 rounded bg-[#1a1a2e] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#8b8bcd]"
+              title={`Input: ${session.metadata.total_input_tokens}, Output: ${session.metadata.total_output_tokens ?? '0'}`}
+            >
+              <Coins className="h-3 w-3" />
+              {Number(session.metadata.total_input_tokens).toLocaleString()}
             </span>
           )}
           <span className="truncate max-w-[120px] sm:max-w-[200px] lg:max-w-none text-[0.6rem] uppercase text-[#5a7a9a]">

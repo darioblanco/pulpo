@@ -333,6 +333,27 @@ impl Store {
                 .await?;
         }
 
+        // Idempotent migration: git diff stats and ahead columns
+        let has_git_files_changed: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'git_files_changed'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_git_files_changed == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN git_files_changed INTEGER")
+                .execute(&self.pool)
+                .await?;
+            sqlx::query("ALTER TABLE sessions ADD COLUMN git_insertions INTEGER")
+                .execute(&self.pool)
+                .await?;
+            sqlx::query("ALTER TABLE sessions ADD COLUMN git_deletions INTEGER")
+                .execute(&self.pool)
+                .await?;
+            sqlx::query("ALTER TABLE sessions ADD COLUMN git_ahead INTEGER")
+                .execute(&self.pool)
+                .await?;
+        }
+
         // Idempotent migration: rename 'killed' status to 'stopped'
         sqlx::query("UPDATE sessions SET status = 'stopped' WHERE status = 'killed'")
             .execute(&self.pool)
@@ -357,8 +378,9 @@ impl Store {
                 metadata, ink, command, description,
                 intervention_code, intervention_reason, intervention_at,
                 last_output_at, idle_since, idle_threshold_secs, worktree_path, worktree_branch,
-                git_branch, git_commit, runtime, created_at, updated_at)
-             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                git_branch, git_commit, git_files_changed, git_insertions, git_deletions, git_ahead,
+                runtime, created_at, updated_at)
+             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
         .bind(&session.name)
@@ -385,6 +407,10 @@ impl Store {
         .bind(&session.worktree_branch)
         .bind(&session.git_branch)
         .bind(&session.git_commit)
+        .bind(session.git_files_changed.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
+        .bind(session.git_insertions.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
+        .bind(session.git_deletions.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
+        .bind(session.git_ahead.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
         .bind(session.runtime.to_string())
         .bind(session.created_at.to_rfc3339())
         .bind(session.updated_at.to_rfc3339())
@@ -506,6 +532,36 @@ impl Store {
         .bind(id)
         .execute(&self.pool)
         .await?;
+        Ok(())
+    }
+
+    pub async fn update_session_git_diff(
+        &self,
+        id: &str,
+        files_changed: Option<u32>,
+        insertions: Option<u32>,
+        deletions: Option<u32>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE sessions SET git_files_changed = ?, git_insertions = ?, git_deletions = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(files_changed.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
+        .bind(insertions.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
+        .bind(deletions.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
+        .bind(Utc::now().to_rfc3339())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn update_session_git_ahead(&self, id: &str, ahead: Option<u32>) -> Result<()> {
+        sqlx::query("UPDATE sessions SET git_ahead = ?, updated_at = ? WHERE id = ?")
+            .bind(ahead.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
+            .bind(Utc::now().to_rfc3339())
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
@@ -646,6 +702,28 @@ impl Store {
             .transpose()?
             .unwrap_or_default();
         map.insert(key.to_owned(), value.to_owned());
+        let json = serde_json::to_string(&map)?;
+        sqlx::query("UPDATE sessions SET metadata = ?, updated_at = ? WHERE id = ?")
+            .bind(&json)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Remove a single key from the session's metadata JSON.
+    pub async fn remove_session_metadata_field(&self, id: &str, key: &str) -> Result<()> {
+        let row = sqlx::query("SELECT metadata FROM sessions WHERE id = ?")
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await?;
+        let existing: Option<String> = row.get("metadata");
+        let mut map: std::collections::HashMap<String, String> = existing
+            .map(|s| serde_json::from_str(&s))
+            .transpose()?
+            .unwrap_or_default();
+        map.remove(key);
         let json = serde_json::to_string(&map)?;
         sqlx::query("UPDATE sessions SET metadata = ?, updated_at = ? WHERE id = ?")
             .bind(&json)
@@ -969,6 +1047,22 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
         worktree_branch: row.try_get("worktree_branch").unwrap_or(None),
         git_branch: row.try_get("git_branch").unwrap_or(None),
         git_commit: row.try_get("git_commit").unwrap_or(None),
+        git_files_changed: {
+            let v: Option<i32> = row.try_get("git_files_changed").unwrap_or(None);
+            v.map(|n| u32::try_from(n).unwrap_or(0))
+        },
+        git_insertions: {
+            let v: Option<i32> = row.try_get("git_insertions").unwrap_or(None);
+            v.map(|n| u32::try_from(n).unwrap_or(0))
+        },
+        git_deletions: {
+            let v: Option<i32> = row.try_get("git_deletions").unwrap_or(None);
+            v.map(|n| u32::try_from(n).unwrap_or(0))
+        },
+        git_ahead: {
+            let v: Option<i32> = row.try_get("git_ahead").unwrap_or(None);
+            v.map(|n| u32::try_from(n).unwrap_or(0))
+        },
         runtime: {
             let s: Option<String> = row.try_get("runtime").unwrap_or(None);
             s.and_then(|s| s.parse().ok()).unwrap_or_default()
@@ -1043,6 +1137,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -1404,6 +1502,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -3186,5 +3288,143 @@ mod tests {
             .unwrap();
         assert_eq!(fetched.git_branch, Some("develop".into()));
         assert_eq!(fetched.git_commit, Some("ff00ff".into()));
+    }
+
+    #[tokio::test]
+    async fn test_update_session_git_diff() {
+        let store = test_store().await;
+        let session = make_session("git-diff-test");
+        store.insert_session(&session).await.unwrap();
+
+        store
+            .update_session_git_diff(&session.id.to_string(), Some(3), Some(42), Some(7))
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.git_files_changed, Some(3));
+        assert_eq!(fetched.git_insertions, Some(42));
+        assert_eq!(fetched.git_deletions, Some(7));
+    }
+
+    #[tokio::test]
+    async fn test_update_session_git_diff_none() {
+        let store = test_store().await;
+        let mut session = make_session("git-diff-none");
+        session.git_files_changed = Some(5);
+        session.git_insertions = Some(10);
+        session.git_deletions = Some(3);
+        store.insert_session(&session).await.unwrap();
+
+        // Clear diff stats
+        store
+            .update_session_git_diff(&session.id.to_string(), None, None, None)
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.git_files_changed, None);
+        assert_eq!(fetched.git_insertions, None);
+        assert_eq!(fetched.git_deletions, None);
+    }
+
+    #[tokio::test]
+    async fn test_update_session_git_ahead() {
+        let store = test_store().await;
+        let session = make_session("git-ahead-test");
+        store.insert_session(&session).await.unwrap();
+
+        store
+            .update_session_git_ahead(&session.id.to_string(), Some(5))
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.git_ahead, Some(5));
+    }
+
+    #[tokio::test]
+    async fn test_update_session_git_ahead_none() {
+        let store = test_store().await;
+        let mut session = make_session("git-ahead-none");
+        session.git_ahead = Some(3);
+        store.insert_session(&session).await.unwrap();
+
+        store
+            .update_session_git_ahead(&session.id.to_string(), None)
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.git_ahead, None);
+    }
+
+    #[tokio::test]
+    async fn test_remove_session_metadata_field() {
+        let store = test_store().await;
+        let session = make_session("meta-remove");
+        store.insert_session(&session).await.unwrap();
+
+        // Add two metadata fields
+        store
+            .update_session_metadata_field(&session.id.to_string(), "error_status", "Panic")
+            .await
+            .unwrap();
+        store
+            .update_session_metadata_field(&session.id.to_string(), "other_key", "value")
+            .await
+            .unwrap();
+
+        // Remove one
+        store
+            .remove_session_metadata_field(&session.id.to_string(), "error_status")
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let meta = fetched.metadata.unwrap();
+        assert!(!meta.contains_key("error_status"));
+        assert_eq!(meta.get("other_key"), Some(&"value".into()));
+    }
+
+    #[tokio::test]
+    async fn test_insert_and_read_git_telemetry_fields() {
+        let store = test_store().await;
+        let mut session = make_session("telemetry-roundtrip");
+        session.git_files_changed = Some(10);
+        session.git_insertions = Some(100);
+        session.git_deletions = Some(50);
+        session.git_ahead = Some(7);
+        store.insert_session(&session).await.unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.git_files_changed, Some(10));
+        assert_eq!(fetched.git_insertions, Some(100));
+        assert_eq!(fetched.git_deletions, Some(50));
+        assert_eq!(fetched.git_ahead, Some(7));
     }
 }

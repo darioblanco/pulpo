@@ -182,6 +182,7 @@ pub async fn run_watchdog_loop(
 /// Detect and update git branch/commit info for active and idle sessions.
 /// Gated with `cfg(not(coverage))` because it requires real git commands.
 #[cfg(not(coverage))]
+#[allow(clippy::too_many_lines)]
 async fn update_git_info(store: &Store) {
     let sessions = match store.list_sessions().await {
         Ok(s) => s,
@@ -206,6 +207,11 @@ async fn update_git_info(store: &Store) {
         let old_branch = session.git_branch.clone();
         let old_commit = session.git_commit.clone();
 
+        let old_files_changed = session.git_files_changed;
+        let old_insertions = session.git_insertions;
+        let old_deletions = session.git_deletions;
+        let old_ahead = session.git_ahead;
+
         let result = tokio::task::spawn_blocking(move || {
             let branch = std::process::Command::new("git")
                 .args(["rev-parse", "--abbrev-ref", "HEAD"])
@@ -221,18 +227,62 @@ async fn update_git_info(store: &Store) {
                 .ok()
                 .filter(|o| o.status.success())
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
-            (branch, commit)
+
+            // Git diff stats (uncommitted changes)
+            let diff_stat = std::process::Command::new("git")
+                .args(["diff", "--shortstat", "HEAD"])
+                .current_dir(&effective_dir)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| {
+                    let out = String::from_utf8_lossy(&o.stdout).to_string();
+                    output_patterns::parse_git_shortstat(&out)
+                });
+
+            // Commits ahead of remote
+            let ahead = std::process::Command::new("git")
+                .args(["rev-list", "--count", "@{upstream}..HEAD"])
+                .current_dir(&effective_dir)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .and_then(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .trim()
+                        .parse::<u32>()
+                        .ok()
+                });
+
+            (branch, commit, diff_stat, ahead)
         })
         .await;
 
         match result {
-            Ok((branch, commit)) => {
+            Ok((branch, commit, diff_stat, ahead)) => {
                 if (branch != old_branch || commit != old_commit)
                     && let Err(e) = store
                         .update_session_git_info(&session_id, branch.as_deref(), commit.as_deref())
                         .await
                 {
                     warn!("Watchdog: failed to update git info for {session_id}: {e}");
+                }
+
+                // Update diff stats only when changed
+                if let Some((files, ins, del)) = diff_stat
+                    && (files != old_files_changed || ins != old_insertions || del != old_deletions)
+                    && let Err(e) = store
+                        .update_session_git_diff(&session_id, files, ins, del)
+                        .await
+                {
+                    warn!("Watchdog: failed to update git diff for {session_id}: {e}");
+                }
+
+                // Update ahead only when changed
+                if ahead != old_ahead
+                    && let Err(e) = store.update_session_git_ahead(&session_id, ahead).await
+                {
+                    warn!("Watchdog: failed to update git ahead for {session_id}: {e}");
                 }
             }
             Err(e) => {
@@ -619,9 +669,10 @@ async fn handle_active_session(
     }
 }
 
-/// Detect PR URL, branch name, and rate limits from session output and store in metadata.
-/// PR and branch are only written if not already present. Rate limits are always updated
-/// (they are transient — a session may recover).
+/// Detect PR URL, branch name, rate limits, errors, and token usage from session output.
+/// PR and branch are only written if not already present. Transient signals (rate limits,
+/// errors) are always updated and cleared when no longer detected.
+#[allow(clippy::too_many_lines)]
 async fn detect_and_store_output_metadata(store: &Store, session: &Session, output: &str) {
     let meta = session.metadata.as_ref();
 
@@ -691,6 +742,73 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
                 rate_limit = %rate_msg,
                 "Detected rate limit from session output"
             );
+        }
+    }
+
+    // Check for errors/failures (transient — clear when no longer in last 30 lines)
+    let current_error = output_patterns::detect_error(output);
+    let stored_error = meta.and_then(|m| m.get("error_status"));
+    match (&current_error, stored_error) {
+        (Some(err), _) => {
+            let timestamp = chrono::Utc::now().to_rfc3339();
+            if let Err(e) = store
+                .update_session_metadata_field(&session.id.to_string(), "error_status", err)
+                .await
+            {
+                warn!(
+                    session_name = %session.name,
+                    "Failed to store error_status metadata: {e}"
+                );
+            }
+            let _ = store
+                .update_session_metadata_field(
+                    &session.id.to_string(),
+                    "error_status_at",
+                    &timestamp,
+                )
+                .await;
+        }
+        (None, Some(_)) => {
+            // Error cleared — remove from metadata
+            if let Err(e) = store
+                .remove_session_metadata_field(&session.id.to_string(), "error_status")
+                .await
+            {
+                warn!(
+                    session_name = %session.name,
+                    "Failed to clear error_status metadata: {e}"
+                );
+            }
+            let _ = store
+                .remove_session_metadata_field(&session.id.to_string(), "error_status_at")
+                .await;
+        }
+        (None, None) => {}
+    }
+
+    // Check for token usage
+    if let Some((input, output_tokens)) = output_patterns::extract_token_usage(output) {
+        let stored_input = meta
+            .and_then(|m| m.get("total_input_tokens"))
+            .and_then(|v| v.parse::<u64>().ok());
+        let stored_output = meta
+            .and_then(|m| m.get("total_output_tokens"))
+            .and_then(|v| v.parse::<u64>().ok());
+        if stored_input != Some(input) || stored_output != Some(output_tokens) {
+            let _ = store
+                .update_session_metadata_field(
+                    &session.id.to_string(),
+                    "total_input_tokens",
+                    &input.to_string(),
+                )
+                .await;
+            let _ = store
+                .update_session_metadata_field(
+                    &session.id.to_string(),
+                    "total_output_tokens",
+                    &output_tokens.to_string(),
+                )
+                .await;
         }
     }
 }
@@ -929,6 +1047,10 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -1162,6 +1284,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -1632,6 +1758,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -1959,6 +2089,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2015,6 +2149,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2079,6 +2217,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2133,6 +2275,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2207,6 +2353,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2261,6 +2411,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2316,6 +2470,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2392,6 +2550,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now() - chrono::Duration::seconds(700),
             updated_at: chrono::Utc::now(),
@@ -2470,6 +2632,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2540,6 +2706,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2581,6 +2751,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2719,6 +2893,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2780,6 +2958,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2842,6 +3024,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -3027,6 +3213,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -3280,6 +3470,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -3333,6 +3527,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -3385,6 +3583,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -4044,6 +4246,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),

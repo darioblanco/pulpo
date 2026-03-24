@@ -418,4 +418,69 @@ describe('SessionDetailPage', () => {
     expect(screen.queryByTestId('session-git-branch')).not.toBeInTheDocument();
     expect(screen.queryByTestId('session-git-commit')).not.toBeInTheDocument();
   });
+
+  it('shows git diff stats when present', async () => {
+    mockGetSession.mockResolvedValue(
+      makeSession({ git_insertions: 42, git_deletions: 7, git_files_changed: 3 }),
+    );
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId('session-git-diff')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('session-git-diff')).toHaveTextContent('+42');
+    expect(screen.getByTestId('session-git-diff')).toHaveTextContent('-7');
+    expect(screen.getByTestId('session-git-diff')).toHaveTextContent('3 files');
+  });
+
+  it('hides git diff when zero', async () => {
+    mockGetSession.mockResolvedValue(
+      makeSession({ git_insertions: 0, git_deletions: 0, git_files_changed: 0 }),
+    );
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId('session-name')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('session-git-diff')).not.toBeInTheDocument();
+  });
+
+  it('shows git ahead when > 0', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ git_ahead: 5 }));
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId('session-git-ahead')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('session-git-ahead')).toHaveTextContent('5');
+  });
+
+  it('hides git ahead when 0', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ git_ahead: 0 }));
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId('session-name')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('session-git-ahead')).not.toBeInTheDocument();
+  });
+
+  it('shows error status from metadata', async () => {
+    mockGetSession.mockResolvedValue(makeSession({ metadata: { error_status: 'Compile error' } }));
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId('session-error')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('session-error')).toHaveTextContent('Compile error');
+  });
+
+  it('shows token usage from metadata', async () => {
+    mockGetSession.mockResolvedValue(
+      makeSession({
+        metadata: { total_input_tokens: '12345', total_output_tokens: '6789' },
+      }),
+    );
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId('session-tokens')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('session-tokens')).toHaveTextContent('12,345');
+    expect(screen.getByTestId('session-tokens')).toHaveTextContent('6,789');
+  });
 });

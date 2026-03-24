@@ -247,6 +247,52 @@ export function SessionDetailPage() {
                       </dd>
                     </div>
                   )}
+                  {(session.git_insertions != null || session.git_deletions != null) &&
+                    ((session.git_insertions ?? 0) > 0 || (session.git_deletions ?? 0) > 0) && (
+                      <div>
+                        <dt className="text-muted-foreground">Git Diff</dt>
+                        <dd className="font-mono text-xs" data-testid="session-git-diff">
+                          <span className="text-green-400">+{session.git_insertions ?? 0}</span> /{' '}
+                          <span className="text-red-400">-{session.git_deletions ?? 0}</span>
+                          {session.git_files_changed != null && (
+                            <span className="ml-1 text-muted-foreground">
+                              ({session.git_files_changed} files)
+                            </span>
+                          )}
+                        </dd>
+                      </div>
+                    )}
+                  {session.git_ahead != null && session.git_ahead > 0 && (
+                    <div>
+                      <dt className="text-muted-foreground">Commits Ahead</dt>
+                      <dd className="font-mono text-xs" data-testid="session-git-ahead">
+                        {session.git_ahead}
+                      </dd>
+                    </div>
+                  )}
+                  {session.metadata?.error_status && (
+                    <div>
+                      <dt className="text-muted-foreground">Error</dt>
+                      <dd className="font-mono text-xs text-red-400" data-testid="session-error">
+                        {session.metadata.error_status}
+                      </dd>
+                    </div>
+                  )}
+                  {session.metadata?.total_input_tokens && (
+                    <div>
+                      <dt className="text-muted-foreground">Token Usage</dt>
+                      <dd className="font-mono text-xs" data-testid="session-tokens">
+                        Input: {Number(session.metadata.total_input_tokens).toLocaleString()}
+                        {session.metadata.total_output_tokens && (
+                          <span>
+                            {' '}
+                            / Output:{' '}
+                            {Number(session.metadata.total_output_tokens).toLocaleString()}
+                          </span>
+                        )}
+                      </dd>
+                    </div>
+                  )}
                   <div>
                     <dt className="text-muted-foreground">Created</dt>
                     <dd data-testid="session-created">{formatRelativeTime(session.created_at)}</dd>

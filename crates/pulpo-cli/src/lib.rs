@@ -350,18 +350,38 @@ struct OutputResponse {
     output: String,
 }
 
-/// Format the repo column: `basename@branch` when `git_branch` is set, else just `basename`.
-/// Truncates to 20 chars if needed.
-fn format_repo(workdir: &str, git_branch: Option<&str>) -> String {
-    let basename = workdir.rsplit('/').next().unwrap_or(workdir).to_owned();
-    let display = match git_branch {
+/// Format the repo column: `basename@branch +42/-7 ↑3` with diff stats and ahead count.
+/// Truncates to 30 chars if needed.
+fn format_repo(session: &Session) -> String {
+    let basename = session
+        .workdir
+        .rsplit('/')
+        .next()
+        .unwrap_or(&session.workdir)
+        .to_owned();
+    let mut display = match session.git_branch.as_deref() {
         Some(branch) => format!("{basename}@{branch}"),
         None => basename,
     };
-    if display.len() <= 20 {
+
+    // Append diff stats when available and non-zero
+    let ins = session.git_insertions.unwrap_or(0);
+    let del = session.git_deletions.unwrap_or(0);
+    if ins > 0 || del > 0 {
+        display = format!("{display} +{ins}/-{del}");
+    }
+
+    // Append ahead count when > 0
+    if let Some(ahead) = session.git_ahead
+        && ahead > 0
+    {
+        display = format!("{display} \u{2191}{ahead}");
+    }
+
+    if display.len() <= 30 {
         display
     } else {
-        let truncated: String = display.chars().take(17).collect();
+        let truncated: String = display.chars().take(27).collect();
         format!("{truncated}...")
     }
 }
@@ -371,7 +391,7 @@ fn format_sessions(sessions: &[Session]) -> String {
         return "No sessions.".into();
     }
     let mut lines = vec![format!(
-        "{:<10} {:<24} {:<12} {:<22} {}",
+        "{:<10} {:<24} {:<12} {:<32} {}",
         "ID", "NAME", "STATUS", "REPO", "COMMAND"
     )];
     for s in sessions {
@@ -386,15 +406,23 @@ fn format_sessions(sessions: &[Session]) -> String {
             .metadata
             .as_ref()
             .is_some_and(|m| m.contains_key("pr_url"));
-        let name_display = match (s.worktree_path.is_some(), has_pr) {
-            (true, true) => format!("{} [wt] [PR]", s.name),
-            (true, false) => format!("{} [wt]", s.name),
-            (false, true) => format!("{} [PR]", s.name),
-            (false, false) => s.name.clone(),
-        };
-        let repo_display = format_repo(&s.workdir, s.git_branch.as_deref());
+        let has_error = s
+            .metadata
+            .as_ref()
+            .is_some_and(|m| m.contains_key("error_status"));
+        let mut name_display = s.name.clone();
+        if s.worktree_path.is_some() {
+            name_display = format!("{name_display} [wt]");
+        }
+        if has_pr {
+            name_display = format!("{name_display} [PR]");
+        }
+        if has_error {
+            name_display = format!("{name_display} [!]");
+        }
+        let repo_display = format_repo(s);
         lines.push(format!(
-            "{:<10} {:<24} {:<12} {:<22} {}",
+            "{:<10} {:<24} {:<12} {:<32} {}",
             short_id, name_display, s.status, repo_display, cmd_display
         ));
     }
@@ -1558,6 +1586,40 @@ pub async fn execute(cli: &Cli) -> Result<String> {
 mod tests {
     use super::*;
 
+    /// Helper to build a minimal `Session` for `format_repo` tests.
+    fn repo_session(workdir: &str, branch: Option<&str>) -> Session {
+        Session {
+            id: uuid::Uuid::nil(),
+            name: "test".into(),
+            workdir: workdir.into(),
+            command: "echo".into(),
+            description: None,
+            status: pulpo_common::session::SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: None,
+            worktree_branch: None,
+            git_branch: branch.map(Into::into),
+            git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
+            runtime: Runtime::Tmux,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
     #[test]
     fn test_base_url() {
         assert_eq!(base_url("localhost:7433"), "http://localhost:7433");
@@ -1845,6 +1907,10 @@ mod tests {
             worktree_branch: Some("fix-auth".into()),
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -1888,6 +1954,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2748,6 +2818,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2765,27 +2839,65 @@ mod tests {
 
     #[test]
     fn test_format_repo_without_branch() {
-        assert_eq!(format_repo("/home/user/pulpo", None), "pulpo");
+        let s = repo_session("/home/user/test", None);
+        assert_eq!(format_repo(&s), "test");
     }
 
     #[test]
     fn test_format_repo_with_branch() {
-        assert_eq!(format_repo("/home/user/pulpo", Some("main")), "pulpo@main");
+        let s = repo_session("/home/user/pulpo", Some("main"));
+        assert_eq!(format_repo(&s), "pulpo@main");
     }
 
     #[test]
     fn test_format_repo_truncates_long() {
-        let result = format_repo(
+        let s = repo_session(
             "/home/user/my-very-long-repo",
             Some("feature/my-long-branch"),
         );
-        assert!(result.len() <= 20);
+        let result = format_repo(&s);
+        assert!(result.len() <= 30);
         assert!(result.ends_with("..."));
     }
 
     #[test]
     fn test_format_repo_root_path() {
-        assert_eq!(format_repo("/", None), "");
+        let s = repo_session("/", None);
+        assert_eq!(format_repo(&s), "");
+    }
+
+    #[test]
+    fn test_format_repo_with_diff_stats() {
+        let mut s = repo_session("/home/user/pulpo", Some("main"));
+        s.git_insertions = Some(42);
+        s.git_deletions = Some(7);
+        let result = format_repo(&s);
+        assert!(result.contains("+42/-7"));
+    }
+
+    #[test]
+    fn test_format_repo_with_ahead() {
+        let mut s = repo_session("/home/user/pulpo", Some("main"));
+        s.git_ahead = Some(3);
+        let result = format_repo(&s);
+        assert!(result.contains("\u{2191}3"));
+    }
+
+    #[test]
+    fn test_format_repo_zero_diff_hidden() {
+        let mut s = repo_session("/home/user/pulpo", None);
+        s.git_insertions = Some(0);
+        s.git_deletions = Some(0);
+        let result = format_repo(&s);
+        assert!(!result.contains("+0/-0"));
+    }
+
+    #[test]
+    fn test_format_repo_zero_ahead_hidden() {
+        let mut s = repo_session("/home/user/pulpo", None);
+        s.git_ahead = Some(0);
+        let result = format_repo(&s);
+        assert!(!result.contains('\u{2191}'));
     }
 
     #[test]
@@ -2816,12 +2928,58 @@ mod tests {
             worktree_branch: None,
             git_branch: Some("main".into()),
             git_commit: Some("abc1234".into()),
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("repo@main"));
+    }
+
+    #[test]
+    fn test_format_sessions_with_error_status() {
+        use chrono::Utc;
+        use pulpo_common::session::SessionStatus;
+        use uuid::Uuid;
+
+        let mut meta = std::collections::HashMap::new();
+        meta.insert("error_status".into(), "Compile error".into());
+        let sessions = vec![Session {
+            id: Uuid::nil(),
+            name: "my-api".into(),
+            workdir: "/tmp/repo".into(),
+            command: "echo hello".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: Some(meta),
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: None,
+            worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
+            runtime: Runtime::Tmux,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_sessions(&sessions);
+        assert!(output.contains("[!]"));
     }
 
     #[test]
@@ -2852,6 +3010,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Docker,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2890,6 +3052,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2926,6 +3092,10 @@ mod tests {
             worktree_branch: Some("wt-task".into()),
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2969,6 +3139,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -3012,6 +3186,10 @@ mod tests {
             worktree_branch: Some("both-task".into()),
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -3051,6 +3229,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -4860,6 +5042,10 @@ mod tests {
             worktree_branch: None,
             git_branch: None,
             git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
