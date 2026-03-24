@@ -455,8 +455,15 @@ impl SessionManager {
         let backend_id = self.resolve_backend_id(&session);
         let backend = self.backend_for_id(&backend_id);
         if let Err(e) = backend.kill_session(&backend_id) {
-            // For lost/stopped sessions the backend process is already gone — that's fine.
-            if session.status == SessionStatus::Lost || session.status == SessionStatus::Stopped {
+            // The stored $N backend ID may be stale — retry with the session name.
+            let name_id = self.backend.session_id(&session.name);
+            if name_id != backend_id && backend.kill_session(&name_id).is_ok() {
+                tracing::info!(session = %session.name, "Killed session by name after stale backend ID failed");
+            } else if session.status == SessionStatus::Lost
+                || session.status == SessionStatus::Stopped
+                || session.status == SessionStatus::Ready
+            {
+                // For terminal states the backend process is already gone — that's fine.
                 tracing::debug!(session = %session.name, error = %e, "Ignoring kill error for {status} session", status = session.status);
             } else {
                 bail!("failed to stop session: {e}");
@@ -545,14 +552,21 @@ impl SessionManager {
         let active_backend = self.backend_for_id(&backend_id);
         let alive = active_backend.is_alive(&backend_id)?;
         if !alive {
+            // Use session name for the new tmux session, not the stale $N backend ID.
+            // The old backend_session_id may point to a dead tmux session that no longer exists.
+            let create_id = if session.runtime == Runtime::Docker {
+                backend_id.clone()
+            } else {
+                self.backend.session_id(&session.name)
+            };
             let final_command = if session.runtime == Runtime::Docker {
                 session.command.clone()
             } else {
                 wrap_command(&session.command, &session.id, &session.name, None)
             };
-            active_backend.create_session(&backend_id, &effective_workdir, &final_command)?;
+            active_backend.create_session(&create_id, &effective_workdir, &final_command)?;
 
-            // Query the new tmux $N session ID (tmux only)
+            // Query the new tmux $N session ID and update the stored backend_session_id
             if session.runtime == Runtime::Tmux
                 && let Ok(tmux_id) = self.backend.query_backend_id(&session.name)
             {
@@ -1421,13 +1435,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_stop_session_backend_error() {
+    async fn test_stop_session_backend_error_recovers_by_name() {
+        // Kill by stale $N ID fails, but retry by session name succeeds
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_kill_error()).await;
         let session = mgr.create_session(make_req("test")).await.unwrap();
 
         let result = mgr.stop_session(&session.id.to_string(), false).await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("failed to stop"));
+        assert!(result.is_ok(), "stop should succeed via name fallback");
     }
 
     #[tokio::test]
