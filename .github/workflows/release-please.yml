@@ -18,6 +18,10 @@ jobs:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      - uses: actions/checkout@v4
+        if: steps.release-please.outputs.pr
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
       - name: Update Cargo.lock on release PR
         if: steps.release-please.outputs.pr
         env:
