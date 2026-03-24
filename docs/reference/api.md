@@ -61,12 +61,13 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
   "metadata": {},
   "idle_threshold_secs": 120,
   "worktree": true,
+  "worktree_base": "main",
   "runtime": "docker",
   "secrets": ["GITHUB_TOKEN"]
 }
 ```
 
-`name` is required. All other fields are optional. If `ink` is specified, its `command` is used as the default (explicit `command` overrides it). `idle_threshold_secs` overrides the global idle threshold for this session (`null` = use global, `0` = never idle).
+`name` is required. All other fields are optional. If `ink` is specified, its `command` is used as the default (explicit `command` overrides it). `idle_threshold_secs` overrides the global idle threshold for this session (`null` = use global, `0` = never idle). `worktree_base` specifies the branch to fork from (implies `worktree: true`). Session responses include `worktree_branch` with the branch name when a worktree is active.
 
 ## Inks
 

@@ -262,6 +262,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -311,6 +312,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -345,6 +347,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),

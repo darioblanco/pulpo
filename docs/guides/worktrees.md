@@ -19,20 +19,34 @@ pulpo spawn fix-auth --workdir ~/repos/my-api --worktree -- claude -p "fix the a
 ```
 
 This:
-1. Creates branch `pulpo/fix-auth` from the current HEAD
+1. Creates branch `fix-auth` from the current HEAD
 2. Checks out a worktree at `~/.pulpo/worktrees/fix-auth/`
 3. Runs the command inside that worktree
 
 The session's working directory is set to the worktree path, so the agent sees a normal git checkout.
 
+## Base branch
+
+By default, worktrees branch from the current HEAD. Use `--worktree-base` to fork from a specific branch:
+
+```bash
+pulpo spawn fix-auth --workdir ~/repos/my-api --worktree-base main --worktree -- claude -p "fix auth"
+```
+
+`--worktree-base` implies `--worktree`, so this also works:
+
+```bash
+pulpo spawn fix-auth --workdir ~/repos/my-api --worktree-base main -- claude -p "fix auth"
+```
+
 ## Branch naming
 
-Worktree branches follow the pattern `pulpo/<session-name>`:
+Worktree branches use the session name directly:
 
 | Session name | Branch |
 |-------------|--------|
-| `fix-auth` | `pulpo/fix-auth` |
-| `refactor-db` | `pulpo/refactor-db` |
+| `fix-auth` | `fix-auth` |
+| `refactor-db` | `refactor-db` |
 
 ## Worktree location
 
@@ -45,15 +59,30 @@ All worktrees live under `~/.pulpo/worktrees/`:
     └── refactor-db/       # full checkout
 ```
 
+## Listing worktree sessions
+
+Use `pulpo worktree list` (or `pulpo wt ls`) to see all sessions with worktrees:
+
+```
+NAME                 BRANCH               STATUS     PATH
+fix-auth             fix-auth             active     /home/user/.pulpo/worktrees/fix-auth
+add-tests            add-tests            idle       /home/user/.pulpo/worktrees/add-tests
+```
+
 ## Cleanup
 
 Worktrees are removed automatically when you stop the session:
 
 ```bash
-pulpo stop fix-auth    # removes worktree + prunes git references
+pulpo stop fix-auth    # removes worktree dir, prunes git refs, deletes branch
 ```
 
-The cleanup runs `git worktree prune` on the parent repo to keep git's worktree list clean.
+The cleanup:
+1. Removes the worktree directory
+2. Runs `git worktree prune` on the parent repo
+3. Deletes the worktree branch (`git branch -D <session-name>`)
+
+If a stale branch is found when creating a new worktree with the same name, it is automatically cleaned up.
 
 ## Example: parallel agents on one repo
 
@@ -69,10 +98,10 @@ Each agent runs in its own worktree on its own branch. When they finish, review 
 
 ```bash
 cd ~/repos/my-api
-git branch | grep pulpo/
-# pulpo/fix-auth
-# pulpo/add-tests
-# pulpo/update-docs
+git branch
+# fix-auth
+# add-tests
+# update-docs
 ```
 
 Create PRs from each branch, or merge directly.
@@ -98,4 +127,4 @@ add-tests [wt]  idle     5m   claude -p "add missing unit tests"
 
 - The `--workdir` must point to a git repository (or be inside one)
 - Git must be installed and available in PATH
-- The branch `pulpo/<session-name>` must not already exist
+- The branch `<session-name>` must not already exist (stale branches are auto-cleaned on retry)

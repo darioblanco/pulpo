@@ -6,7 +6,6 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { ConnectionProvider } from '@/hooks/use-connection';
 import { SSEProvider } from '@/hooks/use-sse';
 import { setApiConfig } from '@/api/client';
-import { HistoryPage } from './history';
 import { SettingsPage } from './settings';
 import { ConnectPage } from './connect';
 
@@ -55,13 +54,6 @@ function wrapWithProviders(ui: React.ReactElement) {
     </MemoryRouter>,
   );
 }
-
-describe('HistoryPage', () => {
-  it('renders', () => {
-    wrapWithProviders(<HistoryPage />);
-    expect(screen.getByTestId('history-page')).toBeInTheDocument();
-  });
-});
 
 describe('SettingsPage', () => {
   it('renders', () => {

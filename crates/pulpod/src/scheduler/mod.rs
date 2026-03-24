@@ -129,6 +129,7 @@ async fn fire_due_schedules(
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };

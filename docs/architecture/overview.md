@@ -136,7 +136,7 @@ pulpo spawn auth-fix --workdir ~/repo --worktree -- claude -p "fix auth"
 pulpo spawn perf-fix --workdir ~/repo --worktree -- codex "optimize queries"
 ```
 
-Each session gets `~/.pulpo/worktrees/<session-name>/` on branch `pulpo/<session-name>`. Worktrees are cleaned up when sessions are stopped.
+Each session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the session name. Worktrees and their branches are cleaned up when sessions are stopped.
 
 ### Built-in Scheduler
 

@@ -790,6 +790,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -891,6 +892,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -924,6 +926,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -956,6 +959,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -998,6 +1002,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -1038,6 +1043,7 @@ mod tests {
             ink: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };

@@ -99,8 +99,8 @@ export function SessionList({ sessions, onRefresh }: SessionListProps) {
                   <>
                     <p className="flex items-center gap-1">
                       <GitBranch className="inline h-3 w-3 text-muted-foreground" />
-                      <span className="text-muted-foreground">Branch:</span> pulpo/
-                      {session.worktree_path.split('/').pop()}
+                      <span className="text-muted-foreground">Branch:</span>{' '}
+                      {session.worktree_branch ?? session.worktree_path.split('/').pop()}
                     </p>
                     <p className="text-xs text-muted-foreground">
                       Worktree: {session.worktree_path}

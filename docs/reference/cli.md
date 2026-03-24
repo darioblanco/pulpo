@@ -14,6 +14,7 @@ pulpo resume <NAME>                       Resume a lost or ready session (auto-a
 pulpo interventions <NAME>                Show watchdog interventions
 pulpo nodes                               List known nodes/peers
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
+pulpo worktree list                       List worktree sessions (alias: wt ls)
 pulpo secret <SUBCOMMAND>                 Manage secrets (env vars for sessions)
 pulpo ui                                  Open web UI in browser
 ```
@@ -36,6 +37,7 @@ By default, `spawn` auto-attaches to the session. Use `--detach` / `-d` to skip 
 | `--description <TEXT>` | Human-readable description for the session |
 | `--idle-threshold <SECS>` | Per-session idle threshold (`0` = never idle) |
 | `--worktree` | Create an isolated git worktree for the session |
+| `--worktree-base <BRANCH>` | Fork worktree from a specific branch (implies `--worktree`) |
 | `--runtime <RUNTIME>` | Session runtime: `tmux` (default) or `docker` |
 | `--auto` | Auto-select the least loaded node |
 | `--secret <NAME>` | Inject a stored secret as an environment variable |

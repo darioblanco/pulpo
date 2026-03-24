@@ -215,6 +215,22 @@ export function SessionDetailPage() {
                       <dd data-testid="session-description">{session.description}</dd>
                     </div>
                   )}
+                  {session.worktree_branch && (
+                    <div>
+                      <dt className="text-muted-foreground">Worktree Branch</dt>
+                      <dd className="font-mono text-xs" data-testid="session-worktree-branch">
+                        {session.worktree_branch}
+                      </dd>
+                    </div>
+                  )}
+                  {session.worktree_path && (
+                    <div>
+                      <dt className="text-muted-foreground">Worktree Path</dt>
+                      <dd className="font-mono text-xs" data-testid="session-worktree-path">
+                        {session.worktree_path}
+                      </dd>
+                    </div>
+                  )}
                   <div>
                     <dt className="text-muted-foreground">Created</dt>
                     <dd data-testid="session-created">{formatRelativeTime(session.created_at)}</dd>

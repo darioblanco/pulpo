@@ -37,8 +37,9 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
   const [interventionEvents, setInterventionEvents] = useState<InterventionEvent[]>([]);
   const [interventionsExpanded, setInterventionsExpanded] = useState(false);
 
-  const canStop = session.status === 'active' || session.status === 'lost';
-  const canResume = session.status === 'lost';
+  const canStop =
+    session.status === 'active' || session.status === 'idle' || session.status === 'lost';
+  const canResume = session.status === 'ready' || session.status === 'lost';
 
   async function handleStop() {
     try {
@@ -158,7 +159,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
               className="flex shrink-0 items-center gap-0.5 rounded bg-[#1e2d3d] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#7a9aba]"
             >
               <GitBranch className="h-3 w-3" />
-              pulpo/{session.worktree_path.split('/').pop()}
+              {session.worktree_branch ?? session.worktree_path?.split('/').pop()}
             </span>
           )}
           {session.metadata?.pr_url && (

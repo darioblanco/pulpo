@@ -7,11 +7,11 @@ import { MobileNav } from './mobile-nav';
 export function AppLayout() {
   return (
     <div className="flex h-[100dvh] flex-col md:h-auto md:min-h-svh md:flex-row">
-      <SidebarProvider>
+      <SidebarProvider className="min-h-0 flex-1 md:min-h-svh">
         <AppSidebar />
-        <SidebarInset>
+        <SidebarInset className="min-w-0">
           <DisconnectedBanner />
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
             <Outlet />
           </div>
         </SidebarInset>

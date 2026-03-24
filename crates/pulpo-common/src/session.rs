@@ -141,6 +141,8 @@ pub struct Session {
     /// Path to the git worktree created for this session, if any.
     /// When set, the worktree is cleaned up when the session is stopped.
     pub worktree_path: Option<String>,
+    /// Git branch name for the worktree (e.g. the session name or a custom name).
+    pub worktree_branch: Option<String>,
     /// The runtime environment for this session (tmux or docker).
     #[serde(default)]
     pub runtime: Runtime,
@@ -173,6 +175,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -317,6 +320,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -363,6 +367,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -392,6 +397,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -424,6 +430,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -622,6 +629,17 @@ mod tests {
         assert!(json.contains("\"runtime\":\"docker\""));
         let deserialized: Session = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.runtime, Runtime::Docker);
+    }
+
+    #[test]
+    fn test_session_with_worktree_branch() {
+        let mut session = make_session();
+        session.worktree_path = Some("/home/user/.pulpo/worktrees/fix-auth".into());
+        session.worktree_branch = Some("fix-auth".into());
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(json.contains("\"worktree_branch\":\"fix-auth\""));
+        let deserialized: Session = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.worktree_branch, Some("fix-auth".into()));
     }
 
     #[test]

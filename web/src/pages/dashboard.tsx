@@ -1,18 +1,21 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import { AppHeader } from '@/components/layout/app-header';
 import { StatusSummary } from '@/components/dashboard/status-summary';
 import { NodeCard } from '@/components/dashboard/node-card';
 import { NewSessionDialog } from '@/components/dashboard/new-session-dialog';
+import { SessionFilter } from '@/components/history/session-filter';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { getPeers, getRemoteSessions, getFleetSessions } from '@/api/client';
+import { getPeers, getRemoteSessions, getFleetSessions, getSessions } from '@/api/client';
 import { useSSE } from '@/hooks/use-sse';
 import { useConnection } from '@/hooks/use-connection';
 import { detectStatusChanges, showDesktopNotification } from '@/lib/notifications';
-import { formatMemory } from '@/lib/utils';
+import { formatMemory, statusColors } from '@/lib/utils';
 import { toast } from 'sonner';
 import type { NodeInfo, PeerInfo, Session, FleetSession } from '@/api/types';
+
+const DEFAULT_STATUSES = new Set(['active', 'idle', 'ready']);
 
 export function DashboardPage() {
   const navigate = useNavigate();
@@ -24,6 +27,8 @@ export function DashboardPage() {
   const [fleetSessions, setFleetSessions] = useState<FleetSession[]>([]);
   const [error, setError] = useState<string | null>(null);
   const previousSessionsRef = useRef<Session[]>([]);
+  const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(DEFAULT_STATUSES);
+  const [searchQuery, setSearchQuery] = useState<string | undefined>(undefined);
 
   const fetchPeers = useCallback(async () => {
     try {
@@ -64,6 +69,16 @@ export function DashboardPage() {
     return () => clearInterval(interval);
   }, [fetchPeers]);
 
+  const handleRefresh = useCallback(async () => {
+    try {
+      const all = await getSessions();
+      setSessions(all);
+    } catch {
+      // Silently ignore — SSE will re-hydrate
+    }
+    fetchPeers();
+  }, [setSessions, fetchPeers]);
+
   const handleSessionCreated = useCallback(
     (session: Session) => {
       setSessions((prev: Session[]) => [...prev, session]);
@@ -86,13 +101,28 @@ export function DashboardPage() {
     previousSessionsRef.current = sessions;
   }, [sessions]);
 
-  const activeSessions = sessions.filter(
-    (s) =>
-      s.status === 'creating' ||
-      s.status === 'active' ||
-      s.status === 'idle' ||
-      s.status === 'lost',
-  );
+  const handleFilter = useCallback((query: { search?: string; statuses: Set<string> }) => {
+    setSelectedStatuses(query.statuses);
+    setSearchQuery(query.search);
+  }, []);
+
+  // Build the set of visible statuses: always include 'creating' plus selected
+  const visibleStatuses = useMemo(() => {
+    const s = new Set(selectedStatuses);
+    s.add('creating');
+    return s;
+  }, [selectedStatuses]);
+
+  const filteredSessions = useMemo(() => {
+    let result = sessions.filter((s) => visibleStatuses.has(s.status));
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(
+        (s) => s.name.toLowerCase().includes(q) || s.command.toLowerCase().includes(q),
+      );
+    }
+    return result;
+  }, [sessions, visibleStatuses, searchQuery]);
 
   const hasMultipleNodes = peers.length > 0;
 
@@ -114,21 +144,17 @@ export function DashboardPage() {
               <NewSessionDialog peers={peers} onCreated={handleSessionCreated} />
             </div>
 
+            <SessionFilter onFilter={handleFilter} />
+
             {hasMultipleNodes ? (
               <Tabs defaultValue="all" data-testid="node-tabs">
-                <TabsList>
+                <TabsList className="h-auto min-h-12 w-auto max-w-full justify-start overflow-x-auto py-1.5">
                   <TabsTrigger value="all" data-testid="tab-all">
                     <div className="flex items-center">
                       <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-primary" />
                       All
                       <span className="ml-1.5 text-xs text-muted-foreground">
-                        (
-                        {
-                          fleetSessions.filter((s) =>
-                            ['creating', 'active', 'idle', 'lost'].includes(s.status),
-                          ).length
-                        }
-                        )
+                        ({fleetSessions.filter((s) => visibleStatuses.has(s.status)).length})
                       </span>
                     </div>
                   </TabsTrigger>
@@ -138,7 +164,7 @@ export function DashboardPage() {
                         <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-status-ready" />
                         {localNode?.name ?? 'local'}
                         <span className="ml-1.5 text-xs text-muted-foreground">
-                          ({activeSessions.length})
+                          ({filteredSessions.length})
                         </span>
                       </div>
                       {localNode && (
@@ -186,11 +212,9 @@ export function DashboardPage() {
 
                 <TabsContent value="all">
                   <div className="space-y-1">
-                    {fleetSessions.filter((s) =>
-                      ['creating', 'active', 'idle', 'lost'].includes(s.status),
-                    ).length === 0 ? (
+                    {fleetSessions.filter((s) => visibleStatuses.has(s.status)).length === 0 ? (
                       <p className="py-8 text-center text-muted-foreground">
-                        No active sessions across the fleet.
+                        No matching sessions across the fleet.
                       </p>
                     ) : (
                       <div className="rounded-lg border">
@@ -207,38 +231,19 @@ export function DashboardPage() {
                           </thead>
                           <tbody>
                             {fleetSessions
-                              .filter((s) =>
-                                ['creating', 'active', 'idle', 'lost'].includes(s.status),
-                              )
+                              .filter((s) => visibleStatuses.has(s.status))
                               .map((s) => (
                                 <tr
                                   key={`${s.node_name}-${s.id}`}
-                                  className="border-b last:border-0"
+                                  className="cursor-pointer border-b last:border-0 hover:bg-muted/30"
+                                  onClick={() => navigate(`/sessions/${s.id}`)}
                                 >
                                   <td className="px-3 py-2 text-muted-foreground">{s.node_name}</td>
                                   <td className="px-3 py-2 font-medium">{s.name}</td>
                                   <td className="px-3 py-2">
-                                    <span
-                                      className={`inline-flex items-center gap-1.5 text-xs ${
-                                        s.status === 'active'
-                                          ? 'text-status-active'
-                                          : s.status === 'idle'
-                                            ? 'text-status-idle'
-                                            : s.status === 'lost'
-                                              ? 'text-status-stopped'
-                                              : 'text-muted-foreground'
-                                      }`}
-                                    >
+                                    <span className="inline-flex items-center gap-1.5 text-xs">
                                       <span
-                                        className={`h-1.5 w-1.5 rounded-full ${
-                                          s.status === 'active'
-                                            ? 'bg-status-active'
-                                            : s.status === 'idle'
-                                              ? 'bg-status-idle'
-                                              : s.status === 'lost'
-                                                ? 'bg-status-stopped'
-                                                : 'bg-muted-foreground'
-                                        }`}
+                                        className={`h-1.5 w-1.5 rounded-full ${statusColors[s.status] ?? 'bg-muted-foreground'}`}
                                       />
                                       {s.status}
                                     </span>
@@ -261,9 +266,9 @@ export function DashboardPage() {
                       name={localNode.name}
                       nodeInfo={localNode}
                       status="online"
-                      sessions={activeSessions}
+                      sessions={filteredSessions}
                       isLocal
-                      onRefresh={fetchPeers}
+                      onRefresh={handleRefresh}
                     />
                   )}
                 </TabsContent>
@@ -276,7 +281,7 @@ export function DashboardPage() {
                       status={peer.status}
                       sessions={peerSessions[peer.name] ?? []}
                       address={peer.address}
-                      onRefresh={fetchPeers}
+                      onRefresh={handleRefresh}
                     />
                   </TabsContent>
                 ))}
@@ -287,9 +292,9 @@ export function DashboardPage() {
                   name={localNode.name}
                   nodeInfo={localNode}
                   status="online"
-                  sessions={activeSessions}
+                  sessions={filteredSessions}
                   isLocal
-                  onRefresh={fetchPeers}
+                  onRefresh={handleRefresh}
                 />
               )
             )}

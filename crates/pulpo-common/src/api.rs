@@ -18,6 +18,8 @@ pub struct CreateSessionRequest {
     pub idle_threshold_secs: Option<u32>,
     /// Create in an isolated git worktree.
     pub worktree: Option<bool>,
+    /// Base branch to fork the worktree from (defaults to current HEAD).
+    pub worktree_base: Option<String>,
     /// Runtime environment (tmux or docker). Defaults to tmux.
     pub runtime: Option<crate::session::Runtime>,
     /// Secret names to inject as environment variables.
@@ -614,11 +616,27 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("/tmp"));
+    }
+
+    #[test]
+    fn test_create_session_request_with_worktree_base() {
+        let json = r#"{"name":"test","worktree":true,"worktree_base":"main"}"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.worktree_base, Some("main".into()));
+        assert_eq!(req.worktree, Some(true));
+    }
+
+    #[test]
+    fn test_create_session_request_without_worktree_base() {
+        let json = r#"{"name":"test"}"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert!(req.worktree_base.is_none());
     }
 
     #[test]
@@ -1166,6 +1184,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -1265,6 +1284,7 @@ mod tests {
                 idle_since: None,
                 idle_threshold_secs: None,
                 worktree_path: None,
+                worktree_branch: None,
                 runtime: Runtime::Tmux,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),

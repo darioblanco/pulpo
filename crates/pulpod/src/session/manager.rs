@@ -144,18 +144,18 @@ impl SessionManager {
         }
 
         // Create git worktree if requested
-        let (effective_workdir, worktree_path) = if wants_worktree {
+        let (effective_workdir, worktree_path, worktree_branch) = if wants_worktree {
             #[cfg(not(coverage))]
             {
-                let wt_path = create_worktree(&workdir, &req.name)?;
-                (wt_path.clone(), Some(wt_path))
+                let wt_path = create_worktree(&workdir, &req.name, req.worktree_base.as_deref())?;
+                (wt_path.clone(), Some(wt_path), Some(req.name.clone()))
             }
             #[cfg(coverage)]
             {
-                (workdir.clone(), None)
+                (workdir.clone(), None, None)
             }
         } else {
-            (workdir.clone(), None)
+            (workdir.clone(), None, None)
         };
 
         // Reject duplicate names among live sessions
@@ -231,6 +231,7 @@ impl SessionManager {
             idle_since: None,
             idle_threshold_secs: req.idle_threshold_secs,
             worktree_path,
+            worktree_branch,
             runtime,
             created_at: now,
             updated_at: now,
@@ -433,7 +434,12 @@ impl SessionManager {
         let backend_id = self.resolve_backend_id(&session);
         let backend = self.backend_for_id(&backend_id);
         if let Err(e) = backend.kill_session(&backend_id) {
-            bail!("failed to stop session: {e}");
+            // For lost/stopped sessions the backend process is already gone — that's fine.
+            if session.status == SessionStatus::Lost || session.status == SessionStatus::Stopped {
+                tracing::debug!(session = %session.name, error = %e, "Ignoring kill error for {status} session", status = session.status);
+            } else {
+                bail!("failed to stop session: {e}");
+            }
         }
 
         let previous = session.status;
@@ -632,60 +638,126 @@ fn is_shell_command(command: &str) -> bool {
 /// polluting the project repository with a `.pulpo/` directory.
 /// Returns the worktree path on success.
 #[cfg(not(coverage))]
-fn create_worktree(repo_dir: &str, session_name: &str) -> Result<String> {
+fn create_worktree(
+    repo_dir: &str,
+    session_name: &str,
+    worktree_base: Option<&str>,
+) -> Result<String> {
     let home = dirs::home_dir().context("cannot determine home directory")?;
-    let worktree_base = home.join(".pulpo").join("worktrees");
-    let worktree_dir = worktree_base.join(session_name);
+    let wt_base_dir = home.join(".pulpo").join("worktrees");
+    let worktree_dir = wt_base_dir.join(session_name);
     let worktree_dir_str = worktree_dir
         .to_str()
         .context("worktree path contains invalid UTF-8")?
         .to_owned();
-    let branch_name = format!("pulpo/{session_name}");
+    let branch_name = session_name.to_owned();
 
     // Ensure parent directory exists
-    std::fs::create_dir_all(&worktree_base)?;
+    std::fs::create_dir_all(&wt_base_dir)?;
+
+    // Build args: `git worktree add -b <branch> <path> [<base-branch>]`
+    let mut args = vec![
+        "worktree".to_owned(),
+        "add".to_owned(),
+        "-b".to_owned(),
+        branch_name.clone(),
+        worktree_dir_str.clone(),
+    ];
+    if let Some(base) = worktree_base {
+        args.push(base.to_owned());
+    }
+    let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
 
     let output = std::process::Command::new("git")
-        .args(["worktree", "add", "-b", &branch_name, &worktree_dir_str])
+        .args(&args_ref)
         .current_dir(repo_dir)
         .output()
         .context("failed to run git worktree add")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git worktree add failed: {}", stderr.trim());
+        // If the branch already exists (stale from a previous unclean shutdown),
+        // delete it and retry.
+        if stderr.contains("already exists") {
+            tracing::info!(branch = %branch_name, "Stale branch found, deleting and retrying");
+            let _ = std::process::Command::new("git")
+                .args(["branch", "-D", &branch_name])
+                .current_dir(repo_dir)
+                .output();
+            let retry = std::process::Command::new("git")
+                .args(&args_ref)
+                .current_dir(repo_dir)
+                .output()
+                .context("failed to run git worktree add (retry)")?;
+            if !retry.status.success() {
+                let retry_stderr = String::from_utf8_lossy(&retry.stderr);
+                bail!(
+                    "git worktree add failed after branch cleanup: {}",
+                    retry_stderr.trim()
+                );
+            }
+        } else {
+            bail!("git worktree add failed: {}", stderr.trim());
+        }
     }
 
     Ok(worktree_dir_str)
 }
 
-/// Remove a git worktree and prune stale entries.
+/// Remove a git worktree, prune stale entries, and delete the associated branch.
 ///
 /// `repo_dir` is the original repository directory where the worktree was
 /// created from — needed to run `git worktree prune` in the correct repo.
 pub(crate) fn cleanup_worktree(worktree_path: &str, repo_dir: &str) {
-    if !std::path::Path::new(worktree_path).exists() {
-        tracing::info!(path = %worktree_path, "Worktree path does not exist, skipping cleanup");
-        // Still prune — the directory may have been manually removed but git
-        // metadata could linger.
-        let _ = std::process::Command::new("git")
-            .args(["worktree", "prune"])
-            .current_dir(repo_dir)
-            .output();
-        return;
-    }
-
-    match std::fs::remove_dir_all(worktree_path) {
-        Ok(()) => tracing::info!(path = %worktree_path, "Worktree directory removed"),
-        Err(e) => {
-            tracing::warn!(path = %worktree_path, error = %e, "Failed to remove worktree directory");
+    if std::path::Path::new(worktree_path).exists() {
+        match std::fs::remove_dir_all(worktree_path) {
+            Ok(()) => tracing::info!(path = %worktree_path, "Worktree directory removed"),
+            Err(e) => {
+                tracing::warn!(path = %worktree_path, error = %e, "Failed to remove worktree directory");
+            }
         }
+    } else {
+        tracing::info!(path = %worktree_path, "Worktree path does not exist, skipping cleanup");
     }
 
+    // Always prune — the directory may have been manually removed but git
+    // metadata could linger.
     let _ = std::process::Command::new("git")
         .args(["worktree", "prune"])
         .current_dir(repo_dir)
         .output();
+
+    // Delete the branch created by `git worktree add -b <session-name>`.
+    // The session name is the last component of the worktree path.
+    if let Some(branch_name) = std::path::Path::new(worktree_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+    {
+        match std::process::Command::new("git")
+            .args(["branch", "-D", branch_name])
+            .current_dir(repo_dir)
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                tracing::info!(branch = %branch_name, "Worktree branch deleted");
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::debug!(
+                    branch = %branch_name,
+                    stderr = %stderr.trim(),
+                    "Branch deletion skipped (may not exist)"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    branch = %branch_name,
+                    error = %e,
+                    "Failed to run git branch -D"
+                );
+            }
+        }
+    }
 }
 
 /// Write secrets to a temporary file that will be sourced and immediately deleted
@@ -764,18 +836,23 @@ fn wrap_command(
     let secrets_source =
         secrets_file.map_or_else(String::new, |path| format!(". {path} && rm -f {path}; "));
 
+    // Common env: session identity + suppress browser launches from agents.
+    // BROWSER=true makes tools that respect $BROWSER (Node `open`, Python `webbrowser`, etc.) no-op.
+    // The `open` function override catches direct macOS `open` calls from shell commands.
+    let env = format!(
+        "{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; export BROWSER=true; open() {{ true; }}; "
+    );
+
     if is_shell_command(command) {
         // Shell session: set env vars and exec the shell directly.
         // No exit marker, no fallback bash — exiting the shell kills the tmux session.
         let escaped = command.replace('\'', "'\\''");
-        return format!(
-            "{shell} -l -c '{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; exec {escaped}'"
-        );
+        return format!("{shell} -l -c '{env}exec {escaped}'");
     }
     let escaped = command.replace('\'', "'\\''");
     // After the agent exits, fall back to the user's shell so they can inspect the workdir.
     format!(
-        "{shell} -l -c '{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; {escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec {shell} -l'"
+        "{shell} -l -c '{env}{escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec {shell} -l'"
     )
 }
 
@@ -927,6 +1004,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         }
@@ -965,6 +1043,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -1003,6 +1082,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -1038,6 +1118,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -1059,6 +1140,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -1079,6 +1161,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -1915,6 +1998,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -1951,6 +2035,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -1985,6 +2070,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -2012,6 +2098,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -2038,6 +2125,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -2073,6 +2161,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -2110,6 +2199,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None, // Not set — should inherit from ink
             secrets: None,
         };
@@ -2144,6 +2234,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: Some(Runtime::Tmux), // Override ink's docker runtime
             secrets: None,
         };
@@ -2181,6 +2272,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: Some(vec!["REQ_SECRET".into()]),
         };
@@ -2319,6 +2411,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -2427,6 +2520,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now() - chrono::Duration::hours(1),
             updated_at: Utc::now(),
@@ -2464,6 +2558,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             secrets: None,
         };
@@ -2494,6 +2589,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: Some(Runtime::Docker),
             secrets: None,
         };
@@ -2544,6 +2640,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: Some(Runtime::Docker),
             secrets: None,
         };
@@ -2582,6 +2679,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: Some(Runtime::Docker),
             secrets: None,
         };
@@ -2611,6 +2709,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: Some(Runtime::Docker),
             secrets: None,
         };
@@ -2734,6 +2833,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: Some(Runtime::Docker),
             secrets: None,
         };
@@ -2853,6 +2953,7 @@ mod tests {
             metadata: None,
             idle_threshold_secs: None,
             worktree: None,
+            worktree_base: None,
             runtime: None,
             // SHARED_SECRET overlaps with ink, REQ_ONLY is new
             secrets: Some(vec!["SHARED_SECRET".into(), "REQ_ONLY".into()]),

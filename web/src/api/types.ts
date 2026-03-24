@@ -35,6 +35,7 @@ export interface Session {
   intervention_at: string | null;
   idle_threshold_secs?: number | null;
   worktree_path?: string | null;
+  worktree_branch?: string | null;
   runtime?: 'tmux' | 'docker';
   last_output_at: string | null;
   output_snippet?: string | null;
@@ -158,6 +159,7 @@ export interface CreateSessionRequest {
   description?: string;
   metadata?: Record<string, string>;
   worktree?: boolean;
+  worktree_base?: string;
   runtime?: 'tmux' | 'docker';
   secrets?: string[];
 }

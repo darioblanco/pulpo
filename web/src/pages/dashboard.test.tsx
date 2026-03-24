@@ -110,11 +110,23 @@ describe('DashboardPage', () => {
     });
   });
 
-  it('shows status summary and new session button after data loads', async () => {
+  it('shows status summary, session filter, and new session button after data loads', async () => {
     renderDashboard();
     await waitFor(() => {
       expect(screen.getByTestId('status-summary')).toBeInTheDocument();
+      expect(screen.getByTestId('session-filter')).toBeInTheDocument();
       expect(screen.getByTestId('new-session-button')).toBeInTheDocument();
+    });
+  });
+
+  it('renders status filter chips with defaults selected', async () => {
+    renderDashboard();
+    await waitFor(() => {
+      expect(screen.getByTestId('status-chip-active')).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByTestId('status-chip-idle')).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByTestId('status-chip-ready')).toHaveAttribute('aria-pressed', 'true');
+      expect(screen.getByTestId('status-chip-stopped')).toHaveAttribute('aria-pressed', 'false');
+      expect(screen.getByTestId('status-chip-lost')).toHaveAttribute('aria-pressed', 'false');
     });
   });
 
@@ -252,7 +264,7 @@ describe('DashboardPage', () => {
     });
   });
 
-  it('shows active sessions on local node and filters by status', async () => {
+  it('shows sessions filtered by default statuses on local node', async () => {
     const sessionData = [
       {
         id: 'sess-1',
@@ -274,6 +286,21 @@ describe('DashboardPage', () => {
         name: 'done-task',
         status: 'ready',
         command: 'Done',
+        description: null,
+        workdir: '/repo',
+        metadata: null,
+        ink: null,
+        intervention_reason: null,
+        intervention_at: null,
+        last_output_at: null,
+
+        created_at: '2025-01-01T00:00:00Z',
+      },
+      {
+        id: 'sess-3',
+        name: 'stopped-task',
+        status: 'stopped',
+        command: 'Old',
         description: null,
         workdir: '/repo',
         metadata: null,
@@ -330,12 +357,15 @@ describe('DashboardPage', () => {
     const es = MockEventSource.instances[0];
     es.onopen?.();
 
-    // Active sessions should be filtered (only active, creating, idle, lost)
+    // Both active and ready sessions show (default filters include active, idle, ready)
     await waitFor(() => {
       expect(screen.getByTestId('count-active').textContent).toBe('1');
+      expect(screen.getByTestId('count-ready').textContent).toBe('1');
     });
-    // Only the running session shows on the local node card
+    // Active and ready sessions visible, stopped is hidden by default
     expect(screen.getByText('running-task')).toBeInTheDocument();
+    expect(screen.getByText('done-task')).toBeInTheDocument();
+    expect(screen.queryByText('stopped-task')).not.toBeInTheDocument();
   });
 
   it('processes notifications when SSE delivers a status change', async () => {
@@ -531,7 +561,7 @@ describe('DashboardPage', () => {
     expect(allTab).toHaveTextContent('(2)');
   });
 
-  it('shows empty fleet message when no active fleet sessions', async () => {
+  it('shows empty fleet message when no matching fleet sessions', async () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes('/fleet/sessions')) {
         return {
@@ -583,7 +613,7 @@ describe('DashboardPage', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('No active sessions across the fleet.')).toBeInTheDocument();
+      expect(screen.getByText('No matching sessions across the fleet.')).toBeInTheDocument();
     });
   });
 
@@ -642,7 +672,7 @@ describe('DashboardPage', () => {
     });
 
     // Empty fleet = shows empty message
-    expect(screen.getByText('No active sessions across the fleet.')).toBeInTheDocument();
+    expect(screen.getByText('No matching sessions across the fleet.')).toBeInTheDocument();
   });
 
   it('shows error when fetch fails and connected', async () => {

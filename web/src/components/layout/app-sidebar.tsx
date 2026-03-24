@@ -1,4 +1,4 @@
-import { Waves, LayoutList, History, Settings, Clock } from 'lucide-react';
+import { Waves, LayoutList, Settings, Clock, GitBranch } from 'lucide-react';
 import { Link, useLocation } from 'react-router';
 import {
   Sidebar,
@@ -16,7 +16,7 @@ import { useSSE } from '@/hooks/use-sse';
 const navItems = [
   { to: '/', icon: Waves, label: 'Ocean' },
   { to: '/sessions', icon: LayoutList, label: 'Sessions' },
-  { to: '/history', icon: History, label: 'History' },
+  { to: '/worktrees', icon: GitBranch, label: 'Worktrees' },
   { to: '/schedules', icon: Clock, label: 'Schedules' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];

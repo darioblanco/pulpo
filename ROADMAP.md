@@ -70,7 +70,7 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - Fleet sessions endpoint (`GET /api/v1/fleet/sessions`) — server-side aggregation
 - Fleet dashboard: "All" tab showing sessions across all nodes in a unified table
 - Smart node selection: `pulpo spawn --auto` picks least-loaded online peer
-- Git worktrees: `pulpo spawn --worktree` creates isolated `pulpo/<name>` branch in `~/.pulpo/worktrees/<name>/`. Auto-cleanup on stop with logging. Branch badge in CLI (`[wt]`) and dashboard.
+- Git worktrees: `pulpo spawn --worktree` creates isolated branch (named after session) in `~/.pulpo/worktrees/<name>/`. Auto-cleanup on stop (removes worktree dir, prunes refs, deletes branch). `--worktree-base <branch>` forks from a specific branch (implies `--worktree`). `pulpo worktree list` / `pulpo wt ls` lists worktree sessions. Stale branches auto-cleaned on retry. `worktree_branch` field in Session/API responses. Branch badge in CLI (`[wt]`) and dashboard.
 - Built-in scheduler: DB-backed schedules with cron expressions, CRUD API (`/api/v1/schedules`), CLI (`pulpo schedule add/list/pause/resume/remove`), scheduler loop firing every 60s
 - Schedule dashboard: create/edit dialog with cron presets, next-run calculation, status filtering, expandable run history per schedule (`/api/v1/schedules/{id}/runs`)
 - PR/branch detection: watchdog scans session output for GitHub/GitLab/Bitbucket PR URLs and git branch pushes, stores in session metadata, surfaces as clickable badges in dashboard and `[PR]` marker in CLI

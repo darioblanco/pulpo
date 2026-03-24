@@ -109,6 +109,11 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('btn-stop')).not.toBeDisabled();
   });
 
+  it('enables stop dot for idle sessions', () => {
+    renderCard(makeSession({ status: 'idle' }));
+    expect(screen.getByTestId('btn-stop')).not.toBeDisabled();
+  });
+
   it('enables stop dot for lost sessions', () => {
     renderCard(makeSession({ status: 'lost' }));
     expect(screen.getByTestId('btn-stop')).not.toBeDisabled();
@@ -119,8 +124,13 @@ describe('SessionCard', () => {
     expect(screen.getByTestId('btn-stop')).toBeDisabled();
   });
 
-  it('enables resume dot only for lost sessions', () => {
+  it('enables resume dot for lost sessions', () => {
     renderCard(makeSession({ status: 'lost' }));
+    expect(screen.getByTestId('btn-resume')).not.toBeDisabled();
+  });
+
+  it('enables resume dot for ready sessions', () => {
+    renderCard(makeSession({ status: 'ready' }));
     expect(screen.getByTestId('btn-resume')).not.toBeDisabled();
   });
 
@@ -318,11 +328,23 @@ describe('SessionCard', () => {
 
   // Worktree badge
 
-  it('shows worktree badge when worktree_path is set', () => {
+  it('shows worktree badge with branch name when set', () => {
+    renderCard(
+      makeSession({
+        worktree_path: '/repo/.pulpo/worktrees/my-task',
+        worktree_branch: 'my-task',
+      }),
+    );
+    const badge = screen.getByTestId('worktree-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('my-task');
+  });
+
+  it('shows worktree badge falling back to path when branch is not set', () => {
     renderCard(makeSession({ worktree_path: '/repo/.pulpo/worktrees/my-task' }));
     const badge = screen.getByTestId('worktree-badge');
     expect(badge).toBeInTheDocument();
-    expect(badge).toHaveTextContent('pulpo/my-task');
+    expect(badge).toHaveTextContent('my-task');
   });
 
   it('hides worktree badge when worktree_path is null', () => {

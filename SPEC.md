@@ -178,6 +178,7 @@ Stored in `~/.pulpo/state.db` (SQLite):
 | `description`     | Optional human-readable description                     |
 | `status`          | `creating`, `active`, `idle`, `ready`, `stopped`, `lost` |
 | `exit_code`       | Process exit code (null if still running)               |
+| `worktree_branch` | Git branch name for worktree sessions (null if no worktree) |
 | `backend_session_id`    | Backend-specific session identifier                     |
 | `output_snapshot` | Last N lines of terminal output                         |
 | `created_at`      | Timestamp                                               |
@@ -349,14 +350,17 @@ WS     /sessions/:id/stream   Stream terminal output (WebSocket)
   "command": "claude 'Fix the auth bug in login.py'",
   "description": "Fix auth bug",
   "metadata": { "discord_channel_id": "123456" },
-  "ink": "reviewer"
+  "ink": "reviewer",
+  "worktree": true,
+  "worktree_base": "main"
 }
 ```
 
 `name` is required. All other fields are optional. `workdir` defaults to the
 user's home directory, `command` defaults to the ink's command or an
 interactive shell. If `ink` is set, its config is used as defaults; explicit
-fields override ink values.
+fields override ink values. `worktree_base` specifies the branch to fork
+from (implies `worktree: true`).
 
 #### GET /sessions
 
@@ -378,8 +382,8 @@ fields override ink values.
 ```
 
 The full `Session` object includes additional nullable fields: `exit_code`,
-`backend_session_id`, `metadata`, `intervention_code`, `intervention_reason`,
-`intervention_at`, `last_output_at`, `idle_since`.
+`backend_session_id`, `worktree_branch`, `metadata`, `intervention_code`,
+`intervention_reason`, `intervention_at`, `last_output_at`, `idle_since`.
 
 ### Node
 

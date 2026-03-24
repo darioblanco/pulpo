@@ -210,6 +210,18 @@ impl Store {
                 .await?;
         }
 
+        // Idempotent migration: worktree_branch column
+        let has_worktree_branch: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'worktree_branch'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_worktree_branch == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN worktree_branch TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+
         // Idempotent migration: sandbox column (legacy name, kept for backward compat)
         let has_sandbox: i32 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'sandbox'",
@@ -329,8 +341,8 @@ impl Store {
                 exit_code, backend_session_id, output_snapshot,
                 metadata, ink, command, description,
                 intervention_code, intervention_reason, intervention_at,
-                last_output_at, idle_since, idle_threshold_secs, worktree_path, runtime, created_at, updated_at)
-             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                last_output_at, idle_since, idle_threshold_secs, worktree_path, worktree_branch, runtime, created_at, updated_at)
+             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
         .bind(&session.name)
@@ -354,6 +366,7 @@ impl Store {
                 .map(|v| i32::try_from(v).unwrap_or(i32::MAX)),
         )
         .bind(&session.worktree_path)
+        .bind(&session.worktree_branch)
         .bind(session.runtime.to_string())
         .bind(session.created_at.to_rfc3339())
         .bind(session.updated_at.to_rfc3339())
@@ -917,6 +930,7 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
             v.map(|n| u32::try_from(n).unwrap_or(0))
         },
         worktree_path: row.try_get("worktree_path").unwrap_or(None),
+        worktree_branch: row.try_get("worktree_branch").unwrap_or(None),
         runtime: {
             let s: Option<String> = row.try_get("runtime").unwrap_or(None);
             s.and_then(|s| s.parse().ok()).unwrap_or_default()
@@ -988,6 +1002,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -1346,6 +1361,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),

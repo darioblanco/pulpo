@@ -154,6 +154,32 @@ describe('SessionDetailPage', () => {
     expect(screen.getByTestId('session-id')).toHaveTextContent('sess-123');
   });
 
+  it('shows worktree branch and path when set', async () => {
+    mockGetSession.mockResolvedValue(
+      makeSession({
+        worktree_branch: 'fix-auth',
+        worktree_path: '/home/user/.pulpo/worktrees/fix-auth',
+      }),
+    );
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId('session-worktree-branch')).toHaveTextContent('fix-auth');
+      expect(screen.getByTestId('session-worktree-path')).toHaveTextContent(
+        '/home/user/.pulpo/worktrees/fix-auth',
+      );
+    });
+  });
+
+  it('hides worktree info when not set', async () => {
+    mockGetSession.mockResolvedValue(makeSession());
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId('session-name')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('session-worktree-branch')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('session-worktree-path')).not.toBeInTheDocument();
+  });
+
   it('shows terminal for active sessions', async () => {
     mockGetSession.mockResolvedValue(makeSession({ status: 'active' }));
     renderDetail();

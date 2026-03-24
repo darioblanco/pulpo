@@ -5,12 +5,12 @@ import { ConnectionProvider } from '@/hooks/use-connection';
 import { SSEProvider } from '@/hooks/use-sse';
 import { AppLayout } from '@/components/layout/app-layout';
 import { DashboardPage } from '@/pages/dashboard';
-import { HistoryPage } from '@/pages/history';
 import { SettingsPage } from '@/pages/settings';
 import { OceanPage } from '@/pages/ocean';
 import { ConnectPage } from '@/pages/connect';
 import { SessionDetailPage } from '@/pages/session-detail';
 import { SchedulesPage } from '@/pages/schedules';
+import { WorktreesPage } from '@/pages/worktrees';
 
 export function App() {
   return (
@@ -23,7 +23,7 @@ export function App() {
                 <Route index element={<OceanPage />} />
                 <Route path="sessions" element={<DashboardPage />} />
                 <Route path="sessions/:id" element={<SessionDetailPage />} />
-                <Route path="history" element={<HistoryPage />} />
+                <Route path="worktrees" element={<WorktreesPage />} />
                 <Route path="schedules" element={<SchedulesPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>

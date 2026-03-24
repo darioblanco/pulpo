@@ -1,33 +1,41 @@
 import { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import type { ListSessionsParams } from '@/api/types';
 
 interface SessionFilterProps {
-  onFilter: (query: ListSessionsParams) => void;
+  onFilter: (query: { search?: string; statuses: Set<string> }) => void;
   statusOptions?: string[];
+  defaultStatuses?: string[];
 }
 
 export function SessionFilter({
   onFilter,
-  statusOptions = ['ready', 'stopped'],
+  statusOptions = ['active', 'idle', 'ready', 'stopped', 'lost'],
+  defaultStatuses = ['active', 'idle', 'ready'],
 }: SessionFilterProps) {
   const [search, setSearch] = useState('');
-  const [activeStatus, setActiveStatus] = useState<string | undefined>(undefined);
+  const [activeStatuses, setActiveStatuses] = useState<Set<string>>(() => new Set(defaultStatuses));
 
-  function emit(overrides: Partial<{ search: string; status?: string }>) {
+  function emit(overrides: Partial<{ search: string; statuses: Set<string> }>) {
     const s = overrides.search ?? search;
-    const st = 'status' in overrides ? overrides.status : activeStatus;
+    const st = overrides.statuses ?? activeStatuses;
     onFilter({
       search: s || undefined,
-      status: st,
+      statuses: st,
     });
   }
 
   function toggleStatus(s: string) {
-    const next = activeStatus === s ? undefined : s;
-    setActiveStatus(next);
-    emit({ status: next });
+    setActiveStatuses((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) {
+        next.delete(s);
+      } else {
+        next.add(s);
+      }
+      emit({ statuses: next });
+      return next;
+    });
   }
 
   return (
@@ -46,9 +54,9 @@ export function SessionFilter({
           <Button
             key={s}
             data-testid={`status-chip-${s}`}
-            variant={activeStatus === s ? 'default' : 'outline'}
+            variant={activeStatuses.has(s) ? 'default' : 'outline'}
             size="xs"
-            aria-pressed={activeStatus === s}
+            aria-pressed={activeStatuses.has(s)}
             onClick={() => toggleStatus(s)}
           >
             {s}

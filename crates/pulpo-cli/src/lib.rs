@@ -84,6 +84,10 @@ pub enum Commands {
         #[arg(long)]
         worktree: bool,
 
+        /// Base branch to fork the worktree from (implies --worktree)
+        #[arg(long = "worktree-base")]
+        worktree_base: Option<String>,
+
         /// Runtime environment: tmux (default) or docker
         #[arg(long)]
         runtime: Option<String>,
@@ -169,6 +173,13 @@ pub enum Commands {
         #[command(subcommand)]
         action: SecretAction,
     },
+
+    /// Manage git worktrees for sessions
+    #[command(visible_alias = "wt")]
+    Worktree {
+        #[command(subcommand)]
+        action: WorktreeAction,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -192,6 +203,13 @@ pub enum SecretAction {
         /// Secret name
         name: String,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WorktreeAction {
+    /// List sessions that use git worktrees
+    #[command(visible_alias = "ls")]
+    List,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1036,6 +1054,62 @@ async fn execute_secret(
     Ok(String::new())
 }
 
+/// Execute a worktree subcommand.
+#[cfg(not(coverage))]
+async fn execute_worktree(
+    client: &reqwest::Client,
+    action: &WorktreeAction,
+    base: &str,
+    token: Option<&str>,
+) -> Result<String> {
+    match action {
+        WorktreeAction::List => {
+            let resp = authed_get(client, format!("{base}/api/v1/sessions"), token)
+                .send()
+                .await?;
+            let text = ok_or_api_error(resp).await?;
+            let sessions: Vec<Session> = serde_json::from_str(&text)?;
+            let wt_sessions: Vec<&Session> = sessions
+                .iter()
+                .filter(|s| s.worktree_path.is_some())
+                .collect();
+            Ok(format_worktree_sessions(&wt_sessions))
+        }
+    }
+}
+
+/// Coverage stub for worktree execution.
+#[cfg(coverage)]
+#[allow(clippy::unnecessary_wraps)]
+async fn execute_worktree(
+    _client: &reqwest::Client,
+    _action: &WorktreeAction,
+    _base: &str,
+    _token: Option<&str>,
+) -> Result<String> {
+    Ok(String::new())
+}
+
+/// Format worktree sessions as a table.
+fn format_worktree_sessions(sessions: &[&Session]) -> String {
+    if sessions.is_empty() {
+        return "No worktree sessions.".into();
+    }
+    let mut lines = vec![format!(
+        "{:<20} {:<20} {:<10} {}",
+        "NAME", "BRANCH", "STATUS", "PATH"
+    )];
+    for s in sessions {
+        let branch = s.worktree_branch.as_deref().unwrap_or("-");
+        let path = s.worktree_path.as_deref().unwrap_or("-");
+        lines.push(format!(
+            "{:<20} {:<20} {:<10} {}",
+            s.name, branch, s.status, path
+        ));
+    }
+    lines.join("\n")
+}
+
 /// Format a list of schedules as a table.
 #[cfg_attr(coverage, allow(dead_code))]
 fn format_schedules(schedules: &[serde_json::Value]) -> String {
@@ -1245,6 +1319,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             idle_threshold,
             auto,
             worktree,
+            worktree_base,
             runtime,
             secret,
             command,
@@ -1282,11 +1357,19 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             if let Some(t) = idle_threshold {
                 body["idle_threshold_secs"] = serde_json::json!(t);
             }
-            if *worktree {
+            // --base-branch implies --worktree
+            if *worktree || worktree_base.is_some() {
                 body["worktree"] = serde_json::json!(true);
-                eprintln!(
-                    "Worktree: branch pulpo/{resolved_name} in ~/.pulpo/worktrees/{resolved_name}/"
-                );
+                if let Some(base) = worktree_base {
+                    body["worktree_base"] = serde_json::json!(base);
+                    eprintln!(
+                        "Worktree: branch {resolved_name} (from {base}) in ~/.pulpo/worktrees/{resolved_name}/"
+                    );
+                } else {
+                    eprintln!(
+                        "Worktree: branch {resolved_name} in ~/.pulpo/worktrees/{resolved_name}/"
+                    );
+                }
             }
             if let Some(rt) = runtime {
                 body["runtime"] = serde_json::json!(rt);
@@ -1450,6 +1533,12 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 Err(other) => other,
             }),
         Commands::Secret { action } => execute_secret(&client, action, &url, token.as_deref())
+            .await
+            .map_err(|e| match e.downcast::<reqwest::Error>() {
+                Ok(re) => friendly_error(&re, node),
+                Err(other) => other,
+            }),
+        Commands::Worktree { action } => execute_worktree(&client, action, &url, token.as_deref())
             .await
             .map_err(|e| match e.downcast::<reqwest::Error>() {
                 Ok(re) => friendly_error(&re, node),
@@ -1650,6 +1739,154 @@ mod tests {
             &cli.command,
             Some(Commands::Spawn { worktree, .. }) if *worktree
         ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_worktree_base() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "spawn",
+            "my-task",
+            "--worktree",
+            "--worktree-base",
+            "main",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { worktree, worktree_base, .. })
+                if *worktree && worktree_base.as_deref() == Some("main")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_worktree_base_implies_worktree() {
+        // --worktree-base without --worktree should still parse (implied at execute time)
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--worktree-base", "develop"])
+            .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { worktree_base, .. })
+                if worktree_base.as_deref() == Some("develop")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_worktree_list() {
+        let cli = Cli::try_parse_from(["pulpo", "worktree", "list"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Worktree {
+                action: WorktreeAction::List
+            })
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_wt_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "wt", "list"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Worktree {
+                action: WorktreeAction::List
+            })
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_worktree_list_ls_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "wt", "ls"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Worktree {
+                action: WorktreeAction::List
+            })
+        ));
+    }
+
+    #[test]
+    fn test_format_worktree_sessions_empty() {
+        let output = format_worktree_sessions(&[]);
+        assert_eq!(output, "No worktree sessions.");
+    }
+
+    #[test]
+    fn test_format_worktree_sessions_with_data() {
+        use chrono::Utc;
+        use pulpo_common::session::SessionStatus;
+        use uuid::Uuid;
+
+        let session = Session {
+            id: Uuid::nil(),
+            name: "fix-auth".into(),
+            workdir: "/tmp/repo".into(),
+            command: "claude -p 'fix auth'".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: Some("/home/user/.pulpo/worktrees/fix-auth".into()),
+            worktree_branch: Some("fix-auth".into()),
+            runtime: Runtime::Tmux,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let sessions = vec![&session];
+        let output = format_worktree_sessions(&sessions);
+        assert!(output.contains("fix-auth"), "should show name: {output}");
+        assert!(output.contains("active"), "should show status: {output}");
+        assert!(
+            output.contains("/home/user/.pulpo/worktrees/fix-auth"),
+            "should show path: {output}"
+        );
+        assert!(output.contains("BRANCH"), "should have header: {output}");
+    }
+
+    #[test]
+    fn test_format_worktree_sessions_no_branch() {
+        use chrono::Utc;
+        use pulpo_common::session::SessionStatus;
+        use uuid::Uuid;
+
+        let session = Session {
+            id: Uuid::nil(),
+            name: "old-session".into(),
+            workdir: "/tmp".into(),
+            command: "echo".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: Some("/home/user/.pulpo/worktrees/old-session".into()),
+            worktree_branch: None,
+            runtime: Runtime::Tmux,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let sessions = vec![&session];
+        let output = format_worktree_sessions(&sessions);
+        assert!(
+            output.contains('-'),
+            "branch should show dash when None: {output}"
+        );
     }
 
     #[test]
@@ -1935,6 +2172,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                worktree_base: None,
                 runtime: None,
                 secret: vec![],
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
@@ -1961,6 +2199,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                worktree_base: None,
                 runtime: None,
                 secret: vec![],
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
@@ -1986,6 +2225,7 @@ mod tests {
                 idle_threshold: Some(120),
                 auto: false,
                 worktree: true,
+                worktree_base: None,
                 runtime: Some("docker".into()),
                 secret: vec![],
                 command: vec!["claude".into()],
@@ -2011,6 +2251,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                worktree_base: None,
                 runtime: None,
                 secret: vec![],
                 command: vec!["echo".into(), "hello".into()],
@@ -2036,6 +2277,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                worktree_base: None,
                 runtime: None,
                 secret: vec![],
                 command: vec![],
@@ -2061,6 +2303,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                worktree_base: None,
                 runtime: None,
                 secret: vec![],
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
@@ -2086,6 +2329,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                worktree_base: None,
                 runtime: None,
                 secret: vec![],
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
@@ -2300,6 +2544,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                worktree_base: None,
                 runtime: None,
                 secret: vec![],
                 command: vec!["test".into()],
@@ -2489,6 +2734,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2530,6 +2776,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Docker,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2565,6 +2812,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2598,6 +2846,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: Some("/home/user/.pulpo/worktrees/wt-task".into()),
+            worktree_branch: Some("wt-task".into()),
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2638,6 +2887,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2678,6 +2928,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: Some("/home/user/.pulpo/worktrees/both-task".into()),
+            worktree_branch: Some("both-task".into()),
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2714,6 +2965,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2816,6 +3068,7 @@ mod tests {
                 idle_threshold: None,
                 auto: false,
                 worktree: false,
+                worktree_base: None,
                 runtime: None,
                 secret: vec![],
                 command: vec!["test".into()],
@@ -4341,6 +4594,7 @@ mod tests {
                 idle_threshold: None,
                 auto: true,
                 worktree: false,
+                worktree_base: None,
                 runtime: None,
                 secret: vec![],
                 command: vec!["echo".into(), "hello".into()],
@@ -4518,6 +4772,7 @@ mod tests {
             idle_since: None,
             idle_threshold_secs: None,
             worktree_path: None,
+            worktree_branch: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
