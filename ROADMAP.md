@@ -74,7 +74,12 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - Built-in scheduler: DB-backed schedules with cron expressions, CRUD API (`/api/v1/schedules`), CLI (`pulpo schedule add/list/pause/resume/remove`), scheduler loop firing every 60s
 - Schedule dashboard: create/edit dialog with cron presets, next-run calculation, status filtering, expandable run history per schedule (`/api/v1/schedules/{id}/runs`)
 - PR/branch detection: watchdog scans session output for GitHub/GitLab/Bitbucket PR URLs and git branch pushes, stores in session metadata, surfaces as clickable badges in dashboard and `[PR]` marker in CLI
-- `pulpo ls` shows live sessions by default (`-a` for all), with ID, RUNTIME, and worktree/PR indicators
+- Watchdog telemetry: git branch/commit tracking, diff stats (+N/-N files), commits ahead of remote, error/failure detection (10+ patterns), token usage parsing, rate limit detection — all updated per tick, surfaced in CLI (REPO column) and web UI (badges + detail)
+- Worktree lifecycle: stop preserves worktree for resume, purge cleans up. `--worktree-base` forks from a specific branch. Branch cleanup on stop. Stale branch auto-recovery.
+- Unified sessions page: merged history into sessions with multi-select status filter chips. Dropped separate history page.
+- Mobile PWA fixes: bottom nav visibility, horizontal scroll prevention, scrollable node tabs
+- `pulpo ls` shows live sessions by default (`-a` for all), with ID, REPO (basename@branch +N/-N), and worktree/PR/error indicators
+- Browser suppression: sessions set `BROWSER=true` and override `open()` to prevent agents from opening browser tabs
 - Session liveness check: CLI polls session status with retries before attach on spawn/resume
 - Secret store: encrypted-at-rest secrets (`pulpo secret set/list/delete`) with `--env` override for env var mapping, `--secret` flag on spawn for injection via temp files (tmux) or `-e` flags (Docker). Secrets never in command strings, `ps` output, or logs.
 - Ink blueprints: inks support `secrets` and `runtime` fields, making them full session blueprints. Ink + request secrets are merged, request `--runtime` overrides ink default.
@@ -82,30 +87,40 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 
 ## What's Next
 
-### Phase 3: Multi-node Scheduling
+### Distribution & Visibility
 
-**P3.2 — Multi-node scheduling**
-- `target_node` field: `NULL` = local, `"mac-mini"` = specific node, `"auto"` = least-loaded peer
-- Local schedules fire via `session_manager.create_session()` directly
-- Remote schedules fire via HTTP POST to the target node's `/api/v1/sessions`
-- Auto schedules use `select_best_node` logic at fire time
-- SSE events for schedule fires and failures
+Pulpo's feature set is strong. The bottleneck is adoption, not capabilities.
 
-### Phase 5: Background Agent Operations
+**Landing page & docs polish**
+- Compelling landing page with demo GIF / video
+- Real-world usage examples (nightly code review, parallel agents, scheduled migrations)
+- Clear "5-minute quickstart" that shows the value immediately
 
-Make agents reliable when nobody is watching.
+**Richer notifications**
+- Notification content enrichment: "agent finished — created PR with +200 lines touching auth, 3 files changed"
+- Leverage watchdog telemetry (git stats, error detection, token usage) in Discord/web push messages
+- Notification summary digest (daily/weekly recap of agent activity)
 
-**P5.1 — Session cost tracking**
-- Track wall-clock time per session (already have created_at/updated_at)
-- Configurable cost-per-hour estimate (user sets API cost rate)
-- Dashboard shows cumulative cost per session, per day, per node
-- Budget alerts via notifications
-- Stretch: parse Claude Code transcript JSONL for real token costs
+**Homebrew-core submission**
+- Requires ≥75 GitHub stars
+- Source build, `brew audit` compliance, no auto-restart on upgrade
 
-**P5.2 remaining — Configurable output matchers**
-- Detect error patterns → auto-alert
-- Configurable output matchers (regex → action) in config
-- PR/branch detection is shipped; this extends it to user-defined patterns
+### Parked Features (build when demanded)
+
+**Multi-node scheduling (P3.2)**
+- `target_node` on schedules: `NULL` = local, `"mac-mini"` = specific, `"auto"` = least-loaded
+- Remote dispatch via HTTP POST to target node's API
+- Build when there are real users with multi-node fleets running scheduled agents
+
+**Configurable output matchers (P5.2)**
+- User-defined regex → action rules in config.toml
+- Extends the hardcoded error/PR/rate-limit detection to custom patterns
+- Build when users ask for patterns we don't cover
+
+**Session cost dashboard (P5.1)**
+- Token tracking from output is shipped; cost = tokens × rate
+- Configurable cost rates, cumulative cost per session/day/node, budget alerts
+- Build when cost visibility becomes a real pain point
 
 ### Phase 6: Team Readiness
 
@@ -137,6 +152,7 @@ Revisit when demanded by real usage, not by speculation.
 - **Node labels/scheduling constraints** — useful at fleet scale, premature now.
 - **SLO metrics / Prometheus endpoint** — observability for its own sake; dashboard shows what matters.
 - **Worktree merge/PR action** — agents create PRs themselves; a pulpo-level merge button would duplicate agent functionality.
+- **Multi-node scheduling** — moved to Parked Features in What's Next. Build when real fleet usage demands it.
 
 ## Removed
 
