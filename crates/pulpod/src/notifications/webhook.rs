@@ -128,6 +128,13 @@ mod tests {
             node_name: "node-1".into(),
             output_snippet: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
+            git_branch: None,
+            git_commit: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_files_changed: None,
+            pr_url: None,
+            error_status: None,
         }
     }
 
@@ -155,14 +162,43 @@ mod tests {
 
     #[test]
     fn test_build_payload_with_optionals() {
-        let event = SessionEvent {
-            previous_status: Some("lost".into()),
-            output_snippet: Some("hello".into()),
-            ..test_event("active")
-        };
+        let mut event = test_event("active");
+        event.previous_status = Some("lost".into());
+        event.output_snippet = Some("hello".into());
         let payload = build_webhook_payload(&event);
         assert_eq!(payload["previous_status"], "lost");
         assert_eq!(payload["output_snippet"], "hello");
+    }
+
+    #[test]
+    fn test_build_payload_with_enrichment_fields() {
+        let mut event = test_event("ready");
+        event.git_branch = Some("main".into());
+        event.git_commit = Some("abc1234".into());
+        event.git_insertions = Some(42);
+        event.git_deletions = Some(7);
+        event.git_files_changed = Some(3);
+        event.pr_url = Some("https://github.com/org/repo/pull/1".into());
+        event.error_status = Some("Lint warning".into());
+        let payload = build_webhook_payload(&event);
+        assert_eq!(payload["git_branch"], "main");
+        assert_eq!(payload["git_commit"], "abc1234");
+        assert_eq!(payload["git_insertions"], 42);
+        assert_eq!(payload["git_deletions"], 7);
+        assert_eq!(payload["git_files_changed"], 3);
+        assert_eq!(payload["pr_url"], "https://github.com/org/repo/pull/1");
+        assert_eq!(payload["error_status"], "Lint warning");
+    }
+
+    #[test]
+    fn test_build_payload_enrichment_fields_omitted_when_none() {
+        let event = test_event("active");
+        let payload = build_webhook_payload(&event);
+        assert!(payload.get("git_branch").is_none());
+        assert!(payload.get("git_commit").is_none());
+        assert!(payload.get("git_insertions").is_none());
+        assert!(payload.get("pr_url").is_none());
+        assert!(payload.get("error_status").is_none());
     }
 
     // --- compute_signature tests ---
@@ -431,6 +467,13 @@ mod tests {
                 node_name: "n".into(),
                 output_snippet: None,
                 timestamp: "t".into(),
+                git_branch: None,
+                git_commit: None,
+                git_insertions: None,
+                git_deletions: None,
+                git_files_changed: None,
+                pr_url: None,
+                error_status: None,
             }));
         }
 

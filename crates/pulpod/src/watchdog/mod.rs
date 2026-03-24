@@ -576,6 +576,13 @@ async fn check_session_idle(
                         node_name: ready_ctx.node_name.clone(),
                         output_snippet: Some(current_output.clone()),
                         timestamp: chrono::Utc::now().to_rfc3339(),
+                        git_branch: None,
+                        git_commit: None,
+                        git_insertions: None,
+                        git_deletions: None,
+                        git_files_changed: None,
+                        pr_url: None,
+                        error_status: None,
                     };
                     let _ = tx.send(PulpoEvent::Session(event));
                 }
@@ -614,6 +621,13 @@ async fn handle_session_ready(store: &Store, session: &Session, ctx: &ReadyConte
             node_name: ctx.node_name.clone(),
             output_snippet: session.output_snapshot.clone(),
             timestamp: chrono::Utc::now().to_rfc3339(),
+            git_branch: None,
+            git_commit: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_files_changed: None,
+            pr_url: None,
+            error_status: None,
         };
         let _ = tx.send(PulpoEvent::Session(event));
     }
@@ -647,6 +661,13 @@ async fn handle_active_session(
                 node_name: ready_ctx.node_name.clone(),
                 output_snippet: session.output_snapshot.clone(),
                 timestamp: chrono::Utc::now().to_rfc3339(),
+                git_branch: None,
+                git_commit: None,
+                git_insertions: None,
+                git_deletions: None,
+                git_files_changed: None,
+                pr_url: None,
+                error_status: None,
             };
             let _ = tx.send(PulpoEvent::Session(event));
         }
@@ -1086,6 +1107,13 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
                 node_name: ctx.node_name.clone(),
                 output_snippet: None,
                 timestamp: chrono::Utc::now().to_rfc3339(),
+                git_branch: None,
+                git_commit: None,
+                git_insertions: None,
+                git_deletions: None,
+                git_files_changed: None,
+                pr_url: None,
+                error_status: None,
             };
             let _ = tx.send(PulpoEvent::Session(event));
         }

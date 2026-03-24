@@ -75,6 +75,45 @@ pub fn build_discord_payload(event: &SessionEvent) -> serde_json::Value {
         });
     }
 
+    if let Some(url) = &event.pr_url {
+        fields.push(DiscordField {
+            name: "PR".into(),
+            value: format!("[View PR]({url})"),
+            inline: true,
+        });
+    }
+
+    if let Some(branch) = &event.git_branch {
+        let value = event
+            .git_commit
+            .as_ref()
+            .map_or_else(|| branch.clone(), |commit| format!("{branch}@{commit}"));
+        fields.push(DiscordField {
+            name: "Branch".into(),
+            value,
+            inline: true,
+        });
+    }
+
+    let ins = event.git_insertions.unwrap_or(0);
+    let del = event.git_deletions.unwrap_or(0);
+    if ins > 0 || del > 0 {
+        let files = event.git_files_changed.unwrap_or(0);
+        fields.push(DiscordField {
+            name: "Changes".into(),
+            value: format!("+{ins}/-{del} ({files} files)"),
+            inline: true,
+        });
+    }
+
+    if let Some(err) = &event.error_status {
+        fields.push(DiscordField {
+            name: "Error".into(),
+            value: err.clone(),
+            inline: false,
+        });
+    }
+
     if let Some(snippet) = &event.output_snippet {
         fields.push(DiscordField {
             name: "Output".into(),
@@ -182,6 +221,13 @@ mod tests {
             node_name: "node-1".into(),
             output_snippet: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
+            git_branch: None,
+            git_commit: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_files_changed: None,
+            pr_url: None,
+            error_status: None,
         }
     }
 
@@ -301,6 +347,93 @@ mod tests {
 
         let fields = payload["embeds"][0]["fields"].as_array().unwrap();
         assert_eq!(fields.len(), 4); // Status + Node + Previous + Output
+    }
+
+    #[test]
+    fn test_build_payload_with_pr_url() {
+        let mut event = test_event("ready");
+        event.pr_url = Some("https://github.com/org/repo/pull/42".into());
+        let payload = build_discord_payload(&event);
+        let fields = payload["embeds"][0]["fields"].as_array().unwrap();
+        let pr_field = fields.iter().find(|f| f["name"] == "PR").unwrap();
+        assert!(pr_field["value"].as_str().unwrap().contains("[View PR]"));
+        assert!(
+            pr_field["value"]
+                .as_str()
+                .unwrap()
+                .contains("https://github.com/org/repo/pull/42")
+        );
+        assert!(pr_field["inline"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_build_payload_with_branch_and_commit() {
+        let mut event = test_event("ready");
+        event.git_branch = Some("main".into());
+        event.git_commit = Some("abc1234".into());
+        let payload = build_discord_payload(&event);
+        let fields = payload["embeds"][0]["fields"].as_array().unwrap();
+        let branch_field = fields.iter().find(|f| f["name"] == "Branch").unwrap();
+        assert_eq!(branch_field["value"], "main@abc1234");
+    }
+
+    #[test]
+    fn test_build_payload_with_branch_no_commit() {
+        let mut event = test_event("ready");
+        event.git_branch = Some("fix-auth".into());
+        let payload = build_discord_payload(&event);
+        let fields = payload["embeds"][0]["fields"].as_array().unwrap();
+        let branch_field = fields.iter().find(|f| f["name"] == "Branch").unwrap();
+        assert_eq!(branch_field["value"], "fix-auth");
+    }
+
+    #[test]
+    fn test_build_payload_with_changes() {
+        let mut event = test_event("ready");
+        event.git_insertions = Some(42);
+        event.git_deletions = Some(7);
+        event.git_files_changed = Some(3);
+        let payload = build_discord_payload(&event);
+        let fields = payload["embeds"][0]["fields"].as_array().unwrap();
+        let changes_field = fields.iter().find(|f| f["name"] == "Changes").unwrap();
+        assert_eq!(changes_field["value"], "+42/-7 (3 files)");
+    }
+
+    #[test]
+    fn test_build_payload_with_zero_changes_omitted() {
+        let mut event = test_event("ready");
+        event.git_insertions = Some(0);
+        event.git_deletions = Some(0);
+        let payload = build_discord_payload(&event);
+        let fields = payload["embeds"][0]["fields"].as_array().unwrap();
+        assert!(fields.iter().all(|f| f["name"] != "Changes"));
+    }
+
+    #[test]
+    fn test_build_payload_with_error_status() {
+        let mut event = test_event("stopped");
+        event.error_status = Some("Compile error in main.rs".into());
+        let payload = build_discord_payload(&event);
+        let fields = payload["embeds"][0]["fields"].as_array().unwrap();
+        let err_field = fields.iter().find(|f| f["name"] == "Error").unwrap();
+        assert_eq!(err_field["value"], "Compile error in main.rs");
+        assert!(!err_field["inline"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_build_payload_with_all_enrichment_fields() {
+        let mut event = test_event("ready");
+        event.pr_url = Some("https://github.com/org/repo/pull/1".into());
+        event.git_branch = Some("feat-x".into());
+        event.git_commit = Some("deadbeef".into());
+        event.git_insertions = Some(100);
+        event.git_deletions = Some(50);
+        event.git_files_changed = Some(10);
+        event.error_status = Some("Lint warning".into());
+        let payload = build_discord_payload(&event);
+        let fields = payload["embeds"][0]["fields"].as_array().unwrap();
+        // Status + Node + PR + Branch + Changes + Error = 6
+        assert_eq!(fields.len(), 6);
     }
 
     #[test]
@@ -501,6 +634,13 @@ mod tests {
                 node_name: "n".into(),
                 output_snippet: None,
                 timestamp: "t".into(),
+                git_branch: None,
+                git_commit: None,
+                git_insertions: None,
+                git_deletions: None,
+                git_files_changed: None,
+                pr_url: None,
+                error_status: None,
             }));
         }
 

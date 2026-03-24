@@ -36,12 +36,14 @@ describe('detectStatusChanges', () => {
     const changes = detectStatusChanges(prev, curr);
 
     expect(changes).toHaveLength(1);
-    expect(changes[0]).toEqual({
-      sessionId: '1',
-      sessionName: 'my-api',
-      from: 'active',
-      to: 'ready',
-    });
+    expect(changes[0]).toEqual(
+      expect.objectContaining({
+        sessionId: '1',
+        sessionName: 'my-api',
+        from: 'active',
+        to: 'ready',
+      }),
+    );
   });
 
   it('detects active → stopped transition', () => {
@@ -61,12 +63,14 @@ describe('detectStatusChanges', () => {
     const changes = detectStatusChanges(prev, curr);
 
     expect(changes).toHaveLength(1);
-    expect(changes[0]).toEqual({
-      sessionId: '1',
-      sessionName: 'my-api',
-      from: 'lost',
-      to: 'active',
-    });
+    expect(changes[0]).toEqual(
+      expect.objectContaining({
+        sessionId: '1',
+        sessionName: 'my-api',
+        from: 'lost',
+        to: 'active',
+      }),
+    );
   });
 
   it('ignores sessions with no status change', () => {
@@ -151,6 +155,58 @@ describe('formatStatusLabel', () => {
     expect(
       formatStatusLabel({ sessionId: '1', sessionName: 'my-api', from: 'lost', to: 'active' }),
     ).toBe('my-api resumed');
+  });
+
+  it('includes branch and changes when available', () => {
+    expect(
+      formatStatusLabel({
+        sessionId: '1',
+        sessionName: 'portal',
+        from: 'active',
+        to: 'ready',
+        gitBranch: 'main',
+        gitInsertions: 42,
+        gitDeletions: 7,
+        gitFilesChanged: 3,
+      }),
+    ).toBe('portal ready (+42/-7, 3 files on main)');
+  });
+
+  it('includes branch only when no changes', () => {
+    expect(
+      formatStatusLabel({
+        sessionId: '1',
+        sessionName: 'my-api',
+        from: 'active',
+        to: 'ready',
+        gitBranch: 'fix-auth',
+      }),
+    ).toBe('my-api ready on fix-auth');
+  });
+
+  it('includes error status when available', () => {
+    expect(
+      formatStatusLabel({
+        sessionId: '1',
+        sessionName: 'test',
+        from: 'active',
+        to: 'stopped',
+        errorStatus: 'Compile error',
+      }),
+    ).toBe('test stopped (Compile error)');
+  });
+
+  it('prefers error status over branch info', () => {
+    expect(
+      formatStatusLabel({
+        sessionId: '1',
+        sessionName: 'test',
+        from: 'active',
+        to: 'stopped',
+        errorStatus: 'Compile error',
+        gitBranch: 'main',
+      }),
+    ).toBe('test stopped (Compile error)');
   });
 });
 
@@ -345,5 +401,50 @@ describe('showDesktopNotification', () => {
     });
 
     // Should not throw
+  });
+
+  it('includes enrichment info in ready notification body', () => {
+    showDesktopNotification({
+      sessionId: '1',
+      sessionName: 'portal',
+      from: 'active',
+      to: 'ready',
+      gitBranch: 'main',
+      gitInsertions: 42,
+      gitDeletions: 7,
+      gitFilesChanged: 3,
+    });
+
+    expect(NotificationConstructor).toHaveBeenCalledWith('Session ready: portal', {
+      body: 'portal is ready — +42/-7 (3 files) on main',
+    });
+  });
+
+  it('includes branch only in notification body', () => {
+    showDesktopNotification({
+      sessionId: '1',
+      sessionName: 'my-api',
+      from: 'active',
+      to: 'ready',
+      gitBranch: 'fix-auth',
+    });
+
+    expect(NotificationConstructor).toHaveBeenCalledWith('Session ready: my-api', {
+      body: 'my-api is ready — on branch fix-auth',
+    });
+  });
+
+  it('includes error status in stopped notification body', () => {
+    showDesktopNotification({
+      sessionId: '1',
+      sessionName: 'test',
+      from: 'active',
+      to: 'stopped',
+      errorStatus: 'Compile error',
+    });
+
+    expect(NotificationConstructor).toHaveBeenCalledWith('Session stopped: test', {
+      body: 'test has been stopped — Error: Compile error',
+    });
   });
 });

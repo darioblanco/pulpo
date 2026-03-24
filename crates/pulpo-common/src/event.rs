@@ -9,6 +9,21 @@ pub struct SessionEvent {
     pub node_name: String,
     pub output_snippet: Option<String>,
     pub timestamp: String,
+    /// Enrichment fields for notifications (populated from session metadata/fields).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_insertions: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_deletions: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_files_changed: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +46,13 @@ mod tests {
             node_name: "node-1".into(),
             output_snippet: Some("Hello world".into()),
             timestamp: "2026-01-01T00:00:00Z".into(),
+            git_branch: None,
+            git_commit: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_files_changed: None,
+            pr_url: None,
+            error_status: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         let deserialized: SessionEvent = serde_json::from_str(&json).unwrap();
@@ -52,6 +74,13 @@ mod tests {
             node_name: "n".into(),
             output_snippet: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
+            git_branch: None,
+            git_commit: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_files_changed: None,
+            pr_url: None,
+            error_status: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"previous_status\":null"));
@@ -68,6 +97,13 @@ mod tests {
             node_name: "n".into(),
             output_snippet: None,
             timestamp: "t".into(),
+            git_branch: None,
+            git_commit: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_files_changed: None,
+            pr_url: None,
+            error_status: None,
         };
         let cloned = event.clone();
         assert_eq!(format!("{event:?}"), format!("{cloned:?}"));
@@ -83,6 +119,13 @@ mod tests {
             node_name: "n".into(),
             output_snippet: None,
             timestamp: "t".into(),
+            git_branch: None,
+            git_commit: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_files_changed: None,
+            pr_url: None,
+            error_status: None,
         });
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"kind\":\"session\""));
@@ -113,6 +156,13 @@ mod tests {
             node_name: "n".into(),
             output_snippet: None,
             timestamp: "t".into(),
+            git_branch: None,
+            git_commit: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_files_changed: None,
+            pr_url: None,
+            error_status: None,
         });
         let cloned = event.clone();
         assert_eq!(format!("{event:?}"), format!("{cloned:?}"));
@@ -128,6 +178,13 @@ mod tests {
             node_name: "n".into(),
             output_snippet: Some("done".into()),
             timestamp: "2026-01-01T00:00:00Z".into(),
+            git_branch: None,
+            git_commit: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_files_changed: None,
+            pr_url: None,
+            error_status: None,
         });
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: PulpoEvent = serde_json::from_str(&json).unwrap();

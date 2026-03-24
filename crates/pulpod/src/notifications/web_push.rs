@@ -1,3 +1,5 @@
+use std::fmt::Write;
+
 use pulpo_common::event::{PulpoEvent, SessionEvent};
 #[cfg_attr(coverage, allow(unused_imports))]
 use tracing::{error, info};
@@ -12,10 +14,39 @@ pub struct WebPushNotifier {
     vapid_private_key: String,
 }
 
+/// Builds a concise, enriched body line for a web push notification.
+fn build_body(event: &SessionEvent) -> String {
+    let mut body = format!("Session `{}` is now {}", event.session_name, event.status);
+
+    // Append PR info
+    if event.pr_url.is_some() {
+        let ins = event.git_insertions.unwrap_or(0);
+        let del = event.git_deletions.unwrap_or(0);
+        if ins > 0 || del > 0 {
+            let files = event.git_files_changed.unwrap_or(0);
+            let _ = write!(body, " — created PR (+{ins}/-{del}, {files} files)");
+        } else {
+            body.push_str(" — created PR");
+        }
+    }
+
+    // Append branch
+    if let Some(branch) = &event.git_branch {
+        let _ = write!(body, " on branch {branch}");
+    }
+
+    // Append error
+    if let Some(err) = &event.error_status {
+        let _ = write!(body, " with error: {err}");
+    }
+
+    body
+}
+
 /// Builds the Web Push notification payload JSON for a session event.
 pub fn build_payload(event: &SessionEvent) -> String {
     let title = format!("Session: {}", event.session_name);
-    let body = format!("Session `{}` is now {}", event.session_name, event.status);
+    let body = build_body(event);
     serde_json::json!({
         "title": title,
         "body": body,
@@ -178,6 +209,13 @@ mod tests {
             node_name: "node-1".into(),
             output_snippet: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
+            git_branch: None,
+            git_commit: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_files_changed: None,
+            pr_url: None,
+            error_status: None,
         }
     }
 
@@ -217,6 +255,55 @@ mod tests {
     }
 
     #[test]
+    fn test_build_body_with_pr_and_changes() {
+        let mut event = test_event("ready");
+        event.pr_url = Some("https://github.com/org/repo/pull/42".into());
+        event.git_insertions = Some(42);
+        event.git_deletions = Some(7);
+        event.git_files_changed = Some(3);
+        event.git_branch = Some("main".into());
+        let body = build_body(&event);
+        assert_eq!(
+            body,
+            "Session `my-session` is now ready — created PR (+42/-7, 3 files) on branch main"
+        );
+    }
+
+    #[test]
+    fn test_build_body_with_branch_only() {
+        let mut event = test_event("ready");
+        event.git_branch = Some("fix-auth".into());
+        let body = build_body(&event);
+        assert_eq!(body, "Session `my-session` is now ready on branch fix-auth");
+    }
+
+    #[test]
+    fn test_build_body_with_error() {
+        let mut event = test_event("stopped");
+        event.error_status = Some("Compile error".into());
+        let body = build_body(&event);
+        assert_eq!(
+            body,
+            "Session `my-session` is now stopped with error: Compile error"
+        );
+    }
+
+    #[test]
+    fn test_build_body_with_pr_no_changes() {
+        let mut event = test_event("ready");
+        event.pr_url = Some("https://github.com/org/repo/pull/1".into());
+        let body = build_body(&event);
+        assert_eq!(body, "Session `my-session` is now ready — created PR");
+    }
+
+    #[test]
+    fn test_build_body_plain() {
+        let event = test_event("active");
+        let body = build_body(&event);
+        assert_eq!(body, "Session `my-session` is now active");
+    }
+
+    #[test]
     fn test_build_payload_with_special_chars() {
         let event = SessionEvent {
             session_id: "id-1".into(),
@@ -226,6 +313,13 @@ mod tests {
             node_name: "node".into(),
             output_snippet: None,
             timestamp: "t".into(),
+            git_branch: None,
+            git_commit: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_files_changed: None,
+            pr_url: None,
+            error_status: None,
         };
         let payload_str = build_payload(&event);
         // Should produce valid JSON even with special characters
@@ -340,6 +434,13 @@ mod tests {
                 node_name: "n".into(),
                 output_snippet: None,
                 timestamp: "t".into(),
+                git_branch: None,
+                git_commit: None,
+                git_insertions: None,
+                git_deletions: None,
+                git_files_changed: None,
+                pr_url: None,
+                error_status: None,
             }));
         }
 

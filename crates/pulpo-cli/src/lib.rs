@@ -1224,6 +1224,82 @@ async fn select_best_node(
     Ok(("localhost:7433".into(), "local".into()))
 }
 
+/// Try to start pulpod if it's not reachable on localhost.
+/// Returns true if the daemon was started (or was already running).
+#[cfg(not(coverage))]
+async fn ensure_daemon_running(client: &reqwest::Client, url: &str, node: &str) -> bool {
+    if !is_localhost(node) {
+        return true; // Remote node — not our job to start
+    }
+    // Quick health check
+    if client
+        .get(format!("{url}/api/v1/health"))
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await
+        .is_ok()
+    {
+        return true; // Already running
+    }
+
+    eprintln!("pulpod is not running — starting it...");
+
+    // Try brew services first (macOS), then systemd (Linux), then direct spawn
+    let started = if cfg!(target_os = "macos") {
+        std::process::Command::new("brew")
+            .args(["services", "start", "pulpo"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    } else {
+        std::process::Command::new("systemctl")
+            .args(["--user", "start", "pulpo"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    };
+
+    if !started {
+        // Fallback: spawn pulpod directly in background
+        if std::process::Command::new("pulpod")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .is_err()
+        {
+            eprintln!(
+                "Failed to start pulpod. Install it with: brew install darioblanco/tap/pulpo"
+            );
+            return false;
+        }
+    }
+
+    // Wait for it to become reachable (up to 5 seconds)
+    for _ in 0..10 {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if client
+            .get(format!("{url}/api/v1/health"))
+            .timeout(std::time::Duration::from_secs(1))
+            .send()
+            .await
+            .is_ok()
+        {
+            eprintln!("pulpod started.");
+            return true;
+        }
+    }
+    eprintln!("pulpod did not start in time.");
+    false
+}
+
+/// Coverage stub for daemon auto-start.
+#[cfg(coverage)]
+async fn ensure_daemon_running(_client: &reqwest::Client, _url: &str, _node: &str) -> bool {
+    true
+}
+
 /// Execute the given CLI command against the specified node.
 #[allow(clippy::too_many_lines)]
 pub async fn execute(cli: &Cli) -> Result<String> {
@@ -1231,6 +1307,10 @@ pub async fn execute(cli: &Cli) -> Result<String> {
     let (resolved_node, peer_token) = resolve_node(&client, &cli.node).await;
     let url = base_url(&resolved_node);
     let node = &resolved_node;
+
+    // Auto-start pulpod if it's not running on localhost
+    ensure_daemon_running(&client, &url, node).await;
+
     let token = resolve_token(&client, &url, node, cli.token.as_deref())
         .await
         .or(peer_token);

@@ -98,6 +98,14 @@ impl SessionManager {
 
     fn emit_event(&self, session: &Session, previous_status: Option<SessionStatus>) {
         if let Some(tx) = &self.event_tx {
+            let pr_url = session
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("pr_url").cloned());
+            let error_status = session
+                .metadata
+                .as_ref()
+                .and_then(|m| m.get("error_status").cloned());
             let event = SessionEvent {
                 session_id: session.id.to_string(),
                 session_name: session.name.clone(),
@@ -106,6 +114,13 @@ impl SessionManager {
                 node_name: self.node_name.clone(),
                 output_snippet: session.output_snapshot.clone(),
                 timestamp: Utc::now().to_rfc3339(),
+                git_branch: session.git_branch.clone(),
+                git_commit: session.git_commit.clone(),
+                git_insertions: session.git_insertions,
+                git_deletions: session.git_deletions,
+                git_files_changed: session.git_files_changed,
+                pr_url,
+                error_status,
             };
             // Ignore send errors — no subscribers is OK
             let _ = tx.send(PulpoEvent::Session(event));
