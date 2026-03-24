@@ -17,6 +17,7 @@
   <a href="https://hub.docker.com/r/darioblanco/pulpo-agents"><img src="https://img.shields.io/docker/pulls/darioblanco/pulpo-agents" alt="Docker Hub: pulpo-agents"></a>
   <a href="https://hub.docker.com/r/darioblanco/pulpo-discord-bot"><img src="https://img.shields.io/docker/pulls/darioblanco/pulpo-discord-bot" alt="Docker Hub: pulpo-discord-bot"></a>
   <a href="https://github.com/darioblanco/pulpo#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a>
+[![Hypercommit](https://img.shields.io/badge/Hypercommit-DB2475)](https://hypercommit.com/pulpo)
 </p>
 
 > **Experimental** — Pulpo is in early development. APIs, config format, and behavior may change between releases.
