@@ -1052,6 +1052,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: now,
             updated_at: now,

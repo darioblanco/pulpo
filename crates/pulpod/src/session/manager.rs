@@ -232,6 +232,8 @@ impl SessionManager {
             idle_threshold_secs: req.idle_threshold_secs,
             worktree_path,
             worktree_branch,
+            git_branch: None,
+            git_commit: None,
             runtime,
             created_at: now,
             updated_at: now,
@@ -449,14 +451,14 @@ impl SessionManager {
             .await?;
         let mut stopped_session = session;
         stopped_session.status = SessionStatus::Stopped;
-        // Clean up worktree if this was a worktree session
-        if let Some(ref wt_path) = stopped_session.worktree_path {
-            tracing::info!(session = %stopped_session.name, path = %wt_path, "Cleaning up worktree after stop");
-            cleanup_worktree(wt_path, &stopped_session.workdir);
-        }
         self.emit_event(&stopped_session, Some(previous));
 
         if purge {
+            // Clean up worktree only on purge — stop preserves it for resume.
+            if let Some(ref wt_path) = stopped_session.worktree_path {
+                tracing::info!(session = %stopped_session.name, path = %wt_path, "Cleaning up worktree after purge");
+                cleanup_worktree(wt_path, &stopped_session.workdir);
+            }
             self.store.delete_session(&session_id).await?;
         }
 
@@ -505,9 +507,17 @@ impl SessionManager {
             );
         }
 
+        // Use worktree path as workdir if it still exists, otherwise fall back to original workdir.
+        let effective_workdir = session
+            .worktree_path
+            .as_ref()
+            .filter(|p| std::path::Path::new(p).exists())
+            .cloned()
+            .unwrap_or_else(|| session.workdir.clone());
+
         // Validate workdir still exists (skip for Docker — workdir is inside the container)
         if session.runtime != Runtime::Docker {
-            validate_workdir(&session.workdir)?;
+            validate_workdir(&effective_workdir)?;
         }
 
         // If the backend session is still alive, just re-mark it as running.
@@ -521,7 +531,7 @@ impl SessionManager {
             } else {
                 wrap_command(&session.command, &session.id, &session.name, None)
             };
-            active_backend.create_session(&backend_id, &session.workdir, &final_command)?;
+            active_backend.create_session(&backend_id, &effective_workdir, &final_command)?;
 
             // Query the new tmux $N session ID (tmux only)
             if session.runtime == Runtime::Tmux
@@ -2521,6 +2531,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now() - chrono::Duration::hours(1),
             updated_at: Utc::now(),

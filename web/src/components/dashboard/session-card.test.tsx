@@ -707,4 +707,38 @@ describe('SessionCard', () => {
       expect(screen.getByText('Hide history')).toBeInTheDocument();
     });
   });
+
+  // Git branch badge
+
+  it('shows git branch badge when git_branch is set and no worktree', () => {
+    renderCard(makeSession({ git_branch: 'main', git_commit: 'abc1234' }));
+    const badge = screen.getByTestId('git-branch-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('main');
+    expect(badge).toHaveTextContent('@abc1234');
+  });
+
+  it('shows git branch badge without commit when git_commit is null', () => {
+    renderCard(makeSession({ git_branch: 'develop' }));
+    const badge = screen.getByTestId('git-branch-badge');
+    expect(badge).toBeInTheDocument();
+    expect(badge).toHaveTextContent('develop');
+    expect(badge).not.toHaveTextContent('@');
+  });
+
+  it('hides git branch badge when git_branch is null', () => {
+    renderCard(makeSession());
+    expect(screen.queryByTestId('git-branch-badge')).not.toBeInTheDocument();
+  });
+
+  it('hides git branch badge when worktree_path is set', () => {
+    renderCard(
+      makeSession({
+        worktree_path: '/repo/.pulpo/worktrees/my-task',
+        git_branch: 'my-task',
+      }),
+    );
+    expect(screen.queryByTestId('git-branch-badge')).not.toBeInTheDocument();
+    expect(screen.getByTestId('worktree-badge')).toBeInTheDocument();
+  });
 });

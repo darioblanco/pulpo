@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
-import { GitBranch, GitPullRequest, ExternalLink, AlertTriangle } from 'lucide-react';
+import { GitBranch, GitCommit, GitPullRequest, ExternalLink, AlertTriangle } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -160,6 +160,16 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
             >
               <GitBranch className="h-3 w-3" />
               {session.worktree_branch ?? session.worktree_path?.split('/').pop()}
+            </span>
+          )}
+          {!session.worktree_path && session.git_branch && (
+            <span
+              data-testid="git-branch-badge"
+              className="flex shrink-0 items-center gap-0.5 rounded bg-[#1e2d3d] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#7a9aba]"
+            >
+              <GitCommit className="h-3 w-3" />
+              {session.git_branch}
+              {session.git_commit && <span className="text-[#5a7a9a]">@{session.git_commit}</span>}
             </span>
           )}
           {session.metadata?.pr_url && (

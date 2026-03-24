@@ -394,4 +394,28 @@ describe('SessionDetailPage', () => {
     });
     expect(screen.getByText('Idle timeout')).toBeInTheDocument();
   });
+
+  it('shows git branch and commit when set', async () => {
+    mockGetSession.mockResolvedValue(
+      makeSession({
+        git_branch: 'feature/login',
+        git_commit: 'abc1234',
+      }),
+    );
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId('session-git-branch')).toHaveTextContent('feature/login');
+      expect(screen.getByTestId('session-git-commit')).toHaveTextContent('abc1234');
+    });
+  });
+
+  it('hides git info when not set', async () => {
+    mockGetSession.mockResolvedValue(makeSession());
+    renderDetail();
+    await waitFor(() => {
+      expect(screen.getByTestId('session-name')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('session-git-branch')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('session-git-commit')).not.toBeInTheDocument();
+  });
 });

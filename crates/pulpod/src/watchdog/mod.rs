@@ -167,6 +167,9 @@ pub async fn run_watchdog_loop(
                 if cfg.adopt_tmux {
                     adopt_tmux_sessions(&backend, &store, &ready_ctx).await;
                 }
+
+                // Update git branch/commit info for active sessions
+                update_git_info(&store).await;
             }
             _ = shutdown_rx.changed() => {
                 info!("Watchdog shutting down");
@@ -175,6 +178,73 @@ pub async fn run_watchdog_loop(
         }
     }
 }
+
+/// Detect and update git branch/commit info for active and idle sessions.
+/// Gated with `cfg(not(coverage))` because it requires real git commands.
+#[cfg(not(coverage))]
+async fn update_git_info(store: &Store) {
+    let sessions = match store.list_sessions().await {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("Watchdog: failed to list sessions for git info: {e}");
+            return;
+        }
+    };
+
+    let live: Vec<_> = sessions
+        .into_iter()
+        .filter(|s| s.status == SessionStatus::Active || s.status == SessionStatus::Idle)
+        .collect();
+
+    for session in live {
+        let effective_dir = session
+            .worktree_path
+            .as_deref()
+            .unwrap_or(&session.workdir)
+            .to_owned();
+        let session_id = session.id.to_string();
+        let old_branch = session.git_branch.clone();
+        let old_commit = session.git_commit.clone();
+
+        let result = tokio::task::spawn_blocking(move || {
+            let branch = std::process::Command::new("git")
+                .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                .current_dir(&effective_dir)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
+            let commit = std::process::Command::new("git")
+                .args(["rev-parse", "--short", "HEAD"])
+                .current_dir(&effective_dir)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
+            (branch, commit)
+        })
+        .await;
+
+        match result {
+            Ok((branch, commit)) => {
+                if (branch != old_branch || commit != old_commit)
+                    && let Err(e) = store
+                        .update_session_git_info(&session_id, branch.as_deref(), commit.as_deref())
+                        .await
+                {
+                    warn!("Watchdog: failed to update git info for {session_id}: {e}");
+                }
+            }
+            Err(e) => {
+                debug!("Watchdog: git info task failed for {session_id}: {e}");
+            }
+        }
+    }
+}
+
+/// No-op stub under coverage builds (real git commands not available in test).
+#[cfg(coverage)]
+async fn update_git_info(_store: &Store) {}
 
 async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemorySnapshot) {
     let sessions = match store.list_sessions().await {
@@ -857,6 +927,8 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -1088,6 +1160,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -1556,6 +1630,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -1881,6 +1957,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -1935,6 +2013,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -1997,6 +2077,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2049,6 +2131,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2121,6 +2205,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2173,6 +2259,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2226,6 +2314,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2300,6 +2390,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now() - chrono::Duration::seconds(700),
             updated_at: chrono::Utc::now(),
@@ -2376,6 +2468,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2444,6 +2538,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2483,6 +2579,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2619,6 +2717,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2678,6 +2778,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2738,6 +2840,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -2921,6 +3025,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -3172,6 +3278,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -3223,6 +3331,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -3273,6 +3383,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -3930,6 +4042,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),

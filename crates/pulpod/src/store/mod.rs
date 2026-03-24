@@ -318,6 +318,21 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
+        // Idempotent migration: git_branch and git_commit columns
+        let has_git_branch: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'git_branch'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_git_branch == 0 {
+            sqlx::query("ALTER TABLE sessions ADD COLUMN git_branch TEXT")
+                .execute(&self.pool)
+                .await?;
+            sqlx::query("ALTER TABLE sessions ADD COLUMN git_commit TEXT")
+                .execute(&self.pool)
+                .await?;
+        }
+
         // Idempotent migration: rename 'killed' status to 'stopped'
         sqlx::query("UPDATE sessions SET status = 'stopped' WHERE status = 'killed'")
             .execute(&self.pool)
@@ -341,8 +356,9 @@ impl Store {
                 exit_code, backend_session_id, output_snapshot,
                 metadata, ink, command, description,
                 intervention_code, intervention_reason, intervention_at,
-                last_output_at, idle_since, idle_threshold_secs, worktree_path, worktree_branch, runtime, created_at, updated_at)
-             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                last_output_at, idle_since, idle_threshold_secs, worktree_path, worktree_branch,
+                git_branch, git_commit, runtime, created_at, updated_at)
+             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
         .bind(&session.name)
@@ -367,6 +383,8 @@ impl Store {
         )
         .bind(&session.worktree_path)
         .bind(&session.worktree_branch)
+        .bind(&session.git_branch)
+        .bind(&session.git_commit)
         .bind(session.runtime.to_string())
         .bind(session.created_at.to_rfc3339())
         .bind(session.updated_at.to_rfc3339())
@@ -471,6 +489,24 @@ impl Store {
 
         let rows = q.fetch_all(&self.pool).await?;
         rows.iter().map(row_to_session).collect()
+    }
+
+    pub async fn update_session_git_info(
+        &self,
+        id: &str,
+        branch: Option<&str>,
+        commit: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE sessions SET git_branch = ?, git_commit = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(branch)
+        .bind(commit)
+        .bind(Utc::now().to_rfc3339())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     pub async fn update_session_status(&self, id: &str, status: SessionStatus) -> Result<()> {
@@ -931,6 +967,8 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
         },
         worktree_path: row.try_get("worktree_path").unwrap_or(None),
         worktree_branch: row.try_get("worktree_branch").unwrap_or(None),
+        git_branch: row.try_get("git_branch").unwrap_or(None),
+        git_commit: row.try_get("git_commit").unwrap_or(None),
         runtime: {
             let s: Option<String> = row.try_get("runtime").unwrap_or(None);
             s.and_then(|s| s.parse().ok()).unwrap_or_default()
@@ -1003,6 +1041,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -1362,6 +1402,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -3082,5 +3124,67 @@ mod tests {
         let metadata = std::fs::metadata(&db_path).unwrap();
         let mode = metadata.permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[tokio::test]
+    async fn test_update_session_git_info() {
+        let store = test_store().await;
+        let mut session = make_session("git-test");
+        session.id = Uuid::new_v4();
+        store.insert_session(&session).await.unwrap();
+
+        store
+            .update_session_git_info(&session.id.to_string(), Some("main"), Some("abc1234"))
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.git_branch, Some("main".into()));
+        assert_eq!(fetched.git_commit, Some("abc1234".into()));
+    }
+
+    #[tokio::test]
+    async fn test_update_session_git_info_clears() {
+        let store = test_store().await;
+        let mut session = make_session("git-clear");
+        session.id = Uuid::new_v4();
+        session.git_branch = Some("feat".into());
+        session.git_commit = Some("deadbeef".into());
+        store.insert_session(&session).await.unwrap();
+
+        store
+            .update_session_git_info(&session.id.to_string(), None, None)
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fetched.git_branch.is_none());
+        assert!(fetched.git_commit.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_insert_session_with_git_info() {
+        let store = test_store().await;
+        let mut session = make_session("git-insert");
+        session.id = Uuid::new_v4();
+        session.git_branch = Some("develop".into());
+        session.git_commit = Some("ff00ff".into());
+        store.insert_session(&session).await.unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.git_branch, Some("develop".into()));
+        assert_eq!(fetched.git_commit, Some("ff00ff".into()));
     }
 }

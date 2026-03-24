@@ -36,6 +36,8 @@ export interface Session {
   idle_threshold_secs?: number | null;
   worktree_path?: string | null;
   worktree_branch?: string | null;
+  git_branch?: string | null;
+  git_commit?: string | null;
   runtime?: 'tmux' | 'docker';
   last_output_at: string | null;
   output_snippet?: string | null;

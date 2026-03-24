@@ -231,6 +231,22 @@ export function SessionDetailPage() {
                       </dd>
                     </div>
                   )}
+                  {session.git_branch && (
+                    <div>
+                      <dt className="text-muted-foreground">Git Branch</dt>
+                      <dd className="font-mono text-xs" data-testid="session-git-branch">
+                        {session.git_branch}
+                      </dd>
+                    </div>
+                  )}
+                  {session.git_commit && (
+                    <div>
+                      <dt className="text-muted-foreground">Git Commit</dt>
+                      <dd className="font-mono text-xs" data-testid="session-git-commit">
+                        {session.git_commit}
+                      </dd>
+                    </div>
+                  )}
                   <div>
                     <dt className="text-muted-foreground">Created</dt>
                     <dd data-testid="session-created">{formatRelativeTime(session.created_at)}</dd>

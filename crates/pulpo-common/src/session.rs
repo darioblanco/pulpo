@@ -143,6 +143,10 @@ pub struct Session {
     pub worktree_path: Option<String>,
     /// Git branch name for the worktree (e.g. the session name or a custom name).
     pub worktree_branch: Option<String>,
+    /// Current git branch detected by the watchdog (updated periodically).
+    pub git_branch: Option<String>,
+    /// Current git short commit hash detected by the watchdog (updated periodically).
+    pub git_commit: Option<String>,
     /// The runtime environment for this session (tmux or docker).
     #[serde(default)]
     pub runtime: Runtime,
@@ -176,6 +180,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -321,6 +327,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -368,6 +376,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -398,6 +408,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -431,6 +443,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),

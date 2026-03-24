@@ -5,7 +5,9 @@ use pulpo_common::api::{
     AuthTokenResponse, ConfigResponse, CreateSessionResponse, InterventionEventResponse,
     PeersResponse,
 };
-use pulpo_common::session::{Runtime, Session};
+#[cfg(test)]
+use pulpo_common::session::Runtime;
+use pulpo_common::session::Session;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -348,11 +350,19 @@ struct OutputResponse {
     output: String,
 }
 
-/// Format a list of sessions as a table.
-const fn session_runtime(session: &Session) -> &'static str {
-    match session.runtime {
-        Runtime::Tmux => "tmux",
-        Runtime::Docker => "docker",
+/// Format the repo column: `basename@branch` when `git_branch` is set, else just `basename`.
+/// Truncates to 20 chars if needed.
+fn format_repo(workdir: &str, git_branch: Option<&str>) -> String {
+    let basename = workdir.rsplit('/').next().unwrap_or(workdir).to_owned();
+    let display = match git_branch {
+        Some(branch) => format!("{basename}@{branch}"),
+        None => basename,
+    };
+    if display.len() <= 20 {
+        display
+    } else {
+        let truncated: String = display.chars().take(17).collect();
+        format!("{truncated}...")
     }
 }
 
@@ -361,12 +371,12 @@ fn format_sessions(sessions: &[Session]) -> String {
         return "No sessions.".into();
     }
     let mut lines = vec![format!(
-        "{:<10} {:<24} {:<12} {:<8} {}",
-        "ID", "NAME", "STATUS", "RUNTIME", "COMMAND"
+        "{:<10} {:<24} {:<12} {:<22} {}",
+        "ID", "NAME", "STATUS", "REPO", "COMMAND"
     )];
     for s in sessions {
-        let cmd_display = if s.command.len() > 50 {
-            let truncated: String = s.command.chars().take(47).collect();
+        let cmd_display = if s.command.len() > 40 {
+            let truncated: String = s.command.chars().take(37).collect();
             format!("{truncated}...")
         } else {
             s.command.clone()
@@ -382,13 +392,10 @@ fn format_sessions(sessions: &[Session]) -> String {
             (false, true) => format!("{} [PR]", s.name),
             (false, false) => s.name.clone(),
         };
+        let repo_display = format_repo(&s.workdir, s.git_branch.as_deref());
         lines.push(format!(
-            "{:<10} {:<24} {:<12} {:<8} {}",
-            short_id,
-            name_display,
-            s.status,
-            session_runtime(s),
-            cmd_display
+            "{:<10} {:<24} {:<12} {:<22} {}",
+            short_id, name_display, s.status, repo_display, cmd_display
         ));
     }
     lines.join("\n")
@@ -1836,6 +1843,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: Some("/home/user/.pulpo/worktrees/fix-auth".into()),
             worktree_branch: Some("fix-auth".into()),
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -1877,6 +1886,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: Some("/home/user/.pulpo/worktrees/old-session".into()),
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2735,6 +2746,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2742,13 +2755,73 @@ mod tests {
         let output = format_sessions(&sessions);
         assert!(output.contains("ID"));
         assert!(output.contains("NAME"));
-        assert!(output.contains("RUNTIME"));
+        assert!(output.contains("REPO"));
         assert!(output.contains("COMMAND"));
         assert!(output.contains("00000000"));
         assert!(output.contains("my-api"));
         assert!(output.contains("active"));
-        assert!(output.contains("tmux"));
         assert!(output.contains("claude -p 'Fix the bug'"));
+    }
+
+    #[test]
+    fn test_format_repo_without_branch() {
+        assert_eq!(format_repo("/home/user/pulpo", None), "pulpo");
+    }
+
+    #[test]
+    fn test_format_repo_with_branch() {
+        assert_eq!(format_repo("/home/user/pulpo", Some("main")), "pulpo@main");
+    }
+
+    #[test]
+    fn test_format_repo_truncates_long() {
+        let result = format_repo(
+            "/home/user/my-very-long-repo",
+            Some("feature/my-long-branch"),
+        );
+        assert!(result.len() <= 20);
+        assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn test_format_repo_root_path() {
+        assert_eq!(format_repo("/", None), "");
+    }
+
+    #[test]
+    fn test_format_sessions_with_git_branch() {
+        use chrono::Utc;
+        use pulpo_common::session::SessionStatus;
+        use uuid::Uuid;
+
+        let sessions = vec![Session {
+            id: Uuid::nil(),
+            name: "my-api".into(),
+            workdir: "/tmp/repo".into(),
+            command: "echo hello".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: None,
+            worktree_branch: None,
+            git_branch: Some("main".into()),
+            git_commit: Some("abc1234".into()),
+            runtime: Runtime::Tmux,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_sessions(&sessions);
+        assert!(output.contains("repo@main"));
     }
 
     #[test]
@@ -2777,12 +2850,14 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Docker,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         }];
         let output = format_sessions(&sessions);
-        assert!(output.contains("docker"));
+        assert!(output.contains("tmp"));
     }
 
     #[test]
@@ -2813,6 +2888,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2847,6 +2924,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: Some("/home/user/.pulpo/worktrees/wt-task".into()),
             worktree_branch: Some("wt-task".into()),
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2888,6 +2967,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2929,6 +3010,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: Some("/home/user/.pulpo/worktrees/both-task".into()),
             worktree_branch: Some("both-task".into()),
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -2966,6 +3049,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -4773,6 +4858,8 @@ mod tests {
             idle_threshold_secs: None,
             worktree_path: None,
             worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
             runtime: Runtime::Tmux,
             created_at: Utc::now(),
             updated_at: Utc::now(),
