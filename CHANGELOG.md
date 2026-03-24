@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.35](https://github.com/darioblanco/pulpo/compare/v0.0.34...v0.0.35) (2026-03-24)
+
+
+### Features
+
+* worktree improvements, UI overhaul, and session UX fixes ([512285f](https://github.com/darioblanco/pulpo/commit/512285f4f8a2b31e4be8a767de30f204dff39bdf))
+
 ## [0.0.34](https://github.com/darioblanco/pulpo/compare/v0.0.33...v0.0.34) (2026-03-23)
 
 
