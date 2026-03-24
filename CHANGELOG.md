@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.36](https://github.com/darioblanco/pulpo/compare/v0.0.35...v0.0.36) (2026-03-24)
+
+
+### Features
+
+* enriched notifications, CLI auto-start daemon ([381caeb](https://github.com/darioblanco/pulpo/commit/381caeb03e25a6f6ed5b6ddd3831449b80314a7b))
+* UI feature parity — cleanup button, spawn options, mobile fixes ([86cf98e](https://github.com/darioblanco/pulpo/commit/86cf98e7e1f077164eb40cf62085d8f9c2f77958))
+* watchdog git tracking, worktree lifecycle fix, CLI repo column ([80ddf2d](https://github.com/darioblanco/pulpo/commit/80ddf2d0dd0a24ac06925e186856cf786e3606d8))
+* watchdog telemetry — diff stats, error detection, token usage, commits ahead ([1a34fcb](https://github.com/darioblanco/pulpo/commit/1a34fcb525ce93a59da85184f6a98d504fd7bcb5))
+
+
+### Bug Fixes
+
+* add checkout step before git commands in release-please workflow ([7ce93ff](https://github.com/darioblanco/pulpo/commit/7ce93ff117126df631d9d506ae5dc58f55c6014b))
+
 ## [0.0.35](https://github.com/darioblanco/pulpo/compare/v0.0.34...v0.0.35) (2026-03-24)
 
 
