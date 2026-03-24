@@ -36,6 +36,7 @@ import {
   getSecrets,
   setSecret,
   deleteSecret,
+  cleanupSessions,
 } from './client';
 
 const mockFetch = vi.fn();
@@ -748,6 +749,41 @@ describe('unsubscribePush', () => {
     mockFetch.mockResolvedValue({ ok: false });
 
     await expect(unsubscribePush('https://example.com')).rejects.toThrow('Failed to unsubscribe');
+  });
+});
+
+// -- Cleanup sessions --
+
+describe('cleanupSessions', () => {
+  it('posts to /api/v1/sessions/cleanup', async () => {
+    const resp = { deleted: 3 };
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(resp) });
+
+    const result = await cleanupSessions();
+
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions/cleanup', {
+      method: 'POST',
+      headers: {},
+    });
+    expect(result).toEqual(resp);
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'cleanup failed' }),
+    });
+
+    await expect(cleanupSessions()).rejects.toThrow('cleanup failed');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(cleanupSessions()).rejects.toThrow('Failed to cleanup sessions');
   });
 });
 

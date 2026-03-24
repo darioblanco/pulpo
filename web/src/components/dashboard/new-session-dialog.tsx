@@ -38,6 +38,9 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
   const [selectedInk, setSelectedInk] = useState('');
   const [inks, setInks] = useState<Record<string, InkConfig>>({});
   const [worktree, setWorktree] = useState(false);
+  const [worktreeBase, setWorktreeBase] = useState('');
+  const [runtime, setRuntime] = useState<'tmux' | 'docker'>('tmux');
+  const [idleThreshold, setIdleThreshold] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [availableSecrets, setAvailableSecrets] = useState<SecretEntry[]>([]);
@@ -90,6 +93,9 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         ...(description ? { description } : {}),
         ...(selectedInk ? { ink: selectedInk } : {}),
         ...(worktree ? { worktree: true } : {}),
+        ...(worktree && worktreeBase ? { worktree_base: worktreeBase } : {}),
+        ...(runtime !== 'tmux' ? { runtime } : {}),
+        ...(idleThreshold ? { idle_threshold_secs: Number(idleThreshold) } : {}),
         ...(selectedSecrets.length > 0 ? { secrets: selectedSecrets } : {}),
       };
 
@@ -108,6 +114,9 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
       setDescription('');
       setSelectedInk('');
       setWorktree(false);
+      setWorktreeBase('');
+      setRuntime('tmux');
+      setIdleThreshold('');
       setSelectedSecrets([]);
       setOpen(false);
       onCreated(resp.session);
@@ -158,19 +167,34 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
             />
           </div>
 
-          <div className="flex items-center gap-2">
-            <Switch
-              id="worktree-toggle"
-              checked={worktree}
-              onCheckedChange={setWorktree}
-              size="sm"
-            />
-            <Label htmlFor="worktree-toggle" className="flex items-center gap-1 text-sm">
-              <GitBranch className="h-3.5 w-3.5" />
-              Worktree
-            </Label>
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="worktree-toggle"
+                checked={worktree}
+                onCheckedChange={setWorktree}
+                size="sm"
+              />
+              <Label htmlFor="worktree-toggle" className="flex items-center gap-1 text-sm">
+                <GitBranch className="h-3.5 w-3.5" />
+                Worktree
+              </Label>
+              {worktree && (
+                <span className="text-xs text-muted-foreground">
+                  Run in an isolated git worktree
+                </span>
+              )}
+            </div>
             {worktree && (
-              <span className="text-xs text-muted-foreground">Run in an isolated git worktree</span>
+              <div className="space-y-1.5" data-testid="worktree-base-field">
+                <Label htmlFor="worktree-base">Base Branch</Label>
+                <Input
+                  id="worktree-base"
+                  placeholder="main (default: current HEAD)"
+                  value={worktreeBase}
+                  onChange={(e) => setWorktreeBase(e.target.value)}
+                />
+              </div>
             )}
           </div>
 
@@ -265,6 +289,30 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="runtime-select">Runtime</Label>
+              <Select value={runtime} onValueChange={(v) => setRuntime(v as 'tmux' | 'docker')}>
+                <SelectTrigger id="runtime-select" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="tmux">tmux</SelectItem>
+                  <SelectItem value="docker">docker</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="idle-threshold">Idle Threshold (seconds)</Label>
+            <Input
+              id="idle-threshold"
+              type="number"
+              placeholder="60 (default)"
+              min={0}
+              value={idleThreshold}
+              onChange={(e) => setIdleThreshold(e.target.value)}
+            />
           </div>
 
           <Button type="submit" className="mt-1 w-full" disabled={submitting || !repoPath}>

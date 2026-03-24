@@ -150,7 +150,7 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') setExpanded(!expanded);
           }}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-x-2 overflow-hidden"
+          className="flex min-w-0 flex-1 cursor-pointer flex-wrap items-center gap-x-2 gap-y-1 overflow-hidden"
         >
           <strong
             className="shrink-0 cursor-pointer font-mono text-xs text-[#c0d0e0] hover:underline"

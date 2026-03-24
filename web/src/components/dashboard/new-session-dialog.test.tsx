@@ -534,6 +534,163 @@ describe('NewSessionDialog', () => {
     });
   });
 
+  it('shows worktree base field when worktree is enabled', async () => {
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+    expect(screen.queryByTestId('worktree-base-field')).not.toBeInTheDocument();
+    const toggle = screen.getByRole('switch');
+    await user.click(toggle);
+    expect(screen.getByTestId('worktree-base-field')).toBeInTheDocument();
+    expect(screen.getByLabelText('Base Branch')).toBeInTheDocument();
+  });
+
+  it('sends worktree_base when worktree is enabled and base is set', async () => {
+    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await user.type(screen.getByLabelText('Name'), 'wt-base-test');
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+
+    const toggle = screen.getByRole('switch');
+    await user.click(toggle);
+    await user.type(screen.getByLabelText('Base Branch'), 'develop');
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'wt-base-test',
+          workdir: '/repo',
+          worktree: true,
+          worktree_base: 'develop',
+        }),
+      );
+    });
+  });
+
+  it('does not send worktree_base when worktree is off', async () => {
+    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await user.type(screen.getByLabelText('Name'), 'no-wt-base');
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith({
+        name: 'no-wt-base',
+        workdir: '/repo',
+      });
+    });
+  });
+
+  it('shows runtime selector in dialog', async () => {
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    await openDialog();
+    expect(screen.getByLabelText('Runtime')).toBeInTheDocument();
+  });
+
+  it('defaults runtime to tmux and does not send it', async () => {
+    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await user.type(screen.getByLabelText('Name'), 'tmux-test');
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      const call = mockCreateSession.mock.calls[0][0];
+      expect(call).not.toHaveProperty('runtime');
+    });
+  });
+
+  it('sends runtime when docker is selected', async () => {
+    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await user.type(screen.getByLabelText('Name'), 'docker-test');
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+
+    // Select docker runtime
+    const runtimeSelect = screen.getByRole('combobox', { name: 'Runtime' });
+    await user.click(runtimeSelect);
+    await waitFor(() => {
+      expect(screen.getAllByText('docker').length).toBeGreaterThan(0);
+    });
+    const options = screen.getAllByText('docker');
+    const listboxOption = options.find((el) => el.closest('[role="option"]'));
+    if (listboxOption) await user.click(listboxOption);
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'docker-test',
+          workdir: '/repo',
+          runtime: 'docker',
+        }),
+      );
+    });
+  });
+
+  it('shows idle threshold field in dialog', async () => {
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    await openDialog();
+    expect(screen.getByLabelText('Idle Threshold (seconds)')).toBeInTheDocument();
+  });
+
+  it('sends idle_threshold_secs when set', async () => {
+    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await user.type(screen.getByLabelText('Name'), 'idle-test');
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+    await user.type(screen.getByLabelText('Idle Threshold (seconds)'), '120');
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(mockCreateSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'idle-test',
+          workdir: '/repo',
+          idle_threshold_secs: 120,
+        }),
+      );
+    });
+  });
+
+  it('does not send idle_threshold_secs when empty', async () => {
+    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
+    render(<NewSessionDialog onCreated={vi.fn()} />);
+    const user = await openDialog();
+
+    await user.type(screen.getByLabelText('Name'), 'no-idle');
+    await user.type(screen.getByLabelText('Working directory'), '/repo');
+
+    const form = screen.getByLabelText('Working directory').closest('form')!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      const call = mockCreateSession.mock.calls[0][0];
+      expect(call).not.toHaveProperty('idle_threshold_secs');
+    });
+  });
+
   it('handles getSecrets failure gracefully', async () => {
     mockGetSecrets.mockRejectedValue(new Error('Network error'));
     render(<NewSessionDialog onCreated={vi.fn()} />);

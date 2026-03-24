@@ -7,7 +7,15 @@ import { NewSessionDialog } from '@/components/dashboard/new-session-dialog';
 import { SessionFilter } from '@/components/history/session-filter';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { getPeers, getRemoteSessions, getFleetSessions, getSessions } from '@/api/client';
+import {
+  getPeers,
+  getRemoteSessions,
+  getFleetSessions,
+  getSessions,
+  cleanupSessions,
+} from '@/api/client';
+import { Button } from '@/components/ui/button';
+import { Trash2 } from 'lucide-react';
 import { useSSE } from '@/hooks/use-sse';
 import { useConnection } from '@/hooks/use-connection';
 import { detectStatusChanges, showDesktopNotification } from '@/lib/notifications';
@@ -124,6 +132,21 @@ export function DashboardPage() {
     return result;
   }, [sessions, visibleStatuses, searchQuery]);
 
+  const hasCleanable = useMemo(
+    () => sessions.some((s) => s.status === 'stopped' || s.status === 'lost'),
+    [sessions],
+  );
+
+  const handleCleanup = useCallback(async () => {
+    try {
+      const result = await cleanupSessions();
+      toast(`Cleaned up ${result.deleted} session${result.deleted !== 1 ? 's' : ''}`);
+      handleRefresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to cleanup sessions');
+    }
+  }, [handleRefresh]);
+
   const hasMultipleNodes = peers.length > 0;
 
   return (
@@ -141,7 +164,20 @@ export function DashboardPage() {
           <>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <StatusSummary sessions={sessions} />
-              <NewSessionDialog peers={peers} onCreated={handleSessionCreated} />
+              <div className="flex items-center gap-2">
+                {hasCleanable && (
+                  <Button
+                    variant="outline"
+                    data-testid="cleanup-button"
+                    className="text-destructive"
+                    onClick={handleCleanup}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Cleanup
+                  </Button>
+                )}
+                <NewSessionDialog peers={peers} onCreated={handleSessionCreated} />
+              </div>
             </div>
 
             <SessionFilter onFilter={handleFilter} />

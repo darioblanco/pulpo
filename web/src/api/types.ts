@@ -167,7 +167,12 @@ export interface CreateSessionRequest {
   worktree?: boolean;
   worktree_base?: string;
   runtime?: 'tmux' | 'docker';
+  idle_threshold_secs?: number;
   secrets?: string[];
+}
+
+export interface CleanupSessionsResponse {
+  deleted: number;
 }
 
 export interface CreateSessionResponse {

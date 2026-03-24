@@ -675,6 +675,143 @@ describe('DashboardPage', () => {
     expect(screen.getByText('No matching sessions across the fleet.')).toBeInTheDocument();
   });
 
+  it('shows cleanup button when stopped sessions exist', async () => {
+    const sessionData = [
+      {
+        id: 'sess-1',
+        name: 'stopped-task',
+        status: 'stopped',
+        command: 'done',
+        description: null,
+        workdir: '/repo',
+        metadata: null,
+        ink: null,
+        intervention_reason: null,
+        intervention_at: null,
+        last_output_at: null,
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ];
+
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/peers')) {
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              local: {
+                name: 'mac-studio',
+                hostname: 'mac-studio.local',
+                os: 'macOS',
+                arch: 'arm64',
+                cpus: 12,
+                memory_mb: 65536,
+                gpu: null,
+              },
+              peers: [],
+            }),
+        };
+      }
+      if (url.includes('/sessions/cleanup')) {
+        return { ok: true, json: () => Promise.resolve({ deleted: 1 }) };
+      }
+      if (url.includes('/sessions')) {
+        return { ok: true, json: () => Promise.resolve(sessionData) };
+      }
+      return { ok: true, json: () => Promise.resolve([]) };
+    });
+
+    render(
+      <MemoryRouter>
+        <ConnectionProvider>
+          <SSEProvider>
+            <TooltipProvider>
+              <SidebarProvider>
+                <DashboardPage />
+              </SidebarProvider>
+            </TooltipProvider>
+          </SSEProvider>
+        </ConnectionProvider>
+      </MemoryRouter>,
+    );
+
+    // Trigger SSE onopen to hydrate sessions
+    await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0));
+    const es = MockEventSource.instances[0];
+    es.onopen?.();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cleanup-button')).toBeInTheDocument();
+    });
+  });
+
+  it('does not show cleanup button when no stopped/lost sessions', async () => {
+    const sessionData = [
+      {
+        id: 'sess-1',
+        name: 'active-task',
+        status: 'active',
+        command: 'run',
+        description: null,
+        workdir: '/repo',
+        metadata: null,
+        ink: null,
+        intervention_reason: null,
+        intervention_at: null,
+        last_output_at: null,
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ];
+
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/peers')) {
+        return {
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              local: {
+                name: 'mac-studio',
+                hostname: 'mac-studio.local',
+                os: 'macOS',
+                arch: 'arm64',
+                cpus: 12,
+                memory_mb: 65536,
+                gpu: null,
+              },
+              peers: [],
+            }),
+        };
+      }
+      if (url.includes('/sessions')) {
+        return { ok: true, json: () => Promise.resolve(sessionData) };
+      }
+      return { ok: true, json: () => Promise.resolve([]) };
+    });
+
+    render(
+      <MemoryRouter>
+        <ConnectionProvider>
+          <SSEProvider>
+            <TooltipProvider>
+              <SidebarProvider>
+                <DashboardPage />
+              </SidebarProvider>
+            </TooltipProvider>
+          </SSEProvider>
+        </ConnectionProvider>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(MockEventSource.instances.length).toBeGreaterThan(0));
+    const es = MockEventSource.instances[0];
+    es.onopen?.();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('new-session-button')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('cleanup-button')).not.toBeInTheDocument();
+  });
+
   it('shows error when fetch fails and connected', async () => {
     // Must have an active URL so isConnected = true (avoids redirect to /connect)
     vi.stubGlobal('localStorage', {

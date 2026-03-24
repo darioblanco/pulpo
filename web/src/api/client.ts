@@ -11,6 +11,7 @@ import type {
   InksResponse,
   CreateSessionRequest,
   CreateSessionResponse,
+  CleanupSessionsResponse,
   FleetSessionsResponse,
   VapidPublicKeyResponse,
   ScheduleInfo,
@@ -145,6 +146,15 @@ export async function stopSession(id: string, purge?: boolean): Promise<void> {
     const err = await res.json();
     throw new Error(err.error || 'Failed to stop session');
   }
+}
+
+export async function cleanupSessions(): Promise<CleanupSessionsResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/sessions/cleanup`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to cleanup sessions');
+  }
+  return res.json();
 }
 
 export async function getSessionOutput(
