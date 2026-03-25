@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.37](https://github.com/darioblanco/pulpo/compare/v0.0.36...v0.0.37) (2026-03-25)
+
+
+### Bug Fixes
+
+* rename git_sha column to git_commit in migration ([c20beaf](https://github.com/darioblanco/pulpo/commit/c20beaf5be1b1d62ab5e47205bca25f72d3b87e0))
+* stale backend ID recovery on stop and resume ([68513e2](https://github.com/darioblanco/pulpo/commit/68513e2b9352bea37c19aba43a561c6ad3387499))
+
 ## [0.0.36](https://github.com/darioblanco/pulpo/compare/v0.0.35...v0.0.36) (2026-03-24)
 
 
