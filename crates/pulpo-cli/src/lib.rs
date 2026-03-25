@@ -352,37 +352,55 @@ struct OutputResponse {
 
 /// Format the repo column: `basename@branch +42/-7 ↑3` with diff stats and ahead count.
 /// Truncates to 30 chars if needed.
-fn format_repo(session: &Session) -> String {
-    let basename = session
-        .workdir
-        .rsplit('/')
-        .next()
-        .unwrap_or(&session.workdir)
-        .to_owned();
-    let mut display = match session.git_branch.as_deref() {
-        Some(branch) => format!("{basename}@{branch}"),
-        None => basename,
-    };
+/// Format the branch column: branch name + diff stats + ahead count.
+fn format_branch(session: &Session) -> String {
+    let branch = session.git_branch.as_deref().unwrap_or("-").to_owned();
 
-    // Append diff stats when available and non-zero
+    let mut suffix = String::new();
     let ins = session.git_insertions.unwrap_or(0);
     let del = session.git_deletions.unwrap_or(0);
     if ins > 0 || del > 0 {
-        display = format!("{display} +{ins}/-{del}");
+        suffix = format!(" +{ins}/-{del}");
     }
-
-    // Append ahead count when > 0
     if let Some(ahead) = session.git_ahead
         && ahead > 0
     {
-        display = format!("{display} \u{2191}{ahead}");
+        suffix = format!("{suffix} \u{2191}{ahead}");
     }
 
-    if display.len() <= 30 {
-        display
+    format!("{branch}{suffix}")
+}
+
+/// Build a display name with badges: [wt] [PR] [!]
+fn format_name(session: &Session) -> String {
+    let mut name = session.name.clone();
+    if session.worktree_path.is_some() {
+        name = format!("{name} [wt]");
+    }
+    if session
+        .metadata
+        .as_ref()
+        .is_some_and(|m| m.contains_key("pr_url"))
+    {
+        name = format!("{name} [PR]");
+    }
+    if session
+        .metadata
+        .as_ref()
+        .is_some_and(|m| m.contains_key("error_status"))
+    {
+        name = format!("{name} [!]");
+    }
+    name
+}
+
+/// Truncate a string to `max` chars with ellipsis.
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_owned()
     } else {
-        let truncated: String = display.chars().take(27).collect();
-        format!("{truncated}...")
+        let t: String = s.chars().take(max.saturating_sub(3)).collect();
+        format!("{t}...")
     }
 }
 
@@ -390,40 +408,38 @@ fn format_sessions(sessions: &[Session]) -> String {
     if sessions.is_empty() {
         return "No sessions.".into();
     }
+
+    // Compute dynamic column widths from data
+    let rows: Vec<(String, String, String, String, String)> = sessions
+        .iter()
+        .map(|s| {
+            (
+                s.id.to_string()[..8].to_owned(),
+                format_name(s),
+                s.status.to_string(),
+                format_branch(s),
+                s.command.clone(),
+            )
+        })
+        .collect();
+
+    let w_id = 8;
+    let w_name = rows.iter().map(|r| r.1.len()).max().unwrap_or(4).max(4);
+    let w_status = 8;
+    let w_branch = rows.iter().map(|r| r.3.len()).max().unwrap_or(6).max(6);
+
     let mut lines = vec![format!(
-        "{:<10} {:<24} {:<12} {:<32} {}",
-        "ID", "NAME", "STATUS", "REPO", "COMMAND"
+        "{:<w_id$}  {:<w_name$}  {:<w_status$}  {:<w_branch$}  {}",
+        "ID", "NAME", "STATUS", "BRANCH", "COMMAND"
     )];
-    for s in sessions {
-        let cmd_display = if s.command.len() > 40 {
-            let truncated: String = s.command.chars().take(37).collect();
-            format!("{truncated}...")
-        } else {
-            s.command.clone()
-        };
-        let short_id = &s.id.to_string()[..8];
-        let has_pr = s
-            .metadata
-            .as_ref()
-            .is_some_and(|m| m.contains_key("pr_url"));
-        let has_error = s
-            .metadata
-            .as_ref()
-            .is_some_and(|m| m.contains_key("error_status"));
-        let mut name_display = s.name.clone();
-        if s.worktree_path.is_some() {
-            name_display = format!("{name_display} [wt]");
-        }
-        if has_pr {
-            name_display = format!("{name_display} [PR]");
-        }
-        if has_error {
-            name_display = format!("{name_display} [!]");
-        }
-        let repo_display = format_repo(s);
+    for (id, name, status, branch, cmd) in &rows {
         lines.push(format!(
-            "{:<10} {:<24} {:<12} {:<32} {}",
-            short_id, name_display, s.status, repo_display, cmd_display
+            "{:<w_id$}  {:<w_name$}  {:<w_status$}  {:<w_branch$}  {}",
+            id,
+            truncate(name, w_name),
+            status,
+            truncate(branch, w_branch),
+            truncate(cmd, 50)
         ));
     }
     lines.join("\n")
@@ -1666,7 +1682,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
 mod tests {
     use super::*;
 
-    /// Helper to build a minimal `Session` for `format_repo` tests.
+    /// Helper to build a minimal `Session` for `format_branch` tests.
     fn repo_session(workdir: &str, branch: Option<&str>) -> Session {
         Session {
             id: uuid::Uuid::nil(),
@@ -2909,7 +2925,7 @@ mod tests {
         let output = format_sessions(&sessions);
         assert!(output.contains("ID"));
         assert!(output.contains("NAME"));
-        assert!(output.contains("REPO"));
+        assert!(output.contains("BRANCH"));
         assert!(output.contains("COMMAND"));
         assert!(output.contains("00000000"));
         assert!(output.contains("my-api"));
@@ -2918,65 +2934,48 @@ mod tests {
     }
 
     #[test]
-    fn test_format_repo_without_branch() {
+    fn test_format_branch_without_branch() {
         let s = repo_session("/home/user/test", None);
-        assert_eq!(format_repo(&s), "test");
+        assert_eq!(format_branch(&s), "-");
     }
 
     #[test]
-    fn test_format_repo_with_branch() {
+    fn test_format_branch_with_branch() {
         let s = repo_session("/home/user/pulpo", Some("main"));
-        assert_eq!(format_repo(&s), "pulpo@main");
+        assert_eq!(format_branch(&s), "main");
     }
 
     #[test]
-    fn test_format_repo_truncates_long() {
-        let s = repo_session(
-            "/home/user/my-very-long-repo",
-            Some("feature/my-long-branch"),
-        );
-        let result = format_repo(&s);
-        assert!(result.len() <= 30);
-        assert!(result.ends_with("..."));
-    }
-
-    #[test]
-    fn test_format_repo_root_path() {
-        let s = repo_session("/", None);
-        assert_eq!(format_repo(&s), "");
-    }
-
-    #[test]
-    fn test_format_repo_with_diff_stats() {
+    fn test_format_branch_with_diff_stats() {
         let mut s = repo_session("/home/user/pulpo", Some("main"));
         s.git_insertions = Some(42);
         s.git_deletions = Some(7);
-        let result = format_repo(&s);
-        assert!(result.contains("+42/-7"));
+        let result = format_branch(&s);
+        assert_eq!(result, "main +42/-7");
     }
 
     #[test]
-    fn test_format_repo_with_ahead() {
+    fn test_format_branch_with_ahead() {
         let mut s = repo_session("/home/user/pulpo", Some("main"));
         s.git_ahead = Some(3);
-        let result = format_repo(&s);
+        let result = format_branch(&s);
         assert!(result.contains("\u{2191}3"));
     }
 
     #[test]
-    fn test_format_repo_zero_diff_hidden() {
+    fn test_format_branch_zero_diff_hidden() {
         let mut s = repo_session("/home/user/pulpo", None);
         s.git_insertions = Some(0);
         s.git_deletions = Some(0);
-        let result = format_repo(&s);
+        let result = format_branch(&s);
         assert!(!result.contains("+0/-0"));
     }
 
     #[test]
-    fn test_format_repo_zero_ahead_hidden() {
+    fn test_format_branch_zero_ahead_hidden() {
         let mut s = repo_session("/home/user/pulpo", None);
         s.git_ahead = Some(0);
-        let result = format_repo(&s);
+        let result = format_branch(&s);
         assert!(!result.contains('\u{2191}'));
     }
 
@@ -3017,7 +3016,7 @@ mod tests {
             updated_at: Utc::now(),
         }];
         let output = format_sessions(&sessions);
-        assert!(output.contains("repo@main"));
+        assert!(output.contains("main"), "should show branch: {output}");
     }
 
     #[test]
@@ -3099,7 +3098,14 @@ mod tests {
             updated_at: Utc::now(),
         }];
         let output = format_sessions(&sessions);
-        assert!(output.contains("tmp"));
+        assert!(
+            output.contains("sandbox-test"),
+            "should show name: {output}"
+        );
+        assert!(
+            output.contains('-'),
+            "branch should show dash when None: {output}"
+        );
     }
 
     #[test]
