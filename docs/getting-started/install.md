@@ -52,6 +52,9 @@ make install
 ## Verify
 
 ```bash
-pulpod --version
-pulpo --version
+pulpo spawn hello -d -- echo "Pulpo is working!"
+pulpo ls
+pulpo logs hello
 ```
+
+The daemon starts automatically when you run your first `pulpo` command. The web dashboard is at [http://localhost:7433](http://localhost:7433) (installable as a PWA on your phone).

@@ -4,149 +4,119 @@
 <h1 align="center">Pulpo</h1>
 
 <p align="center">
-  <strong>Agent session runtime. Durable sessions across your machines.</strong><br />
-  tmux or Docker runtime, multi-node fleet, watchdog supervision — managed from your phone.
+  <strong>Run coding agents on your servers. Check from your phone.</strong><br />
+  Session lifecycle, watchdog supervision, multi-node fleet — for Claude Code, Codex, Aider, and any CLI tool.
 </p>
 
 <p align="center">
   <a href="https://github.com/darioblanco/pulpo/actions/workflows/ci.yml"><img src="https://github.com/darioblanco/pulpo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/darioblanco/pulpo/actions/workflows/docker-images.yml"><img src="https://github.com/darioblanco/pulpo/actions/workflows/docker-images.yml/badge.svg" alt="Docker Images"></a>
   <a href="https://github.com/darioblanco/pulpo/releases"><img src="https://img.shields.io/github/v/release/darioblanco/pulpo?display_name=tag" alt="Latest Release"></a>
-  <a href="https://github.com/darioblanco/pulpo/releases"><img src="https://img.shields.io/github/release-date/darioblanco/pulpo" alt="Release Date"></a>
-  <a href="https://hub.docker.com/r/darioblanco/pulpo-base"><img src="https://img.shields.io/docker/pulls/darioblanco/pulpo-base" alt="Docker Hub: pulpo-base"></a>
-  <a href="https://hub.docker.com/r/darioblanco/pulpo-agents"><img src="https://img.shields.io/docker/pulls/darioblanco/pulpo-agents" alt="Docker Hub: pulpo-agents"></a>
-  <a href="https://hub.docker.com/r/darioblanco/pulpo-discord-bot"><img src="https://img.shields.io/docker/pulls/darioblanco/pulpo-discord-bot" alt="Docker Hub: pulpo-discord-bot"></a>
-  <a href="https://github.com/darioblanco/pulpo#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License: MIT OR Apache-2.0"></a>
+  <a href="https://hub.docker.com/r/darioblanco/pulpo-agents"><img src="https://img.shields.io/docker/pulls/darioblanco/pulpo-agents" alt="Docker Hub"></a>
+  <a href="https://github.com/darioblanco/pulpo#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License"></a>
 </p>
 
-> **Experimental** — Pulpo is in early development. APIs, config format, and behavior may change between releases.
-
-## The Problem
-
-You have agents — Claude Code, Codex, Aider, Gemini CLI — and you want them to run on your servers while you go to dinner. Today that means SSH into a machine, start tmux, launch the agent, and hope nothing crashes. If it does, you lose the session. If you want to check from your phone, you can't. If you want multiple agents on the same repo, they step on each other.
-
-## What Pulpo Does
-
-Pulpo is an **agent session runtime** — it runs coding agents in tmux sessions or Docker containers, with lifecycle management, crash recovery, and watchdog supervision. Designed for coding agents, flexible enough for any terminal work.
-
-## Core Idea
-
-Pulpo is easiest to understand as one core loop:
-
-1. You start a command as a **session**
-2. `pulpod` runs it on a **runtime** (`tmux` or `docker`)
-3. Pulpo tracks its **lifecycle** (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`)
-4. You control it from the CLI, web UI, or API
-
-That is the product. Worktrees, schedules, fleet discovery, push notifications, Discord, and MCP are all layers around that core session model.
-
-### What Pulpo Guarantees
-
-The strongest contract in the project is:
-
-- a session is a first-class object with durable state
-- sessions run on a named runtime (`tmux` or `docker`)
-- lifecycle states are explicit and inspectable
-- the watchdog and liveness checks drive recovery and intervention behavior
-- the CLI, web UI, and API all reflect the same underlying daemon-owned state
-
-Everything beyond that is either operational depth or a convenience surface.
-
-```bash
-# Spawn an agent on a remote machine by name
-pulpo --node mac-mini spawn auth-fix --workdir ~/repos/api -- claude -p "fix auth tests"
-
-# Spawn two agents on the same repo without conflicts
-pulpo spawn frontend --workdir ~/repo --worktree -- claude -p "redesign UI"
-pulpo spawn backend  --workdir ~/repo --worktree -- codex "optimize queries"
-
-# Schedule nightly reviews on the beefy server
-pulpo schedule add nightly "0 3 * * *" --node gpu-box -- claude -p "review code"
-
-# Auto-select the least loaded machine
-pulpo spawn review --auto -- claude -p "security audit"
-
-# Run in a Docker container (safe for --dangerously-skip-permissions)
-pulpo spawn risky-task --runtime docker -- claude --dangerously-skip-permissions -p "refactor everything"
-
-# Check from your phone
-open http://localhost:7433  # PWA with push notifications
-```
-
-### Key Features
-
-- **Session lifecycle** — explicit states (`active`, `idle`, `ready`, `stopped`, `lost`) with resume semantics. Agents survive reboots.
-- **Multi-node fleet** — spawn and manage sessions across machines. Tailscale, mDNS, or seed discovery. Fleet dashboard shows all sessions across all nodes.
-- **Watchdog supervision** — memory pressure kills, idle detection (31 built-in patterns for Claude Code, Codex, Gemini, Aider, Amazon Q), configurable per-session thresholds.
-- **Git worktrees** — `--worktree` isolates each agent in its own worktree. Multiple agents work on the same repo without conflicts. Works with any agent.
-- **Built-in scheduler** — cron-based schedules with multi-node targeting. Run nightly reviews on the beefy server, auto-select least loaded node.
-- **Docker runtime** — `--runtime docker` runs sessions in Docker containers. Safe for `--dangerously-skip-permissions` while still mounting the session workdir (and any configured volumes). Configure the image in `[docker]` config.
-- **Adopts existing tmux** — start tmux however you want, pulpo discovers it and brings it under management. No migration needed.
-- **Command-agnostic** — Claude Code, Codex, Gemini CLI, Aider, shell scripts, anything. Same lifecycle, same controls.
-- **6 control surfaces** — CLI, web UI (PWA + push notifications), REST API, SSE events, MCP server, Discord bot.
-- **Self-hosted** — your machines, your data. MIT/Apache-2.0 licensed.
-
-### What To Learn First
-
-If you are new to the project, learn these in order:
-
-1. spawn a session
-2. inspect status and output
-3. understand `idle` vs `ready` vs `lost` vs `stopped`
-4. learn the two runtimes: `tmux` and `docker`
-5. only then add multi-node, schedules, worktrees, and other operational features
-
-### How It's Different
-
-| | Pulpo | tmuxinator | cmux | agent-deck | NTM |
-|---|---|---|---|---|---|
-| Multi-node | Fleet with discovery | No | No | No | No |
-| Session lifecycle | 6 states + resume | No | No | TUI only | Status only |
-| Watchdog | Memory + idle + patterns | No | No | No | No |
-| Worktrees | Any agent | No | Claude only | Yes | No |
-| Scheduling | Built-in cron + node targeting | No | No | No | No |
-| Docker runtime | Yes | No | No | Yes | No |
-| Adopts external tmux | Yes | No | No | No | No |
-| Command-agnostic | Any command | N/A | Claude only | Generic | 3 agents |
-| Windows support | Yes (Docker) | No | No | No | No |
-| Web UI + mobile | PWA + push | No | No | TUI + Web | Dashboard |
-
-## Get Started
-
-### macOS / Linux
+## Install
 
 ```bash
 brew install darioblanco/tap/pulpo
-pulpod
-pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests"
 ```
 
-### Windows
+That's it. The daemon auto-starts when you run your first command.
 
-Download `pulpod.exe` and `pulpo.exe` from [GitHub Releases](https://github.com/darioblanco/pulpo/releases). Windows uses Docker containers (no tmux required):
-
-```powershell
-pulpod
-pulpo spawn my-task --runtime docker -- claude -p "Fix failing auth tests"
-pulpo logs my-task --follow
-```
-
-### Dashboard
+<details>
+<summary>Linux / manual install</summary>
 
 ```bash
-open http://localhost:7433  # PWA — installable on phone
+# Linux (systemd)
+curl -fsSL https://github.com/darioblanco/pulpo/releases/latest/download/pulpod-x86_64-unknown-linux-gnu.tar.xz | tar xJ
+sudo mv pulpod pulpo /usr/local/bin/
+pulpod  # or: make service-install-linux
 ```
 
-No agent is required — `pulpo spawn my-shell` opens a managed shell session.
+Download binaries from [GitHub Releases](https://github.com/darioblanco/pulpo/releases). Windows uses Docker runtime (no tmux required).
+</details>
+
+## Quick Start
+
+```bash
+# Spawn an agent — pulpod starts automatically
+pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests"
+
+# Check status
+pulpo ls
+
+# Open the dashboard (installable as PWA on your phone)
+pulpo ui
+```
+
+```
+ID        NAME          STATUS    BRANCH                    COMMAND
+a1b2c3d4  my-api [PR]   idle      fix-auth +42/-7 ↑1        claude -p "Fix failing auth tests"
+```
+
+## Why Pulpo
+
+You have coding agents. You want them to run on your servers while you go to dinner.
+
+Today that means: SSH in, start tmux, launch the agent, hope nothing crashes. If it does, you lose the session. If you want to check from your phone, you can't. If you want multiple agents on the same repo, they step on each other.
+
+Pulpo fixes all of that:
+
+```bash
+# Parallel agents on the same repo — each gets its own worktree
+pulpo spawn frontend --workdir ~/repo --worktree -- claude -p "redesign sidebar"
+pulpo spawn backend  --workdir ~/repo --worktree -- codex "optimize queries"
+
+# Spawn on a remote machine by name
+pulpo --node mac-mini spawn review -- claude -p "security audit"
+
+# Schedule nightly runs
+pulpo schedule add nightly "0 3 * * *" --workdir ~/repo -- claude -p "review code"
+
+# Run in Docker (safe for --dangerously-skip-permissions)
+pulpo spawn risky --runtime docker -- claude --dangerously-skip-permissions -p "refactor"
+```
+
+## Features
+
+- **Session lifecycle** — 6 states (`active`, `idle`, `ready`, `stopped`, `lost`) with resume. Agents survive reboots.
+- **Watchdog** — memory pressure intervention, idle detection (31+ patterns), error detection, git tracking (branch, diff stats, commits ahead), token usage, rate limit alerts.
+- **Multi-node fleet** — Tailscale, mDNS, or seed discovery. Fleet dashboard shows all sessions across all nodes.
+- **Git worktrees** — `--worktree` isolates each agent. `--worktree-base main` forks from a specific branch. Stop preserves the worktree for resume.
+- **Scheduler** — cron-based schedules with node targeting. `pulpo schedule add nightly "0 3 * * *" -- claude -p "review"`.
+- **Docker runtime** — `--runtime docker` for sandboxed execution.
+- **Adopts existing tmux** — start tmux however you want, pulpo discovers and manages it.
+- **Command-agnostic** — Claude Code, Codex, Gemini CLI, Aider, OpenCode, shell scripts, anything.
+- **6 interfaces** — CLI, web UI (PWA + push notifications), REST API, SSE events, MCP server, Discord bot.
+- **Smart notifications** — "agent finished — created PR with +200 lines touching auth on branch fix-auth" via Discord, web push, or webhooks.
+- **Self-hosted** — your machines, your data. MIT/Apache-2.0.
+
+## How It Works
+
+1. You start a command as a **session**
+2. `pulpod` runs it on a **runtime** (tmux or Docker)
+3. The **watchdog** tracks lifecycle, git state, errors, and resource usage
+4. You control it from CLI, web UI, or API — from anywhere
+
+### Comparison
+
+| | Pulpo | agent-deck | cmux | NTM |
+|---|---|---|---|---|
+| Multi-node fleet | Yes | No | No | No |
+| Session lifecycle + resume | 6 states | TUI only | No | Status only |
+| Watchdog (memory, idle, errors) | Yes | No | No | No |
+| Git tracking (branch, diff, ahead) | Yes | No | No | No |
+| Worktrees | Any agent | Yes | Claude only | No |
+| Scheduling | Built-in cron | No | No | No |
+| Docker runtime | Yes | Yes | No | No |
+| Adopts external tmux | Yes | No | No | No |
+| Command-agnostic | Any command | Generic | Claude only | 3 agents |
+| Web UI + mobile PWA | Yes | Web | No | Dashboard |
 
 <h3 align="center">
-  <a href="https://pulpo.darioblanco.com/getting-started/install">Install</a>
-  <span> · </span>
   <a href="https://pulpo.darioblanco.com/getting-started/quickstart">Quickstart</a>
   <span> · </span>
   <a href="https://pulpo.darioblanco.com">Documentation</a>
-  <span> · </span>
-  <a href="https://github.com/darioblanco/pulpo/tree/main/examples">Examples</a>
   <span> · </span>
   <a href="CONTRIBUTING.md">Contributing</a>
 </h3>

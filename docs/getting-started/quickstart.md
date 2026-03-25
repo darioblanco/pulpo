@@ -1,23 +1,14 @@
 # Quickstart
 
-This guide intentionally teaches the core path first:
-
-1. start the daemon
-2. spawn a session
-3. inspect status and output
-4. understand the basic lifecycle
-
-Everything after that is optional operational depth.
-
-## 1. Start daemon
+## 1. Install
 
 ```bash
-pulpod
+brew install darioblanco/tap/pulpo
 ```
 
-The web UI is available at [http://localhost:7433](http://localhost:7433) (installable as a PWA).
-
 ## 2. Spawn a session
+
+The daemon starts automatically — no manual setup needed.
 
 ```bash
 pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests"
