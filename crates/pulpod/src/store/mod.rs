@@ -328,6 +328,24 @@ impl Store {
             sqlx::query("ALTER TABLE sessions ADD COLUMN git_branch TEXT")
                 .execute(&self.pool)
                 .await?;
+        }
+        // Rename git_sha → git_commit if the old column name exists (from earlier builds)
+        let has_git_sha: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'git_sha'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_git_sha > 0 {
+            sqlx::query("ALTER TABLE sessions RENAME COLUMN git_sha TO git_commit")
+                .execute(&self.pool)
+                .await?;
+        }
+        let has_git_commit: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'git_commit'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_git_commit == 0 {
             sqlx::query("ALTER TABLE sessions ADD COLUMN git_commit TEXT")
                 .execute(&self.pool)
                 .await?;
