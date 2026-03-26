@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.38](https://github.com/darioblanco/pulpo/compare/v0.0.37...v0.0.38) (2026-03-25)
+
+
+### Features
+
+* split BRANCH column from REPO in pulpo ls, dynamic column widths ([a300a8f](https://github.com/darioblanco/pulpo/commit/a300a8f39e03f9026ae0b17784e05944fc9a8f81))
+
 ## [0.0.37](https://github.com/darioblanco/pulpo/compare/v0.0.36...v0.0.37) (2026-03-25)
 
 
