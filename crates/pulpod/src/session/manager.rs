@@ -881,9 +881,8 @@ fn wrap_command(
 
     // Common env: session identity + suppress browser launches from agents.
     // BROWSER=true makes tools that respect $BROWSER (Node `open`, Python `webbrowser`, etc.) no-op.
-    // The `open` function override catches direct macOS `open` calls from shell commands.
     let env = format!(
-        "{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; export BROWSER=true; open() {{ true; }}; "
+        "{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; export BROWSER=true; "
     );
 
     if is_shell_command(command) {
