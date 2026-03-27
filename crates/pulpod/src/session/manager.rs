@@ -880,9 +880,12 @@ fn wrap_command(
         secrets_file.map_or_else(String::new, |path| format!(". {path} && rm -f {path}; "));
 
     // Common env: session identity + suppress browser launches from agents.
-    // BROWSER=true makes tools that respect $BROWSER (Node `open`, Python `webbrowser`, etc.) no-op.
+    // BROWSER=true: tools using Node `open` package, Python `webbrowser`, etc. become no-ops.
+    // open() wrapper: intercepts only URL opens (http/https), passes file/dir opens to real
+    // /usr/bin/open so image paste, file handling, etc. still work.
     let env = format!(
-        "{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; export BROWSER=true; "
+        "{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; export BROWSER=true; \
+         open() {{ case \"$1\" in http://*|https://*) return 0;; *) command open \"$@\";; esac; }}; "
     );
 
     if is_shell_command(command) {
