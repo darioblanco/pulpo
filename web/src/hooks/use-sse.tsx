@@ -143,23 +143,18 @@ export function SSEProvider({ children }: { children: ReactNode }) {
     return () => disconnect();
   }, [baseUrl, authToken, connect, disconnect]);
 
-  // Reconnect immediately when the page becomes visible (e.g. mobile PWA
-  // returning from background). Without this, the user waits for the
-  // exponential backoff timer (up to 30 s) before SSE reconnects.
+  // Reconnect when the page becomes visible (e.g. mobile PWA returning from
+  // background). iOS Safari silently kills SSE connections in the background
+  // without firing onerror, so we can't trust the existing EventSource.
+  // Always close and reconnect to guarantee a fresh connection.
   useEffect(() => {
     function handleVisibility() {
       if (document.visibilityState !== 'visible') return;
-      // If SSE is already alive, just re-hydrate in case we missed events
-      if (eventSourceRef.current && !connected) {
-        // SSE object exists but never opened — let the backoff handle it
-        return;
-      }
+      // Kill the existing connection — it may be silently dead (iOS)
       if (eventSourceRef.current) {
-        // Connection looks alive — refresh session data in case we missed events
-        hydrate();
-        return;
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
       }
-      // SSE is dead — cancel any pending backoff and reconnect now
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
@@ -169,7 +164,7 @@ export function SSEProvider({ children }: { children: ReactNode }) {
     }
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, [connect, connected, hydrate]);
+  }, [connect]);
 
   return (
     <SSEContext.Provider value={{ connected, sessions, setSessions }}>

@@ -516,43 +516,20 @@ describe('useSSE', () => {
     expect(MockEventSource.instances.length).toBeGreaterThan(countBefore);
   });
 
-  it('hydrates on visibilitychange when SSE is still connected', async () => {
+  it('reconnects on visibilitychange (iOS kills SSE in background)', async () => {
     mockFetch.mockResolvedValue({ json: () => Promise.resolve([]) });
-    const { result } = renderHook(() => useSSE(), { wrapper });
+    renderHook(() => useSSE(), { wrapper });
 
     act(() => lastES().onopen?.());
-    expect(result.current.connected).toBe(true);
+    const esBefore = MockEventSource.instances.length;
 
-    mockFetch.mockClear();
-    mockFetch.mockResolvedValue({
-      json: () =>
-        Promise.resolve([
-          {
-            id: 'sess-1',
-            name: 'refreshed',
-            status: 'active',
-            command: 'Fix',
-            description: null,
-            workdir: '/repo',
-            metadata: null,
-            ink: null,
-            intervention_reason: null,
-            intervention_at: null,
-            last_output_at: null,
-            created_at: '2025-01-01T00:00:00Z',
-          },
-        ]),
-    });
-
-    // Page becomes visible — should re-hydrate sessions
+    // Page becomes visible — should close old SSE and create a new one
     act(() => {
       Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true });
       document.dispatchEvent(new Event('visibilitychange'));
     });
 
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalled();
-    });
+    expect(MockEventSource.instances.length).toBe(esBefore + 1);
   });
 
   it('does nothing on visibilitychange when hidden', () => {
