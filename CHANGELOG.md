@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.0.39](https://github.com/darioblanco/pulpo/compare/v0.0.38...v0.0.39) (2026-03-28)
+
+
+### Bug Fixes
+
+* compute ocean height from container width, not CSS viewport ([b70159f](https://github.com/darioblanco/pulpo/commit/b70159f5b4778a67ffd2aa92039e45c00e28ff09))
+* iOS PWA freezing — service worker and SSE reliability ([ba8dc15](https://github.com/darioblanco/pulpo/commit/ba8dc15a4151738dc34842ce5e83e634c24f3626))
+* ocean canvas aspect ratio on narrow screens ([235c7cd](https://github.com/darioblanco/pulpo/commit/235c7cdd56ec045ab8a04f998cf7f42dbe98a5fa))
+* ocean grid — 1 col default, 2 at 2xl, 3 at 1800px+ ([c7414e7](https://github.com/darioblanco/pulpo/commit/c7414e7403f0f38454f35fb32c8b1f59fbdf5d54))
+* ocean grid — 1 col default, 2 on lg, 3 only on 2xl ([d2b12b1](https://github.com/darioblanco/pulpo/commit/d2b12b190ccb0d80ffbf91845863001c1e3c6f34))
+* ocean grid — 2 cols at 2xl, 3 cols at 1800px+ ([ebabab4](https://github.com/darioblanco/pulpo/commit/ebabab41f98a9564a67e620954525e7d6beb8004))
+* ocean grid — 2 cols at xl, 3 cols at 2xl ([57b9cb3](https://github.com/darioblanco/pulpo/commit/57b9cb3f9ae9f5c1cb3e7a56956579946be6f195))
+* remove open() shell override that broke image paste in Claude Code ([b9754c0](https://github.com/darioblanco/pulpo/commit/b9754c083f41efb6c0550ecfce7f56621a817239))
+* simplify ocean canvas sizing — aspect-ratio CSS, no JS height hacks ([71a4106](https://github.com/darioblanco/pulpo/commit/71a4106ce0b2a221c0cea2d9c7db3edf63ebb982))
+* smart open() wrapper — block URLs only, pass files through ([b76446d](https://github.com/darioblanco/pulpo/commit/b76446d21b6660ae3272dee90fbb682349786ec2))
+* tide pool canvas aspect ratio on narrow viewports ([2d50c20](https://github.com/darioblanco/pulpo/commit/2d50c205c09b1eef04be62df043f54bfe58917e5))
+* use try_get for all SQLite row columns to prevent CI flaky panic ([bc4db3a](https://github.com/darioblanco/pulpo/commit/bc4db3acb00a6fdd7de9f0dc0210573cbae3eed9))
+
 ## [0.0.38](https://github.com/darioblanco/pulpo/compare/v0.0.37...v0.0.38) (2026-03-25)
 
 
