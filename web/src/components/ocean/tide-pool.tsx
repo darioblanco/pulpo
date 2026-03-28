@@ -86,26 +86,19 @@ export function TidePool({
 
     const resize = () => {
       const rect = container.getBoundingClientRect();
-      if (rect.width === 0) return;
-
-      // Enforce ~16:10 aspect ratio: on narrow viewports, shrink height
-      // proportionally instead of creating a tall narrow canvas.
-      const maxHeight = window.innerHeight - 160; // ~10rem for header/nav
-      const aspectHeight = rect.width * 0.625; // 16:10
-      const targetHeight = Math.max(Math.min(maxHeight, aspectHeight), 280);
-      container.style.height = `${targetHeight}px`;
+      if (rect.width === 0 || rect.height === 0) return;
 
       const dpr = window.devicePixelRatio || 1;
       canvas.width = rect.width * dpr;
-      canvas.height = targetHeight * dpr;
+      canvas.height = rect.height * dpr;
       canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${targetHeight}px`;
+      canvas.style.height = `${rect.height}px`;
 
       if (!worldRef.current) {
-        worldRef.current = createWorld(rect.width, targetHeight);
+        worldRef.current = createWorld(rect.width, rect.height);
       } else {
         worldRef.current.camera.width = rect.width;
-        worldRef.current.camera.height = targetHeight;
+        worldRef.current.camera.height = rect.height;
         fitCamera(worldRef.current.camera, worldRef.current.nodes);
       }
     };
@@ -238,7 +231,7 @@ export function TidePool({
         {onToggleExpand && (
           <button
             onClick={onToggleExpand}
-            className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground cursor-pointer hover:text-white hover:bg-white/10 transition-colors"
+            className="ml-auto hidden items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground cursor-pointer hover:text-white hover:bg-white/10 transition-colors sm:flex"
             data-testid="tide-pool-expand-toggle"
             title={expanded ? 'Show all nodes' : 'Focus this node'}
           >
@@ -253,7 +246,7 @@ export function TidePool({
         ref={containerRef}
         className="relative w-full border border-border rounded-lg overflow-hidden"
         style={{
-          aspectRatio: expanded ? undefined : '16 / 9',
+          aspectRatio: '16 / 9',
           ...(expanded
             ? {
                 maxHeight: '1080px',

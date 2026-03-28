@@ -61,26 +61,19 @@ export function OceanCanvas({ localNode, localSessions, peers, peerSessions }: O
 
     const resize = () => {
       const rect = container.getBoundingClientRect();
-      if (rect.width === 0) return;
-
-      // Enforce minimum ~16:10 aspect ratio: if the container is narrow,
-      // shrink height to match instead of zooming out to microscopic levels.
-      const maxHeight = window.innerHeight - 128; // ~8rem for header/nav
-      const aspectHeight = rect.width * 0.625; // 16:10
-      const targetHeight = Math.max(Math.min(maxHeight, aspectHeight), 280);
-      container.style.height = `${targetHeight}px`;
+      if (rect.width === 0 || rect.height === 0) return;
 
       const dpr = window.devicePixelRatio || 1;
       canvas.width = rect.width * dpr;
-      canvas.height = targetHeight * dpr;
+      canvas.height = rect.height * dpr;
       canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${targetHeight}px`;
+      canvas.style.height = `${rect.height}px`;
 
       if (!worldRef.current) {
-        worldRef.current = createWorld(rect.width, targetHeight);
+        worldRef.current = createWorld(rect.width, rect.height);
       } else {
         worldRef.current.camera.width = rect.width;
-        worldRef.current.camera.height = targetHeight;
+        worldRef.current.camera.height = rect.height;
         fitCamera(worldRef.current.camera, worldRef.current.nodes);
       }
     };
@@ -158,7 +151,12 @@ export function OceanCanvas({ localNode, localSessions, peers, peerSessions }: O
   }, []);
 
   return (
-    <div ref={containerRef} className="relative w-full" data-testid="ocean-canvas-container">
+    <div
+      ref={containerRef}
+      className="relative w-full"
+      style={{ aspectRatio: '16 / 9', maxHeight: 'calc(100dvh - 8rem)' }}
+      data-testid="ocean-canvas-container"
+    >
       <canvas
         ref={canvasRef}
         data-testid="ocean-canvas"
