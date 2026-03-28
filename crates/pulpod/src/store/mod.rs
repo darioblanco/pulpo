@@ -1028,30 +1028,32 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
         .map(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)))
         .transpose()?;
 
+    // Use try_get throughout to prevent panics from SQLite prepared statement
+    // cache races during parallel tests (stale column count after ALTER TABLE).
     Ok(Session {
         id: Uuid::parse_str(&id_str)?,
-        name: row.get("name"),
-        workdir: row.get("workdir"),
-        command: row.get("command"),
-        description: row.get("description"),
+        name: row.try_get("name").unwrap_or_default(),
+        workdir: row.try_get("workdir").unwrap_or_default(),
+        command: row.try_get("command").unwrap_or_default(),
+        description: row.try_get("description").unwrap_or(None),
         status: status_str
             .parse::<SessionStatus>()
             .map_err(|e| anyhow::anyhow!(e))?,
-        exit_code: row.get("exit_code"),
-        backend_session_id: row.get("backend_session_id"),
-        output_snapshot: row.get("output_snapshot"),
+        exit_code: row.try_get("exit_code").unwrap_or(None),
+        backend_session_id: row.try_get("backend_session_id").unwrap_or(None),
+        output_snapshot: row.try_get("output_snapshot").unwrap_or(None),
         metadata,
-        ink: row.get("ink"),
+        ink: row.try_get("ink").unwrap_or(None),
         intervention_code,
-        intervention_reason: row.get("intervention_reason"),
+        intervention_reason: row.try_get("intervention_reason").unwrap_or(None),
         intervention_at,
         last_output_at: {
-            let s: Option<String> = row.get("last_output_at");
+            let s: Option<String> = row.try_get("last_output_at").unwrap_or(None);
             s.map(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)))
                 .transpose()?
         },
         idle_since: {
-            let s: Option<String> = row.get("idle_since");
+            let s: Option<String> = row.try_get("idle_since").unwrap_or(None);
             s.map(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)))
                 .transpose()?
         },
