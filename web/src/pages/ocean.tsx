@@ -109,13 +109,13 @@ export function OceanPage() {
     [sessions],
   );
 
-  // Grid columns based on pool count
+  // Grid columns: 1 by default, 2 on large screens, 3 only on very wide screens
   const gridCols =
     pools.length <= 1
       ? 'grid-cols-1'
       : pools.length <= 4
-        ? 'grid-cols-1 md:grid-cols-2'
-        : 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3';
+        ? 'grid-cols-1 lg:grid-cols-2'
+        : 'grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3';
 
   const showExpand = pools.length > 1;
   const visiblePools = focusedNode ? pools.filter((p) => p.nodeName === focusedNode) : pools;
