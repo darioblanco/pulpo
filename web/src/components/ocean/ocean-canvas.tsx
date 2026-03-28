@@ -154,7 +154,12 @@ export function OceanCanvas({ localNode, localSessions, peers, peerSessions }: O
     <div
       ref={containerRef}
       className="relative w-full"
-      style={{ height: 'calc(100dvh - 8rem)' }}
+      style={{
+        // Use available viewport height, but enforce a minimum aspect ratio (~16:10)
+        // so narrow screens reduce height instead of zooming out to microscopic levels.
+        height: 'min(calc(100dvh - 8rem), calc(100vw * 0.625))',
+        minHeight: '280px',
+      }}
       data-testid="ocean-canvas-container"
     >
       <canvas
