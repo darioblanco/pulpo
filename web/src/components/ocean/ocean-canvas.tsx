@@ -61,19 +61,26 @@ export function OceanCanvas({ localNode, localSessions, peers, peerSessions }: O
 
     const resize = () => {
       const rect = container.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return;
+      if (rect.width === 0) return;
+
+      // Enforce minimum ~16:10 aspect ratio: if the container is narrow,
+      // shrink height to match instead of zooming out to microscopic levels.
+      const maxHeight = window.innerHeight - 128; // ~8rem for header/nav
+      const aspectHeight = rect.width * 0.625; // 16:10
+      const targetHeight = Math.max(Math.min(maxHeight, aspectHeight), 280);
+      container.style.height = `${targetHeight}px`;
 
       const dpr = window.devicePixelRatio || 1;
       canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
+      canvas.height = targetHeight * dpr;
       canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${rect.height}px`;
+      canvas.style.height = `${targetHeight}px`;
 
       if (!worldRef.current) {
-        worldRef.current = createWorld(rect.width, rect.height);
+        worldRef.current = createWorld(rect.width, targetHeight);
       } else {
         worldRef.current.camera.width = rect.width;
-        worldRef.current.camera.height = rect.height;
+        worldRef.current.camera.height = targetHeight;
         fitCamera(worldRef.current.camera, worldRef.current.nodes);
       }
     };
@@ -151,17 +158,7 @@ export function OceanCanvas({ localNode, localSessions, peers, peerSessions }: O
   }, []);
 
   return (
-    <div
-      ref={containerRef}
-      className="relative w-full"
-      style={{
-        // Use available viewport height, but enforce a minimum aspect ratio (~16:10)
-        // so narrow screens reduce height instead of zooming out to microscopic levels.
-        height: 'min(calc(100dvh - 8rem), calc(100vw * 0.625))',
-        minHeight: '280px',
-      }}
-      data-testid="ocean-canvas-container"
-    >
+    <div ref={containerRef} className="relative w-full" data-testid="ocean-canvas-container">
       <canvas
         ref={canvasRef}
         data-testid="ocean-canvas"
