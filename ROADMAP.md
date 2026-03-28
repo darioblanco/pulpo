@@ -78,8 +78,13 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 - Worktree lifecycle: stop preserves worktree for resume, purge cleans up. `--worktree-base` forks from a specific branch. Branch cleanup on stop. Stale branch auto-recovery.
 - Unified sessions page: merged history into sessions with multi-select status filter chips. Dropped separate history page.
 - Mobile PWA fixes: bottom nav visibility, horizontal scroll prevention, scrollable node tabs
-- `pulpo ls` shows live sessions by default (`-a` for all), with ID, REPO (basename@branch +N/-N), and worktree/PR/error indicators
-- Browser suppression: sessions set `BROWSER=true` and override `open()` to prevent agents from opening browser tabs
+- `pulpo ls` shows live sessions by default (`-a` for all), with dynamic-width ID, NAME, STATUS, BRANCH (with diff stats +N/-N and ↑ahead), COMMAND columns. Worktree/PR/error indicators on session names.
+- Enriched notifications: Discord embeds, web push, and webhooks carry git branch/commit, diff stats, PR URL, and error status. Example: "Session portal is now ready — created PR (+42/-7, 3 files) on branch fix-auth"
+- CLI auto-start daemon: `pulpo spawn` auto-starts `pulpod` via brew services / systemd / direct spawn if not running on localhost
+- UI feature parity: new session dialog supports worktree-base, runtime (docker), idle threshold. Cleanup button for batch-removing stopped/lost sessions. Session card badges wrap on mobile.
+- Stale backend ID recovery: stop and resume fall back to session name when the tmux `$N` ID is stale
+- Browser suppression: sessions set `BROWSER=true` and wrap `open()` to block URL opens while passing file/dir opens through
+- iOS PWA reliability: service worker with skipWaiting + clientsClaim, SPA navigation fallback, SSE always reconnects on visibility change (iOS kills connections silently in background)
 - Session liveness check: CLI polls session status with retries before attach on spawn/resume
 - Secret store: encrypted-at-rest secrets (`pulpo secret set/list/delete`) with `--env` override for env var mapping, `--secret` flag on spawn for injection via temp files (tmux) or `-e` flags (Docker). Secrets never in command strings, `ps` output, or logs.
 - Ink blueprints: inks support `secrets` and `runtime` fields, making them full session blueprints. Ink + request secrets are merged, request `--runtime` overrides ink default.
@@ -96,10 +101,9 @@ Pulpo's feature set is strong. The bottleneck is adoption, not capabilities.
 - Real-world usage examples (nightly code review, parallel agents, scheduled migrations)
 - Clear "5-minute quickstart" that shows the value immediately
 
-**Richer notifications**
-- Notification content enrichment: "agent finished — created PR with +200 lines touching auth, 3 files changed"
-- Leverage watchdog telemetry (git stats, error detection, token usage) in Discord/web push messages
-- Notification summary digest (daily/weekly recap of agent activity)
+**Notification digest**
+- Daily/weekly summary of agent activity (sessions completed, PRs created, errors encountered)
+- Enriched per-event notifications are shipped; this adds aggregation
 
 **Homebrew-core submission**
 - Requires ≥75 GitHub stars

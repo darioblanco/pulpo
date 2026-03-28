@@ -332,12 +332,13 @@ pulpo/
     │   │   ├── layout/           # Sidebar, header, app shell
     │   │   ├── dashboard/        # Status summary, node/session cards, new session
     │   │   ├── session/          # Chat view, terminal view (ghostty-web)
-    │   │   ├── history/          # Session filter, session list
+    │   │   ├── history/          # Session filter (reused by dashboard)
     │   │   ├── settings/         # Node, peer settings
     │   │   └── connect/          # Connect form, saved connections
     │   └── pages/
-    │       ├── dashboard.tsx     # Real-time session dashboard
-    │       ├── history.tsx       # Session history with search/filter
+    │       ├── dashboard.tsx     # Sessions dashboard with status filters
+    │       ├── worktrees.tsx     # Worktree sessions table
+    │       ├── schedules.tsx     # Schedule management
     │       ├── settings.tsx      # Node, peers config
     │       └── connect.tsx       # Connection screen (standalone)
     ├── eslint.config.js
