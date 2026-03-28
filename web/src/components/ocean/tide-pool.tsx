@@ -86,19 +86,26 @@ export function TidePool({
 
     const resize = () => {
       const rect = container.getBoundingClientRect();
-      if (rect.width === 0 || rect.height === 0) return;
+      if (rect.width === 0) return;
+
+      // Enforce ~16:10 aspect ratio: on narrow viewports, shrink height
+      // proportionally instead of creating a tall narrow canvas.
+      const maxHeight = window.innerHeight - 160; // ~10rem for header/nav
+      const aspectHeight = rect.width * 0.625; // 16:10
+      const targetHeight = Math.max(Math.min(maxHeight, aspectHeight), 280);
+      container.style.height = `${targetHeight}px`;
 
       const dpr = window.devicePixelRatio || 1;
       canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
+      canvas.height = targetHeight * dpr;
       canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${rect.height}px`;
+      canvas.style.height = `${targetHeight}px`;
 
       if (!worldRef.current) {
-        worldRef.current = createWorld(rect.width, rect.height);
+        worldRef.current = createWorld(rect.width, targetHeight);
       } else {
         worldRef.current.camera.width = rect.width;
-        worldRef.current.camera.height = rect.height;
+        worldRef.current.camera.height = targetHeight;
         fitCamera(worldRef.current.camera, worldRef.current.nodes);
       }
     };
@@ -249,7 +256,6 @@ export function TidePool({
           aspectRatio: expanded ? undefined : '16 / 9',
           ...(expanded
             ? {
-                height: 'calc(100dvh - 10rem)',
                 maxHeight: '1080px',
                 maxWidth: '1920px',
                 margin: '0 auto',
