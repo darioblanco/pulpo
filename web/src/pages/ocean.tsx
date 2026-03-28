@@ -109,13 +109,9 @@ export function OceanPage() {
     [sessions],
   );
 
-  // Grid columns: 1 by default, 2 at xl, 3 at 2xl
+  // Grid columns: 1 by default, 2 at 2xl, 3 beyond 2xl
   const gridCols =
-    pools.length <= 1
-      ? 'grid-cols-1'
-      : pools.length <= 4
-        ? 'grid-cols-1 xl:grid-cols-2'
-        : 'grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3';
+    pools.length <= 1 ? 'grid-cols-1' : 'grid-cols-1 2xl:grid-cols-2 min-[1800px]:grid-cols-3';
 
   const showExpand = pools.length > 1;
   const visiblePools = focusedNode ? pools.filter((p) => p.nodeName === focusedNode) : pools;
