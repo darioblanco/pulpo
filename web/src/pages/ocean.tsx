@@ -109,13 +109,13 @@ export function OceanPage() {
     [sessions],
   );
 
-  // Grid columns: 1 by default, 2 on large screens, 3 only on very wide screens
+  // Grid columns: 1 by default, 2 on 2xl, 3 only on very wide screens (1800px+)
   const gridCols =
     pools.length <= 1
       ? 'grid-cols-1'
       : pools.length <= 4
-        ? 'grid-cols-1 lg:grid-cols-2'
-        : 'grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3';
+        ? 'grid-cols-1 2xl:grid-cols-2'
+        : 'grid-cols-1 2xl:grid-cols-2 min-[1800px]:grid-cols-3';
 
   const showExpand = pools.length > 1;
   const visiblePools = focusedNode ? pools.filter((p) => p.nodeName === focusedNode) : pools;
