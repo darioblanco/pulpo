@@ -67,15 +67,7 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
         inks: config
             .inks
             .iter()
-            .map(|(k, v)| {
-                (
-                    k.clone(),
-                    InkConfigResponse {
-                        description: v.description.clone(),
-                        command: v.command.clone(),
-                    },
-                )
-            })
+            .map(|(k, v)| (k.clone(), InkConfigResponse::from(v)))
             .collect(),
     }
 }
@@ -174,16 +166,7 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
     if let Some(inks) = req.inks {
         config.inks = inks
             .into_iter()
-            .map(|(k, v)| {
-                (
-                    k,
-                    crate::config::InkConfig {
-                        description: v.description,
-                        command: v.command,
-                        ..crate::config::InkConfig::default()
-                    },
-                )
-            })
+            .map(|(k, v)| (k, crate::config::InkConfig::from(&v)))
             .collect();
     }
 
@@ -710,6 +693,8 @@ mod tests {
             InkConfigResponse {
                 description: Some("Review code".into()),
                 command: Some("claude -p 'review'".into()),
+                secrets: vec![],
+                runtime: None,
             },
         );
         let req = UpdateConfigRequest {

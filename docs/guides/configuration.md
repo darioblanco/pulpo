@@ -30,7 +30,7 @@ Bind modes:
 
 ## Inks
 
-Inks are reusable command templates. Each ink has 2 fields:
+Inks are reusable command templates with optional runtime and secret defaults:
 
 ```toml
 [inks.reviewer]
@@ -40,9 +40,24 @@ command = "claude -p 'review this code for correctness, security, and performanc
 [inks.quick-fix]
 description = "Quick fix with Codex"
 command = "codex --quiet 'Fix the issue quickly with minimal changes.'"
+
+[inks.docker-coder]
+description = "Docker-isolated coder with secrets"
+command = "claude --dangerously-skip-permissions -p 'Implement the changes'"
+runtime = "docker"
+secrets = ["GH_WORK", "ANTHROPIC_KEY"]
 ```
 
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | string | Human-readable description |
+| `command` | string | Command template to run |
+| `runtime` | string | Default runtime: `tmux` or `docker` (overridden by `--runtime` on spawn) |
+| `secrets` | string[] | Default secrets to inject (merged with `--secret` on spawn) |
+
 Use with: `pulpo spawn auth-review --ink reviewer`
+
+Inks can also be managed via CLI: `pulpo ink list`, `pulpo ink add <NAME> --command ...`, etc.
 
 ## Watchdog
 

@@ -73,7 +73,24 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/inks` | List configured inks |
+| GET | `/api/v1/inks` | List all configured inks |
+| GET | `/api/v1/inks/:name` | Get a specific ink |
+| POST | `/api/v1/inks/:name` | Create a new ink |
+| PUT | `/api/v1/inks/:name` | Update an existing ink |
+| DELETE | `/api/v1/inks/:name` | Delete an ink |
+
+Ink request/response body:
+
+```json
+{
+  "description": "Code reviewer focused on correctness",
+  "command": "claude -p 'review this code'",
+  "secrets": ["GITHUB_TOKEN"],
+  "runtime": "docker"
+}
+```
+
+All fields are optional. `secrets` defaults to `[]`, `runtime` defaults to `null` (inherits tmux). Changes are persisted to `config.toml`.
 
 ## Schedules
 

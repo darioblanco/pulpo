@@ -8,6 +8,7 @@ use chrono::Utc;
 use pulpo_common::api::CreateSessionRequest;
 use pulpo_common::event::{PulpoEvent, SessionEvent};
 use pulpo_common::session::{Runtime, Session, SessionStatus};
+use std::sync::RwLock;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -20,7 +21,7 @@ pub struct SessionManager {
     backend: Arc<dyn Backend>,
     docker_backend: Option<Arc<dyn Backend>>,
     store: Store,
-    inks: HashMap<String, InkConfig>,
+    inks: Arc<RwLock<HashMap<String, InkConfig>>>,
     default_command: Option<String>,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
     node_name: String,
@@ -51,7 +52,7 @@ impl SessionManager {
             backend,
             docker_backend: None,
             store,
-            inks,
+            inks: Arc::new(RwLock::new(inks)),
             default_command,
             event_tx: None,
             node_name: String::new(),
@@ -88,8 +89,14 @@ impl SessionManager {
         self
     }
 
-    pub const fn inks(&self) -> &HashMap<String, InkConfig> {
-        &self.inks
+    /// Return a snapshot of the current inks map.
+    pub fn inks(&self) -> HashMap<String, InkConfig> {
+        self.inks.read().expect("inks lock poisoned").clone()
+    }
+
+    /// Replace the inks map (e.g., after config CRUD).
+    pub fn set_inks(&self, inks: HashMap<String, InkConfig>) {
+        *self.inks.write().expect("inks lock poisoned") = inks;
     }
 
     pub fn backend(&self) -> Arc<dyn Backend> {
@@ -335,7 +342,10 @@ impl SessionManager {
         if let Some(ref ink_name) = req.ink {
             let ink = self
                 .inks
+                .read()
+                .expect("inks lock poisoned")
                 .get(ink_name)
+                .cloned()
                 .ok_or_else(|| anyhow!("unknown ink: {ink_name}"))?;
             ink_secrets.clone_from(&ink.secrets);
             ink_runtime = ink.runtime.as_deref().and_then(|r| r.parse().ok());
@@ -343,7 +353,7 @@ impl SessionManager {
             // If no explicit command, try the ink's command
             if req.command.is_none() {
                 let command = ink.command.clone().unwrap_or_default();
-                let description = req.description.clone().or_else(|| ink.description.clone());
+                let description = req.description.clone().or(ink.description);
                 if !command.is_empty() {
                     return Ok(ResolvedInk {
                         command,

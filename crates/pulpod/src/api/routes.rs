@@ -74,6 +74,13 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
         .route("/api/v1/fleet/sessions", get(fleet::fleet_sessions))
         .route("/api/v1/inks", get(inks::list))
+        .route(
+            "/api/v1/inks/{name}",
+            get(inks::get)
+                .post(inks::create)
+                .put(inks::update)
+                .delete(inks::delete),
+        )
         .route("/api/v1/push/vapid-key", get(push::get_vapid_key))
         .route("/api/v1/push/subscribe", post(push::subscribe_push))
         .route("/api/v1/push/unsubscribe", post(push::unsubscribe_push))

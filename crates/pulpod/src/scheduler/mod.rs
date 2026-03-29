@@ -1,7 +1,7 @@
 #[cfg(not(coverage))]
 use std::time::Duration;
 
-use chrono::Utc;
+use chrono::Local;
 use cron::Schedule as CronSchedule;
 #[cfg(not(coverage))]
 use pulpo_common::api::CreateSessionRequest;
@@ -40,13 +40,17 @@ pub fn validate_cron(expr: &str) -> Result<(), String> {
 }
 
 /// Check if a schedule is due to fire now.
-/// A schedule is due if its next fire time (after `last_run_at` or `created_at`) is in the past.
+/// Cron expressions are evaluated in the daemon's local timezone (matching
+/// conventional crontab behavior). The reference time (`last_run_at` or
+/// `created_at`) is converted to local time before computing the next fire.
 #[cfg_attr(coverage, allow(dead_code))]
 fn is_due(schedule: &Schedule) -> bool {
     let Ok(cron) = normalize_cron(&schedule.cron).parse::<CronSchedule>() else {
         return false;
     };
 
+    // Parse the reference time and convert to local timezone so that cron
+    // fields (hour, minute, etc.) match the daemon machine's wall clock.
     let reference_time = schedule
         .last_run_at
         .as_ref()
@@ -54,15 +58,15 @@ fn is_due(schedule: &Schedule) -> bool {
         .map_or_else(
             || {
                 chrono::DateTime::parse_from_rfc3339(&schedule.created_at)
-                    .map_or_else(|_| Utc::now(), |dt| dt.with_timezone(&Utc))
+                    .map_or_else(|_| Local::now(), |dt| dt.with_timezone(&Local))
             },
-            |dt| dt.with_timezone(&Utc),
+            |dt| dt.with_timezone(&Local),
         );
 
-    // Get the next fire time after the reference
+    // Get the next fire time after the reference, in local time
     cron.after(&reference_time)
         .next()
-        .is_some_and(|next| next <= Utc::now())
+        .is_some_and(|next| next <= Local::now())
 }
 
 /// Run the scheduler loop. Ticks every 60 seconds and fires due schedules.
@@ -114,7 +118,20 @@ async fn fire_due_schedules(
         debug!(schedule_name = %schedule.name, "Schedule is due, firing");
 
         // Build session name from schedule name + timestamp suffix
-        let session_name = format!("{}-{}", schedule.name, Utc::now().format("%Y%m%d-%H%M"));
+        let session_name = format!("{}-{}", schedule.name, Local::now().format("%Y%m%d-%H%M"));
+
+        let runtime = schedule.runtime.as_deref().map(|r| {
+            r.parse::<pulpo_common::session::Runtime>().unwrap_or_else(|_| {
+                warn!(schedule_name = %schedule.name, runtime = r, "Unknown runtime, falling back to tmux");
+                pulpo_common::session::Runtime::Tmux
+            })
+        });
+
+        let secrets = if schedule.secrets.is_empty() {
+            None
+        } else {
+            Some(schedule.secrets.clone())
+        };
 
         let req = CreateSessionRequest {
             name: session_name,
@@ -128,10 +145,10 @@ async fn fire_due_schedules(
             description: schedule.description.clone(),
             metadata: None,
             idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: None,
-            secrets: None,
+            worktree: schedule.worktree,
+            worktree_base: schedule.worktree_base.clone(),
+            runtime,
+            secrets,
         };
 
         match session_manager.create_session(req).await {
@@ -165,6 +182,7 @@ async fn fire_due_schedules(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     #[test]
     fn test_normalize_cron_5_fields() {
@@ -206,6 +224,10 @@ mod tests {
             target_node: None,
             ink: None,
             description: None,
+            runtime: None,
+            secrets: vec![],
+            worktree: None,
+            worktree_base: None,
             enabled: true,
             last_run_at: None,
             last_session_id: None,
@@ -226,6 +248,10 @@ mod tests {
             target_node: None,
             ink: None,
             description: None,
+            runtime: None,
+            secrets: vec![],
+            worktree: None,
+            worktree_base: None,
             enabled: true,
             last_run_at: Some((Utc::now() - chrono::Duration::seconds(10)).to_rfc3339()),
             last_session_id: Some("prev".into()),
@@ -245,6 +271,10 @@ mod tests {
             target_node: None,
             ink: None,
             description: None,
+            runtime: None,
+            secrets: vec![],
+            worktree: None,
+            worktree_base: None,
             enabled: true,
             last_run_at: None,
             last_session_id: None,
@@ -265,6 +295,10 @@ mod tests {
             target_node: None,
             ink: None,
             description: None,
+            runtime: None,
+            secrets: vec![],
+            worktree: None,
+            worktree_base: None,
             enabled: false,
             last_run_at: None,
             last_session_id: None,

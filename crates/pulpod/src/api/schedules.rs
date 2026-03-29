@@ -98,6 +98,10 @@ pub async fn create(
         target_node: req.target_node,
         ink: req.ink,
         description: req.description,
+        runtime: req.runtime,
+        secrets: req.secrets.unwrap_or_default(),
+        worktree: req.worktree,
+        worktree_base: req.worktree_base,
         enabled: true,
         last_run_at: None,
         last_session_id: None,
@@ -152,6 +156,18 @@ pub async fn update(
     }
     if let Some(enabled) = req.enabled {
         schedule.enabled = enabled;
+    }
+    if let Some(runtime) = &req.runtime {
+        schedule.runtime.clone_from(runtime);
+    }
+    if let Some(secrets) = req.secrets {
+        schedule.secrets = secrets;
+    }
+    if let Some(worktree) = &req.worktree {
+        schedule.worktree = *worktree;
+    }
+    if let Some(worktree_base) = &req.worktree_base {
+        schedule.worktree_base.clone_from(worktree_base);
     }
 
     // Delete and re-insert (simpler than UPDATE with all fields)
@@ -611,5 +627,82 @@ mod tests {
         resp.assert_status_ok();
         let body = resp.text();
         assert!(body.contains("list-test"));
+    }
+
+    #[tokio::test]
+    async fn test_create_schedule_with_execution_fields() {
+        let server = test_server().await;
+        let resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "docker-review",
+                "cron": "0 3 * * *",
+                "command": "claude -p 'review'",
+                "workdir": "/tmp",
+                "runtime": "docker",
+                "secrets": ["GH_TOKEN", "NPM_TOKEN"],
+                "worktree": true,
+                "worktree_base": "main"
+            }))
+            .await;
+        resp.assert_status(StatusCode::CREATED);
+        let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
+        assert_eq!(body["runtime"], "docker");
+        assert_eq!(
+            body["secrets"],
+            serde_json::json!(["GH_TOKEN", "NPM_TOKEN"])
+        );
+        assert_eq!(body["worktree"], true);
+        assert_eq!(body["worktree_base"], "main");
+    }
+
+    #[tokio::test]
+    async fn test_update_schedule_execution_fields() {
+        let server = test_server().await;
+        let create_resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "update-exec",
+                "cron": "0 3 * * *",
+                "command": "echo",
+                "workdir": "/tmp"
+            }))
+            .await;
+        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
+        let id = created["id"].as_str().unwrap();
+
+        let resp = server
+            .put(&format!("/api/v1/schedules/{id}"))
+            .json(&serde_json::json!({
+                "runtime": "docker",
+                "secrets": ["SECRET_A"],
+                "worktree": true,
+                "worktree_base": "develop"
+            }))
+            .await;
+        resp.assert_status_ok();
+        let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
+        assert_eq!(body["runtime"], "docker");
+        assert_eq!(body["secrets"], serde_json::json!(["SECRET_A"]));
+        assert_eq!(body["worktree"], true);
+        assert_eq!(body["worktree_base"], "develop");
+    }
+
+    #[tokio::test]
+    async fn test_create_schedule_backward_compat_no_exec_fields() {
+        let server = test_server().await;
+        let resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "compat",
+                "cron": "0 3 * * *",
+                "workdir": "/tmp"
+            }))
+            .await;
+        resp.assert_status(StatusCode::CREATED);
+        let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
+        assert!(body.get("runtime").is_none() || body["runtime"].is_null());
+        // secrets should not appear (empty vec with skip_serializing_if)
+        assert!(body.get("secrets").is_none() || body["secrets"].as_array().unwrap().is_empty());
     }
 }

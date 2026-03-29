@@ -318,6 +318,29 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
+        // Idempotent migration: schedule execution fields (runtime, secrets, worktree, worktree_base)
+        for col in &[
+            ("runtime", "TEXT"),
+            ("secrets", "TEXT NOT NULL DEFAULT '[]'"),
+            ("worktree", "INTEGER"),
+            ("worktree_base", "TEXT"),
+        ] {
+            let has: i32 = sqlx::query_scalar(&format!(
+                "SELECT COUNT(*) FROM pragma_table_info('schedules') WHERE name = '{}'",
+                col.0
+            ))
+            .fetch_one(&self.pool)
+            .await?;
+            if has == 0 {
+                sqlx::query(&format!(
+                    "ALTER TABLE schedules ADD COLUMN {} {}",
+                    col.0, col.1
+                ))
+                .execute(&self.pool)
+                .await?;
+            }
+        }
+
         // Idempotent migration: git_branch and git_commit columns
         let has_git_branch: i32 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'git_branch'",
@@ -822,9 +845,10 @@ impl Store {
     // -- Schedule methods --
 
     pub async fn insert_schedule(&self, schedule: &pulpo_common::api::Schedule) -> Result<()> {
+        let secrets_json = serde_json::to_string(&schedule.secrets)?;
         sqlx::query(
-            "INSERT INTO schedules (id, name, cron, command, workdir, target_node, ink, description, enabled, last_run_at, last_session_id, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO schedules (id, name, cron, command, workdir, target_node, ink, description, runtime, secrets, worktree, worktree_base, enabled, last_run_at, last_session_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&schedule.id)
         .bind(&schedule.name)
@@ -834,6 +858,10 @@ impl Store {
         .bind(&schedule.target_node)
         .bind(&schedule.ink)
         .bind(&schedule.description)
+        .bind(&schedule.runtime)
+        .bind(&secrets_json)
+        .bind(schedule.worktree)
+        .bind(&schedule.worktree_base)
         .bind(schedule.enabled)
         .bind(&schedule.last_run_at)
         .bind(&schedule.last_session_id)
@@ -1094,6 +1122,8 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
 
 #[allow(clippy::unnecessary_wraps)]
 fn row_to_schedule(row: &SqliteRow) -> Result<pulpo_common::api::Schedule> {
+    let secrets_json: String = row.try_get("secrets").unwrap_or_else(|_| "[]".to_owned());
+    let secrets: Vec<String> = serde_json::from_str(&secrets_json).unwrap_or_default();
     Ok(pulpo_common::api::Schedule {
         id: row.get("id"),
         name: row.get("name"),
@@ -1103,6 +1133,10 @@ fn row_to_schedule(row: &SqliteRow) -> Result<pulpo_common::api::Schedule> {
         target_node: row.get("target_node"),
         ink: row.get("ink"),
         description: row.get("description"),
+        runtime: row.try_get("runtime").unwrap_or(None),
+        secrets,
+        worktree: row.try_get("worktree").unwrap_or(None),
+        worktree_base: row.try_get("worktree_base").unwrap_or(None),
         enabled: row.get("enabled"),
         last_run_at: row.get("last_run_at"),
         last_session_id: row.get("last_session_id"),
@@ -2639,6 +2673,10 @@ mod tests {
             target_node: None,
             ink: None,
             description: Some("Nightly review".into()),
+            runtime: None,
+            secrets: vec![],
+            worktree: None,
+            worktree_base: None,
             enabled: true,
             last_run_at: None,
             last_session_id: None,
@@ -2714,6 +2752,10 @@ mod tests {
             target_node: None,
             ink: None,
             description: None,
+            runtime: None,
+            secrets: vec![],
+            worktree: None,
+            worktree_base: None,
             enabled: true,
             last_run_at: None,
             last_session_id: None,
@@ -2726,6 +2768,66 @@ mod tests {
             ..schedule
         };
         assert!(store.insert_schedule(&dup).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_schedule_execution_fields_roundtrip() {
+        let store = test_store().await;
+        let schedule = pulpo_common::api::Schedule {
+            id: "sched-exec".into(),
+            name: "docker-review".into(),
+            cron: "0 3 * * *".into(),
+            command: "claude -p 'review'".into(),
+            workdir: "/tmp".into(),
+            target_node: None,
+            ink: Some("coder".into()),
+            description: Some("Docker review".into()),
+            runtime: Some("docker".into()),
+            secrets: vec!["GH_TOKEN".into(), "NPM_TOKEN".into()],
+            worktree: Some(true),
+            worktree_base: Some("main".into()),
+            enabled: true,
+            last_run_at: None,
+            last_session_id: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        store.insert_schedule(&schedule).await.unwrap();
+
+        let fetched = store.get_schedule("docker-review").await.unwrap().unwrap();
+        assert_eq!(fetched.runtime, Some("docker".into()));
+        assert_eq!(fetched.secrets, vec!["GH_TOKEN", "NPM_TOKEN"]);
+        assert_eq!(fetched.worktree, Some(true));
+        assert_eq!(fetched.worktree_base, Some("main".into()));
+    }
+
+    #[tokio::test]
+    async fn test_schedule_execution_fields_default_empty() {
+        let store = test_store().await;
+        let schedule = pulpo_common::api::Schedule {
+            id: "sched-empty".into(),
+            name: "plain".into(),
+            cron: "0 3 * * *".into(),
+            command: "echo".into(),
+            workdir: "/tmp".into(),
+            target_node: None,
+            ink: None,
+            description: None,
+            runtime: None,
+            secrets: vec![],
+            worktree: None,
+            worktree_base: None,
+            enabled: true,
+            last_run_at: None,
+            last_session_id: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        store.insert_schedule(&schedule).await.unwrap();
+
+        let fetched = store.get_schedule("plain").await.unwrap().unwrap();
+        assert!(fetched.runtime.is_none());
+        assert!(fetched.secrets.is_empty());
+        assert!(fetched.worktree.is_none());
+        assert!(fetched.worktree_base.is_none());
     }
 
     // -- update_session_metadata_field tests --

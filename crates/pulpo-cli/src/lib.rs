@@ -182,6 +182,12 @@ pub enum Commands {
         #[command(subcommand)]
         action: WorktreeAction,
     },
+
+    /// Manage ink presets (reusable command templates)
+    Ink {
+        #[command(subcommand)]
+        action: InkAction,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -215,6 +221,59 @@ pub enum WorktreeAction {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum InkAction {
+    /// List all ink presets
+    #[command(visible_alias = "ls")]
+    List,
+    /// Show details for a specific ink
+    Get {
+        /// Ink name
+        name: String,
+    },
+    /// Add a new ink preset
+    Add {
+        /// Ink name
+        name: String,
+        /// Human-readable description
+        #[arg(long)]
+        description: Option<String>,
+        /// Command template
+        #[arg(long)]
+        command: Option<String>,
+        /// Runtime environment: tmux (default) or docker
+        #[arg(long)]
+        runtime: Option<String>,
+        /// Secrets to inject (by name, repeatable)
+        #[arg(long)]
+        secret: Vec<String>,
+    },
+    /// Update an existing ink preset
+    Update {
+        /// Ink name
+        name: String,
+        /// Human-readable description
+        #[arg(long)]
+        description: Option<String>,
+        /// Command template
+        #[arg(long)]
+        command: Option<String>,
+        /// Runtime environment: tmux (default) or docker
+        #[arg(long)]
+        runtime: Option<String>,
+        /// Secrets to inject (by name, repeatable). Replaces existing secrets.
+        #[arg(long)]
+        secret: Vec<String>,
+    },
+    /// Remove an ink preset
+    #[command(visible_alias = "rm")]
+    Remove {
+        /// Ink name
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum ScheduleAction {
     /// Add a new schedule
     #[command(alias = "install")]
@@ -235,6 +294,18 @@ pub enum ScheduleAction {
         /// Description
         #[arg(long)]
         description: Option<String>,
+        /// Runtime environment: tmux (default) or docker
+        #[arg(long)]
+        runtime: Option<String>,
+        /// Secrets to inject as environment variables (by name, repeatable)
+        #[arg(long)]
+        secret: Vec<String>,
+        /// Create an isolated git worktree for each run
+        #[arg(long)]
+        worktree: bool,
+        /// Base branch to fork the worktree from (implies --worktree)
+        #[arg(long = "worktree-base")]
+        worktree_base: Option<String>,
         /// Command to run (everything after --)
         #[arg(last = true)]
         command: Vec<String>,
@@ -522,6 +593,24 @@ fn open_browser(_url: &str) -> Result<()> {
     Ok(())
 }
 
+/// Check if a TERM value is widely available across systems.
+/// Returns false for exotic terminal types (e.g. xterm-ghostty) that may not
+/// have terminfo entries installed on remote or headless machines.
+fn is_safe_term(term: &str) -> bool {
+    matches!(
+        term,
+        "xterm"
+            | "xterm-256color"
+            | "screen"
+            | "screen-256color"
+            | "tmux"
+            | "tmux-256color"
+            | "linux"
+            | "vt100"
+            | "dumb"
+    )
+}
+
 /// Build the command to attach to a session's terminal.
 /// Detects Docker sessions by the `docker:` prefix in the backend session ID.
 #[cfg_attr(coverage, allow(dead_code))]
@@ -532,11 +621,17 @@ fn build_attach_command(backend_session_id: &str) -> std::process::Command {
         cmd.args(["exec", "-it", container, "/bin/sh"]);
         return cmd;
     }
-    // tmux sessions
+    // tmux sessions — force a safe TERM value so attach works even when the
+    // local terminal uses an exotic terminfo (e.g. xterm-ghostty) that isn't
+    // installed on the machine running tmux.
     #[cfg(not(target_os = "windows"))]
     {
         let mut cmd = std::process::Command::new("tmux");
         cmd.args(["attach-session", "-t", backend_session_id]);
+        let term = std::env::var("TERM").unwrap_or_default();
+        if !is_safe_term(&term) {
+            cmd.env("TERM", "xterm-256color");
+        }
         cmd
     }
     #[cfg(target_os = "windows")]
@@ -948,6 +1043,10 @@ async fn execute_schedule(
             node,
             ink,
             description,
+            runtime,
+            secret,
+            worktree,
+            worktree_base,
             command,
         } => {
             let cmd = if command.is_empty() {
@@ -959,6 +1058,7 @@ async fn execute_schedule(
                 std::env::current_dir()
                     .map_or_else(|_| ".".into(), |p| p.to_string_lossy().into_owned())
             });
+            let use_worktree = *worktree || worktree_base.is_some();
             let mut body = serde_json::json!({
                 "name": name,
                 "cron": cron,
@@ -975,6 +1075,18 @@ async fn execute_schedule(
             }
             if let Some(d) = description {
                 body["description"] = serde_json::json!(d);
+            }
+            if let Some(r) = runtime {
+                body["runtime"] = serde_json::json!(r);
+            }
+            if !secret.is_empty() {
+                body["secrets"] = serde_json::json!(secret);
+            }
+            if use_worktree {
+                body["worktree"] = serde_json::json!(true);
+            }
+            if let Some(wb) = worktree_base {
+                body["worktree_base"] = serde_json::json!(wb);
             }
             let resp = authed_post(client, format!("{base}/api/v1/schedules"), token)
                 .json(&body)
@@ -1161,6 +1273,184 @@ fn format_worktree_sessions(sessions: &[&Session]) -> String {
     lines.join("\n")
 }
 
+#[cfg_attr(coverage, allow(dead_code))]
+fn build_ink_body(
+    base: &serde_json::Value,
+    description: Option<&String>,
+    command: Option<&String>,
+    runtime: Option<&String>,
+    secret: &[String],
+) -> serde_json::Value {
+    let mut body = base.clone();
+    if let Some(d) = description {
+        body["description"] = serde_json::json!(d);
+    }
+    if let Some(c) = command {
+        body["command"] = serde_json::json!(c);
+    }
+    if let Some(r) = runtime {
+        body["runtime"] = serde_json::json!(r);
+    }
+    if !secret.is_empty() {
+        body["secrets"] = serde_json::json!(secret);
+    }
+    body
+}
+
+/// Execute an ink subcommand via the inks API.
+#[cfg(not(coverage))]
+async fn execute_ink(
+    client: &reqwest::Client,
+    action: &InkAction,
+    base: &str,
+    token: Option<&str>,
+) -> Result<String> {
+    match action {
+        InkAction::List => {
+            let resp = authed_get(client, format!("{base}/api/v1/inks"), token)
+                .send()
+                .await?;
+            let text = ok_or_api_error(resp).await?;
+            let wrapper: serde_json::Value = serde_json::from_str(&text)?;
+            let inks = wrapper
+                .get("inks")
+                .and_then(|v| v.as_object())
+                .cloned()
+                .unwrap_or_default();
+            Ok(format_inks(&inks))
+        }
+        InkAction::Get { name } => {
+            let resp = authed_get(client, format!("{base}/api/v1/inks/{name}"), token)
+                .send()
+                .await?;
+            let text = ok_or_api_error(resp).await?;
+            let ink: serde_json::Value = serde_json::from_str(&text)?;
+            Ok(format_ink_detail(name, &ink))
+        }
+        InkAction::Add {
+            name,
+            description,
+            command,
+            runtime,
+            secret,
+        } => {
+            let body = build_ink_body(
+                &serde_json::json!({}),
+                description.as_ref(),
+                command.as_ref(),
+                runtime.as_ref(),
+                secret,
+            );
+            let resp = authed_post(client, format!("{base}/api/v1/inks/{name}"), token)
+                .json(&body)
+                .send()
+                .await?;
+            ok_or_api_error(resp).await?;
+            Ok(format!("Created ink \"{name}\""))
+        }
+        InkAction::Update {
+            name,
+            description,
+            command,
+            runtime,
+            secret,
+        } => {
+            let get_resp = authed_get(client, format!("{base}/api/v1/inks/{name}"), token)
+                .send()
+                .await?;
+            let text = ok_or_api_error(get_resp).await?;
+            let existing: serde_json::Value = serde_json::from_str(&text)?;
+            let body = build_ink_body(
+                &existing,
+                description.as_ref(),
+                command.as_ref(),
+                runtime.as_ref(),
+                secret,
+            );
+            let resp = authed_put(client, format!("{base}/api/v1/inks/{name}"), token)
+                .json(&body)
+                .send()
+                .await?;
+            ok_or_api_error(resp).await?;
+            Ok(format!("Updated ink \"{name}\""))
+        }
+        InkAction::Remove { name } => {
+            let resp = authed_delete(client, format!("{base}/api/v1/inks/{name}"), token)
+                .send()
+                .await?;
+            ok_or_api_error(resp).await?;
+            Ok(format!("Removed ink \"{name}\""))
+        }
+    }
+}
+
+/// Coverage stub for ink execution.
+#[cfg(coverage)]
+#[allow(clippy::unnecessary_wraps)]
+async fn execute_ink(
+    _client: &reqwest::Client,
+    _action: &InkAction,
+    _base: &str,
+    _token: Option<&str>,
+) -> Result<String> {
+    Ok(String::new())
+}
+
+/// Format a map of inks as a table.
+fn format_inks(inks: &serde_json::Map<String, serde_json::Value>) -> String {
+    if inks.is_empty() {
+        return "No inks configured.".into();
+    }
+    let mut lines = vec![format!(
+        "{:<20} {:<12} {:<30} {}",
+        "NAME", "RUNTIME", "COMMAND", "DESCRIPTION"
+    )];
+    let mut names: Vec<&String> = inks.keys().collect();
+    names.sort();
+    for name in names {
+        let ink = &inks[name];
+        let runtime = ink
+            .get("runtime")
+            .and_then(|v| v.as_str())
+            .unwrap_or("tmux");
+        let command = ink.get("command").and_then(|v| v.as_str()).unwrap_or("-");
+        let desc = ink
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("-");
+        // Truncate command for display (char-safe to avoid multi-byte panic)
+        let cmd_display = if command.chars().count() > 28 {
+            let truncated: String = command.chars().take(25).collect();
+            format!("{truncated}...")
+        } else {
+            command.to_owned()
+        };
+        lines.push(format!("{name:<20} {runtime:<12} {cmd_display:<30} {desc}"));
+    }
+    lines.join("\n")
+}
+
+/// Format a single ink detail view.
+fn format_ink_detail(name: &str, ink: &serde_json::Value) -> String {
+    let mut lines = vec![format!("Ink: {name}")];
+    if let Some(desc) = ink.get("description").and_then(|v| v.as_str()) {
+        lines.push(format!("  Description: {desc}"));
+    }
+    if let Some(cmd) = ink.get("command").and_then(|v| v.as_str()) {
+        lines.push(format!("  Command:     {cmd}"));
+    }
+    if let Some(runtime) = ink.get("runtime").and_then(|v| v.as_str()) {
+        lines.push(format!("  Runtime:     {runtime}"));
+    }
+    if let Some(secrets) = ink.get("secrets").and_then(|v| v.as_array())
+        && !secrets.is_empty()
+    {
+        let names: Vec<&str> = secrets.iter().filter_map(|s| s.as_str()).collect();
+        lines.push(format!("  Secrets:     {}", names.join(", ")));
+    }
+    lines.join("\n")
+}
+
 /// Format a list of schedules as a table.
 #[cfg_attr(coverage, allow(dead_code))]
 fn format_schedules(schedules: &[serde_json::Value]) -> String {
@@ -1168,8 +1458,8 @@ fn format_schedules(schedules: &[serde_json::Value]) -> String {
         return "No schedules.".into();
     }
     let mut lines = vec![format!(
-        "{:<20} {:<18} {:<8} {:<12} {}",
-        "NAME", "CRON", "ENABLED", "LAST RUN", "NODE"
+        "{:<20} {:<18} {:<8} {:<24} {}",
+        "NAME", "CRON (local)", "ENABLED", "LAST RUN", "NODE"
     )];
     for s in schedules {
         let name = s["name"].as_str().unwrap_or("?");
@@ -1181,13 +1471,28 @@ fn format_schedules(schedules: &[serde_json::Value]) -> String {
         };
         let last_run = s["last_run_at"]
             .as_str()
-            .map_or("-", |t| if t.len() >= 16 { &t[..16] } else { t });
+            .map_or_else(|| "-".to_owned(), format_local_time);
         let node = s["target_node"].as_str().unwrap_or("local");
         lines.push(format!(
-            "{name:<20} {cron:<18} {enabled:<8} {last_run:<12} {node}"
+            "{name:<20} {cron:<18} {enabled:<8} {last_run:<20} {node}"
         ));
     }
     lines.join("\n")
+}
+
+/// Format an RFC 3339 timestamp as local time (e.g., "2026-03-29 03:00 CET").
+fn format_local_time(rfc3339: &str) -> String {
+    chrono::DateTime::parse_from_rfc3339(rfc3339).map_or_else(
+        |_| {
+            // Fallback: truncate to ~16 chars (char-safe)
+            let truncated: String = rfc3339.chars().take(16).collect();
+            truncated
+        },
+        |dt| {
+            let local = dt.with_timezone(&chrono::Local);
+            local.format("%Y-%m-%d %H:%M %Z").to_string()
+        },
+    )
 }
 
 /// Select the best node from the peer registry based on load.
@@ -1670,6 +1975,12 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 Err(other) => other,
             }),
         Commands::Worktree { action } => execute_worktree(&client, action, &url, token.as_deref())
+            .await
+            .map_err(|e| match e.downcast::<reqwest::Error>() {
+                Ok(re) => friendly_error(&re, node),
+                Err(other) => other,
+            }),
+        Commands::Ink { action } => execute_ink(&client, action, &url, token.as_deref())
             .await
             .map_err(|e| match e.downcast::<reqwest::Error>() {
                 Ok(re) => friendly_error(&re, node),
@@ -3805,6 +4116,24 @@ mod tests {
     }
 
     #[test]
+    fn test_is_safe_term() {
+        assert!(is_safe_term("xterm-256color"));
+        assert!(is_safe_term("xterm"));
+        assert!(is_safe_term("screen"));
+        assert!(is_safe_term("screen-256color"));
+        assert!(is_safe_term("tmux"));
+        assert!(is_safe_term("tmux-256color"));
+        assert!(is_safe_term("linux"));
+        assert!(is_safe_term("vt100"));
+        assert!(is_safe_term("dumb"));
+        assert!(!is_safe_term("xterm-ghostty"));
+        assert!(!is_safe_term("alacritty"));
+        assert!(!is_safe_term(""));
+        assert!(!is_safe_term("rxvt-unicode-256color"));
+        assert!(!is_safe_term("wezterm"));
+    }
+
+    #[test]
     fn test_build_attach_command_docker() {
         let cmd = build_attach_command("docker:pulpo-my-task");
         assert_eq!(cmd.get_program(), "docker");
@@ -4356,7 +4685,8 @@ mod tests {
         assert!(output.contains("weekly"));
         assert!(output.contains("no"));
         assert!(output.contains("gpu-box"));
-        assert!(output.contains("2026-03-18T03:00"));
+        // last_run_at is converted to local time; verify it contains the date
+        assert!(output.contains("2026-03-18"));
     }
 
     #[test]
@@ -4370,7 +4700,7 @@ mod tests {
         })];
         let output = format_schedules(&schedules);
         assert!(output.contains("NAME"));
-        assert!(output.contains("CRON"));
+        assert!(output.contains("CRON (local)"));
         assert!(output.contains("ENABLED"));
         assert!(output.contains("LAST RUN"));
         assert!(output.contains("NODE"));
@@ -5138,5 +5468,330 @@ mod tests {
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("..."));
+    }
+
+    // -- Ink CLI parsing tests --
+
+    #[test]
+    fn test_cli_parse_ink_list() {
+        let cli = Cli::try_parse_from(["pulpo", "ink", "list"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Ink {
+                action: InkAction::List
+            })
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_ink_list_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "ink", "ls"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Ink {
+                action: InkAction::List
+            })
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_ink_get() {
+        let cli = Cli::try_parse_from(["pulpo", "ink", "get", "coder"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Ink {
+                action: InkAction::Get { name }
+            }) if name == "coder"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_ink_add() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "ink",
+            "add",
+            "coder",
+            "--description",
+            "A coder ink",
+            "--command",
+            "claude -p 'code'",
+            "--runtime",
+            "docker",
+            "--secret",
+            "GH_TOKEN",
+            "--secret",
+            "NPM_TOKEN",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Ink {
+                action: InkAction::Add { name, description, command, runtime, secret }
+            }) if name == "coder"
+                && description.as_deref() == Some("A coder ink")
+                && command.as_deref() == Some("claude -p 'code'")
+                && runtime.as_deref() == Some("docker")
+                && secret == &["GH_TOKEN", "NPM_TOKEN"]
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_ink_add_minimal() {
+        let cli = Cli::try_parse_from(["pulpo", "ink", "add", "bare"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Ink {
+                action: InkAction::Add { name, command, secret, .. }
+            }) if name == "bare" && command.is_none() && secret.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_ink_update() {
+        let cli = Cli::try_parse_from(["pulpo", "ink", "update", "coder", "--command", "new cmd"])
+            .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Ink {
+                action: InkAction::Update { name, command, .. }
+            }) if name == "coder" && command.as_deref() == Some("new cmd")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_ink_remove() {
+        let cli = Cli::try_parse_from(["pulpo", "ink", "remove", "coder"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Ink {
+                action: InkAction::Remove { name }
+            }) if name == "coder"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_ink_remove_alias() {
+        let cli = Cli::try_parse_from(["pulpo", "ink", "rm", "coder"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Ink {
+                action: InkAction::Remove { name }
+            }) if name == "coder"
+        ));
+    }
+
+    #[test]
+    fn test_ink_action_debug() {
+        let action = InkAction::List;
+        let debug = format!("{action:?}");
+        assert!(debug.contains("List"));
+    }
+
+    // -- Ink format tests --
+
+    #[test]
+    fn test_format_inks_empty() {
+        let inks = serde_json::Map::new();
+        assert_eq!(format_inks(&inks), "No inks configured.");
+    }
+
+    #[test]
+    fn test_format_inks_with_entries() {
+        let mut inks = serde_json::Map::new();
+        inks.insert(
+            "coder".into(),
+            serde_json::json!({
+                "description": "A coder",
+                "command": "claude -p 'code'",
+                "runtime": "docker"
+            }),
+        );
+        let output = format_inks(&inks);
+        assert!(output.contains("coder"));
+        assert!(output.contains("docker"));
+        assert!(output.contains("A coder"));
+    }
+
+    #[test]
+    fn test_format_inks_header() {
+        let mut inks = serde_json::Map::new();
+        inks.insert("test".into(), serde_json::json!({}));
+        let output = format_inks(&inks);
+        assert!(output.contains("NAME"));
+        assert!(output.contains("RUNTIME"));
+        assert!(output.contains("COMMAND"));
+        assert!(output.contains("DESCRIPTION"));
+    }
+
+    #[test]
+    fn test_format_inks_long_command_truncated() {
+        let mut inks = serde_json::Map::new();
+        inks.insert(
+            "longcmd".into(),
+            serde_json::json!({
+                "command": "this is a very long command that exceeds the display limit for the table"
+            }),
+        );
+        let output = format_inks(&inks);
+        assert!(output.contains("..."));
+    }
+
+    #[test]
+    fn test_format_ink_detail() {
+        let ink = serde_json::json!({
+            "description": "A coder ink",
+            "command": "claude -p 'code'",
+            "runtime": "docker",
+            "secrets": ["GH_TOKEN", "NPM_TOKEN"]
+        });
+        let output = format_ink_detail("coder", &ink);
+        assert!(output.contains("Ink: coder"));
+        assert!(output.contains("A coder ink"));
+        assert!(output.contains("claude -p 'code'"));
+        assert!(output.contains("docker"));
+        assert!(output.contains("GH_TOKEN, NPM_TOKEN"));
+    }
+
+    #[test]
+    fn test_format_ink_detail_minimal() {
+        let ink = serde_json::json!({});
+        let output = format_ink_detail("bare", &ink);
+        assert!(output.contains("Ink: bare"));
+        assert!(!output.contains("Description"));
+    }
+
+    // -- Schedule CLI new flags tests --
+
+    #[test]
+    fn test_cli_parse_schedule_add_with_runtime() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "schedule",
+            "add",
+            "nightly",
+            "0 3 * * *",
+            "--runtime",
+            "docker",
+            "--secret",
+            "GH_TOKEN",
+            "--worktree",
+            "--worktree-base",
+            "main",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Schedule {
+                action: ScheduleAction::Add { name, runtime, secret, worktree, worktree_base, .. }
+            }) if name == "nightly"
+                && runtime.as_deref() == Some("docker")
+                && secret == &["GH_TOKEN"]
+                && *worktree
+                && worktree_base.as_deref() == Some("main")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_add_worktree_base_implies_worktree() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "schedule",
+            "add",
+            "nightly",
+            "0 3 * * *",
+            "--worktree-base",
+            "develop",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Schedule {
+                action: ScheduleAction::Add { worktree, worktree_base, .. }
+            }) if !worktree && worktree_base.as_deref() == Some("develop")
+        ));
+    }
+
+    // -- format_local_time tests --
+
+    #[test]
+    fn test_format_local_time_valid_utc() {
+        let result = format_local_time("2026-03-18T03:00:00Z");
+        assert!(result.contains("2026-03-18"));
+        // Should contain time and timezone indicator
+        assert!(result.contains(':'));
+    }
+
+    #[test]
+    fn test_format_local_time_valid_with_offset() {
+        let result = format_local_time("2026-03-18T03:00:00+02:00");
+        assert!(result.contains("2026-03-18"));
+    }
+
+    #[test]
+    fn test_format_local_time_invalid_truncated() {
+        let result = format_local_time("short");
+        assert_eq!(result, "short");
+    }
+
+    #[test]
+    fn test_format_local_time_invalid_long() {
+        let result = format_local_time("not-a-valid-rfc3339-timestamp");
+        assert_eq!(result.chars().count(), 16);
+    }
+
+    #[test]
+    fn test_format_local_time_multibyte_safe() {
+        // Multi-byte input should not panic
+        let result = format_local_time("日本語テストの文字列です");
+        assert!(!result.is_empty());
+    }
+
+    // -- build_ink_body tests --
+
+    #[test]
+    fn test_build_ink_body_empty() {
+        let body = build_ink_body(&serde_json::json!({}), None, None, None, &[]);
+        assert_eq!(body, serde_json::json!({}));
+    }
+
+    #[test]
+    fn test_build_ink_body_all_fields() {
+        let body = build_ink_body(
+            &serde_json::json!({}),
+            Some(&"desc".into()),
+            Some(&"cmd".into()),
+            Some(&"docker".into()),
+            &["S1".into(), "S2".into()],
+        );
+        assert_eq!(body["description"], "desc");
+        assert_eq!(body["command"], "cmd");
+        assert_eq!(body["runtime"], "docker");
+        assert_eq!(body["secrets"], serde_json::json!(["S1", "S2"]));
+    }
+
+    #[test]
+    fn test_build_ink_body_merges_with_base() {
+        let base = serde_json::json!({"description": "old", "command": "old_cmd"});
+        let body = build_ink_body(&base, None, Some(&"new_cmd".into()), None, &[]);
+        // description preserved from base, command overridden
+        assert_eq!(body["description"], "old");
+        assert_eq!(body["command"], "new_cmd");
+    }
+
+    // -- format_inks multibyte test --
+
+    #[test]
+    fn test_format_inks_multibyte_command_safe() {
+        let mut inks = serde_json::Map::new();
+        inks.insert(
+            "test".into(),
+            serde_json::json!({
+                "command": "日本語コマンドですこれは長い文字列で切り捨てテスト"
+            }),
+        );
+        // Should not panic on multi-byte truncation
+        let output = format_inks(&inks);
+        assert!(output.contains("test"));
     }
 }

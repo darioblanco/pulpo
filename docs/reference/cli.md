@@ -14,6 +14,7 @@ pulpo resume <NAME>                       Resume a lost or ready session (auto-a
 pulpo interventions <NAME>                Show watchdog interventions
 pulpo nodes                               List known nodes/peers
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
+pulpo ink <SUBCOMMAND>                    Manage ink presets (reusable command templates)
 pulpo worktree list                       List worktree sessions (alias: wt ls)
 pulpo secret <SUBCOMMAND>                 Manage secrets (env vars for sessions)
 pulpo ui                                  Open web UI in browser
@@ -56,6 +57,40 @@ pulpo schedule pause <ID>                                       Pause a job
 pulpo schedule resume <ID>                                      Resume a paused job
 pulpo schedule remove <ID>                                      Remove a job
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--workdir <PATH>` | Working directory (default: current) |
+| `--node <NAME>` | Target node (omit = local, `auto` = least-loaded) |
+| `--ink <NAME>` | Ink preset from config |
+| `--description <TEXT>` | Human-readable description |
+| `--runtime <RUNTIME>` | Session runtime: `tmux` (default) or `docker` |
+| `--secret <NAME>` | Inject a stored secret (repeatable) |
+| `--worktree` | Create an isolated git worktree for each run |
+| `--worktree-base <BRANCH>` | Fork worktree from a specific branch (implies `--worktree`) |
+
+**Scheduler behavior:** Schedules run in the daemon's machine timezone. The scheduler loop ticks every 60 seconds, so cron expressions more granular than 1 minute won't fire more often. Each schedule fire creates a fresh session with a timestamped name (`<schedule>-YYYYMMDD-HHMM`).
+
+**Worktree schedules:** When `--worktree` is set, each scheduled run creates a fresh git worktree, giving the agent an isolated copy of the repository. The worktree is cleaned up when the session is stopped.
+
+## Ink Subcommands
+
+```text
+pulpo ink list                             List all ink presets (alias: ls)
+pulpo ink get <NAME>                       Show ink details
+pulpo ink add <NAME> [OPTIONS]             Add a new ink preset
+pulpo ink update <NAME> [OPTIONS]          Update an existing ink preset
+pulpo ink remove <NAME>                    Remove an ink preset (alias: rm)
+```
+
+| Flag | Description |
+|------|-------------|
+| `--description <TEXT>` | Human-readable description |
+| `--command <CMD>` | Command template |
+| `--runtime <RUNTIME>` | Default runtime: `tmux` or `docker` |
+| `--secret <NAME>` | Default secrets to inject (repeatable) |
+
+Inks are persisted in `config.toml` and take effect immediately for new sessions. When used with `pulpo spawn --ink <NAME>`, the ink provides defaults for command, description, runtime, and secrets. Explicit spawn flags override ink defaults.
 
 ## Secret Subcommands
 

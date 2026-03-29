@@ -147,6 +147,12 @@ pub struct NotificationsConfigResponse {
 pub struct InkConfigResponse {
     pub description: Option<String>,
     pub command: Option<String>,
+    /// Secret names to inject as environment variables.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secrets: Vec<String>,
+    /// Runtime to use (tmux or docker).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -293,6 +299,18 @@ pub struct Schedule {
     pub target_node: Option<String>,
     pub ink: Option<String>,
     pub description: Option<String>,
+    /// Runtime environment (tmux or docker).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
+    /// Secret names to inject as environment variables.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secrets: Vec<String>,
+    /// Create in an isolated git worktree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<bool>,
+    /// Base branch to fork the worktree from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_base: Option<String>,
     pub enabled: bool,
     pub last_run_at: Option<String>,
     pub last_session_id: Option<String>,
@@ -310,6 +328,15 @@ pub struct CreateScheduleRequest {
     pub target_node: Option<String>,
     pub ink: Option<String>,
     pub description: Option<String>,
+    /// Runtime environment (tmux or docker).
+    pub runtime: Option<String>,
+    /// Secret names to inject as environment variables.
+    #[serde(default)]
+    pub secrets: Option<Vec<String>>,
+    /// Create in an isolated git worktree.
+    pub worktree: Option<bool>,
+    /// Base branch to fork the worktree from.
+    pub worktree_base: Option<String>,
 }
 
 /// Request to update a schedule.
@@ -322,6 +349,14 @@ pub struct UpdateScheduleRequest {
     pub ink: Option<Option<String>>,
     pub description: Option<Option<String>>,
     pub enabled: Option<bool>,
+    /// Runtime environment (tmux or docker). Use `Some(None)` to clear.
+    pub runtime: Option<Option<String>>,
+    /// Secret names. Use `Some(vec![])` to clear.
+    pub secrets: Option<Vec<String>>,
+    /// Create in an isolated git worktree. Use `Some(None)` to clear.
+    pub worktree: Option<Option<bool>>,
+    /// Base branch to fork the worktree from. Use `Some(None)` to clear.
+    pub worktree_base: Option<Option<String>>,
 }
 
 // -- Secret types --
@@ -1205,6 +1240,8 @@ mod tests {
         let resp = InkConfigResponse {
             description: Some("Code review".into()),
             command: Some("claude -p 'review'".into()),
+            secrets: vec![],
+            runtime: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("Code review"));
@@ -1216,6 +1253,8 @@ mod tests {
         let resp = InkConfigResponse {
             description: None,
             command: None,
+            secrets: vec![],
+            runtime: None,
         };
         #[allow(clippy::redundant_clone)]
         let cloned = resp.clone();
@@ -1411,6 +1450,10 @@ mod tests {
             target_node: None,
             ink: None,
             description: Some("Nightly review".into()),
+            runtime: None,
+            secrets: vec![],
+            worktree: None,
+            worktree_base: None,
             enabled: true,
             last_run_at: None,
             last_session_id: None,

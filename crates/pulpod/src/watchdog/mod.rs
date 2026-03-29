@@ -2695,17 +2695,25 @@ mod tests {
             test_ready_ctx(),
         ));
 
-        time::sleep(Duration::from_millis(50)).await;
+        // Poll until idle_since is set, with a generous timeout
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let fetched = store
+                .get_session(&session.id.to_string())
+                .await
+                .unwrap()
+                .unwrap();
+            if fetched.idle_since.is_some() {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "idle_since was not set within 2s"
+            );
+            time::sleep(Duration::from_millis(10)).await;
+        }
         shutdown_tx.send(true).unwrap();
         handle.await.unwrap();
-
-        // Session should have been marked idle
-        let fetched = store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(fetched.idle_since.is_some());
     }
 
     #[tokio::test]
