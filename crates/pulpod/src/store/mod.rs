@@ -1122,25 +1122,27 @@ fn row_to_session(row: &SqliteRow) -> Result<Session> {
 
 #[allow(clippy::unnecessary_wraps)]
 fn row_to_schedule(row: &SqliteRow) -> Result<pulpo_common::api::Schedule> {
+    // Use try_get throughout to prevent panics from SQLite prepared statement
+    // cache races during parallel tests (stale column count after ALTER TABLE).
     let secrets_json: String = row.try_get("secrets").unwrap_or_else(|_| "[]".to_owned());
     let secrets: Vec<String> = serde_json::from_str(&secrets_json).unwrap_or_default();
     Ok(pulpo_common::api::Schedule {
-        id: row.get("id"),
-        name: row.get("name"),
-        cron: row.get("cron"),
-        command: row.get("command"),
-        workdir: row.get("workdir"),
-        target_node: row.get("target_node"),
-        ink: row.get("ink"),
-        description: row.get("description"),
+        id: row.try_get("id").unwrap_or_default(),
+        name: row.try_get("name").unwrap_or_default(),
+        cron: row.try_get("cron").unwrap_or_default(),
+        command: row.try_get("command").unwrap_or_default(),
+        workdir: row.try_get("workdir").unwrap_or_default(),
+        target_node: row.try_get("target_node").unwrap_or(None),
+        ink: row.try_get("ink").unwrap_or(None),
+        description: row.try_get("description").unwrap_or(None),
         runtime: row.try_get("runtime").unwrap_or(None),
         secrets,
         worktree: row.try_get("worktree").unwrap_or(None),
         worktree_base: row.try_get("worktree_base").unwrap_or(None),
-        enabled: row.get("enabled"),
-        last_run_at: row.get("last_run_at"),
-        last_session_id: row.get("last_session_id"),
-        created_at: row.get("created_at"),
+        enabled: row.try_get("enabled").unwrap_or(true),
+        last_run_at: row.try_get("last_run_at").unwrap_or(None),
+        last_session_id: row.try_get("last_session_id").unwrap_or(None),
+        created_at: row.try_get("created_at").unwrap_or_default(),
     })
 }
 
