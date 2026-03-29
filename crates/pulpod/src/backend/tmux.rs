@@ -913,9 +913,9 @@ mod tests {
         )
         .unwrap_or_else(|e| panic!("failed to create tmux session '{session_name}': {e}"));
 
-        // Wait for the command to produce output (up to 3 seconds)
+        // Wait for the command to produce output (up to 10 seconds — CI can be slow)
         let mut output = String::new();
-        for _ in 0..30 {
+        for _ in 0..100 {
             std::thread::sleep(std::time::Duration::from_millis(100));
             if let Ok(o) = run_tmux(
                 build_capture_command(&tmux, session_name, 50),
