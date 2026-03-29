@@ -22,10 +22,11 @@ hooks:
 # make dev-web   → run web UI dev server (hot reload, proxies to pulpod)
 # make dev-stop  → stop local pulpod and restart homebrew service
 
-# Run pulpod from source. Stops the homebrew service first to free port 7433.
+# Run pulpod from source. Stops existing service first to free port 7433.
 # Uses .pulpo/config.toml (gitignored — copy from ~/.pulpo/config.toml if missing).
 dev:
-	@brew services stop pulpo 2>/dev/null || true
+	@if command -v brew >/dev/null 2>&1; then brew services stop pulpo 2>/dev/null || true; \
+	elif command -v systemctl >/dev/null 2>&1; then systemctl --user stop pulpo 2>/dev/null || true; fi
 	@if [ ! -f .pulpo/config.toml ]; then \
 		if [ -f ~/.pulpo/config.toml ]; then \
 			cp ~/.pulpo/config.toml .pulpo/config.toml; \
@@ -36,13 +37,14 @@ dev:
 		fi; \
 	fi
 	@mkdir -p .pulpo/data
-	@echo "Running local pulpod (Ctrl+C to stop, then 'make dev-stop' to restore homebrew)"
+	@echo "Running local pulpod (Ctrl+C to stop, then 'make dev-stop' to restore service)"
 	cargo run -p pulpod -- --config $(PWD)/.pulpo/config.toml
 
-# Stop local dev and restore the homebrew service
+# Stop local dev and restore the system service
 dev-stop:
-	@brew services start pulpo
-	@echo "Homebrew pulpo restored."
+	@if command -v brew >/dev/null 2>&1; then brew services start pulpo; \
+	elif command -v systemctl >/dev/null 2>&1; then systemctl --user start pulpo; fi
+	@echo "Service restored."
 
 # Run the web UI dev server (port 5173, proxies /api to pulpod)
 dev-web:
@@ -156,11 +158,12 @@ endif
 # Install binaries to /usr/local/bin (uses sudo if needed)
 install: build
 	@if [ -w /usr/local/bin ]; then \
-		cp target/release/pulpod /usr/local/bin/; \
-		cp target/release/pulpo /usr/local/bin/; \
+		cp target/release/pulpod target/release/pulpo /usr/local/bin/; \
+	elif [ -d /usr/local/bin ]; then \
+		sudo cp target/release/pulpod target/release/pulpo /usr/local/bin/; \
 	else \
-		sudo cp target/release/pulpod /usr/local/bin/; \
-		sudo cp target/release/pulpo /usr/local/bin/; \
+		sudo mkdir -p /usr/local/bin; \
+		sudo cp target/release/pulpod target/release/pulpo /usr/local/bin/; \
 	fi
 
 # Install and load launchd service (macOS)
@@ -189,10 +192,10 @@ service-uninstall-linux:
 # Deploy pulpod to a remote Linux server
 DEPLOY_HOST ?= deploy@your-server
 deploy-server:
-	scp target/release/pulpod $(DEPLOY_HOST):/usr/local/bin/pulpod
+	scp target/release/pulpod target/release/pulpo $(DEPLOY_HOST):/usr/local/bin/
 	scp contrib/pulpo.service $(DEPLOY_HOST):~/.config/systemd/user/pulpo.service
 	ssh $(DEPLOY_HOST) "systemctl --user daemon-reload && systemctl --user restart pulpo"
-	@echo "Deployed pulpod to $(DEPLOY_HOST)"
+	@echo "Deployed pulpod + pulpo to $(DEPLOY_HOST)"
 
 # ─── Check ───────────────────────────────────────────────────────────────────
 
