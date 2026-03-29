@@ -13,6 +13,7 @@ pub mod session;
 pub mod store;
 pub mod watchdog;
 
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -21,6 +22,8 @@ use pulpo_common::event::PulpoEvent;
 use tokio::sync::{broadcast, watch};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 #[cfg(all(not(coverage), not(target_os = "windows")))]
 use backend::tmux::TmuxBackend;
@@ -157,12 +160,77 @@ pub enum CliCommand {
 }
 
 /// Initialize tracing subscriber for logging.
-pub fn init_tracing() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("pulpod=info".parse()?))
+///
+/// When `log_dir` is `Some`, logs are written to hourly-rotated files under
+/// `{log_dir}/logs/` using a non-blocking writer. The `retain_days` parameter
+/// controls how many days of log files to keep (converted to `days * 24` hourly
+/// files for `max_log_files`). If the log directory cannot be created, falls back
+/// to console-only logging instead of failing.
+///
+/// The console layer is included only when stdout is a terminal (i.e., not when
+/// running under systemd/launchd), to avoid double-logging to both journald and
+/// the log file.
+///
+/// When `log_dir` is `None`, only console output is used (useful for tests).
+///
+/// Returns an optional guard that must be held for the lifetime of the program
+/// to ensure buffered log writes are flushed.
+pub fn init_tracing(
+    log_dir: Option<&Path>,
+    retain_days: u32,
+) -> Result<Option<tracing_appender::non_blocking::WorkerGuard>> {
+    use std::io::IsTerminal;
+    use tracing_appender::rolling::{RollingFileAppender, Rotation};
+
+    let env_filter = EnvFilter::from_default_env().add_directive("pulpod=info".parse()?);
+    let is_tty = std::io::stdout().is_terminal();
+
+    if let Some(dir) = log_dir {
+        let log_path = dir.join("logs");
+        match std::fs::create_dir_all(&log_path) {
+            Ok(()) => {
+                let max_files = retain_days.max(1) as usize * 24;
+                let file_appender = RollingFileAppender::builder()
+                    .rotation(Rotation::HOURLY)
+                    .filename_prefix("pulpod.log")
+                    .max_log_files(max_files)
+                    .build(&log_path)
+                    .map_err(|e| anyhow::anyhow!("Failed to create log appender: {e}"))?;
+                let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+                let file_layer = tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(non_blocking);
+
+                // Include console layer only when running interactively (TTY).
+                // Under systemd/launchd, stdout goes to journald/syslog already.
+                let console_layer = is_tty.then(tracing_subscriber::fmt::layer);
+
+                tracing_subscriber::registry()
+                    .with(env_filter)
+                    .with(console_layer)
+                    .with(file_layer)
+                    .try_init()
+                    .ok();
+
+                return Ok(Some(guard));
+            }
+            Err(e) => {
+                eprintln!(
+                    "Warning: could not create log directory {}: {e}. Logging to console only.",
+                    log_path.display()
+                );
+            }
+        }
+    }
+
+    let console_layer = tracing_subscriber::fmt::layer();
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(console_layer)
         .try_init()
         .ok();
-    Ok(())
+
+    Ok(None)
 }
 
 /// Upgrade name-based backend session IDs to tmux `$N` IDs for live sessions.
@@ -798,10 +866,27 @@ data_dir = "{}"
     }
 
     #[test]
-    fn test_init_tracing() {
+    fn test_init_tracing_console_only() {
         // Should not panic even if called multiple times (uses try_init)
-        let result = init_tracing();
+        let result = init_tracing(None, 7);
         assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_init_tracing_with_log_dir() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let result = init_tracing(Some(tmpdir.path()), 7);
+        assert!(result.is_ok());
+        assert!(tmpdir.path().join("logs").is_dir());
+    }
+
+    #[test]
+    fn test_init_tracing_degrades_on_bad_dir() {
+        // Read-only path that can't be created — should fall back to console-only
+        let result = init_tracing(Some(Path::new("/proc/nonexistent")), 7);
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
     }
 
     #[cfg(coverage)]

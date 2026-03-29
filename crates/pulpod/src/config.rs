@@ -296,6 +296,9 @@ pub struct NodeConfig {
     /// Default command used when spawning a session without an explicit command or ink.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_command: Option<String>,
+    /// Number of days to retain log files. Defaults to 7.
+    #[serde(default = "default_log_retain_days")]
+    pub log_retain_days: u32,
 }
 
 impl Default for NodeConfig {
@@ -309,6 +312,7 @@ impl Default for NodeConfig {
             seed: None,
             discovery_interval_secs: default_discovery_interval_secs(),
             default_command: None,
+            log_retain_days: default_log_retain_days(),
         }
     }
 }
@@ -324,6 +328,10 @@ fn default_name() -> String {
 
 const fn default_port() -> u16 {
     7433
+}
+
+const fn default_log_retain_days() -> u32 {
+    7
 }
 
 fn default_data_dir() -> String {
@@ -448,6 +456,7 @@ pub fn load(path: &str) -> Result<Config> {
                 seed: None,
                 discovery_interval_secs: default_discovery_interval_secs(),
                 default_command: None,
+                log_retain_days: default_log_retain_days(),
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -1934,6 +1943,7 @@ name = "test"
             seed: Some("10.0.0.1:7433".into()),
             discovery_interval_secs: 30,
             default_command: None,
+            log_retain_days: 7,
         };
         let toml_str = toml::to_string(&config).unwrap();
         assert!(toml_str.contains("seed = \"10.0.0.1:7433\""));

@@ -16,9 +16,6 @@
     <key>KeepAlive</key>
     <true/>
 
-    <key>StandardOutPath</key>
-    <string>/tmp/pulpod.stdout.log</string>
-
     <key>StandardErrorPath</key>
     <string>/tmp/pulpod.stderr.log</string>
 

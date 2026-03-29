@@ -14,7 +14,9 @@ async fn main() -> anyhow::Result<()> {
         }
         None => {
             // HTTP daemon mode
-            pulpod::init_tracing()?;
+            let config = pulpod::config::load(&cli.config)?;
+            let data_dir = std::path::PathBuf::from(config.data_dir());
+            let _log_guard = pulpod::init_tracing(Some(&data_dir), config.node.log_retain_days)?;
             let (app, addr, shutdown_handle) = pulpod::build_app(&cli).await?;
             let listener = tokio::net::TcpListener::bind(&addr).await?;
 
