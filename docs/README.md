@@ -59,6 +59,8 @@ Pulpo is a strong fit for:
 - operators who want scheduled, repeatable, unattended agent work
 
 See [Why Pulpo](/getting-started/why-pulpo) for the full ICP and competitor view.
+For an objective source-based comparison page, see
+[Alternatives And Comparisons](/getting-started/alternatives).
 
 ## Where Pulpo Fits
 
@@ -127,16 +129,18 @@ The project is still experimental overall, but the session/runtime/lifecycle mod
 ## Read In Order
 
 1. [Why Pulpo](/getting-started/why-pulpo) for positioning, ICPs, and alternatives
-2. [Quickstart](/getting-started/quickstart) for the shortest hands-on path
-3. [Core Concepts](/architecture/core-concepts) for the vocabulary
-4. [Architecture Overview](/architecture/overview) for the mental model
-5. [Session Lifecycle](/operations/session-lifecycle) for behavior guarantees
-6. [Configuration Guide](/guides/configuration) for operational setup
-7. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
+2. [Alternatives And Comparisons](/getting-started/alternatives) for category-level market context
+3. [Quickstart](/getting-started/quickstart) for the shortest hands-on path
+4. [Core Concepts](/architecture/core-concepts) for the vocabulary
+5. [Architecture Overview](/architecture/overview) for the mental model
+6. [Session Lifecycle](/operations/session-lifecycle) for behavior guarantees
+7. [Configuration Guide](/guides/configuration) for operational setup
+8. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
 
 ## Quick Links
 
 - [Why Pulpo](/getting-started/why-pulpo)
+- [Alternatives And Comparisons](/getting-started/alternatives)
 - [Install](/getting-started/install)
 - [Quickstart](/getting-started/quickstart)
 - [Core Concepts](/architecture/core-concepts)

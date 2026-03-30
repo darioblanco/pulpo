@@ -92,6 +92,9 @@ is not "which tool has more features?" It is "which layer does each tool own?"
 | Agent orchestration frameworks | Multi-agent planners and task routers | Decomposing work, assigning tasks, coordinating agents | Pulpo is the runtime layer underneath those workflows, not the planner |
 | Generic infrastructure | Raw tmux, cron, SSH, Docker scripts | Maximum flexibility, no product constraints | Pulpo gives you lifecycle semantics, recovery, supervision, and a unified control surface |
 
+For a more detailed and explicitly source-based version, see
+[Alternatives And Comparisons](/getting-started/alternatives).
+
 ## Hosted Agents Vs Pulpo
 
 Hosted coding agents are getting better quickly. They usually win on:
@@ -149,4 +152,5 @@ feeling like jobs that need to run somewhere, be observed, and survive failure.
 
 1. [Install](/getting-started/install)
 2. [Quickstart](/getting-started/quickstart)
-3. [Core Concepts](/architecture/core-concepts)
+3. [Alternatives And Comparisons](/getting-started/alternatives)
+4. [Core Concepts](/architecture/core-concepts)
