@@ -80,6 +80,9 @@ pulpo schedule add nightly-review "0 3 * * *" --workdir ~/repo -- claude -p "rev
 pulpo schedule list
 ```
 
+For a fuller version of this pattern using reusable inks and a real overnight
+workflow, see [Nightly Code Review](/guides/nightly-code-review).
+
 ## 7. Docker runtime
 
 Run agents in isolated containers — safe for unrestricted permissions:
@@ -122,6 +125,7 @@ curl -N http://localhost:7433/api/v1/events  # SSE stream
 ## Next steps
 
 - [Why Pulpo](/getting-started/why-pulpo) — ICPs, alternatives, and where Pulpo fits
+- [Nightly Code Review](/guides/nightly-code-review) — a concrete recurring background-agent workflow
 - [Core Concepts](/architecture/core-concepts) — the smallest vocabulary for understanding Pulpo
 - [Architecture Overview](/architecture/overview) — the session/runtime/watchdog mental model
 - [Session Lifecycle](/operations/session-lifecycle) — exact transition behavior

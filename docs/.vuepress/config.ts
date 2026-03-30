@@ -41,6 +41,7 @@ export default defineUserConfig({
       ],
       '/architecture/': ['/architecture/core-concepts', '/architecture/overview'],
       '/guides/': [
+        '/guides/nightly-code-review',
         '/guides/configuration',
         '/guides/discovery',
         '/guides/recovery',

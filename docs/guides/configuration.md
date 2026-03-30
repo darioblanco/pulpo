@@ -59,6 +59,9 @@ Use with: `pulpo spawn auth-review --ink reviewer`
 
 Inks can also be managed via CLI: `pulpo ink list`, `pulpo ink add <NAME> --command ...`, etc.
 
+For a concrete example of using an ink with schedules, see
+[Nightly Code Review](/guides/nightly-code-review).
+
 ## Watchdog
 
 The watchdog monitors sessions for memory pressure, idle detection, and ready session cleanup:

@@ -146,6 +146,16 @@ for repo in my-api my-frontend my-infra; do
 done
 ```
 
+### Nightly review via ink
+
+```bash
+pulpo schedule add nightly-review "0 3 * * *" \
+  --workdir ~/repos/my-api \
+  --ink nightly-review
+```
+
+See [Nightly Code Review](/guides/nightly-code-review) for the complete recipe.
+
 ### Follow all sessions in parallel (tmux panes)
 
 ```bash

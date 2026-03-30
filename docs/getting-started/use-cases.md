@@ -76,6 +76,7 @@ Best docs to read next:
 
 - [Quickstart](/getting-started/quickstart)
 - [Configuration Guide](/guides/configuration)
+- [Nightly Code Review](/guides/nightly-code-review)
 - [Architecture Overview](/architecture/overview)
 
 ## 4. User Evaluating Pulpo Against Hosted Agents
@@ -136,6 +137,7 @@ Best docs to read next:
 | If you need... | Start here |
 | --- | --- |
 | One agent running on your own server tonight | [Quickstart](/getting-started/quickstart) |
+| A recurring overnight review workflow | [Nightly Code Review](/guides/nightly-code-review) |
 | Multiple agents on one repo safely | [Worktrees Guide](/guides/worktrees) |
 | Multi-node control over Tailscale or LAN | [Discovery Guide](/guides/discovery) |
 | Secrets and safer Docker runs | [Secrets](/guides/secrets) |
