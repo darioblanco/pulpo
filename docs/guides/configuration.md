@@ -24,7 +24,7 @@ default_command = "claude"   # Optional fallback when spawn has no command
 
 Bind modes:
 - `local` (default) — binds to `127.0.0.1`, no auth, no discovery
-- `public` — binds to `0.0.0.0`, requires auth token, enables mDNS or seed discovery
+- `public` — binds to `0.0.0.0`, requires auth token. Use manual `[peers]` config for multi-node.
 - `tailscale` — binds to Tailscale IP, auto-serves HTTPS via `tailscale serve`, peer discovery via Tailscale API
 - `container` — binds to `0.0.0.0`, no auth (trusts container network isolation)
 

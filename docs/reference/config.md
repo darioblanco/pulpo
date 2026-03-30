@@ -13,7 +13,6 @@ All sections are optional. Pulpo runs with zero config.
 | `data_dir` | string | `~/.pulpo` | Data directory for SQLite, logs |
 | `bind` | string | `"local"` | `"local"`, `"public"`, `"tailscale"`, `"container"` |
 | `tag` | string | — | Tailscale ACL tag for filtering (e.g. `"pulpo"`) |
-| `seed` | string | — | Seed peer address for gossip discovery (e.g. `"10.0.0.5:7433"`) |
 | `discovery_interval_secs` | u64 | `30` | How often to run peer discovery |
 | `default_command` | string | — | Default command when spawn has no explicit command or ink command |
 

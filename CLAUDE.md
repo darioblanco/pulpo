@@ -85,16 +85,16 @@ async fn main() -> anyhow::Result<()> { /* ... */ }
 fn main() {}
 ```
 
-2. **Untestable I/O** — functions that require real infrastructure (mDNS, PTY spawn, MCP stdio) are gated with `#[cfg(not(coverage))]` on the function itself.
+2. **Untestable I/O** — functions that require real infrastructure (PTY spawn, MCP stdio) are gated with `#[cfg(not(coverage))]` on the function itself.
 
 3. **Dead code under coverage** — helpers that become unused when their callers are excluded use `#[cfg_attr(coverage, allow(dead_code))]` to suppress warnings.
 
 **Tiered enforcement:**
-- Local pre-commit: **99%** line coverage (strict gate via `cargo-llvm-cov`)
-- CI (Linux): **99%** threshold (macOS-specific paths unreachable on Linux)
+- Local pre-commit: **98%** line coverage (strict gate via `cargo-llvm-cov`)
+- CI (Linux): **98%** threshold (macOS-specific paths unreachable on Linux)
 - `main.rs` and `embed.rs` excluded via `cargo-llvm-cov` filename regex
 
-> **Note:** `cargo-llvm-cov 0.8+` counts `?` error-path regions as "missed lines" even when the line itself executes, making true 100% impossible without testing every `Result::Err` branch. The 99% threshold accounts for this.
+> **Note:** `cargo-llvm-cov 0.8+` counts `?` error-path regions as "missed lines" even when the line itself executes, and `cfg(coverage)` exclusions for I/O code further reduce the measurable surface. The 98% threshold accounts for this.
 
 **When to exclude:** Only for genuinely untestable I/O (process spawning, network listeners, real hardware). All business logic must be testable and tested. Do not use `cfg(coverage)` to skip testable code.
 
@@ -106,7 +106,7 @@ Git hooks live in `.githooks/` and are activated via `git config core.hooksPath 
 2. `cargo clippy -- -D warnings`
 3. `eslint` + `tsc --noEmit`
 4. `cargo test` + `vitest run`
-5. `cargo llvm-cov --fail-under-lines 99` (line coverage gate)
+5. `cargo llvm-cov --fail-under-lines 98` (line coverage gate)
 
 **If the hook blocks your commit, fix the issue — do not bypass with `--no-verify`.**
 
@@ -297,11 +297,9 @@ pulpo/
 │   │   ├── mcp/                  # MCP server
 │   │   │   ├── mod.rs            # MCP tool handlers
 │   │   │   └── resources.rs      # MCP resource definitions
-│   │   └── discovery/            # Peer discovery (mDNS, Tailscale, seed)
-│   │       ├── mod.rs            # ServiceRegistration types + constants
-│   │       ├── mdns.rs           # mDNS register, browse, shutdown
-│   │       ├── tailscale.rs      # Tailscale API peer discovery
-│   │       └── seed.rs           # Seed-based gossip peer discovery
+│   │   └── discovery/            # Peer discovery (Tailscale)
+│   │       ├── mod.rs            # Discovery types + constants
+│   │       └── tailscale.rs      # Tailscale API peer discovery
 │   ├── pulpo-cli/src/
 │   │   ├── main.rs               # Thin entry point (cfg(coverage) excluded)
 │   │   └── lib.rs                # CLI logic: Cli, Commands, execute

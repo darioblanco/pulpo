@@ -26,7 +26,6 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
             data_dir: config.node.data_dir.clone(),
             bind: config.node.bind,
             tag: config.node.tag.clone(),
-            seed: config.node.seed.clone(),
             discovery_interval_secs: config.node.discovery_interval_secs,
         },
         auth: AuthConfigResponse {},
@@ -87,7 +86,6 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
     let original_port = config.node.port;
     let original_bind = config.node.bind;
     let original_tag = config.node.tag.clone();
-    let original_seed = config.node.seed.clone();
 
     // Node settings
     if let Some(name) = &req.node_name {
@@ -104,9 +102,6 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
     }
     if let Some(tag) = req.tag {
         config.node.tag = if tag.is_empty() { None } else { Some(tag) };
-    }
-    if let Some(seed) = req.seed {
-        config.node.seed = if seed.is_empty() { None } else { Some(seed) };
     }
     if let Some(interval) = req.discovery_interval_secs {
         config.node.discovery_interval_secs = interval;
@@ -175,11 +170,10 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
         config.peers = peers;
     }
 
-    // Restart required for port, bind, tag, or seed changes (affects network/discovery loops)
+    // Restart required for port, bind, or tag changes (affects network/discovery loops)
     config.node.port != original_port
         || config.node.bind != original_bind
         || config.node.tag != original_tag
-        || config.node.seed != original_seed
 }
 
 pub async fn update_config(
@@ -550,36 +544,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_config_seed_requires_restart() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            seed: Some("10.0.0.1:7433".into()),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.node.seed, Some("10.0.0.1:7433".into()));
-        assert!(resp.restart_required);
-    }
-
-    #[tokio::test]
-    async fn test_update_config_seed_empty_clears() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            seed: Some("10.0.0.1:7433".into()),
-            ..Default::default()
-        };
-        let _ = update_config(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        let req = UpdateConfigRequest {
-            seed: Some(String::new()),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.node.seed, None);
-    }
-
-    #[tokio::test]
     async fn test_update_config_discovery_interval() {
         let state = test_state().await;
         let req = UpdateConfigRequest {
@@ -716,7 +680,6 @@ mod tests {
                 port: 7433,
                 data_dir: "/tmp".into(),
                 tag: Some("gpu".into()),
-                seed: Some("10.0.0.1:7433".into()),
                 discovery_interval_secs: 120,
                 ..NodeConfig::default()
             },
@@ -760,7 +723,6 @@ mod tests {
         let resp = config_to_response(&config);
         // Node fields
         assert_eq!(resp.node.tag, Some("gpu".into()));
-        assert_eq!(resp.node.seed, Some("10.0.0.1:7433".into()));
         assert_eq!(resp.node.discovery_interval_secs, 120);
         // Watchdog
         assert!(resp.watchdog.enabled);

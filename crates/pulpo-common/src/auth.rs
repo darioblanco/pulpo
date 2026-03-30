@@ -13,7 +13,7 @@ pub enum BindMode {
     /// Discovery via Tailscale API. No auth token (Tailscale handles authentication).
     Tailscale,
     /// Bind to `0.0.0.0` — reachable from the network (requires auth token).
-    /// Discovery via mDNS or seed.
+    /// Use manual `[peers]` config for multi-node.
     Public,
     /// Bind to `0.0.0.0` — for container environments (no auth, trusts container network isolation).
     Container,

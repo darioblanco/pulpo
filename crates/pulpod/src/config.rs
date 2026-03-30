@@ -287,10 +287,7 @@ pub struct NodeConfig {
     /// Tailscale ACL tag to filter peers (e.g. `"pulpo"`). Only used with `tailscale` bind mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
-    /// Seed peer address (`host:port`). Only used with `public` bind mode for seed discovery.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<String>,
-    /// Scan interval in seconds for peer discovery (tailscale/seed). Defaults to 30.
+    /// Scan interval in seconds for Tailscale peer discovery. Defaults to 30.
     #[serde(default = "default_discovery_interval_secs")]
     pub discovery_interval_secs: u64,
     /// Default command used when spawning a session without an explicit command or ink.
@@ -309,7 +306,6 @@ impl Default for NodeConfig {
             data_dir: default_data_dir(),
             bind: BindMode::default(),
             tag: None,
-            seed: None,
             discovery_interval_secs: default_discovery_interval_secs(),
             default_command: None,
             log_retain_days: default_log_retain_days(),
@@ -453,7 +449,6 @@ pub fn load(path: &str) -> Result<Config> {
                 data_dir: default_data_dir(),
                 bind: BindMode::default(),
                 tag: None,
-                seed: None,
                 discovery_interval_secs: default_discovery_interval_secs(),
                 default_command: None,
                 log_retain_days: default_log_retain_days(),
@@ -1843,7 +1838,6 @@ url = "https://example.com"
         assert_eq!(node.port, 7433);
         assert_eq!(node.bind, pulpo_common::auth::BindMode::Local);
         assert!(node.tag.is_none());
-        assert!(node.seed.is_none());
         assert_eq!(node.discovery_interval_secs, 30);
     }
 
@@ -1869,25 +1863,6 @@ discovery_interval_secs = 60
     }
 
     #[test]
-    fn test_load_config_with_public_seed() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-bind = "public"
-seed = "10.0.0.5:7433"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Public);
-        assert_eq!(config.node.seed, Some("10.0.0.5:7433".into()));
-    }
-
-    #[test]
     fn test_load_config_without_bind_defaults_to_local() {
         let tmpdir = tempfile::tempdir().unwrap();
         let path = tmpdir.path().join("config.toml");
@@ -1902,7 +1877,6 @@ name = "test"
         let config = load(path.to_str().unwrap()).unwrap();
         assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Local);
         assert!(config.node.tag.is_none());
-        assert!(config.node.seed.is_none());
     }
 
     #[test]
@@ -1940,13 +1914,11 @@ name = "test"
             data_dir: "/tmp".into(),
             bind: pulpo_common::auth::BindMode::Public,
             tag: None,
-            seed: Some("10.0.0.1:7433".into()),
             discovery_interval_secs: 30,
             default_command: None,
             log_retain_days: 7,
         };
         let toml_str = toml::to_string(&config).unwrap();
-        assert!(toml_str.contains("seed = \"10.0.0.1:7433\""));
         // tag should be skipped (None + skip_serializing_if)
         assert!(!toml_str.contains("tag"));
     }

@@ -48,7 +48,7 @@ export function PeerSettings({ peers, onUpdate, bind }: PeerSettingsProps) {
     ? 'Peer discovery is disabled in local mode. Switch to tailscale, public, or container to connect nodes.'
     : isTailscale
       ? 'Peers are auto-discovered via the Tailscale API. You can also add manual entries.'
-      : 'Manually add peers or use a seed peer for auto-discovery.';
+      : 'Manually add peers for multi-node connectivity.';
 
   return (
     <Card data-testid="peer-settings">

@@ -25,7 +25,6 @@ export function SettingsPage() {
   const [dataDir, setDataDir] = useState('');
   const [bind, setBind] = useState('local');
   const [tag, setTag] = useState('');
-  const [seed, setSeed] = useState('');
   const [discoveryInterval, setDiscoveryInterval] = useState(60);
 
   // Watchdog
@@ -57,7 +56,6 @@ export function SettingsPage() {
       setDataDir(config.node.data_dir);
       setBind(config.node.bind);
       setTag(config.node.tag ?? '');
-      setSeed(config.node.seed ?? '');
       setDiscoveryInterval(config.node.discovery_interval_secs);
 
       setWatchdogEnabled(config.watchdog.enabled);
@@ -97,7 +95,6 @@ export function SettingsPage() {
         data_dir: dataDir,
         bind,
         tag,
-        seed,
         discovery_interval_secs: discoveryInterval,
         watchdog_enabled: watchdogEnabled,
         watchdog_memory_threshold: watchdogMemoryThreshold,
@@ -193,8 +190,6 @@ export function SettingsPage() {
                     onBindChange={setBind}
                     tag={tag}
                     onTagChange={setTag}
-                    seed={seed}
-                    onSeedChange={setSeed}
                     discoveryInterval={discoveryInterval}
                     onDiscoveryIntervalChange={setDiscoveryInterval}
                   />

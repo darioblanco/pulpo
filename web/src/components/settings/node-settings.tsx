@@ -15,7 +15,7 @@ const bindDescriptions: Record<string, string> = {
   local: 'Binds to 127.0.0.1. Only reachable from this machine. No discovery, no auth.',
   tailscale:
     'Binds locally and serves HTTPS via tailscale serve. Peers discovered via Tailscale API.',
-  public: 'Binds to 0.0.0.0. Requires auth token. Peers via mDNS or seed.',
+  public: 'Binds to 0.0.0.0. Requires auth token. Use manual [peers] config for multi-node.',
   container: 'Binds to 0.0.0.0. Trusts container network isolation (no auth).',
 };
 
@@ -30,8 +30,6 @@ interface NodeSettingsProps {
   onBindChange: (bind: string) => void;
   tag: string;
   onTagChange: (tag: string) => void;
-  seed: string;
-  onSeedChange: (seed: string) => void;
   discoveryInterval: number;
   onDiscoveryIntervalChange: (secs: number) => void;
 }
@@ -47,13 +45,10 @@ export function NodeSettings({
   onBindChange,
   tag,
   onTagChange,
-  seed,
-  onSeedChange,
   discoveryInterval,
   onDiscoveryIntervalChange,
 }: NodeSettingsProps) {
   const showNetworking = bind !== 'local';
-  const showSeed = bind === 'public' || bind === 'container';
 
   return (
     <Card data-testid="node-settings">
@@ -130,35 +125,19 @@ export function NodeSettings({
           </FormField>
         </div>
         {showNetworking && (
-          <div className="grid items-start gap-6 sm:grid-cols-2">
-            {showSeed && (
-              <FormField
-                label="Seed peer"
-                htmlFor="node-seed"
-                description="Address of an existing node to bootstrap discovery."
-              >
-                <Input
-                  id="node-seed"
-                  value={seed}
-                  onChange={(e) => onSeedChange(e.target.value)}
-                  placeholder="10.0.0.1:7433"
-                />
-              </FormField>
-            )}
-            <FormField
-              label="Discovery interval"
-              htmlFor="node-discovery-interval"
-              description="How often to re-scan for peers (seconds)."
-            >
-              <Input
-                id="node-discovery-interval"
-                type="number"
-                value={discoveryInterval}
-                onChange={(e) => onDiscoveryIntervalChange(parseInt(e.target.value, 10) || 0)}
-                placeholder="60"
-              />
-            </FormField>
-          </div>
+          <FormField
+            label="Discovery interval"
+            htmlFor="node-discovery-interval"
+            description="How often to re-scan for peers (seconds)."
+          >
+            <Input
+              id="node-discovery-interval"
+              type="number"
+              value={discoveryInterval}
+              onChange={(e) => onDiscoveryIntervalChange(parseInt(e.target.value, 10) || 0)}
+              placeholder="60"
+            />
+          </FormField>
         )}
       </CardContent>
     </Card>

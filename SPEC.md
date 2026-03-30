@@ -2,7 +2,7 @@
 
 > _Eight arms, one brain — orchestrating agents across your network._
 >
-> Last verified against code: 2026-03-15
+> Last verified against code: 2026-03-30
 
 Pulpo is a lightweight daemon that manages coding agent sessions across multiple
 machines on a trusted network (LAN, VPN, or Tailscale).
@@ -515,13 +515,13 @@ See [CLAUDE.md](CLAUDE.md) for the full, maintained project layout. Key director
 pulpo/
 ├── crates/
 │   ├── pulpod/src/             # Daemon: Axum API, tmux backend, SQLite, watchdog,
-│   │   ├── api/                #   MCP server, mDNS, SSE, inks
+│   │   ├── api/                #   MCP server, SSE, inks
 │   │   ├── backend/            #   tmux.rs — terminal backend
 │   │   ├── session/            #   manager, state machine, output capture, PTY bridge
 │   │   ├── store/              #   SQLite persistence + migrations
 │   │   ├── notifications/      #   Discord webhook notifier
 │   │   ├── peers/              #   PeerRegistry + health probing
-│   │   ├── discovery/          #   mDNS service discovery
+│   │   ├── discovery/          #   Tailscale peer discovery
 │   │   └── mcp/                #   MCP server (session tools as MCP resources)
 │   ├── pulpo-cli/src/          # CLI: thin client, clap commands
 │   └── pulpo-common/src/       # Shared types: Session, NodeInfo, PeerInfo,
@@ -633,9 +633,8 @@ Tauri 2 builds native iOS `.ipa` and Android `.apk` from the same React + Rust c
 - ✅ Tauri iOS build + TestFlight distribution
 - ✅ Tauri Android build + Play Store distribution
 - ✅ Token authentication + bind modes (local/public/container)
-- ✅ mDNS peer discovery (`_pulpo._tcp.local.`) — activates in `public` bind mode
 - ✅ QR code pairing for mobile clients
-- ⬜ Tailscale auto-discovery — planned
+- ✅ Tailscale auto-discovery
 - ⬜ Push notifications via APNs (iOS) and FCM (Android) — not planned (polling + Notification API sufficient)
 
 ### Phase 7: Voice Commands (experimental)

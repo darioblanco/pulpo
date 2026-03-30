@@ -78,7 +78,6 @@ export interface NodeConfigResponse {
   data_dir: string;
   bind: string;
   tag: string | null;
-  seed: string | null;
   discovery_interval_secs: number;
 }
 
@@ -133,7 +132,6 @@ export interface UpdateConfigRequest {
   data_dir?: string;
   bind?: string;
   tag?: string;
-  seed?: string;
   discovery_interval_secs?: number;
   watchdog_enabled?: boolean;
   watchdog_memory_threshold?: number;

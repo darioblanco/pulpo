@@ -58,7 +58,6 @@ describe('types', () => {
         data_dir: '~/.pulpo/data',
         bind: 'local',
         tag: null,
-        seed: null,
         discovery_interval_secs: 60,
       },
       peers: {},

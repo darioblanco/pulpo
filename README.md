@@ -123,7 +123,7 @@ Pulpo is the opposite bet:
 
 It is strongest when you need:
 
-- self-hosted execution
+- self-hosted execution (sovereign by architecture, not by contract)
 - remote supervision across multiple machines
 - explicit recovery semantics after failure or reboot
 - worktree isolation for parallel agent work
@@ -134,7 +134,7 @@ It is strongest when you need:
 
 - **Durable sessions**: explicit lifecycle states (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output.
 - **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error patterns, token tracking, and git telemetry.
-- **Multi-node fleet control**: discover peers and manage sessions across machines from one dashboard or CLI.
+- **Multi-node fleet control**: Tailscale discovery + manual peer config. Manage sessions across machines from one dashboard or CLI.
 - **Execution isolation**: use worktrees for parallel repo work and Docker for sandboxed runs.
 - **Operational surfaces**: CLI, web UI/PWA, REST API, SSE, MCP server, Discord bot, and notifications.
 - **Command-agnostic execution**: Claude Code, Codex, Gemini CLI, Aider, shell scripts, and other terminal commands.

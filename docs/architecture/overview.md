@@ -161,8 +161,6 @@ pulpo schedule add scan "0 0 * * 0" --node auto -- claude -p "security audit"
 Pulpo nodes discover each other and present a unified view:
 
 - **Tailscale**: Discovers peers via local Tailscale API, serves HTTPS via `tailscale serve`
-- **mDNS**: Zero-config LAN discovery via `_pulpo._tcp.local.`
-- **Seed**: Bootstrap from a known peer, discover transitively
 - **Manual**: Explicit peer entries in config
 
 Each node runs independently with its own SQLite store. Session state stays local to each node — the unified view is assembled at query time by the UI/CLI.

@@ -93,13 +93,9 @@ impl backend::Backend for WindowsStubBackend {
 
 /// Holds shutdown senders for all background loops.
 ///
-/// Calling `shutdown()` signals all loops to exit gracefully. Also holds owned
-/// resources (like mDNS registration) that should be dropped on shutdown.
+/// Calling `shutdown()` signals all loops to exit gracefully.
 pub struct ShutdownHandle {
     senders: Vec<watch::Sender<bool>>,
-    /// mDNS registration kept alive until shutdown (behind cfg so coverage builds compile).
-    #[cfg(not(coverage))]
-    mdns_registration: Option<discovery::mdns::MdnsRegistration>,
     /// Whether `tailscale serve` was started and needs cleanup on shutdown.
     tailscale_serve_active: bool,
 }
@@ -108,19 +104,12 @@ impl ShutdownHandle {
     const fn new() -> Self {
         Self {
             senders: Vec::new(),
-            #[cfg(not(coverage))]
-            mdns_registration: None,
             tailscale_serve_active: false,
         }
     }
 
     fn add_sender(&mut self, tx: watch::Sender<bool>) {
         self.senders.push(tx);
-    }
-
-    #[cfg(not(coverage))]
-    fn set_mdns_registration(&mut self, reg: discovery::mdns::MdnsRegistration) {
-        self.mdns_registration = Some(reg);
     }
 
     /// Signal all background loops to shut down and clean up resources.
@@ -446,52 +435,11 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
             shutdown_handle.add_sender(ts_shutdown_tx);
             info!("Tailscale discovery enabled");
         }
-        pulpo_common::auth::BindMode::Public => {
-            if let Some(seed_address) = config.node.seed.clone() {
-                // Seed discovery (explicit seed peer)
-                let seed_registry = peer_registry.clone();
-                let own_name = config.node.name.clone();
-                let seed_interval =
-                    std::time::Duration::from_secs(config.node.discovery_interval_secs);
-                let (seed_shutdown_tx, seed_shutdown_rx) = watch::channel(false);
-                tokio::spawn(discovery::seed::run_seed_discovery(
-                    seed_registry,
-                    own_name,
-                    port,
-                    seed_address,
-                    seed_interval,
-                    seed_shutdown_rx,
-                ));
-                shutdown_handle.add_sender(seed_shutdown_tx);
-                info!("Seed discovery enabled");
-            } else {
-                // mDNS discovery (default for public)
-                let reg = discovery::ServiceRegistration {
-                    node_name: config.node.name.clone(),
-                    port,
-                };
-                match discovery::mdns::MdnsRegistration::register(&reg) {
-                    Ok(registration) => {
-                        shutdown_handle.set_mdns_registration(registration);
-                    }
-                    Err(e) => {
-                        tracing::warn!("mDNS registration failed (discovery disabled): {e}");
-                    }
-                }
-
-                let browser_registry = peer_registry.clone();
-                let own_name = config.node.name.clone();
-                let (browser_shutdown_tx, browser_shutdown_rx) = watch::channel(false);
-                tokio::spawn(discovery::mdns::run_mdns_browser(
-                    browser_registry,
-                    own_name,
-                    browser_shutdown_rx,
-                ));
-                shutdown_handle.add_sender(browser_shutdown_tx);
-            }
-        }
-        // Local and Container: no discovery
-        pulpo_common::auth::BindMode::Local | pulpo_common::auth::BindMode::Container => {}
+        // Public, Local, and Container: no automatic discovery.
+        // Use manual [peers] config for multi-node in these modes.
+        pulpo_common::auth::BindMode::Public
+        | pulpo_common::auth::BindMode::Local
+        | pulpo_common::auth::BindMode::Container => {}
     }
 
     // Start Discord notification loop if configured
@@ -1212,67 +1160,6 @@ discovery_interval_secs = 60
         // Tailscale bind uses 127.0.0.1 (tailscale serve proxies over HTTPS)
         assert_eq!(addr, "127.0.0.1:0");
         assert!(handle.tailscale_serve_active);
-        handle.shutdown();
-    }
-
-    #[tokio::test]
-    async fn test_build_app_bind_public_with_seed() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let config_path = tmpdir.path().join("config.toml");
-        let data_dir = tmpdir.path().join("data");
-        std::fs::write(
-            &config_path,
-            format!(
-                r#"
-[node]
-name = "test"
-port = 0
-data_dir = "{}"
-bind = "public"
-seed = "10.0.0.5:7433"
-"#,
-                data_dir.display()
-            ),
-        )
-        .unwrap();
-
-        let cli = Cli {
-            config: config_path.to_str().unwrap().into(),
-            port: Some(0),
-            command: None,
-        };
-        let (_app, addr, handle) = build_app(&cli).await.unwrap();
-        assert_eq!(addr, "0.0.0.0:0");
-        handle.shutdown();
-    }
-
-    #[tokio::test]
-    async fn test_build_app_bind_public_mdns() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let config_path = tmpdir.path().join("config.toml");
-        let data_dir = tmpdir.path().join("data");
-        std::fs::write(
-            &config_path,
-            format!(
-                r#"
-[node]
-name = "test"
-port = 0
-data_dir = "{}"
-bind = "public"
-"#,
-                data_dir.display()
-            ),
-        )
-        .unwrap();
-
-        let cli = Cli {
-            config: config_path.to_str().unwrap().into(),
-            port: Some(0),
-            command: None,
-        };
-        let (_app, addr, handle) = build_app(&cli).await.unwrap();
-        assert_eq!(addr, "0.0.0.0:0");
         handle.shutdown();
     }
 

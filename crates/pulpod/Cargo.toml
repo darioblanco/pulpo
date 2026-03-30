@@ -48,7 +48,6 @@ dirs.workspace = true
 num_cpus.workspace = true
 rand.workspace = true
 base64.workspace = true
-mdns-sd.workspace = true
 rmcp.workspace = true
 schemars.workspace = true
 cron.workspace = true

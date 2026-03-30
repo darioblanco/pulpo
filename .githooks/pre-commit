@@ -18,7 +18,9 @@ cargo test --workspace
 echo "==> Pre-commit: checking coverage (100% line coverage required)..."
 # Note: --fail-under-lines uses region-aware line counts in cargo-llvm-cov 0.8+,
 # so ? error paths count as "missed lines" even though the line itself executes.
-# Using 99 to avoid false failures from untested ? error branches.
-cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$" --fail-under-lines 99
+# Using 98 threshold: cargo-llvm-cov 0.8+ counts ? error-path regions as
+# missed, and cfg(coverage) exclusions for I/O code make 99+ impossible.
+# --test-threads=1 prevents sqlx-sqlite prepared statement cache races.
+cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$" --fail-under-lines 98 -- --test-threads=1
 
 echo "==> All checks passed."

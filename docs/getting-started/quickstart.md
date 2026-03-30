@@ -127,5 +127,5 @@ curl -N http://localhost:7433/api/v1/events  # SSE stream
 - [Session Lifecycle](/operations/session-lifecycle) — exact transition behavior
 - [Configuration Guide](/guides/configuration) — inks, watchdog, notifications, peers
 - [Examples](https://github.com/darioblanco/pulpo/tree/main/examples) — runnable CLI workflows
-- [Discovery Guide](/guides/discovery) — multi-node setup with Tailscale, mDNS, or seed
+- [Discovery Guide](/guides/discovery) — multi-node setup with Tailscale or manual peers
 - [CLI Reference](/reference/cli) — all commands, flags, and scripting recipes

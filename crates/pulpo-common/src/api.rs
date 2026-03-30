@@ -98,7 +98,6 @@ pub struct NodeConfigResponse {
     pub data_dir: String,
     pub bind: BindMode,
     pub tag: Option<String>,
-    pub seed: Option<String>,
     pub discovery_interval_secs: u64,
 }
 
@@ -172,7 +171,6 @@ pub struct UpdateConfigRequest {
     pub data_dir: Option<String>,
     pub bind: Option<BindMode>,
     pub tag: Option<String>,
-    pub seed: Option<String>,
     pub discovery_interval_secs: Option<u64>,
     // Watchdog
     pub watchdog_enabled: Option<bool>,
@@ -407,7 +405,6 @@ mod tests {
                 data_dir: "/tmp".into(),
                 bind: BindMode::Local,
                 tag: None,
-                seed: None,
                 discovery_interval_secs: 30,
             },
             auth: AuthConfigResponse {},
@@ -442,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"discovery_interval_secs":30},"auth":{},"peers":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
@@ -467,7 +464,6 @@ mod tests {
             data_dir: "/tmp".into(),
             bind: BindMode::Local,
             tag: None,
-            seed: None,
             discovery_interval_secs: 30,
         };
         let debug = format!("{resp:?}");
@@ -1135,7 +1131,6 @@ mod tests {
             data_dir: "/tmp".into(),
             bind: BindMode::Tailscale,
             tag: None,
-            seed: None,
             discovery_interval_secs: 30,
         };
         let json = serde_json::to_string(&resp).unwrap();

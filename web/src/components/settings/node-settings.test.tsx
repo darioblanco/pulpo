@@ -13,8 +13,6 @@ const defaults = {
   onBindChange: vi.fn(),
   tag: '',
   onTagChange: vi.fn(),
-  seed: '',
-  onSeedChange: vi.fn(),
   discoveryInterval: 60,
   onDiscoveryIntervalChange: vi.fn(),
 };
@@ -36,26 +34,21 @@ describe('NodeSettings', () => {
 
   it('hides networking fields in local mode', () => {
     render(<NodeSettings {...defaults} bind="local" />);
-    expect(screen.queryByLabelText('Seed peer')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Discovery interval')).not.toBeInTheDocument();
   });
 
   it('shows discovery interval for tailscale mode', () => {
     render(<NodeSettings {...defaults} bind="tailscale" />);
     expect(screen.getByLabelText('Discovery interval')).toBeInTheDocument();
-    // Tailscale uses API discovery, no seed peer
-    expect(screen.queryByLabelText('Seed peer')).not.toBeInTheDocument();
   });
 
-  it('shows seed peer and discovery interval for public mode', () => {
+  it('shows discovery interval for public mode', () => {
     render(<NodeSettings {...defaults} bind="public" />);
-    expect(screen.getByLabelText('Seed peer')).toBeInTheDocument();
     expect(screen.getByLabelText('Discovery interval')).toBeInTheDocument();
   });
 
-  it('shows seed peer and discovery interval for container mode', () => {
+  it('shows discovery interval for container mode', () => {
     render(<NodeSettings {...defaults} bind="container" />);
-    expect(screen.getByLabelText('Seed peer')).toBeInTheDocument();
     expect(screen.getByLabelText('Discovery interval')).toBeInTheDocument();
   });
 
@@ -92,15 +85,6 @@ describe('NodeSettings', () => {
     render(<NodeSettings {...defaults} onTagChange={onTagChange} />);
     fireEvent.change(screen.getByLabelText('Tag'), { target: { value: 'gpu' } });
     expect(onTagChange).toHaveBeenCalledWith('gpu');
-  });
-
-  it('calls onSeedChange', () => {
-    const onSeedChange = vi.fn();
-    render(<NodeSettings {...defaults} bind="public" onSeedChange={onSeedChange} />);
-    fireEvent.change(screen.getByLabelText('Seed peer'), {
-      target: { value: '10.0.0.1:7433' },
-    });
-    expect(onSeedChange).toHaveBeenCalledWith('10.0.0.1:7433');
   });
 
   it('calls onDiscoveryIntervalChange', () => {

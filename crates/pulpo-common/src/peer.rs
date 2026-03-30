@@ -77,7 +77,7 @@ pub enum PeerSource {
     /// Peer was explicitly listed in config.
     #[default]
     Configured,
-    /// Peer was discovered via mDNS or similar.
+    /// Peer was auto-discovered (e.g. via Tailscale API).
     Discovered,
 }
 
