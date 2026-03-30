@@ -12,6 +12,9 @@ This guide matters most for:
 
 Run multiple agents on the same repository without conflicts. Each agent gets its own git worktree — an isolated checkout with its own branch and working directory.
 
+If you want the full end-to-end workflow rather than the feature explanation,
+see [Parallel Agents On One Repo](/guides/parallel-agents-one-repo).
+
 ## Why worktrees?
 
 Without worktrees, two agents editing the same repo will clobber each other's changes. Git worktrees solve this at the filesystem level: each agent works in a separate directory on a separate branch, all sharing the same `.git` history.

@@ -72,7 +72,7 @@ For concrete user profiles and workflow matches, see
 If you want to understand Pulpo quickly, start with a real workflow:
 
 - [Nightly Code Review](/guides/nightly-code-review): schedule an overnight review session and inspect the result in the morning
-- [Worktrees Guide](/guides/worktrees): run multiple agents on one repo without collisions
+- [Parallel Agents On One Repo](/guides/parallel-agents-one-repo): split one repository across multiple concurrent agent sessions
 - [Discovery Guide](/guides/discovery): operate a small fleet across your own machines
 
 ## Where Pulpo Fits
@@ -150,7 +150,8 @@ The project is still experimental overall, but the session/runtime/lifecycle mod
 7. [Session Lifecycle](/operations/session-lifecycle) for behavior guarantees
 8. [Configuration Guide](/guides/configuration) for operational setup
 9. [Nightly Code Review](/guides/nightly-code-review) for a concrete recurring workflow
-10. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
+10. [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) for a concrete worktree workflow
+11. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
 
 ## Quick Links
 
@@ -165,6 +166,7 @@ The project is still experimental overall, but the session/runtime/lifecycle mod
 - [Configuration Guide](/guides/configuration)
 - [Discovery Guide](/guides/discovery)
 - [Nightly Code Review](/guides/nightly-code-review)
+- [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
 - [Recovery Guide](/guides/recovery)
 - [CLI Reference](/reference/cli)
 - [Config Reference](/reference/config)

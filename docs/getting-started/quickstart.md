@@ -72,6 +72,7 @@ pulpo spawn backend  --workdir ~/repo --worktree -- codex "optimize queries"
 ```
 
 Each agent gets an isolated git worktree at `~/.pulpo/worktrees/<name>/`. See the [Worktrees Guide](/guides/worktrees) for details.
+For a full end-to-end workflow, see [Parallel Agents On One Repo](/guides/parallel-agents-one-repo).
 
 ## 6. Schedule recurring runs
 
@@ -126,6 +127,7 @@ curl -N http://localhost:7433/api/v1/events  # SSE stream
 
 - [Why Pulpo](/getting-started/why-pulpo) — ICPs, alternatives, and where Pulpo fits
 - [Nightly Code Review](/guides/nightly-code-review) — a concrete recurring background-agent workflow
+- [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) — a concrete parallel-worktree workflow
 - [Core Concepts](/architecture/core-concepts) — the smallest vocabulary for understanding Pulpo
 - [Architecture Overview](/architecture/overview) — the session/runtime/watchdog mental model
 - [Session Lifecycle](/operations/session-lifecycle) — exact transition behavior

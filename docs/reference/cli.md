@@ -146,6 +146,15 @@ for repo in my-api my-frontend my-infra; do
 done
 ```
 
+### Parallel agents on one repo with worktrees
+
+```bash
+pulpo spawn frontend --workdir ~/repos/my-app --worktree -d -- claude -p "Redesign the settings page"
+pulpo spawn backend  --workdir ~/repos/my-app --worktree -d -- codex "Optimize the user query path"
+```
+
+See [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) for the complete recipe.
+
 ### Nightly review via ink
 
 ```bash

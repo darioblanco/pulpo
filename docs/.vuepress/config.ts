@@ -42,6 +42,7 @@ export default defineUserConfig({
       '/architecture/': ['/architecture/core-concepts', '/architecture/overview'],
       '/guides/': [
         '/guides/nightly-code-review',
+        '/guides/parallel-agents-one-repo',
         '/guides/configuration',
         '/guides/discovery',
         '/guides/recovery',

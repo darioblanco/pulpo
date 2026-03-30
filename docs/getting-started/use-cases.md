@@ -26,6 +26,7 @@ What Pulpo is doing for you:
 Best docs to read next:
 
 - [Quickstart](/getting-started/quickstart)
+- [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
 - [Worktrees Guide](/guides/worktrees)
 - [Session Lifecycle](/operations/session-lifecycle)
 
@@ -138,6 +139,7 @@ Best docs to read next:
 | --- | --- |
 | One agent running on your own server tonight | [Quickstart](/getting-started/quickstart) |
 | A recurring overnight review workflow | [Nightly Code Review](/guides/nightly-code-review) |
+| Parallel agents on the same repository | [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) |
 | Multiple agents on one repo safely | [Worktrees Guide](/guides/worktrees) |
 | Multi-node control over Tailscale or LAN | [Discovery Guide](/guides/discovery) |
 | Secrets and safer Docker runs | [Secrets](/guides/secrets) |
