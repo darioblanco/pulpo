@@ -4,7 +4,8 @@ use axum::{
     Router, middleware,
     routing::{delete, get, post, put},
 };
-use tower_http::cors::{Any, CorsLayer};
+use pulpo_common::auth::BindMode;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use super::AppState;
 use super::auth;
@@ -26,10 +27,30 @@ use super::watchdog;
 use super::ws;
 
 pub fn build(state: Arc<AppState>) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    // In Public mode, restrict CORS to same-origin only (the embedded web UI
+    // is served from the same origin and doesn't need permissive CORS).
+    // For Local/Tailscale/Container, allow Any for cross-node convenience.
+    let bind_mode = state
+        .config
+        .try_read()
+        .map_or(BindMode::Local, |c| c.node.bind);
+    let cors = if bind_mode == BindMode::Public {
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::predicate(|origin, _parts| {
+                // Deny cross-origin requests in Public mode.
+                // Same-origin requests don't trigger CORS at all, so this
+                // effectively blocks only third-party origins.
+                let _ = origin;
+                false
+            }))
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    };
 
     Router::new()
         .route("/api/v1/health", get(health::check))
@@ -599,6 +620,57 @@ mod tests {
         );
     }
 
+    async fn test_server_with_bind(bind: pulpo_common::auth::BindMode) -> TestServer {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test-node".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                bind,
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig {
+                token: "test-token".into(),
+            },
+            peers: HashMap::new(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            docker: crate::config::DockerConfig::default(),
+        };
+        let backend = Arc::new(StubBackend);
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let state = AppState::new(config, manager, peer_registry, store);
+        let app = build(state);
+        TestServer::new(app).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_cors_public_bind_denies_cross_origin() {
+        let server = test_server_with_bind(pulpo_common::auth::BindMode::Public).await;
+        let resp = server
+            .get("/api/v1/health")
+            .add_header(
+                axum::http::header::ORIGIN,
+                axum::http::HeaderValue::from_static("http://evil.example.com"),
+            )
+            .await;
+        resp.assert_status_ok();
+        // In Public mode, cross-origin requests should NOT get access-control-allow-origin: *
+        assert_ne!(
+            resp.headers()
+                .get("access-control-allow-origin")
+                .map(|v| v.to_str().unwrap_or("")),
+            Some("*")
+        );
+    }
+
     #[tokio::test]
     async fn test_get_config() {
         let server = test_server().await;
@@ -1164,8 +1236,15 @@ mod tests {
     #[tokio::test]
     async fn test_auth_token_endpoint_exempt() {
         let server = authed_test_server().await;
-        // Auth endpoints exempt (no ConnectInfo in test → treated as local)
-        let resp = server.get("/api/v1/auth/token").await;
+        // No ConnectInfo in test → fail closed (treated as remote), so pass token
+        let bearer = format!("Bearer {TEST_TOKEN}");
+        let resp = server
+            .get("/api/v1/auth/token")
+            .add_header(
+                axum::http::header::AUTHORIZATION,
+                axum::http::HeaderValue::from_str(&bearer).unwrap(),
+            )
+            .await;
         resp.assert_status_ok();
         let body = resp.text();
         assert!(body.contains(TEST_TOKEN));
@@ -1174,7 +1253,15 @@ mod tests {
     #[tokio::test]
     async fn test_auth_pairing_url_endpoint() {
         let server = authed_test_server().await;
-        let resp = server.get("/api/v1/auth/pairing-url").await;
+        // No ConnectInfo in test → fail closed (treated as remote), so pass token
+        let bearer = format!("Bearer {TEST_TOKEN}");
+        let resp = server
+            .get("/api/v1/auth/pairing-url")
+            .add_header(
+                axum::http::header::AUTHORIZATION,
+                axum::http::HeaderValue::from_str(&bearer).unwrap(),
+            )
+            .await;
         resp.assert_status_ok();
         let body = resp.text();
         assert!(body.contains(TEST_TOKEN));

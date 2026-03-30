@@ -33,6 +33,20 @@ const fn is_loopback(addr: &SocketAddr) -> bool {
     addr.ip().is_loopback()
 }
 
+/// Constant-time string comparison to prevent timing side-channel attacks on token validation.
+///
+/// The length check does leak whether lengths match, but both tokens are generated
+/// by the same code path and are always the same length.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.bytes()
+        .zip(b.bytes())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
+}
+
 /// Auth middleware: enforces Bearer token when `bind = "public"`.
 ///
 /// Exempt paths:
@@ -67,7 +81,7 @@ pub async fn require_auth(
     // Auth endpoints are exempt when called from loopback
     if path.starts_with("/api/v1/auth/") {
         let client_addr = req.extensions().get::<ConnectInfo<SocketAddr>>();
-        let is_local = client_addr.is_none_or(|ConnectInfo(addr)| is_loopback(addr));
+        let is_local = client_addr.is_some_and(|ConnectInfo(addr)| is_loopback(addr));
         if is_local {
             return next.run(req).await;
         }
@@ -84,7 +98,7 @@ pub async fn require_auth(
         .or_else(|| extract_query_token(&req));
 
     match token {
-        Some(t) if t == expected_token => next.run(req).await,
+        Some(t) if constant_time_eq(&t, &expected_token) => next.run(req).await,
         _ => StatusCode::UNAUTHORIZED.into_response(),
     }
 }
@@ -234,6 +248,33 @@ mod tests {
         assert_eq!(resolve_hostname(result), "localhost");
     }
 
+    // -- constant_time_eq tests --
+
+    #[test]
+    fn test_constant_time_eq_equal() {
+        assert!(constant_time_eq("abc123", "abc123"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_different() {
+        assert!(!constant_time_eq("abc123", "abc124"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_different_lengths() {
+        assert!(!constant_time_eq("short", "longer-string"));
+    }
+
+    #[test]
+    fn test_constant_time_eq_empty() {
+        assert!(constant_time_eq("", ""));
+    }
+
+    #[test]
+    fn test_constant_time_eq_one_empty() {
+        assert!(!constant_time_eq("", "notempty"));
+    }
+
     // -- Middleware integration tests --
 
     use crate::backend::StubBackend;
@@ -351,6 +392,19 @@ mod tests {
         let addr: SocketAddr = "192.168.1.100:12345".parse().unwrap();
         let resp = call_middleware(state, req, Some(addr)).await;
         // Remote client hitting /api/v1/auth/* without token → 401
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_middleware_public_auth_path_no_connect_info_denied() {
+        let state = make_state(BindMode::Public, "tok").await;
+        let req = Request::builder()
+            .uri("/api/v1/auth/token")
+            .body(Body::empty())
+            .unwrap();
+        // No ConnectInfo at all (e.g. behind a reverse proxy that strips it)
+        let resp = call_middleware(state, req, None).await;
+        // Fail closed: missing ConnectInfo → treat as remote → 401
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 

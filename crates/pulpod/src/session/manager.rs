@@ -226,7 +226,7 @@ impl SessionManager {
         // The file is sourced and immediately deleted by the session shell, so secrets
         // never appear in the command string visible in `ps` or `capture-pane`.
         let secrets_file = if runtime != Runtime::Docker && !secrets_env.is_empty() {
-            write_secrets_file(&id, &secrets_env)?
+            write_secrets_file(&id, &secrets_env, self.store.data_dir())?
         } else {
             None
         };
@@ -276,6 +276,10 @@ impl SessionManager {
         if let Err(e) =
             active_backend.create_session(&backend_id, &effective_workdir, &final_command)
         {
+            // Clean up the secrets file if it was created
+            if let Some(ref sf) = secrets_file {
+                let _ = std::fs::remove_file(sf);
+            }
             self.store
                 .update_session_status(&id.to_string(), SessionStatus::Stopped)
                 .await?;
@@ -840,18 +844,21 @@ pub(crate) fn cleanup_worktree(worktree_path: &str, repo_dir: &str) {
     }
 }
 
-/// Write secrets to a temporary file that will be sourced and immediately deleted
+/// Write secrets to a file in `data_dir` that will be sourced and immediately deleted
 /// by the session command. Returns `Some(path)` if secrets were written, `None` if
-/// there are no secrets. The file is chmod 0600 to restrict access.
+/// there are no secrets.
 ///
-/// Security: secrets never appear in the command string visible in `ps`, tmux
-/// `capture-pane`, or the database. The temp file is deleted by the session shell
-/// immediately after sourcing.
+/// Security: the file is created with mode 0600 atomically via `OpenOptions` on Unix,
+/// so there is no race window where it is world-readable. Secrets never appear in the
+/// command string visible in `ps`, tmux `capture-pane`, or the database. The file is
+/// deleted by the session shell immediately after sourcing.
 fn write_secrets_file(
     session_id: &uuid::Uuid,
     secrets: &HashMap<String, String>,
+    data_dir: &str,
 ) -> Result<Option<String>> {
     use std::fmt::Write;
+    use std::io::Write as IoWrite;
 
     if secrets.is_empty() {
         return Ok(None);
@@ -863,18 +870,32 @@ fn write_secrets_file(
         let _ = writeln!(content, "export {key}='{escaped_value}'");
     }
 
-    let path = format!("/tmp/pulpo-secrets-{session_id}.sh");
+    let secrets_dir = format!("{data_dir}/secrets");
+    std::fs::create_dir_all(&secrets_dir)
+        .map_err(|e| anyhow!("failed to create secrets directory {secrets_dir}: {e}"))?;
 
-    std::fs::write(&path, &content)
-        .map_err(|e| anyhow!("failed to write secrets file {path}: {e}"))?;
+    let path = format!("{secrets_dir}/secrets-{session_id}.sh");
 
-    // Restrict permissions to owner-only (0600)
+    // Create the file with restrictive permissions (0600) atomically on Unix —
+    // no race window where the file is world-readable.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let perms = std::fs::Permissions::from_mode(0o600);
-        std::fs::set_permissions(&path, perms)
-            .map_err(|e| anyhow!("failed to set permissions on secrets file {path}: {e}"))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| anyhow!("failed to create secrets file {path}: {e}"))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| anyhow!("failed to write secrets file {path}: {e}"))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&path, &content)
+            .map_err(|e| anyhow!("failed to write secrets file {path}: {e}"))?;
     }
 
     Ok(Some(path))
@@ -1382,6 +1403,49 @@ mod tests {
         let sessions = mgr.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].status, SessionStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_create_session_backend_failure_cleans_up_secrets_file() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_create_error()).await;
+        // Pre-populate a secret
+        mgr.store()
+            .set_secret("CLEANUP_TOKEN", "val123")
+            .await
+            .unwrap();
+        let mut req = make_req("cleanup-test");
+        req.secrets = Some(vec!["CLEANUP_TOKEN".into()]);
+        let result = mgr.create_session(req).await;
+        assert!(result.is_err());
+
+        // The secrets file should have been cleaned up
+        let data_dir = mgr.store().data_dir();
+        let secrets_dir = format!("{data_dir}/secrets");
+        if std::fs::exists(&secrets_dir).unwrap_or(false) {
+            let entries: Vec<_> = std::fs::read_dir(&secrets_dir)
+                .unwrap()
+                .filter_map(std::result::Result::ok)
+                .collect();
+            assert!(
+                entries.is_empty(),
+                "secrets file should have been cleaned up, found: {entries:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_write_secrets_file_creates_secrets_subdirectory() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let data_dir = tmpdir.path().to_str().unwrap();
+        let id = uuid::Uuid::new_v4();
+        let mut secrets = HashMap::new();
+        secrets.insert("KEY".to_owned(), "val".to_owned());
+        let path = write_secrets_file(&id, &secrets, data_dir)
+            .unwrap()
+            .unwrap();
+        // File should be under data_dir/secrets/
+        assert!(path.starts_with(&format!("{data_dir}/secrets/")));
+        assert!(std::path::Path::new(&path).exists());
     }
 
     #[tokio::test]
@@ -1974,50 +2038,54 @@ mod tests {
 
     #[test]
     fn test_write_secrets_file_empty() {
+        let tmpdir = tempfile::tempdir().unwrap();
         let id = uuid::Uuid::new_v4();
-        let result = write_secrets_file(&id, &HashMap::new()).unwrap();
+        let result =
+            write_secrets_file(&id, &HashMap::new(), tmpdir.path().to_str().unwrap()).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn test_write_secrets_file_creates_file() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let data_dir = tmpdir.path().to_str().unwrap();
         let id = uuid::Uuid::new_v4();
         let mut secrets = HashMap::new();
         secrets.insert("GITHUB_TOKEN".to_owned(), "ghp_abc123".to_owned());
         secrets.insert("NPM_TOKEN".to_owned(), "npm_xyz".to_owned());
 
-        let path = write_secrets_file(&id, &secrets).unwrap().unwrap();
-        assert_eq!(path, format!("/tmp/pulpo-secrets-{id}.sh"));
+        let path = write_secrets_file(&id, &secrets, data_dir)
+            .unwrap()
+            .unwrap();
+        assert_eq!(path, format!("{data_dir}/secrets/secrets-{id}.sh"));
 
         // File should exist and contain export statements
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("export GITHUB_TOKEN='ghp_abc123'"));
         assert!(content.contains("export NPM_TOKEN='npm_xyz'"));
 
-        // File should have restrictive permissions (0600)
+        // File should have restrictive permissions (0600) set atomically
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let metadata = std::fs::metadata(&path).unwrap();
             assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
         }
-
-        // Clean up
-        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
     fn test_write_secrets_file_escapes_single_quotes() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let data_dir = tmpdir.path().to_str().unwrap();
         let id = uuid::Uuid::new_v4();
         let mut secrets = HashMap::new();
         secrets.insert("MY_KEY".to_owned(), "value'with'quotes".to_owned());
 
-        let path = write_secrets_file(&id, &secrets).unwrap().unwrap();
+        let path = write_secrets_file(&id, &secrets, data_dir)
+            .unwrap()
+            .unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("export MY_KEY='value'\\''with'\\''quotes'"));
-
-        // Clean up
-        std::fs::remove_file(&path).unwrap();
     }
 
     #[tokio::test]
@@ -2049,24 +2117,23 @@ mod tests {
             !create_call.contains("ghp_abc"),
             "secret value leaked into command: {create_call}"
         );
-        // Instead, the command should source a secrets file
+        // Instead, the command should source a secrets file from data_dir
         assert!(
-            create_call.contains(". /tmp/pulpo-secrets-"),
+            create_call.contains("/secrets/secrets-"),
             "command should source secrets file: {create_call}"
         );
         assert!(
-            create_call.contains("&& rm -f /tmp/pulpo-secrets-"),
+            create_call.contains("&& rm -f"),
             "command should delete secrets file: {create_call}"
         );
         drop(calls);
 
-        // Verify the secrets file was created with correct content
-        let secrets_path = format!("/tmp/pulpo-secrets-{}.sh", session.id);
+        // Verify the secrets file was created with correct content in data_dir
+        let data_dir = mgr.store().data_dir();
+        let secrets_path = format!("{data_dir}/secrets/secrets-{}.sh", session.id);
         let content = std::fs::read_to_string(&secrets_path).unwrap();
         assert!(content.contains("export MY_TOKEN='secret123'"));
         assert!(content.contains("export GITHUB_TOKEN='ghp_abc'"));
-        // Clean up
-        std::fs::remove_file(&secrets_path).unwrap();
     }
 
     #[tokio::test]
@@ -2443,12 +2510,13 @@ mod tests {
         );
         // Instead, the command should source a secrets file
         assert!(
-            create_call.contains(". /tmp/pulpo-secrets-"),
+            create_call.contains("/secrets/secrets-"),
             "command should source secrets file: {create_call}"
         );
 
         // Verify the secrets file contains both secrets
-        let secrets_path = format!("/tmp/pulpo-secrets-{}.sh", session.id);
+        let data_dir = mgr.store().data_dir();
+        let secrets_path = format!("{data_dir}/secrets/secrets-{}.sh", session.id);
         let content = std::fs::read_to_string(&secrets_path).unwrap();
         assert!(
             content.contains("INK_SECRET"),
@@ -2458,46 +2526,53 @@ mod tests {
             content.contains("REQ_SECRET"),
             "request secret should be in file: {content}"
         );
-        // Clean up
-        std::fs::remove_file(&secrets_path).unwrap();
     }
 
     #[test]
     fn test_write_secrets_file_path_includes_session_id() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let data_dir = tmpdir.path().to_str().unwrap();
         let id = uuid::Uuid::new_v4();
         let mut secrets = HashMap::new();
         secrets.insert("KEY".to_owned(), "val".to_owned());
-        let path = write_secrets_file(&id, &secrets).unwrap().unwrap();
+        let path = write_secrets_file(&id, &secrets, data_dir)
+            .unwrap()
+            .unwrap();
         assert!(
             path.contains(&id.to_string()),
             "path should contain session ID: {path}"
         );
-        assert_eq!(path, format!("/tmp/pulpo-secrets-{id}.sh"));
-        std::fs::remove_file(&path).unwrap();
+        assert_eq!(path, format!("{data_dir}/secrets/secrets-{id}.sh"));
     }
 
     #[test]
     fn test_write_secrets_file_content_format() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let data_dir = tmpdir.path().to_str().unwrap();
         let id = uuid::Uuid::new_v4();
         let mut secrets = HashMap::new();
         secrets.insert("MY_VAR".to_owned(), "hello world".to_owned());
-        let path = write_secrets_file(&id, &secrets).unwrap().unwrap();
+        let path = write_secrets_file(&id, &secrets, data_dir)
+            .unwrap()
+            .unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         // Each line should be: export KEY='VALUE'
         assert!(content.contains("export MY_VAR='hello world'\n"));
-        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
     fn test_write_secrets_file_escapes_multiple_single_quotes() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let data_dir = tmpdir.path().to_str().unwrap();
         let id = uuid::Uuid::new_v4();
         let mut secrets = HashMap::new();
         secrets.insert("K".to_owned(), "a'b'c".to_owned());
-        let path = write_secrets_file(&id, &secrets).unwrap().unwrap();
+        let path = write_secrets_file(&id, &secrets, data_dir)
+            .unwrap()
+            .unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         // Each ' becomes '\'' in shell single-quote escaping
         assert!(content.contains("export K='a'\\''b'\\''c'"));
-        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
@@ -3120,7 +3195,8 @@ mod tests {
         let session = mgr.create_session(req).await.unwrap();
 
         // Verify the secrets file contains all 3 secrets (no duplicates)
-        let secrets_path = format!("/tmp/pulpo-secrets-{}.sh", session.id);
+        let data_dir = mgr.store().data_dir();
+        let secrets_path = format!("{data_dir}/secrets/secrets-{}.sh", session.id);
         let content = std::fs::read_to_string(&secrets_path).unwrap();
         // Count occurrences of SHARED_SECRET — should appear exactly once
         let shared_count = content.matches("SHARED_SECRET").count();
@@ -3130,7 +3206,6 @@ mod tests {
         );
         assert!(content.contains("INK_ONLY"));
         assert!(content.contains("REQ_ONLY"));
-        std::fs::remove_file(&secrets_path).unwrap();
     }
 
     // -- stop_session with purge on various statuses --
