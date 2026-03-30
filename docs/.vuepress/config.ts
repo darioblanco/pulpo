@@ -45,6 +45,7 @@ export default defineUserConfig({
         '/guides/parallel-agents-one-repo',
         '/guides/private-infra-with-tailscale',
         '/guides/docker-isolated-risky-tasks',
+        '/guides/agent-examples',
         '/guides/configuration',
         '/guides/discovery',
         '/guides/recovery',

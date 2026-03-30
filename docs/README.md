@@ -66,6 +66,8 @@ For an objective source-based comparison page, see
 [Alternatives And Comparisons](/getting-started/alternatives).
 For concrete user profiles and workflow matches, see
 [Use Cases](/getting-started/use-cases).
+For examples with specific coding agents, see
+[Agent Examples](/guides/agent-examples).
 
 ## Example Workflows
 
@@ -75,6 +77,7 @@ If you want to understand Pulpo quickly, start with a real workflow:
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo): split one repository across multiple concurrent agent sessions
 - [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale): run agents across your own private machines with remote control and node-local secrets
 - [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks): give high-impact tasks a safer runtime boundary without losing Pulpo supervision
+- [Agent Examples](/guides/agent-examples): see how Pulpo wraps Claude Code, Codex, Gemini CLI, Kimi Code, and GLM-5 via OpenCode
 
 ## Where Pulpo Fits
 
@@ -154,7 +157,8 @@ The project is still experimental overall, but the session/runtime/lifecycle mod
 10. [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) for a concrete worktree workflow
 11. [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale) for the self-hosted multi-node workflow
 12. [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks) for safer high-permission execution
-13. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
+13. [Agent Examples](/guides/agent-examples) for tool-specific command examples
+14. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
 
 ## Quick Links
 
@@ -172,6 +176,7 @@ The project is still experimental overall, but the session/runtime/lifecycle mod
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
 - [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale)
 - [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks)
+- [Agent Examples](/guides/agent-examples)
 - [Recovery Guide](/guides/recovery)
 - [CLI Reference](/reference/cli)
 - [Config Reference](/reference/config)

@@ -61,6 +61,8 @@ Inks can also be managed via CLI: `pulpo ink list`, `pulpo ink add <NAME> --comm
 
 For a concrete example of using an ink with schedules, see
 [Nightly Code Review](/guides/nightly-code-review).
+For command examples across specific agent tools, see
+[Agent Examples](/guides/agent-examples).
 
 ## Watchdog
 

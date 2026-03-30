@@ -4,6 +4,8 @@ This guide is for the shortest path from "I installed Pulpo" to "I have a
 managed agent session running on infrastructure I control."
 
 If you want the market context first, read [Why Pulpo](/getting-started/why-pulpo).
+If you want examples with specific coding agents, see
+[Agent Examples](/guides/agent-examples).
 
 ## 1. Install
 
@@ -132,6 +134,7 @@ curl -N http://localhost:7433/api/v1/events  # SSE stream
 - [Nightly Code Review](/guides/nightly-code-review) — a concrete recurring background-agent workflow
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) — a concrete parallel-worktree workflow
 - [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks) — a concrete safer-runtime workflow
+- [Agent Examples](/guides/agent-examples) — concrete examples with Claude Code, Codex, Gemini CLI, Kimi Code, and GLM-5 via OpenCode
 - [Core Concepts](/architecture/core-concepts) — the smallest vocabulary for understanding Pulpo
 - [Architecture Overview](/architecture/overview) — the session/runtime/watchdog mental model
 - [Session Lifecycle](/operations/session-lifecycle) — exact transition behavior
