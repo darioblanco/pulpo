@@ -213,76 +213,315 @@ pub fn detect_error(output: &str) -> Option<String> {
     None
 }
 
-/// Extract token usage from agent output.
-/// Looks for patterns in the last 50 lines.
-/// Returns `(input_tokens, output_tokens)` if found.
-pub fn extract_token_usage(output: &str) -> Option<(u64, u64)> {
-    let cleaned = strip_ansi(output);
-    let last_lines: Vec<&str> = cleaned.lines().rev().take(50).collect();
-
-    let mut input_tokens: Option<u64> = None;
-    let mut output_tokens: Option<u64> = None;
-    let mut total_tokens: Option<u64> = None;
-
-    for line in &last_lines {
-        let lower = line.to_lowercase();
-
-        // Try to extract input/output tokens
-        if input_tokens.is_none() {
-            if let Some(n) = extract_number_after(&lower, "input tokens:") {
-                input_tokens = Some(n);
-            } else if let Some(n) = extract_number_after(&lower, "input_tokens:") {
-                input_tokens = Some(n);
-            }
-        }
-        if output_tokens.is_none() {
-            if let Some(n) = extract_number_after(&lower, "output tokens:") {
-                output_tokens = Some(n);
-            } else if let Some(n) = extract_number_after(&lower, "output_tokens:") {
-                output_tokens = Some(n);
-            }
-        }
-        if total_tokens.is_none() {
-            if let Some(n) = extract_number_after(&lower, "total tokens:") {
-                total_tokens = Some(n);
-            } else if let Some(n) = extract_number_after(&lower, "total_tokens:") {
-                total_tokens = Some(n);
-            } else if let Some(n) = extract_number_after(&lower, "tokens used:") {
-                total_tokens = Some(n);
-            }
-        }
-    }
-
-    // If we have input and output, return those
-    if let (Some(inp), Some(out)) = (input_tokens, output_tokens) {
-        return Some((inp, out));
-    }
-
-    // If we have total tokens, split roughly (we can't know the split, use total as input)
-    if let Some(total) = total_tokens {
-        return Some((total, 0));
-    }
-
-    None
+/// Extracted token and cost data from agent terminal output.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AgentUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub cache_write_tokens: Option<u64>,
+    pub cache_read_tokens: Option<u64>,
+    pub session_cost_usd: Option<f64>,
 }
 
-/// Extract a number that follows a keyword in a line.
-/// Handles comma-separated numbers like "12,345".
-fn extract_number_after(line: &str, keyword: &str) -> Option<u64> {
-    let idx = line.find(keyword)?;
-    let rest = &line[idx + keyword.len()..];
-    // Skip whitespace and find the number
-    let trimmed = rest.trim_start();
-    // Collect digits and commas
-    let num_str: String = trimmed
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == ',')
-        .filter(char::is_ascii_digit)
-        .collect();
-    if num_str.is_empty() {
+/// Parse a number string that may have K/M suffix and commas.
+/// Examples: `"7.49K"` → `7490`, `"4.5M"` → `4_500_000`, `"12,345"` → `12345`.
+fn parse_number_with_suffix(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
         return None;
     }
-    num_str.parse().ok()
+
+    let last = s.as_bytes().last()?;
+    let (num_part, multiplier) = match last {
+        b'K' | b'k' => (&s[..s.len() - 1], 1_000.0),
+        b'M' | b'm' => (&s[..s.len() - 1], 1_000_000.0),
+        _ => (s, 1.0),
+    };
+
+    // Remove commas and parse as f64 (to handle decimals like 7.49K)
+    let cleaned: String = num_part.chars().filter(|c| *c != ',').collect();
+    let value: f64 = cleaned.parse().ok()?;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Some((value * multiplier).round() as u64)
+}
+
+/// Keywords that indicate a line contains cost/price information.
+/// Dollar amounts are only extracted from lines containing these keywords
+/// to avoid false positives from code output like `$100.00`.
+const COST_KEYWORDS: &[&str] = &[
+    "cost", "spent", "session", "message", "total", "price", "budget", "usage", "billing",
+];
+
+/// Check if a lowercased line contains any cost-related keyword.
+fn has_cost_keyword(lower_line: &str) -> bool {
+    COST_KEYWORDS.iter().any(|kw| lower_line.contains(kw))
+}
+
+/// Extract all dollar amounts from a line.
+/// Matches `$X.XX`, `$X.XXX`, `$X`, etc.
+fn extract_dollar_amounts(line: &str) -> Vec<f64> {
+    let mut amounts = Vec::new();
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'$' {
+            // Collect the number after $
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len() && (bytes[end].is_ascii_digit() || bytes[end] == b'.') {
+                end += 1;
+            }
+            if end > start
+                && let Ok(val) = line[start..end].parse::<f64>()
+            {
+                amounts.push(val);
+            }
+            i = end;
+        } else {
+            i += 1;
+        }
+    }
+    amounts
+}
+
+/// Token category for keyword-proximity classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TokenCategory {
+    Input,
+    Output,
+    Total,
+    CacheWrite,
+    CacheRead,
+}
+
+/// Keyword with its category and maximum allowed distance.
+struct KeywordRule {
+    category: TokenCategory,
+    keyword: &'static str,
+    max_distance: usize,
+}
+
+/// All keyword rules. The classifier picks the nearest matching keyword.
+const KEYWORD_RULES: &[KeywordRule] = &[
+    // Multi-word keywords (more specific)
+    KeywordRule {
+        category: TokenCategory::CacheWrite,
+        keyword: "cache write",
+        max_distance: 30,
+    },
+    KeywordRule {
+        category: TokenCategory::CacheWrite,
+        keyword: "cache_write",
+        max_distance: 30,
+    },
+    KeywordRule {
+        category: TokenCategory::CacheWrite,
+        keyword: "cache creation",
+        max_distance: 30,
+    },
+    KeywordRule {
+        category: TokenCategory::CacheRead,
+        keyword: "cache hit",
+        max_distance: 30,
+    },
+    KeywordRule {
+        category: TokenCategory::CacheRead,
+        keyword: "cache_hit",
+        max_distance: 30,
+    },
+    KeywordRule {
+        category: TokenCategory::CacheRead,
+        keyword: "cache read",
+        max_distance: 30,
+    },
+    // Standard keywords
+    KeywordRule {
+        category: TokenCategory::Input,
+        keyword: "input",
+        max_distance: 30,
+    },
+    KeywordRule {
+        category: TokenCategory::Input,
+        keyword: "sent",
+        max_distance: 30,
+    },
+    KeywordRule {
+        category: TokenCategory::Output,
+        keyword: "output",
+        max_distance: 30,
+    },
+    KeywordRule {
+        category: TokenCategory::Output,
+        keyword: "received",
+        max_distance: 30,
+    },
+    KeywordRule {
+        category: TokenCategory::Total,
+        keyword: "total",
+        max_distance: 30,
+    },
+    KeywordRule {
+        category: TokenCategory::Total,
+        keyword: "used",
+        max_distance: 30,
+    },
+    // Short ambiguous keywords — tight window (line is padded with trailing space)
+    KeywordRule {
+        category: TokenCategory::Input,
+        keyword: " in ",
+        max_distance: 10,
+    },
+    KeywordRule {
+        category: TokenCategory::Output,
+        keyword: " out ",
+        max_distance: 10,
+    },
+];
+
+/// Find a number token starting at the given position in the line.
+/// Returns `(raw_string, parsed_value, end_position)`.
+fn find_number_at(line: &str, start: usize) -> Option<(usize, u64, usize)> {
+    let bytes = line.as_bytes();
+    let mut pos = start;
+
+    // Must start with a digit
+    if pos >= bytes.len() || !bytes[pos].is_ascii_digit() {
+        return None;
+    }
+
+    // Collect digits, commas, dots, and K/M suffix
+    let num_start = pos;
+    while pos < bytes.len()
+        && (bytes[pos].is_ascii_digit()
+            || bytes[pos] == b','
+            || bytes[pos] == b'.'
+            || bytes[pos] == b'K'
+            || bytes[pos] == b'k'
+            || bytes[pos] == b'M'
+            || bytes[pos] == b'm')
+    {
+        // K/M suffix ends the number
+        if matches!(bytes[pos], b'K' | b'k' | b'M' | b'm') {
+            pos += 1;
+            break;
+        }
+        pos += 1;
+    }
+
+    let raw = &line[num_start..pos];
+    let value = parse_number_with_suffix(raw)?;
+    Some((num_start, value, pos))
+}
+
+/// Classify a number on a line by finding the nearest keyword within range.
+/// Returns the category of the closest matching keyword.
+fn classify_number(line_lower: &str, num_start: usize, num_end: usize) -> Option<TokenCategory> {
+    let mut best: Option<(TokenCategory, usize)> = None; // (category, distance)
+
+    for rule in KEYWORD_RULES {
+        // Check window before the number
+        let win_start = num_start.saturating_sub(rule.max_distance);
+        let before = &line_lower[win_start..num_start];
+        if let Some(pos) = before.rfind(rule.keyword) {
+            // Distance = gap between keyword end and number start
+            let keyword_end = win_start + pos + rule.keyword.len();
+            let distance = num_start - keyword_end;
+            if best.is_none() || distance < best.unwrap().1 {
+                best = Some((rule.category, distance));
+            }
+        }
+
+        // Check window after the number
+        let win_end = (num_end + rule.max_distance).min(line_lower.len());
+        let after = &line_lower[num_end..win_end];
+        if let Some(pos) = after.find(rule.keyword) {
+            // Distance = gap between number end and keyword start
+            let distance = pos;
+            if best.is_none() || distance < best.unwrap().1 {
+                best = Some((rule.category, distance));
+            }
+        }
+    }
+
+    best.map(|(cat, _)| cat)
+}
+
+/// Extract token usage and cost from agent terminal output.
+///
+/// Uses keyword-proximity matching to classify numbers found near
+/// recognizable keywords. Works across agents without per-agent code.
+///
+/// Scans all lines (output is already capped at 500 by `capture_output`).
+/// Iterates from the bottom (most recent) up; first match per category wins.
+pub fn extract_agent_usage(output: &str) -> Option<AgentUsage> {
+    let cleaned = strip_ansi(output);
+    let lines: Vec<&str> = cleaned.lines().collect();
+
+    let mut usage = AgentUsage::default();
+    let mut max_cost: Option<f64> = None;
+    let mut found_anything = false;
+
+    // Iterate from bottom (most recent output) to top
+    for line in lines.iter().rev() {
+        // Pad with trailing space so " out " matches at end of line
+        let mut lower = line.to_lowercase();
+        lower.push(' ');
+
+        // Extract dollar amounts only from lines with cost-related keywords
+        if has_cost_keyword(&lower) {
+            for amount in extract_dollar_amounts(&lower) {
+                if amount > 0.0 {
+                    found_anything = true;
+                    match max_cost {
+                        Some(current) if amount > current => max_cost = Some(amount),
+                        None => max_cost = Some(amount),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // Find and classify numbers on this line
+        let mut pos = 0;
+        while pos < lower.len() {
+            if lower.as_bytes()[pos].is_ascii_digit() {
+                if let Some((num_start, value, num_end)) = find_number_at(&lower, pos) {
+                    if let Some(category) = classify_number(&lower, num_start, num_end) {
+                        found_anything = true;
+                        // First match per category wins (most recent line)
+                        match category {
+                            TokenCategory::Input if usage.input_tokens.is_none() => {
+                                usage.input_tokens = Some(value);
+                            }
+                            TokenCategory::Output if usage.output_tokens.is_none() => {
+                                usage.output_tokens = Some(value);
+                            }
+                            TokenCategory::Total if usage.total_tokens.is_none() => {
+                                usage.total_tokens = Some(value);
+                            }
+                            TokenCategory::CacheWrite if usage.cache_write_tokens.is_none() => {
+                                usage.cache_write_tokens = Some(value);
+                            }
+                            TokenCategory::CacheRead if usage.cache_read_tokens.is_none() => {
+                                usage.cache_read_tokens = Some(value);
+                            }
+                            _ => {}
+                        }
+                    }
+                    pos = num_end;
+                } else {
+                    pos += 1;
+                }
+            } else {
+                pos += 1;
+            }
+        }
+    }
+
+    usage.session_cost_usd = max_cost;
+
+    if found_anything { Some(usage) } else { None }
 }
 
 /// Parse `git diff --shortstat` output into (files, insertions, deletions).
@@ -836,95 +1075,6 @@ mod tests {
         assert_eq!(detect_error(output), Some("Test failed".into()));
     }
 
-    // -- extract_token_usage tests --
-
-    #[test]
-    fn test_extract_token_usage_input_output() {
-        let output = "Input tokens: 1234\nOutput tokens: 5678\n";
-        assert_eq!(extract_token_usage(output), Some((1234, 5678)));
-    }
-
-    #[test]
-    fn test_extract_token_usage_underscore_format() {
-        let output = "input_tokens: 1000\noutput_tokens: 2000\n";
-        assert_eq!(extract_token_usage(output), Some((1000, 2000)));
-    }
-
-    #[test]
-    fn test_extract_token_usage_total_only() {
-        let output = "Total tokens: 12345\n";
-        assert_eq!(extract_token_usage(output), Some((12345, 0)));
-    }
-
-    #[test]
-    fn test_extract_token_usage_total_underscore() {
-        let output = "total_tokens: 9999\n";
-        assert_eq!(extract_token_usage(output), Some((9999, 0)));
-    }
-
-    #[test]
-    fn test_extract_token_usage_tokens_used() {
-        let output = "tokens used: 5000\n";
-        assert_eq!(extract_token_usage(output), Some((5000, 0)));
-    }
-
-    #[test]
-    fn test_extract_token_usage_with_commas() {
-        let output = "Input tokens: 12,345\nOutput tokens: 67,890\n";
-        assert_eq!(extract_token_usage(output), Some((12345, 67890)));
-    }
-
-    #[test]
-    fn test_extract_token_usage_no_match() {
-        let output = "$ cargo build\nCompiling...\nDone.\n";
-        assert!(extract_token_usage(output).is_none());
-    }
-
-    #[test]
-    fn test_extract_token_usage_empty() {
-        assert!(extract_token_usage("").is_none());
-    }
-
-    #[test]
-    fn test_extract_token_usage_only_last_50_lines() {
-        let mut output = String::from("Total tokens: 9999\n");
-        for _ in 0..55 {
-            output.push_str("normal line\n");
-        }
-        assert!(extract_token_usage(&output).is_none());
-    }
-
-    #[test]
-    fn test_extract_token_usage_with_ansi() {
-        let output = "\x1b[33mInput tokens: 100\x1b[0m\n\x1b[33mOutput tokens: 200\x1b[0m\n";
-        assert_eq!(extract_token_usage(output), Some((100, 200)));
-    }
-
-    // -- extract_number_after tests --
-
-    #[test]
-    fn test_extract_number_after_basic() {
-        assert_eq!(extract_number_after("total: 42", "total:"), Some(42));
-    }
-
-    #[test]
-    fn test_extract_number_after_with_commas() {
-        assert_eq!(
-            extract_number_after("count: 1,234,567", "count:"),
-            Some(1_234_567)
-        );
-    }
-
-    #[test]
-    fn test_extract_number_after_not_found() {
-        assert_eq!(extract_number_after("nothing here", "total:"), None);
-    }
-
-    #[test]
-    fn test_extract_number_after_no_number() {
-        assert_eq!(extract_number_after("total: abc", "total:"), None);
-    }
-
     // -- parse_git_shortstat tests --
 
     #[test]
@@ -976,5 +1126,237 @@ mod tests {
     #[test]
     fn test_extract_leading_number_with_prefix() {
         assert_eq!(extract_leading_number("abc 123 def"), Some(123));
+    }
+
+    // -- parse_number_with_suffix tests --
+
+    #[test]
+    fn test_parse_number_with_suffix_plain() {
+        assert_eq!(parse_number_with_suffix("105"), Some(105));
+    }
+
+    #[test]
+    fn test_parse_number_with_suffix_k() {
+        assert_eq!(parse_number_with_suffix("7.49K"), Some(7490));
+    }
+
+    #[test]
+    fn test_parse_number_with_suffix_k_lowercase() {
+        assert_eq!(parse_number_with_suffix("1k"), Some(1000));
+    }
+
+    #[test]
+    fn test_parse_number_with_suffix_m() {
+        assert_eq!(parse_number_with_suffix("4.5M"), Some(4_500_000));
+    }
+
+    #[test]
+    fn test_parse_number_with_suffix_m_lowercase() {
+        assert_eq!(parse_number_with_suffix("1.2m"), Some(1_200_000));
+    }
+
+    #[test]
+    fn test_parse_number_with_suffix_commas() {
+        assert_eq!(parse_number_with_suffix("12,345"), Some(12345));
+    }
+
+    #[test]
+    fn test_parse_number_with_suffix_zero() {
+        assert_eq!(parse_number_with_suffix("0"), Some(0));
+    }
+
+    #[test]
+    fn test_parse_number_with_suffix_empty() {
+        assert_eq!(parse_number_with_suffix(""), None);
+    }
+
+    #[test]
+    fn test_parse_number_with_suffix_letters() {
+        assert_eq!(parse_number_with_suffix("abc"), None);
+    }
+
+    #[test]
+    fn test_parse_number_with_suffix_whitespace() {
+        assert_eq!(parse_number_with_suffix("  7.49K  "), Some(7490));
+    }
+
+    // -- extract_dollar_amounts tests --
+
+    #[test]
+    fn test_extract_dollar_amounts_single() {
+        assert_eq!(extract_dollar_amounts("Total cost: $1.55"), vec![1.55]);
+    }
+
+    #[test]
+    fn test_extract_dollar_amounts_multiple() {
+        let amounts = extract_dollar_amounts("Cost: $0.03 message, $0.06 session.");
+        assert_eq!(amounts, vec![0.03, 0.06]);
+    }
+
+    #[test]
+    fn test_extract_dollar_amounts_none() {
+        assert!(extract_dollar_amounts("no dollars here").is_empty());
+    }
+
+    #[test]
+    fn test_extract_dollar_amounts_small() {
+        assert_eq!(extract_dollar_amounts("Cost: $0.003"), vec![0.003]);
+    }
+
+    #[test]
+    fn test_extract_dollar_amounts_whole() {
+        assert_eq!(extract_dollar_amounts("Cost: $10"), vec![10.0]);
+    }
+
+    // -- extract_agent_usage integration tests --
+
+    #[test]
+    fn test_agent_usage_aider_basic() {
+        let output = "Tokens: 10,675 sent, 101 received. Cost: $0.03 message, $0.06 session.\n";
+        let usage = extract_agent_usage(output).unwrap();
+        assert_eq!(usage.input_tokens, Some(10_675));
+        assert_eq!(usage.output_tokens, Some(101));
+        assert_eq!(usage.session_cost_usd, Some(0.06));
+    }
+
+    #[test]
+    fn test_agent_usage_aider_with_cache() {
+        let output = "Tokens: 10,675 sent, 1,024 cache write, 8,192 cache hit, 101 received. Cost: $0.03 message, $0.06 session.\n";
+        let usage = extract_agent_usage(output).unwrap();
+        assert_eq!(usage.input_tokens, Some(10_675));
+        assert_eq!(usage.output_tokens, Some(101));
+        assert_eq!(usage.cache_write_tokens, Some(1024));
+        assert_eq!(usage.cache_read_tokens, Some(8192));
+        assert_eq!(usage.session_cost_usd, Some(0.06));
+    }
+
+    #[test]
+    fn test_agent_usage_claude_code_cost() {
+        let output = "Total cost:            $0.55\nTotal duration (API):  6m 19.7s\n";
+        let usage = extract_agent_usage(output).unwrap();
+        assert_eq!(usage.session_cost_usd, Some(0.55));
+    }
+
+    #[test]
+    fn test_agent_usage_codex() {
+        let output = "Token usage: 7.49K total (7.38K input + 105 output)\n";
+        let usage = extract_agent_usage(output).unwrap();
+        assert_eq!(usage.input_tokens, Some(7380));
+        assert_eq!(usage.output_tokens, Some(105));
+        assert_eq!(usage.total_tokens, Some(7490));
+    }
+
+    #[test]
+    fn test_agent_usage_opencode() {
+        let output = "142 tok/s · 4.5M in · 19K out\n";
+        let usage = extract_agent_usage(output).unwrap();
+        assert_eq!(usage.input_tokens, Some(4_500_000));
+        assert_eq!(usage.output_tokens, Some(19_000));
+    }
+
+    #[test]
+    fn test_agent_usage_goose_context_bar() {
+        // Goose uses a TUI context bar — no classifiable keywords near the numbers.
+        // The format "(3548/32000 tokens)" has no input/output/total keywords, so
+        // we don't extract from it. This is acceptable: Goose is a TUI widget that
+        // may not even appear reliably in tmux capture-pane output.
+        let output = "(3548/32000 tokens)\n";
+        assert!(extract_agent_usage(output).is_none());
+    }
+
+    #[test]
+    fn test_agent_usage_generic_input_output() {
+        let output = "Input tokens: 1234\nOutput tokens: 5678\n";
+        let usage = extract_agent_usage(output).unwrap();
+        assert_eq!(usage.input_tokens, Some(1234));
+        assert_eq!(usage.output_tokens, Some(5678));
+    }
+
+    #[test]
+    fn test_agent_usage_generic_underscore() {
+        let output = "input_tokens: 1000\noutput_tokens: 2000\n";
+        let usage = extract_agent_usage(output).unwrap();
+        assert_eq!(usage.input_tokens, Some(1000));
+        assert_eq!(usage.output_tokens, Some(2000));
+    }
+
+    #[test]
+    fn test_agent_usage_total_only() {
+        let output = "Total tokens: 12345\n";
+        let usage = extract_agent_usage(output).unwrap();
+        assert_eq!(usage.total_tokens, Some(12345));
+    }
+
+    #[test]
+    fn test_agent_usage_tokens_used() {
+        let output = "tokens used: 5000\n";
+        let usage = extract_agent_usage(output).unwrap();
+        // "used" maps to Total category
+        assert_eq!(usage.total_tokens, Some(5000));
+    }
+
+    #[test]
+    fn test_agent_usage_empty() {
+        assert!(extract_agent_usage("").is_none());
+    }
+
+    #[test]
+    fn test_agent_usage_no_match() {
+        assert!(extract_agent_usage("$ cargo build\nCompiling...\nDone.\n").is_none());
+    }
+
+    #[test]
+    fn test_agent_usage_with_ansi() {
+        let output = "\x1b[33mInput tokens: 100\x1b[0m\n\x1b[33mOutput tokens: 200\x1b[0m\n";
+        let usage = extract_agent_usage(output).unwrap();
+        assert_eq!(usage.input_tokens, Some(100));
+        assert_eq!(usage.output_tokens, Some(200));
+    }
+
+    #[test]
+    fn test_agent_usage_last_match_wins() {
+        let output =
+            "Input tokens: 100\nOutput tokens: 200\nInput tokens: 500\nOutput tokens: 600\n";
+        let usage = extract_agent_usage(output).unwrap();
+        // Last (bottom) match wins — 500/600
+        assert_eq!(usage.input_tokens, Some(500));
+        assert_eq!(usage.output_tokens, Some(600));
+    }
+
+    #[test]
+    fn test_agent_usage_cost_takes_largest() {
+        let output = "Cost: $0.03 message, $0.06 session.\n";
+        let usage = extract_agent_usage(output).unwrap();
+        assert_eq!(usage.session_cost_usd, Some(0.06));
+    }
+
+    #[test]
+    fn test_agent_usage_with_commas() {
+        let output = "Input tokens: 12,345\nOutput tokens: 67,890\n";
+        let usage = extract_agent_usage(output).unwrap();
+        assert_eq!(usage.input_tokens, Some(12345));
+        assert_eq!(usage.output_tokens, Some(67890));
+    }
+
+    #[test]
+    fn test_agent_usage_ignores_dollar_in_code_output() {
+        // Dollar amounts in code without cost keywords should NOT be picked up
+        let output = "let amount = $100.00;\nlet fee = $15.50;\n";
+        assert!(extract_agent_usage(output).is_none());
+    }
+
+    #[test]
+    fn test_agent_usage_cost_requires_keyword() {
+        // Dollar amount WITH a cost keyword is accepted
+        let output = "Total cost: $0.55\n";
+        let usage = extract_agent_usage(output).unwrap();
+        assert_eq!(usage.session_cost_usd, Some(0.55));
+    }
+
+    #[test]
+    fn test_agent_usage_cost_zero_ignored() {
+        // $0.00 is filtered out (amount > 0.0 check)
+        let output = "Cost: $0.00 session.\n";
+        assert!(extract_agent_usage(output).is_none());
     }
 }

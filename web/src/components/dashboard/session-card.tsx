@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   ArrowUp,
   Coins,
+  DollarSign,
   XCircle,
 } from 'lucide-react';
 import {
@@ -268,15 +269,26 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
               {session.git_ahead}
             </span>
           )}
-          {session.metadata?.total_input_tokens && (
+          {session.metadata?.session_cost_usd && Number(session.metadata.session_cost_usd) > 0 ? (
             <span
-              data-testid="token-usage-badge"
-              className="flex shrink-0 items-center gap-0.5 rounded bg-[#1a1a2e] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#8b8bcd]"
-              title={`Input: ${session.metadata.total_input_tokens}, Output: ${session.metadata.total_output_tokens ?? '0'}`}
+              data-testid="cost-badge"
+              className="flex shrink-0 items-center gap-0.5 rounded bg-[#1a2e1a] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#8bcd8b]"
+              title={`Cost: $${Number(session.metadata.session_cost_usd).toFixed(2)}${session.metadata.total_input_tokens ? `, Input: ${Number(session.metadata.total_input_tokens).toLocaleString()}, Output: ${Number(session.metadata.total_output_tokens ?? '0').toLocaleString()}` : ''}`}
             >
-              <Coins className="h-3 w-3" />
-              {Number(session.metadata.total_input_tokens).toLocaleString()}
+              <DollarSign className="h-3 w-3" />$
+              {Number(session.metadata.session_cost_usd).toFixed(2)}
             </span>
+          ) : (
+            session.metadata?.total_input_tokens && (
+              <span
+                data-testid="token-usage-badge"
+                className="flex shrink-0 items-center gap-0.5 rounded bg-[#1a1a2e] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#8b8bcd]"
+                title={`Input: ${Number(session.metadata.total_input_tokens).toLocaleString()}, Output: ${Number(session.metadata.total_output_tokens ?? '0').toLocaleString()}${session.metadata.cache_write_tokens ? `, Cache Write: ${Number(session.metadata.cache_write_tokens).toLocaleString()}` : ''}${session.metadata.cache_read_tokens ? `, Cache Read: ${Number(session.metadata.cache_read_tokens).toLocaleString()}` : ''}`}
+              >
+                <Coins className="h-3 w-3" />
+                {Number(session.metadata.total_input_tokens).toLocaleString()}
+              </span>
+            )
           )}
           <span className="truncate max-w-[120px] sm:max-w-[200px] lg:max-w-none text-[0.6rem] uppercase text-[#5a7a9a]">
             {truncateCommand(session.command)}

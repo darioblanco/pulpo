@@ -162,6 +162,36 @@ pub struct Session {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Well-known metadata keys used across the codebase.
+pub mod meta {
+    // Token and cost tracking
+    pub const TOTAL_INPUT_TOKENS: &str = "total_input_tokens";
+    pub const TOTAL_OUTPUT_TOKENS: &str = "total_output_tokens";
+    pub const CACHE_WRITE_TOKENS: &str = "cache_write_tokens";
+    pub const CACHE_READ_TOKENS: &str = "cache_read_tokens";
+    pub const SESSION_COST_USD: &str = "session_cost_usd";
+    // Git and PR detection
+    pub const PR_URL: &str = "pr_url";
+    pub const BRANCH: &str = "branch";
+    // Error and rate limit tracking
+    pub const ERROR_STATUS: &str = "error_status";
+    pub const ERROR_STATUS_AT: &str = "error_status_at";
+    pub const RATE_LIMIT: &str = "rate_limit";
+    pub const RATE_LIMIT_AT: &str = "rate_limit_at";
+}
+
+impl Session {
+    /// Get a metadata value as a string slice.
+    pub fn meta_str(&self, key: &str) -> Option<&str> {
+        self.metadata.as_ref()?.get(key).map(String::as_str)
+    }
+
+    /// Get a metadata value, parsed into a target type.
+    pub fn meta_parsed<T: std::str::FromStr>(&self, key: &str) -> Option<T> {
+        self.meta_str(key)?.parse().ok()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

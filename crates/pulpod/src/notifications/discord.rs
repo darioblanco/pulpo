@@ -228,6 +228,9 @@ mod tests {
             git_files_changed: None,
             pr_url: None,
             error_status: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            session_cost_usd: None,
         }
     }
 
@@ -641,6 +644,9 @@ mod tests {
                 git_files_changed: None,
                 pr_url: None,
                 error_status: None,
+                total_input_tokens: None,
+                total_output_tokens: None,
+                session_cost_usd: None,
             }));
         }
 

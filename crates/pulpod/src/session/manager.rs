@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow, bail};
 use chrono::Utc;
 use pulpo_common::api::CreateSessionRequest;
 use pulpo_common::event::{PulpoEvent, SessionEvent};
-use pulpo_common::session::{Runtime, Session, SessionStatus};
+use pulpo_common::session::{Runtime, Session, SessionStatus, meta};
 use std::sync::RwLock;
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -105,14 +105,8 @@ impl SessionManager {
 
     fn emit_event(&self, session: &Session, previous_status: Option<SessionStatus>) {
         if let Some(tx) = &self.event_tx {
-            let pr_url = session
-                .metadata
-                .as_ref()
-                .and_then(|m| m.get("pr_url").cloned());
-            let error_status = session
-                .metadata
-                .as_ref()
-                .and_then(|m| m.get("error_status").cloned());
+            let pr_url = session.meta_str(meta::PR_URL).map(str::to_owned);
+            let error_status = session.meta_str(meta::ERROR_STATUS).map(str::to_owned);
             let event = SessionEvent {
                 session_id: session.id.to_string(),
                 session_name: session.name.clone(),
@@ -128,6 +122,9 @@ impl SessionManager {
                 git_files_changed: session.git_files_changed,
                 pr_url,
                 error_status,
+                total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
+                total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
+                session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
             };
             // Ignore send errors — no subscribers is OK
             let _ = tx.send(PulpoEvent::Session(event));

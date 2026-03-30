@@ -24,6 +24,13 @@ pub struct SessionEvent {
     pub pr_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_status: Option<String>,
+    /// Token and cost enrichment fields.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +60,9 @@ mod tests {
             git_files_changed: None,
             pr_url: None,
             error_status: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            session_cost_usd: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         let deserialized: SessionEvent = serde_json::from_str(&json).unwrap();
@@ -81,6 +91,9 @@ mod tests {
             git_files_changed: None,
             pr_url: None,
             error_status: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            session_cost_usd: None,
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"previous_status\":null"));
@@ -104,6 +117,9 @@ mod tests {
             git_files_changed: None,
             pr_url: None,
             error_status: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            session_cost_usd: None,
         };
         let cloned = event.clone();
         assert_eq!(format!("{event:?}"), format!("{cloned:?}"));
@@ -126,6 +142,9 @@ mod tests {
             git_files_changed: None,
             pr_url: None,
             error_status: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            session_cost_usd: None,
         });
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"kind\":\"session\""));
@@ -163,6 +182,9 @@ mod tests {
             git_files_changed: None,
             pr_url: None,
             error_status: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            session_cost_usd: None,
         });
         let cloned = event.clone();
         assert_eq!(format!("{event:?}"), format!("{cloned:?}"));
@@ -185,6 +207,9 @@ mod tests {
             git_files_changed: None,
             pr_url: None,
             error_status: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            session_cost_usd: None,
         });
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: PulpoEvent = serde_json::from_str(&json).unwrap();

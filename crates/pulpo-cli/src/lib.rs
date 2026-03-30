@@ -444,25 +444,49 @@ fn format_branch(session: &Session) -> String {
 
 /// Build a display name with badges: [wt] [PR] [!]
 fn format_name(session: &Session) -> String {
+    use pulpo_common::session::meta;
+
     let mut name = session.name.clone();
     if session.worktree_path.is_some() {
         name = format!("{name} [wt]");
     }
-    if session
-        .metadata
-        .as_ref()
-        .is_some_and(|m| m.contains_key("pr_url"))
-    {
+    if session.meta_str(meta::PR_URL).is_some() {
         name = format!("{name} [PR]");
     }
-    if session
-        .metadata
-        .as_ref()
-        .is_some_and(|m| m.contains_key("error_status"))
-    {
+    if session.meta_str(meta::ERROR_STATUS).is_some() {
         name = format!("{name} [!]");
     }
     name
+}
+
+/// Format token count with K/M suffixes for human readability.
+fn format_token_count(n: u64) -> String {
+    if n >= 1_000_000 {
+        #[allow(clippy::cast_precision_loss)]
+        let val = n as f64 / 1_000_000.0;
+        format!("{val:.1}M")
+    } else if n >= 1_000 {
+        #[allow(clippy::cast_precision_loss)]
+        let val = n as f64 / 1_000.0;
+        format!("{val:.1}K")
+    } else {
+        n.to_string()
+    }
+}
+
+/// Format usage column: cost if available, else token count.
+fn format_usage(session: &Session) -> String {
+    use pulpo_common::session::meta;
+
+    if let Some(cost) = session.meta_parsed::<f64>(meta::SESSION_COST_USD) {
+        return format!("${cost:.2}");
+    }
+
+    if let Some(tokens) = session.meta_parsed::<u64>(meta::TOTAL_INPUT_TOKENS) {
+        return format!("{} tok", format_token_count(tokens));
+    }
+
+    "-".into()
 }
 
 /// Truncate a string to `max` chars with ellipsis.
@@ -481,13 +505,14 @@ fn format_sessions(sessions: &[Session]) -> String {
     }
 
     // Compute dynamic column widths from data
-    let rows: Vec<(String, String, String, String, String)> = sessions
+    let rows: Vec<(String, String, String, String, String, String)> = sessions
         .iter()
         .map(|s| {
             (
                 s.id.to_string()[..8].to_owned(),
                 format_name(s),
                 s.status.to_string(),
+                format_usage(s),
                 format_branch(s),
                 s.command.clone(),
             )
@@ -497,18 +522,20 @@ fn format_sessions(sessions: &[Session]) -> String {
     let w_id = 8;
     let w_name = rows.iter().map(|r| r.1.len()).max().unwrap_or(4).max(4);
     let w_status = 8;
-    let w_branch = rows.iter().map(|r| r.3.len()).max().unwrap_or(6).max(6);
+    let w_usage = rows.iter().map(|r| r.3.len()).max().unwrap_or(5).max(5);
+    let w_branch = rows.iter().map(|r| r.4.len()).max().unwrap_or(6).max(6);
 
     let mut lines = vec![format!(
-        "{:<w_id$}  {:<w_name$}  {:<w_status$}  {:<w_branch$}  {}",
-        "ID", "NAME", "STATUS", "BRANCH", "COMMAND"
+        "{:<w_id$}  {:<w_name$}  {:<w_status$}  {:<w_usage$}  {:<w_branch$}  {}",
+        "ID", "NAME", "STATUS", "USAGE", "BRANCH", "COMMAND"
     )];
-    for (id, name, status, branch, cmd) in &rows {
+    for (id, name, status, usage, branch, cmd) in &rows {
         lines.push(format!(
-            "{:<w_id$}  {:<w_name$}  {:<w_status$}  {:<w_branch$}  {}",
+            "{:<w_id$}  {:<w_name$}  {:<w_status$}  {:<w_usage$}  {:<w_branch$}  {}",
             id,
             truncate(name, w_name),
             status,
+            usage,
             truncate(branch, w_branch),
             truncate(cmd, 50)
         ));
@@ -5793,5 +5820,100 @@ mod tests {
         // Should not panic on multi-byte truncation
         let output = format_inks(&inks);
         assert!(output.contains("test"));
+    }
+
+    // -- format_token_count tests --
+
+    #[test]
+    fn test_format_token_count_small() {
+        assert_eq!(format_token_count(999), "999");
+    }
+
+    #[test]
+    fn test_format_token_count_thousands() {
+        assert_eq!(format_token_count(1234), "1.2K");
+    }
+
+    #[test]
+    fn test_format_token_count_millions() {
+        assert_eq!(format_token_count(1_234_567), "1.2M");
+    }
+
+    #[test]
+    fn test_format_token_count_exact_k() {
+        assert_eq!(format_token_count(1000), "1.0K");
+    }
+
+    #[test]
+    fn test_format_token_count_zero() {
+        assert_eq!(format_token_count(0), "0");
+    }
+
+    // -- format_usage tests --
+
+    #[test]
+    fn test_format_usage_with_cost() {
+        let mut session = repo_session("/tmp", None);
+        let mut meta = std::collections::HashMap::new();
+        meta.insert("session_cost_usd".into(), "0.550000".into());
+        meta.insert("total_input_tokens".into(), "10000".into());
+        session.metadata = Some(meta);
+        // Cost takes priority over tokens
+        assert_eq!(format_usage(&session), "$0.55");
+    }
+
+    #[test]
+    fn test_format_usage_with_tokens_only() {
+        let mut session = repo_session("/tmp", None);
+        let mut meta = std::collections::HashMap::new();
+        meta.insert("total_input_tokens".into(), "12345".into());
+        session.metadata = Some(meta);
+        assert_eq!(format_usage(&session), "12.3K tok");
+    }
+
+    #[test]
+    fn test_format_usage_no_data() {
+        let session = repo_session("/tmp", None);
+        assert_eq!(format_usage(&session), "-");
+    }
+
+    #[test]
+    fn test_format_sessions_includes_usage_header() {
+        use chrono::Utc;
+        use pulpo_common::session::SessionStatus;
+        use uuid::Uuid;
+
+        let sessions = vec![Session {
+            id: Uuid::nil(),
+            name: "test".into(),
+            workdir: "/tmp".into(),
+            command: "claude".into(),
+            description: None,
+            status: SessionStatus::Active,
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: None,
+            worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
+            runtime: Runtime::Tmux,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }];
+        let output = format_sessions(&sessions);
+        assert!(output.contains("USAGE"));
     }
 }

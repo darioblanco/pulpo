@@ -216,6 +216,9 @@ mod tests {
             git_files_changed: None,
             pr_url: None,
             error_status: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            session_cost_usd: None,
         }
     }
 
@@ -320,6 +323,9 @@ mod tests {
             git_files_changed: None,
             pr_url: None,
             error_status: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            session_cost_usd: None,
         };
         let payload_str = build_payload(&event);
         // Should produce valid JSON even with special characters
@@ -441,6 +447,9 @@ mod tests {
                 git_files_changed: None,
                 pr_url: None,
                 error_status: None,
+                total_input_tokens: None,
+                total_output_tokens: None,
+                session_cost_usd: None,
             }));
         }
 

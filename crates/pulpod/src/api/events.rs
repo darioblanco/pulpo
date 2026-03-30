@@ -86,6 +86,9 @@ mod tests {
             git_files_changed: None,
             pr_url: None,
             error_status: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            session_cost_usd: None,
         });
         state.event_tx.send(event.clone()).unwrap();
         let received = rx.recv().await.unwrap();
@@ -111,6 +114,9 @@ mod tests {
             git_files_changed: None,
             pr_url: None,
             error_status: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            session_cost_usd: None,
         });
 
         let result = event_to_sse(&event);
@@ -139,6 +145,9 @@ mod tests {
                 git_files_changed: None,
                 pr_url: None,
                 error_status: None,
+                total_input_tokens: None,
+                total_output_tokens: None,
+                session_cost_usd: None,
             }));
         }
 

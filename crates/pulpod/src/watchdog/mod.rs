@@ -10,7 +10,7 @@ use pulpo_common::session::SessionStatus;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
-use pulpo_common::session::{InterventionCode, Runtime, Session};
+use pulpo_common::session::{InterventionCode, Runtime, Session, meta};
 
 use crate::backend::Backend;
 use crate::store::Store;
@@ -583,6 +583,9 @@ async fn check_session_idle(
                         git_files_changed: None,
                         pr_url: None,
                         error_status: None,
+                        total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
+                        total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
+                        session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
                     };
                     let _ = tx.send(PulpoEvent::Session(event));
                 }
@@ -628,6 +631,9 @@ async fn handle_session_ready(store: &Store, session: &Session, ctx: &ReadyConte
             git_files_changed: None,
             pr_url: None,
             error_status: None,
+            total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
+            total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
+            session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
         };
         let _ = tx.send(PulpoEvent::Session(event));
     }
@@ -668,6 +674,9 @@ async fn handle_active_session(
                 git_files_changed: None,
                 pr_url: None,
                 error_status: None,
+                total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
+                total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
+                session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
             };
             let _ = tx.send(PulpoEvent::Session(event));
         }
@@ -698,10 +707,10 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
     let meta = session.metadata.as_ref();
 
     // Check and store PR URL
-    let has_pr = meta.is_some_and(|m| m.contains_key("pr_url"));
+    let has_pr = meta.is_some_and(|m| m.contains_key(meta::PR_URL));
     if !has_pr && let Some(pr_url) = output_patterns::extract_pr_url(output) {
         if let Err(e) = store
-            .update_session_metadata_field(&session.id.to_string(), "pr_url", &pr_url)
+            .update_session_metadata_field(&session.id.to_string(), meta::PR_URL, &pr_url)
             .await
         {
             warn!(
@@ -718,10 +727,10 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
     }
 
     // Check and store branch
-    let has_branch = meta.is_some_and(|m| m.contains_key("branch"));
+    let has_branch = meta.is_some_and(|m| m.contains_key(meta::BRANCH));
     if !has_branch && let Some(branch) = output_patterns::extract_branch(output) {
         if let Err(e) = store
-            .update_session_metadata_field(&session.id.to_string(), "branch", &branch)
+            .update_session_metadata_field(&session.id.to_string(), meta::BRANCH, &branch)
             .await
         {
             warn!(
@@ -741,7 +750,7 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
     if let Some(rate_msg) = output_patterns::detect_rate_limit(output) {
         let timestamp = chrono::Utc::now().to_rfc3339();
         if let Err(e) = store
-            .update_session_metadata_field(&session.id.to_string(), "rate_limit", &rate_msg)
+            .update_session_metadata_field(&session.id.to_string(), meta::RATE_LIMIT, &rate_msg)
             .await
         {
             warn!(
@@ -750,7 +759,7 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
             );
         }
         if let Err(e) = store
-            .update_session_metadata_field(&session.id.to_string(), "rate_limit_at", &timestamp)
+            .update_session_metadata_field(&session.id.to_string(), meta::RATE_LIMIT_AT, &timestamp)
             .await
         {
             warn!(
@@ -768,12 +777,12 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
 
     // Check for errors/failures (transient — clear when no longer in last 30 lines)
     let current_error = output_patterns::detect_error(output);
-    let stored_error = meta.and_then(|m| m.get("error_status"));
+    let stored_error = meta.and_then(|m| m.get(meta::ERROR_STATUS));
     match (&current_error, stored_error) {
         (Some(err), _) => {
             let timestamp = chrono::Utc::now().to_rfc3339();
             if let Err(e) = store
-                .update_session_metadata_field(&session.id.to_string(), "error_status", err)
+                .update_session_metadata_field(&session.id.to_string(), meta::ERROR_STATUS, err)
                 .await
             {
                 warn!(
@@ -784,7 +793,7 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
             let _ = store
                 .update_session_metadata_field(
                     &session.id.to_string(),
-                    "error_status_at",
+                    meta::ERROR_STATUS_AT,
                     &timestamp,
                 )
                 .await;
@@ -792,7 +801,7 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
         (None, Some(_)) => {
             // Error cleared — remove from metadata
             if let Err(e) = store
-                .remove_session_metadata_field(&session.id.to_string(), "error_status")
+                .remove_session_metadata_field(&session.id.to_string(), meta::ERROR_STATUS)
                 .await
             {
                 warn!(
@@ -801,36 +810,80 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
                 );
             }
             let _ = store
-                .remove_session_metadata_field(&session.id.to_string(), "error_status_at")
+                .remove_session_metadata_field(&session.id.to_string(), meta::ERROR_STATUS_AT)
                 .await;
         }
         (None, None) => {}
     }
 
-    // Check for token usage
-    if let Some((input, output_tokens)) = output_patterns::extract_token_usage(output) {
-        let stored_input = meta
-            .and_then(|m| m.get("total_input_tokens"))
-            .and_then(|v| v.parse::<u64>().ok());
-        let stored_output = meta
-            .and_then(|m| m.get("total_output_tokens"))
-            .and_then(|v| v.parse::<u64>().ok());
-        if stored_input != Some(input) || stored_output != Some(output_tokens) {
-            let _ = store
-                .update_session_metadata_field(
-                    &session.id.to_string(),
-                    "total_input_tokens",
-                    &input.to_string(),
-                )
-                .await;
-            let _ = store
-                .update_session_metadata_field(
-                    &session.id.to_string(),
-                    "total_output_tokens",
-                    &output_tokens.to_string(),
-                )
-                .await;
-        }
+    // Check for token usage and cost
+    if let Some(usage) = output_patterns::extract_agent_usage(output) {
+        store_agent_usage(store, session, meta, &usage).await;
+    }
+}
+
+/// Accumulate a u64 token metadata field, handling agent restarts.
+/// If new value < stored value, the agent was restarted — accumulate.
+async fn accumulate_token_field(
+    store: &Store,
+    id: &str,
+    key: &str,
+    new_val: u64,
+    meta: Option<&std::collections::HashMap<String, String>>,
+) {
+    let stored = meta
+        .and_then(|m| m.get(key))
+        .and_then(|v| v.parse::<u64>().ok());
+    let final_val = match stored {
+        Some(prev) if new_val < prev => prev + new_val, // restart: accumulate
+        Some(prev) if new_val == prev => return,        // unchanged
+        _ => new_val,
+    };
+    let _ = store
+        .update_session_metadata_field(id, key, &final_val.to_string())
+        .await;
+}
+
+/// Store agent usage data as metadata fields, with accumulation on restart.
+///
+/// When new token counts are lower than stored values, the agent was restarted —
+/// previous totals are added to new values instead of overwriting.
+async fn store_agent_usage(
+    store: &Store,
+    session: &Session,
+    meta_map: Option<&std::collections::HashMap<String, String>>,
+    usage: &output_patterns::AgentUsage,
+) {
+    let id = session.id.to_string();
+
+    // Store input tokens; fall back to total_tokens when no input/output split
+    let input = usage
+        .input_tokens
+        .or_else(|| usage.total_tokens.filter(|_| usage.output_tokens.is_none()));
+    if let Some(val) = input {
+        accumulate_token_field(store, &id, meta::TOTAL_INPUT_TOKENS, val, meta_map).await;
+    }
+    if let Some(output) = usage.output_tokens {
+        accumulate_token_field(store, &id, meta::TOTAL_OUTPUT_TOKENS, output, meta_map).await;
+    }
+    if let Some(cache_write) = usage.cache_write_tokens {
+        accumulate_token_field(store, &id, meta::CACHE_WRITE_TOKENS, cache_write, meta_map).await;
+    }
+    if let Some(cache_read) = usage.cache_read_tokens {
+        accumulate_token_field(store, &id, meta::CACHE_READ_TOKENS, cache_read, meta_map).await;
+    }
+    if let Some(cost) = usage.session_cost_usd {
+        let stored_cost = meta_map
+            .and_then(|m| m.get(meta::SESSION_COST_USD))
+            .and_then(|v| v.parse::<f64>().ok());
+        let final_cost = match stored_cost {
+            Some(prev) if cost < prev => prev + cost, // restart: accumulate
+            Some(prev) if (cost - prev).abs() < 1e-7 => return, // unchanged (matches .6 decimal storage)
+            _ => cost,
+        };
+        let _ = store
+            .update_session_metadata_field(&id, meta::SESSION_COST_USD, &format!("{final_cost:.6}"))
+            .await;
     }
 }
 
@@ -1114,6 +1167,9 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
                 git_files_changed: None,
                 pr_url: None,
                 error_status: None,
+                total_input_tokens: None,
+                total_output_tokens: None,
+                session_cost_usd: None,
             };
             let _ = tx.send(PulpoEvent::Session(event));
         }

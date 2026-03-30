@@ -278,6 +278,14 @@ export function SessionDetailPage() {
                       </dd>
                     </div>
                   )}
+                  {session.metadata?.session_cost_usd && (
+                    <div>
+                      <dt className="text-muted-foreground">Session Cost</dt>
+                      <dd className="font-mono text-xs" data-testid="session-cost">
+                        ${Number(session.metadata.session_cost_usd).toFixed(2)}
+                      </dd>
+                    </div>
+                  )}
                   {session.metadata?.total_input_tokens && (
                     <div>
                       <dt className="text-muted-foreground">Token Usage</dt>
@@ -288,6 +296,20 @@ export function SessionDetailPage() {
                             {' '}
                             / Output:{' '}
                             {Number(session.metadata.total_output_tokens).toLocaleString()}
+                          </span>
+                        )}
+                        {session.metadata.cache_write_tokens && (
+                          <span>
+                            {' '}
+                            / Cache Write:{' '}
+                            {Number(session.metadata.cache_write_tokens).toLocaleString()}
+                          </span>
+                        )}
+                        {session.metadata.cache_read_tokens && (
+                          <span>
+                            {' '}
+                            / Cache Read:{' '}
+                            {Number(session.metadata.cache_read_tokens).toLocaleString()}
                           </span>
                         )}
                       </dd>
