@@ -19,7 +19,7 @@ See `CLAUDE.md` for detailed conventions, code examples, and file paths.
 See `SPEC.md` for architecture, session lifecycle, and API design.
 See `ROADMAP.md` for project sequencing and next steps.
 
-Development commands: `make setup` | `make fmt` | `make lint` | `make test` | `make coverage` | `make all`
+Development commands: `make setup` | `make fmt` | `make lint` | `make test` | `make coverage-rust` | `make coverage` | `make ci`
 
 ## Engineering Standards
 
