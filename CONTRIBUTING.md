@@ -72,9 +72,11 @@ make test           # run all tests (Rust + web)
 make test-rust      # Rust tests only
 make test-web       # web tests only
 make test-web-watch # web tests in watch mode
-make lint           # clippy + eslint + svelte-check
+make lint           # clippy + eslint + tsc
 make all            # format + lint + test (same as pre-commit hook)
-make coverage       # 100% line coverage enforcement
+make coverage       # coverage checks (Rust + web)
+make coverage-rust  # Rust coverage gate
+make ci             # canonical full quality gate
 make clean          # remove all build artifacts + dev data (.pulpo/)
 ```
 
@@ -86,7 +88,7 @@ This project follows **TDD**. Every change starts with a failing test:
 2. Confirm it fails
 3. Write the minimal implementation
 4. Refactor while keeping tests green
-5. Verify `make coverage` passes (100% line coverage required)
+5. Verify `make ci` passes
 
 See [CLAUDE.md](CLAUDE.md) for detailed conventions, project structure, and code standards.
 
@@ -94,7 +96,7 @@ See [CLAUDE.md](CLAUDE.md) for detailed conventions, project structure, and code
 
 1. Fork the repo and create a branch from `main`
 2. Make your changes following the existing code style
-3. Ensure `make ci` passes locally (format + lint + test + coverage)
+3. Ensure `make ci` passes locally
 4. Open a pull request with a clear description of the change
 
 ## Code Style

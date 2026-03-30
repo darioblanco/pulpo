@@ -54,7 +54,7 @@ This project follows **TDD**. Every feature and bug fix starts with a failing te
 2. **Run the test** — confirm it fails for the right reason.
 3. **Write the minimal implementation** to make the test pass.
 4. **Refactor** — clean up while keeping tests green.
-5. **Check coverage** — `make coverage` must pass (100% line coverage).
+5. **Run the quality gates** — `make ci` must pass.
 
 - **Rust**: `cargo test --workspace`. Tests live alongside source code in `#[cfg(test)] mod tests` blocks.
 - **Web**: `vitest` with jsdom environment. Test files use `*.test.ts` or `*.spec.ts` naming.
@@ -62,8 +62,9 @@ This project follows **TDD**. Every feature and bug fix starts with a failing te
 
 ### Coverage
 
-- **Target: 100% line coverage** for Rust code. Enforced in pre-commit hook and CI.
-- Uses `cargo-llvm-cov`. Run `make coverage` to check (fails if under 100%).
+- Rust coverage is enforced by the executable gate `make coverage-rust`.
+- The full local quality gate is `make ci`.
+- Uses `cargo-llvm-cov`. Run `make coverage` for Rust + web coverage, or `make coverage-html` for an HTML report.
 - Run `make coverage-html` for an HTML report at `target/llvm-cov/html/index.html`.
 - Every new function, branch, and error path must have a test. No exceptions.
 - `main.rs` files are excluded from coverage — they are thin `#[cfg(not(coverage))]` wrappers. All logic lives in `lib.rs`.
@@ -89,9 +90,8 @@ fn main() {}
 
 3. **Dead code under coverage** — helpers that become unused when their callers are excluded use `#[cfg_attr(coverage, allow(dead_code))]` to suppress warnings.
 
-**Tiered enforcement:**
-- Local pre-commit: **98%** line coverage (strict gate via `cargo-llvm-cov`)
-- CI (Linux): **98%** threshold (macOS-specific paths unreachable on Linux)
+**Enforced threshold:**
+- Local and CI Rust coverage gate: **98%** line coverage via `make coverage-rust`
 - `main.rs` and `embed.rs` excluded via `cargo-llvm-cov` filename regex
 
 > **Note:** `cargo-llvm-cov 0.8+` counts `?` error-path regions as "missed lines" even when the line itself executes, and `cfg(coverage)` exclusions for I/O code further reduce the measurable surface. The 98% threshold accounts for this.
@@ -106,7 +106,7 @@ Git hooks live in `.githooks/` and are activated via `git config core.hooksPath 
 2. `cargo clippy -- -D warnings`
 3. `eslint` + `tsc --noEmit`
 4. `cargo test` + `vitest run`
-5. `cargo llvm-cov --fail-under-lines 98` (line coverage gate)
+5. `make coverage-rust` (Rust coverage gate)
 
 **If the hook blocks your commit, fix the issue — do not bypass with `--no-verify`.**
 
@@ -121,7 +121,7 @@ Git hooks live in `.githooks/` and are activated via `git config core.hooksPath 
 5. Add integration tests in `routes.rs` using `axum-test::TestServer`
 6. Add the CLI subcommand in `crates/pulpo-cli/src/lib.rs`
 7. Add the API client function in `web/src/api/client.ts`
-8. Verify `make coverage` passes before committing.
+8. Verify `make ci` passes before committing.
 
 ### Adding a new backend feature (tmux/Docker)
 
@@ -206,7 +206,8 @@ describe('api', () => {
 | `make lint` | Run all linters (clippy + eslint + tsc) |
 | `make test` | Run all tests (Rust + web) |
 | `make test-web-watch` | Run web tests in watch mode |
-| `make coverage` | Run Rust tests with 100% coverage check |
+| `make coverage` | Run coverage checks (Rust + web) |
+| `make coverage-rust` | Run the Rust coverage gate |
 | `make coverage-html` | Generate HTML coverage report |
 | `make build` | Build release binary with embedded web UI |
 | `make release` | Build release binaries to `dist/` |

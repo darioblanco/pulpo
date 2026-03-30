@@ -145,13 +145,12 @@ jobs:
       - run: cargo test --workspace
 
   coverage:
-    name: Coverage (100% lines)
+    name: Coverage
     needs: [changes, web, web-build-only]
     if: |
       always() &&
       needs.changes.outputs.rust == 'true' &&
-      (needs.web.result == 'success' || needs.web-build-only.result == 'success') &&
-      (github.event_name == 'push' || github.event_name == 'schedule')
+      (needs.web.result == 'success' || needs.web-build-only.result == 'success')
     runs-on: ubuntu-latest
     env:
       # Override workspace RUSTFLAGS — coverage builds with cfg(coverage) make
@@ -169,9 +168,4 @@ jobs:
           path: web/build/
       - run: cargo install cargo-llvm-cov
       - run: sudo apt-get update && sudo apt-get install -y tmux
-      # CI runs on Linux where some platform-specific code (macOS memory parsing,
-      # WSL branches) is unreachable. Local pre-commit enforces 100% on dev platform.
-      # 98% threshold: cargo-llvm-cov 0.8+ counts ? error-path regions as missed,
-      # and cfg(coverage) exclusions for I/O code make 99+ unreliable.
-      # --test-threads=1 prevents sqlx-sqlite prepared statement cache races.
-      - run: cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$" --fail-under-lines 98 -- --test-threads=1
+      - run: make coverage-rust

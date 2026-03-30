@@ -24,7 +24,7 @@ Development commands: `make setup` | `make fmt` | `make lint` | `make test` | `m
 ## Engineering Standards
 
 - **TDD**: Write failing test, implement minimal fix, refactor, re-run coverage gates.
-- **100% line coverage** enforced locally (99% in CI for cross-platform gaps).
+- **Quality gates are executable**: changes must pass the repo's enforced commands (`make ci` locally, CI on GitHub).
 - Rust logic belongs in `lib.rs`; keep `main.rs` thin wrappers.
 - No `unsafe` code. No `.unwrap()` in production code.
 - Use `tracing` for operational events.
