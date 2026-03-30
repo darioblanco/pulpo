@@ -171,4 +171,6 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y tmux
       # CI runs on Linux where some platform-specific code (macOS memory parsing,
       # WSL branches) is unreachable. Local pre-commit enforces 100% on dev platform.
-      - run: cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$" --fail-under-lines 99
+      # --test-threads=1 prevents sqlx-sqlite prepared statement cache races that
+      # cause flaky panics when parallel tests share the process-global worker pool.
+      - run: cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$" --fail-under-lines 99 -- --test-threads=1
