@@ -8,6 +8,9 @@ Pulpo supports two methods for multi-node operation: **Tailscale auto-discovery*
 
 > **Note:** Distributed discovery methods (mDNS, seed-based gossip) were removed to simplify the codebase. They may return in a future version. Use Tailscale discovery or manual `[peers]` config instead.
 
+For a full example that combines discovery with remote execution and secrets,
+see [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale).
+
 ## Tailscale (recommended)
 
 ```toml

@@ -12,6 +12,9 @@ This guide matters most for:
 
 Secrets are environment variables that get injected into agent sessions. They provide a way to pass sensitive values (API keys, tokens, credentials) to your sessions without hardcoding them in commands or inks.
 
+For a full multi-node example, see
+[Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale).
+
 ## Overview
 
 - Secrets are stored as **plaintext in SQLite** with restrictive file permissions (mode `0600`)

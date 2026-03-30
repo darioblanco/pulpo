@@ -165,6 +165,17 @@ pulpo schedule add nightly-review "0 3 * * *" \
 
 See [Nightly Code Review](/guides/nightly-code-review) for the complete recipe.
 
+### Remote private-infra run with secrets
+
+```bash
+pulpo --node mac-mini spawn review-backend \
+  --workdir ~/repos/backend \
+  --secret GH_WORK \
+  -- claude -p "Review this service for correctness, security issues, and missing tests."
+```
+
+See [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale) for the complete recipe.
+
 ### Follow all sessions in parallel (tmux panes)
 
 ```bash

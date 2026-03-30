@@ -43,6 +43,7 @@ export default defineUserConfig({
       '/guides/': [
         '/guides/nightly-code-review',
         '/guides/parallel-agents-one-repo',
+        '/guides/private-infra-with-tailscale',
         '/guides/configuration',
         '/guides/discovery',
         '/guides/recovery',

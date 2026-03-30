@@ -73,7 +73,7 @@ If you want to understand Pulpo quickly, start with a real workflow:
 
 - [Nightly Code Review](/guides/nightly-code-review): schedule an overnight review session and inspect the result in the morning
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo): split one repository across multiple concurrent agent sessions
-- [Discovery Guide](/guides/discovery): operate a small fleet across your own machines
+- [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale): run agents across your own private machines with remote control and node-local secrets
 
 ## Where Pulpo Fits
 
@@ -151,7 +151,8 @@ The project is still experimental overall, but the session/runtime/lifecycle mod
 8. [Configuration Guide](/guides/configuration) for operational setup
 9. [Nightly Code Review](/guides/nightly-code-review) for a concrete recurring workflow
 10. [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) for a concrete worktree workflow
-11. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
+11. [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale) for the self-hosted multi-node workflow
+12. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
 
 ## Quick Links
 
@@ -167,6 +168,7 @@ The project is still experimental overall, but the session/runtime/lifecycle mod
 - [Discovery Guide](/guides/discovery)
 - [Nightly Code Review](/guides/nightly-code-review)
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
+- [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale)
 - [Recovery Guide](/guides/recovery)
 - [CLI Reference](/reference/cli)
 - [Config Reference](/reference/config)
