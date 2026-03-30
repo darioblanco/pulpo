@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.0.40](https://github.com/darioblanco/pulpo/compare/v0.0.39...v0.0.40) (2026-03-29)
+
+
+### Features
+
+* add persistent file logging with hourly rotation ([50749f7](https://github.com/darioblanco/pulpo/commit/50749f729779aa27db416cef35498e3d96b9f234))
+* ink CRUD CLI/API, schedule execution fields, scheduler local-time, TERM fix ([493ffcc](https://github.com/darioblanco/pulpo/commit/493ffcc899531d18f7d2b375ee8cbc6556a7cc17))
+
+
+### Bug Fixes
+
+* increase tmux integration test timeout from 3s to 10s for slow CI ([fb8a0af](https://github.com/darioblanco/pulpo/commit/fb8a0afdf594bfc9c6011ecc0fe8a9dcb8e54872))
+* Linux installation, deployment, and release targets ([e42b9f5](https://github.com/darioblanco/pulpo/commit/e42b9f56e4bf85dbb60f1efd31b517b8eb6b968a))
+* use try_get for all schedule row columns to prevent CI flaky panic ([2063379](https://github.com/darioblanco/pulpo/commit/2063379e87c90ae479be4c91c0c8dee7c47c6a42))
+
 ## [0.0.39](https://github.com/darioblanco/pulpo/compare/v0.0.38...v0.0.39) (2026-03-28)
 
 
