@@ -1,4 +1,4 @@
-.PHONY: all check fmt lint test coverage coverage-rust coverage-web build clean setup hooks install release release-tarball service-install service-uninstall service-install-linux service-uninstall-linux deploy-server dev dev-stop dev-web test-web-watch
+.PHONY: all check fmt lint test coverage coverage-rust coverage-web build build-web-if-missing clean setup hooks install release release-tarball service-install service-uninstall service-install-linux service-uninstall-linux deploy-server dev dev-stop dev-web test-web-watch ci
 
 # Run all checks (what pre-commit runs)
 all: fmt lint test
@@ -91,18 +91,30 @@ test-web:
 
 # ─── Coverage ────────────────────────────────────────────────────────────────
 
+# Build embedded web assets if they are missing. Rust coverage needs these for
+# rust-embed, but CI may provide them via a downloaded artifact instead.
+build-web-if-missing:
+	@if [ ! -d web/build ]; then \
+		echo "web/build missing; building web assets for Rust coverage..."; \
+		cd web && npm run build; \
+	fi
+
 # Generate test coverage reports (requires cargo-llvm-cov)
 # Excludes main.rs files (thin cfg(coverage) wrappers that cargo test never invokes)
 coverage: coverage-rust coverage-web
 
-coverage-rust:
-	cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$$" --fail-under-lines 99
+coverage-rust: build-web-if-missing
+	cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$$" --fail-under-lines 98 -- --test-threads=1
 
 coverage-web:
 	cd web && PATH=/usr/local/bin:$$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor npx vitest run --coverage
 
 # Generate HTML coverage report
 coverage-html:
+	@if [ ! -d web/build ]; then \
+		echo "web/build missing; building web assets for Rust coverage report..."; \
+		cd web && npm run build; \
+	fi
 	cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$$" --html
 	@echo "Coverage report: target/llvm-cov/html/index.html"
 

@@ -15,12 +15,7 @@ echo "==> Pre-commit: running tests..."
 cargo test --workspace
 (cd web && PATH=/usr/local/bin:$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor npx vitest run --passWithNoTests)
 
-echo "==> Pre-commit: checking coverage (100% line coverage required)..."
-# Note: --fail-under-lines uses region-aware line counts in cargo-llvm-cov 0.8+,
-# so ? error paths count as "missed lines" even though the line itself executes.
-# Using 98 threshold: cargo-llvm-cov 0.8+ counts ? error-path regions as
-# missed, and cfg(coverage) exclusions for I/O code make 99+ impossible.
-# --test-threads=1 prevents sqlx-sqlite prepared statement cache races.
-cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$" --fail-under-lines 98 -- --test-threads=1
+echo "==> Pre-commit: checking Rust coverage..."
+make coverage-rust
 
 echo "==> All checks passed."
