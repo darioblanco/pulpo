@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.41](https://github.com/darioblanco/pulpo/compare/v0.0.40...v0.0.41) (2026-03-30)
+
+
+### Bug Fixes
+
+* serialize coverage tests to prevent sqlx-sqlite prepared statement races ([79b9b59](https://github.com/darioblanco/pulpo/commit/79b9b599e945da9723f2ff2d74f5f17e4ffa1c80))
+
 ## [0.0.40](https://github.com/darioblanco/pulpo/compare/v0.0.39...v0.0.40) (2026-03-29)
 
 
