@@ -99,6 +99,9 @@ The agent runs in a Docker container with the session workdir mounted, plus any 
 image = "my-agents-image:latest"
 ```
 
+For the full workflow around higher-risk tasks, see
+[Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks).
+
 ## 8. Remote nodes
 
 Spawn on another machine by name:
@@ -128,6 +131,7 @@ curl -N http://localhost:7433/api/v1/events  # SSE stream
 - [Why Pulpo](/getting-started/why-pulpo) — ICPs, alternatives, and where Pulpo fits
 - [Nightly Code Review](/guides/nightly-code-review) — a concrete recurring background-agent workflow
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) — a concrete parallel-worktree workflow
+- [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks) — a concrete safer-runtime workflow
 - [Core Concepts](/architecture/core-concepts) — the smallest vocabulary for understanding Pulpo
 - [Architecture Overview](/architecture/overview) — the session/runtime/watchdog mental model
 - [Session Lifecycle](/operations/session-lifecycle) — exact transition behavior

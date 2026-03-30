@@ -14,6 +14,8 @@ Secrets are environment variables that get injected into agent sessions. They pr
 
 For a full multi-node example, see
 [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale).
+For a higher-risk Docker workflow, see
+[Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks).
 
 ## Overview
 

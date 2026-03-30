@@ -52,6 +52,7 @@ What Pulpo is doing for you:
 Best docs to read next:
 
 - [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale)
+- [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks)
 - [Discovery Guide](/guides/discovery)
 - [Secrets](/guides/secrets)
 - [Alternatives And Comparisons](/getting-started/alternatives)
@@ -142,6 +143,7 @@ Best docs to read next:
 | A recurring overnight review workflow | [Nightly Code Review](/guides/nightly-code-review) |
 | Parallel agents on the same repository | [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) |
 | A private multi-node setup with remote execution | [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale) |
+| A safer runtime for higher-risk tasks | [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks) |
 | Multiple agents on one repo safely | [Worktrees Guide](/guides/worktrees) |
 | Multi-node control over Tailscale or LAN | [Discovery Guide](/guides/discovery) |
 | Secrets and safer Docker runs | [Secrets](/guides/secrets) |

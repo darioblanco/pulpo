@@ -44,6 +44,7 @@ export default defineUserConfig({
         '/guides/nightly-code-review',
         '/guides/parallel-agents-one-repo',
         '/guides/private-infra-with-tailscale',
+        '/guides/docker-isolated-risky-tasks',
         '/guides/configuration',
         '/guides/discovery',
         '/guides/recovery',

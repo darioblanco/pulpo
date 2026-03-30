@@ -14,6 +14,8 @@ Run multiple agents on the same repository without conflicts. Each agent gets it
 
 If you want the full end-to-end workflow rather than the feature explanation,
 see [Parallel Agents On One Repo](/guides/parallel-agents-one-repo).
+If you want the safer-runtime variant, see
+[Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks).
 
 ## Why worktrees?
 

@@ -176,6 +176,17 @@ pulpo --node mac-mini spawn review-backend \
 
 See [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale) for the complete recipe.
 
+### Docker-isolated risky task
+
+```bash
+pulpo spawn risky-refactor \
+  --workdir ~/repos/my-api \
+  --runtime docker \
+  -- claude --dangerously-skip-permissions -p "Refactor the service layer and simplify the data flow."
+```
+
+See [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks) for the complete recipe.
+
 ### Follow all sessions in parallel (tmux panes)
 
 ```bash
