@@ -1,12 +1,32 @@
 # Pulpo Roadmap
 
-Strategic direction for Pulpo as the runtime infrastructure for coding agents.
+Strategic direction for Pulpo as the self-hosted control plane for background
+coding agents.
 
 ## Mission
 
-Pulpo is the **universal agent runtime** — the place where coding agents run, regardless of where "run" means. Your laptop, your server, a Docker container, a Kubernetes cluster. Same lifecycle, same controls, same dashboard.
+Pulpo is the place where coding agents run when the runtime needs to stay under
+your control.
 
-It is not an agent framework, not a prompt tool, not an orchestration layer. It is the infrastructure that makes agents reliable, observable, and manageable when you stop watching them.
+Your laptop, your server, a Docker container, eventually a cluster. Same session
+model, same lifecycle semantics, same control surfaces.
+
+It is not an agent framework, not a prompt tool, not an orchestration layer. It
+is the infrastructure that makes agents reliable, observable, and manageable
+when you stop watching them.
+
+## Positioning
+
+Pulpo is a self-hosted control plane for background coding agents.
+
+The category matters. The market now has:
+
+- hosted coding agents with vendor-owned sandboxes and PR workflows
+- local agent managers focused on terminal UX
+- orchestration frameworks that decide how multiple agents collaborate
+
+Pulpo sits below and beside those categories. It focuses on where agents run,
+how they are supervised, and what happens when they fail.
 
 ## Backend Progression
 
@@ -32,13 +52,46 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 
 ## Competitive Landscape (March 2026)
 
-**Agent TUI managers** (Agent Deck 1.6k stars, NTM 191 stars): Manage multiple agent sessions in a terminal. Single-machine, no API, no remote access. Pulpo's multi-node + web UI + API are the differentiators.
+The market has moved quickly toward async and background execution:
 
-**Orchestration frameworks** (Gas Town 12.4k stars): Multi-agent coordination — decompose work, assign to agents, track progress. Complementary to Pulpo, not competitive. Gas Town doesn't care where agents run; Pulpo doesn't care how they coordinate.
+- **Hosted coding agents** now offer cloud execution, PR-native delegation, and
+  managed sandboxes.
+- **Execution infrastructure** vendors are starting to market sandbox and
+  runtime layers for agents.
+- **Local command centers** manage multiple sessions well, but stay focused on
+  terminal UX and single-machine workflows.
 
-**Agent tools** (Claude Code, Codex, Aider, OpenHands): The agents themselves. Pulpo runs them all, competes with none.
+That makes Pulpo more relevant, not less relevant. But it sharpens the wedge.
 
-**Pulpo's wedge: multi-node runtime + mobile management + API surface.** Nobody else lets you spawn an agent on a remote server from your phone and get notified when it's done.
+**Hosted coding agents**: Strongest at managed cloud convenience and provider
+integration. Weakest where users need self-hosting, private-network access,
+bring-your-own-agent flexibility, and daemon-owned recovery semantics.
+
+**Local agent managers**: Strong at terminal-centric multi-session workflows.
+Weaker at multi-node control, durable remote supervision, and policy-driven
+recovery.
+
+**Orchestration frameworks**: Complementary rather than competitive. They decide
+what agents should do. Pulpo decides where sessions run and how they are
+supervised.
+
+**Pulpo's wedge**: self-hosted execution + multi-node supervision +
+command-agnostic agent support + explicit session lifecycle.
+
+## Product Thesis
+
+Pulpo should feel like:
+
+- the private control plane for agent fleets
+- the durable session layer under agent work
+- the operational bridge between local agents and background infrastructure
+
+Pulpo should not be framed primarily as:
+
+- a tmux abstraction
+- a generic "universal runtime"
+- an orchestration framework
+- a replacement for hosted coding-agent products
 
 ## Shipped
 
@@ -92,18 +145,50 @@ This is the gap between "run an agent in your terminal" and "run agents as infra
 
 ## What's Next
 
-### Distribution & Visibility
+### Positioning, Distribution, and Proof
 
-Pulpo's feature set is strong. The bottleneck is adoption, not capabilities.
+Pulpo's main near-term risk is not missing features. It is being understood as a
+nice session manager instead of a category-defining control plane.
 
-**Landing page & docs polish**
-- Compelling landing page with demo GIF / video
-- Real-world usage examples (nightly code review, parallel agents, scheduled migrations)
-- Clear "5-minute quickstart" that shows the value immediately
+**Category clarity**
+- Keep leading docs, README, and site language centered on self-hosted
+  background agents, not tmux internals
+- Show concrete "why not hosted" and "why not local-only" comparisons
+- Publish a clear positioning page and architecture overview aimed at operators,
+  not just hackers
+
+**Proof of value**
+- Demo video showing: remote spawn, overnight run, phone check-in, recovery, PR
+  result
+- Real-world examples: nightly review, migration rehearsal, parallel worktree
+  implementation, security scan, docs generation
+- 5-minute quickstart that reaches a visible result fast
+
+**Distribution**
+- Landing page tuned to the control-plane category
+- Docs information architecture optimized for "why Pulpo" before exhaustive
+  reference detail
+- Homebrew-core submission once adoption and packaging criteria make sense
+
+### Reliability and Policy Depth
+
+These reinforce the control-plane position directly.
 
 **Notification digest**
 - Daily/weekly summary of agent activity (sessions completed, PRs created, errors encountered)
 - Enriched per-event notifications are shipped; this adds aggregation
+
+**Configurable output matchers (P5.2)**
+- User-defined regex to action rules in `config.toml`
+- Extends hardcoded error/PR/rate-limit detection to custom operational patterns
+- Build when users ask for patterns we do not cover
+
+**Session cost dashboard (P5.1)**
+- Token tracking from output is shipped; cost = tokens x rate
+- Configurable cost rates, cumulative cost per session/day/node, budget alerts
+- Build when cost visibility becomes a real pain point
+
+### Distribution Milestones
 
 **Homebrew-core submission**
 - Requires ≥75 GitHub stars
@@ -115,16 +200,6 @@ Pulpo's feature set is strong. The bottleneck is adoption, not capabilities.
 - `target_node` on schedules: `NULL` = local, `"mac-mini"` = specific, `"auto"` = least-loaded
 - Remote dispatch via HTTP POST to target node's API
 - Build when there are real users with multi-node fleets running scheduled agents
-
-**Configurable output matchers (P5.2)**
-- User-defined regex → action rules in config.toml
-- Extends the hardcoded error/PR/rate-limit detection to custom patterns
-- Build when users ask for patterns we don't cover
-
-**Session cost dashboard (P5.1)**
-- Token tracking from output is shipped; cost = tokens × rate
-- Configurable cost rates, cumulative cost per session/day/node, budget alerts
-- Build when cost visibility becomes a real pain point
 
 ### Phase 6: Team Readiness
 
@@ -160,7 +235,8 @@ Revisit when demanded by real usage, not by speculation.
 
 ## Removed
 
-- ~~Kubernetes-lite framing~~ — the "universal agent runtime" vision is the right framing now that we have multiple backends.
+- ~~Universal runtime as the primary framing~~ — the sharper framing is
+  self-hosted control plane for background coding agents.
 - ~~Docker runtime backend~~ — shipped as `--runtime docker` flag.
 - Voice-command surfaces
 - IDE-native UX competition
@@ -171,6 +247,7 @@ Revisit when demanded by real usage, not by speculation.
 
 Pulpo is succeeding if:
 
+- users understand it as infrastructure for unattended agent work, not as a tmux helper
 - You spawn agents on remote machines without SSH
 - You check agent status from your phone while away from your desk
 - Watchdog catches runaway agents before they burn through your API budget
@@ -183,6 +260,7 @@ Pulpo is succeeding if:
 - Infrastructure layer, not intelligence layer
 - Command-agnostic: runs any agent, any command
 - Multi-node native: sessions are not tied to localhost
+- Self-hosted first: the runtime belongs on infrastructure the user controls
 - Mobile-first web UI: the phone is the primary management surface
 - Explicit failure semantics: every state transition is observable and auditable
 - Zero-config local start, progressive operational depth

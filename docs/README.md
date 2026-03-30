@@ -3,7 +3,7 @@ home: true
 title: Pulpo Documentation
 heroText: Pulpo
 heroImage: https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.png
-tagline: Agent session runtime. Run coding agents in tmux or Docker across your machines — with lifecycle management, crash recovery, and watchdog supervision.
+tagline: The self-hosted control plane for background coding agents. Run agents on your own machines with durable sessions, recovery, and remote supervision.
 actions:
   - text: Install
     link: /getting-started/install
@@ -12,15 +12,25 @@ actions:
     link: /getting-started/quickstart
     type: secondary
 features:
-  - title: 1. Run Sessions
-    details: "`pulpod` runs commands as managed sessions in tmux or Docker. Pulpo is command-agnostic: Claude Code, Codex, Gemini CLI, shell scripts, or any other terminal command."
-  - title: 2. Track State
-    details: "Sessions move through explicit states: `creating`, `active`, `idle`, `ready`, `stopped`, `lost`. This lifecycle is the core product contract."
-  - title: 3. Recover and Supervise
+  - title: 1. Run On Your Infrastructure
+    details: "`pulpod` runs commands as managed sessions on machines you control. Pulpo is command-agnostic: Claude Code, Codex, Gemini CLI, shell scripts, or any other terminal command."
+  - title: 2. Keep State Durable
+    details: "Sessions move through explicit states: `creating`, `active`, `idle`, `ready`, `stopped`, `lost`. That lifecycle is the core product contract."
+  - title: 3. Supervise Background Work
     details: "The watchdog detects waiting-for-input, idle sessions, memory pressure, and lost backends. Sessions can be resumed from `lost` and `ready` states."
-  - title: 4. Operate Across Machines
-    details: "Nodes can be managed individually or as a fleet. Discovery, scheduling, worktrees, secrets, notifications, and the web UI sit on top of the same session model."
+  - title: 4. Control A Fleet
+    details: "Nodes can be managed individually or as a fleet. Discovery, scheduling, worktrees, secrets, notifications, and the web UI all build on the same session model."
 ---
+
+## What Pulpo Is
+
+Pulpo is a self-hosted control plane for background coding agents.
+
+It exists for the gap between "I can run an agent in my terminal" and "I can
+reliably run agents across my own machines while I am not watching."
+
+Pulpo is infrastructure, not a model, IDE, prompt framework, or orchestration
+planner.
 
 ## Core Model
 
@@ -40,6 +50,15 @@ Everything else is a control surface or an operational convenience around that c
 - peer discovery
 - Discord bot
 - MCP server
+
+## Who It Is For
+
+Pulpo is for users who want coding agents to:
+
+- run on servers or always-on machines instead of laptops
+- access private repos, VPN-only systems, or internal environments
+- remain manageable from a phone or another machine
+- survive crashes, reboots, and lost backends with explicit recovery semantics
 
 ## What Is Core vs Optional
 
