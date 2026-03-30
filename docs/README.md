@@ -8,9 +8,12 @@ actions:
   - text: Why Pulpo
     link: /getting-started/why-pulpo
     type: primary
+  - text: Use Cases
+    link: /getting-started/use-cases
+    type: secondary
   - text: Install
     link: /getting-started/install
-    type: secondary
+    type: default
   - text: Quickstart
     link: /getting-started/quickstart
     type: default
@@ -61,6 +64,8 @@ Pulpo is a strong fit for:
 See [Why Pulpo](/getting-started/why-pulpo) for the full ICP and competitor view.
 For an objective source-based comparison page, see
 [Alternatives And Comparisons](/getting-started/alternatives).
+For concrete user profiles and workflow matches, see
+[Use Cases](/getting-started/use-cases).
 
 ## Where Pulpo Fits
 
@@ -129,17 +134,19 @@ The project is still experimental overall, but the session/runtime/lifecycle mod
 ## Read In Order
 
 1. [Why Pulpo](/getting-started/why-pulpo) for positioning, ICPs, and alternatives
-2. [Alternatives And Comparisons](/getting-started/alternatives) for category-level market context
-3. [Quickstart](/getting-started/quickstart) for the shortest hands-on path
-4. [Core Concepts](/architecture/core-concepts) for the vocabulary
-5. [Architecture Overview](/architecture/overview) for the mental model
-6. [Session Lifecycle](/operations/session-lifecycle) for behavior guarantees
-7. [Configuration Guide](/guides/configuration) for operational setup
-8. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
+2. [Use Cases](/getting-started/use-cases) for concrete user profiles and workflows
+3. [Alternatives And Comparisons](/getting-started/alternatives) for category-level market context
+4. [Quickstart](/getting-started/quickstart) for the shortest hands-on path
+5. [Core Concepts](/architecture/core-concepts) for the vocabulary
+6. [Architecture Overview](/architecture/overview) for the mental model
+7. [Session Lifecycle](/operations/session-lifecycle) for behavior guarantees
+8. [Configuration Guide](/guides/configuration) for operational setup
+9. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
 
 ## Quick Links
 
 - [Why Pulpo](/getting-started/why-pulpo)
+- [Use Cases](/getting-started/use-cases)
 - [Alternatives And Comparisons](/getting-started/alternatives)
 - [Install](/getting-started/install)
 - [Quickstart](/getting-started/quickstart)

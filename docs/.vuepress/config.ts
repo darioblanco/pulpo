@@ -34,6 +34,7 @@ export default defineUserConfig({
     sidebar: {
       '/getting-started/': [
         '/getting-started/why-pulpo',
+        '/getting-started/use-cases',
         '/getting-started/alternatives',
         '/getting-started/install',
         '/getting-started/quickstart',

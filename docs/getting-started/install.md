@@ -1,5 +1,14 @@
 # Install
 
+Choose the install path based on where you want the runtime to live:
+
+- laptop or always-on Mac/Linux machine: Homebrew or source install
+- Windows: Docker-based sessions
+- server or team-managed box: service install after binary or source setup
+
+If you are still deciding whether Pulpo fits your workflow, read
+[Use Cases](/getting-started/use-cases) first.
+
 ## Homebrew (macOS/Linux)
 
 ```bash

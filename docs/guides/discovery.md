@@ -4,6 +4,14 @@
 Discovery is an operational layer, not the core Pulpo contract. Learn sessions, runtimes, and lifecycle first, then add discovery when you need multi-node operation.
 :::
 
+This guide matters most for:
+
+- users running Pulpo across multiple personal machines
+- small teams with private infrastructure
+- anyone who wants one control plane across a fleet instead of one host
+
+If that is not you yet, you can safely skip discovery at first.
+
 Pulpo derives the discovery method from the `bind` mode in `[node]`. No separate `[discovery]` section is needed.
 
 ## Tailscale (recommended)

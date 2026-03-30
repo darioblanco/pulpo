@@ -4,6 +4,12 @@
 Secrets are an operational feature for running real sessions safely. They are important in practice, but secondary to the core Pulpo model of sessions, runtimes, and lifecycle states.
 :::
 
+This guide matters most for:
+
+- users running agents against private services or private repos
+- teams keeping runtime execution on infrastructure they control
+- Docker-based sessions that still need agent authentication
+
 Secrets are environment variables that get injected into agent sessions. They provide a way to pass sensitive values (API keys, tokens, credentials) to your sessions without hardcoding them in commands or inks.
 
 ## Overview
