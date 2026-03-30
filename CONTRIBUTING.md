@@ -102,7 +102,7 @@ See [CLAUDE.md](CLAUDE.md) for detailed conventions, project structure, and code
 ## Code Style
 
 - **Rust**: `cargo fmt` (100 char width, edition 2024). Clippy with `deny(warnings)`, `warn(pedantic, nursery)`.
-- **Web**: Prettier (single quotes, trailing commas, 100 char width). ESLint + svelte-check.
+- **Web**: Prettier (single quotes, trailing commas, 100 char width). ESLint + `tsc --noEmit`.
 - **No `unsafe` code** — `forbid(unsafe_code)` is set workspace-wide.
 - **No `.unwrap()`** in production code — use `?` or handle errors explicitly. `.unwrap()` is fine in tests.
 
