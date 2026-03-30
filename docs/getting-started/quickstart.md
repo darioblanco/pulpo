@@ -1,5 +1,10 @@
 # Quickstart
 
+This guide is for the shortest path from "I installed Pulpo" to "I have a
+managed agent session running on infrastructure I control."
+
+If you want the market context first, read [Why Pulpo](/getting-started/why-pulpo).
+
 ## 1. Install
 
 ```bash
@@ -17,6 +22,9 @@ pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests
 This auto-attaches to the tmux session. Detach with `Ctrl-b d` to return to your shell. Use `--detach` / `-d` to skip auto-attach.
 
 No agent is required — `pulpo spawn my-shell` opens a managed shell session. Everything after `--` is the command to run.
+
+This is the key shift: instead of launching an agent into disposable shell
+state, you are creating a durable session Pulpo can supervise and recover.
 
 ## What just happened?
 
@@ -101,6 +109,9 @@ Or auto-select the least loaded node:
 pulpo spawn review --auto -- claude -p "security audit"
 ```
 
+This is where Pulpo starts to feel different from a local session manager: the
+runtime can live on another machine, but the control model stays the same.
+
 ## 9. Open dashboard
 
 ```bash
@@ -110,6 +121,7 @@ curl -N http://localhost:7433/api/v1/events  # SSE stream
 
 ## Next steps
 
+- [Why Pulpo](/getting-started/why-pulpo) — ICPs, alternatives, and where Pulpo fits
 - [Core Concepts](/architecture/core-concepts) — the smallest vocabulary for understanding Pulpo
 - [Architecture Overview](/architecture/overview) — the session/runtime/watchdog mental model
 - [Session Lifecycle](/operations/session-lifecycle) — exact transition behavior

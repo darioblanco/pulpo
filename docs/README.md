@@ -5,12 +5,15 @@ heroText: Pulpo
 heroImage: https://raw.githubusercontent.com/darioblanco/pulpo/main/web/public/logo.png
 tagline: The self-hosted control plane for background coding agents. Run agents on your own machines with durable sessions, recovery, and remote supervision.
 actions:
+  - text: Why Pulpo
+    link: /getting-started/why-pulpo
+    type: primary
   - text: Install
     link: /getting-started/install
-    type: primary
+    type: secondary
   - text: Quickstart
     link: /getting-started/quickstart
-    type: secondary
+    type: default
 features:
   - title: 1. Run On Your Infrastructure
     details: "`pulpod` runs commands as managed sessions on machines you control. Pulpo is command-agnostic: Claude Code, Codex, Gemini CLI, shell scripts, or any other terminal command."
@@ -31,6 +34,39 @@ reliably run agents across my own machines while I am not watching."
 
 Pulpo is infrastructure, not a model, IDE, prompt framework, or orchestration
 planner.
+
+## Why It Matters
+
+The market has moved from "agent in my terminal" toward "agent working in the
+background."
+
+That creates new infrastructure needs:
+
+- the runtime should not disappear when your laptop sleeps
+- session state should survive reboots and backend loss
+- you should know if an agent is active, waiting, ready, stopped, or lost
+- multiple agents should be able to work on one repo safely
+- remote supervision should not require SSH plus tmux plus guesswork
+
+Pulpo exists for that operational gap.
+
+## Who Pulpo Is For
+
+Pulpo is a strong fit for:
+
+- power users running agents on Macs, Linux boxes, or home servers
+- small teams with private repos, VPN-only services, or internal environments
+- operators who want scheduled, repeatable, unattended agent work
+
+See [Why Pulpo](/getting-started/why-pulpo) for the full ICP and competitor view.
+
+## Where Pulpo Fits
+
+| Category | Best at | Pulpo's difference |
+| --- | --- | --- |
+| Hosted coding agents | Managed cloud execution and provider-native workflows | Pulpo keeps the runtime on infrastructure you control |
+| Local session managers | Fast local terminal UX for many sessions | Pulpo adds durable state, recovery, multi-node control, and watchdog semantics |
+| Agent orchestration frameworks | Planning and coordinating multiple agents | Pulpo is the runtime layer underneath that work |
 
 ## Core Model
 
@@ -90,15 +126,17 @@ The project is still experimental overall, but the session/runtime/lifecycle mod
 
 ## Read In Order
 
-1. [Quickstart](/getting-started/quickstart) for the shortest hands-on path
-2. [Core Concepts](/architecture/core-concepts) for the vocabulary
-3. [Architecture Overview](/architecture/overview) for the mental model
-4. [Session Lifecycle](/operations/session-lifecycle) for behavior guarantees
-5. [Configuration Guide](/guides/configuration) for operational setup
-6. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
+1. [Why Pulpo](/getting-started/why-pulpo) for positioning, ICPs, and alternatives
+2. [Quickstart](/getting-started/quickstart) for the shortest hands-on path
+3. [Core Concepts](/architecture/core-concepts) for the vocabulary
+4. [Architecture Overview](/architecture/overview) for the mental model
+5. [Session Lifecycle](/operations/session-lifecycle) for behavior guarantees
+6. [Configuration Guide](/guides/configuration) for operational setup
+7. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
 
 ## Quick Links
 
+- [Why Pulpo](/getting-started/why-pulpo)
 - [Install](/getting-started/install)
 - [Quickstart](/getting-started/quickstart)
 - [Core Concepts](/architecture/core-concepts)

@@ -1,6 +1,8 @@
 # Architecture Overview
 
-Pulpo is an agent session runtime. The shortest accurate description is:
+Pulpo is a self-hosted control plane for background coding agents.
+
+Architecturally, the shortest accurate description is:
 
 - `pulpod` runs and tracks sessions
 - each session is a command plus durable state
@@ -29,6 +31,8 @@ This separation matters because Pulpo is not:
 - a prompt library
 - a workflow orchestrator
 - a special wrapper around one model vendor
+
+It is the layer that turns agent commands into durable infrastructure objects.
 
 ## Components
 
@@ -110,6 +114,9 @@ The watchdog is the supervision loop. It is responsible for:
 | Discord bot | Remote session control from Discord |
 
 These are all clients of the same session model. If one surface disappears, the core runtime is still intact.
+
+This is why "control plane" is the right framing: the daemon owns the truth,
+and every surface reflects or operates on that same truth.
 
 ## Command-Based Sessions
 

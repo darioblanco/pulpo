@@ -23,6 +23,7 @@ export default defineUserConfig({
     colorMode: 'auto',
     colorModeSwitch: true,
     navbar: [
+      { text: 'Why Pulpo', link: '/getting-started/why-pulpo' },
       { text: 'Getting Started', link: '/getting-started/install' },
       { text: 'Core Concepts', link: '/architecture/core-concepts' },
       { text: 'Guides', link: '/guides/configuration' },
@@ -31,7 +32,11 @@ export default defineUserConfig({
       { text: 'Operations', link: '/operations/session-lifecycle' },
     ],
     sidebar: {
-      '/getting-started/': ['/getting-started/install', '/getting-started/quickstart'],
+      '/getting-started/': [
+        '/getting-started/why-pulpo',
+        '/getting-started/install',
+        '/getting-started/quickstart',
+      ],
       '/architecture/': ['/architecture/core-concepts', '/architecture/overview'],
       '/guides/': [
         '/guides/configuration',
