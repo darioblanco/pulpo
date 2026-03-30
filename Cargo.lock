@@ -2529,7 +2529,7 @@ dependencies = [
 
 [[package]]
 name = "pulpo-cli"
-version = "0.0.40"
+version = "0.0.41"
 dependencies = [
  "anyhow",
  "axum",
@@ -2548,7 +2548,7 @@ dependencies = [
 
 [[package]]
 name = "pulpo-common"
-version = "0.0.40"
+version = "0.0.41"
 dependencies = [
  "chrono",
  "schemars",
@@ -2561,7 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "pulpod"
-version = "0.0.40"
+version = "0.0.41"
 dependencies = [
  "anyhow",
  "axum",
