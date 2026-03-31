@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionEvent {
     pub session_id: String,
     pub session_name: String,
@@ -53,16 +53,7 @@ mod tests {
             node_name: "node-1".into(),
             output_snippet: Some("Hello world".into()),
             timestamp: "2026-01-01T00:00:00Z".into(),
-            git_branch: None,
-            git_commit: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_files_changed: None,
-            pr_url: None,
-            error_status: None,
-            total_input_tokens: None,
-            total_output_tokens: None,
-            session_cost_usd: None,
+            ..Default::default()
         };
         let json = serde_json::to_string(&event).unwrap();
         let deserialized: SessionEvent = serde_json::from_str(&json).unwrap();
@@ -80,20 +71,9 @@ mod tests {
             session_id: "id".into(),
             session_name: "name".into(),
             status: "stopped".into(),
-            previous_status: None,
             node_name: "n".into(),
-            output_snippet: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
-            git_branch: None,
-            git_commit: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_files_changed: None,
-            pr_url: None,
-            error_status: None,
-            total_input_tokens: None,
-            total_output_tokens: None,
-            session_cost_usd: None,
+            ..Default::default()
         };
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"previous_status\":null"));
@@ -106,20 +86,9 @@ mod tests {
             session_id: "id".into(),
             session_name: "name".into(),
             status: "active".into(),
-            previous_status: None,
             node_name: "n".into(),
-            output_snippet: None,
             timestamp: "t".into(),
-            git_branch: None,
-            git_commit: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_files_changed: None,
-            pr_url: None,
-            error_status: None,
-            total_input_tokens: None,
-            total_output_tokens: None,
-            session_cost_usd: None,
+            ..Default::default()
         };
         let cloned = event.clone();
         assert_eq!(format!("{event:?}"), format!("{cloned:?}"));
@@ -131,20 +100,9 @@ mod tests {
             session_id: "s1".into(),
             session_name: "test".into(),
             status: "active".into(),
-            previous_status: None,
             node_name: "n".into(),
-            output_snippet: None,
             timestamp: "t".into(),
-            git_branch: None,
-            git_commit: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_files_changed: None,
-            pr_url: None,
-            error_status: None,
-            total_input_tokens: None,
-            total_output_tokens: None,
-            session_cost_usd: None,
+            ..Default::default()
         });
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"kind\":\"session\""));
@@ -171,20 +129,9 @@ mod tests {
             session_id: "id".into(),
             session_name: "name".into(),
             status: "active".into(),
-            previous_status: None,
             node_name: "n".into(),
-            output_snippet: None,
             timestamp: "t".into(),
-            git_branch: None,
-            git_commit: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_files_changed: None,
-            pr_url: None,
-            error_status: None,
-            total_input_tokens: None,
-            total_output_tokens: None,
-            session_cost_usd: None,
+            ..Default::default()
         });
         let cloned = event.clone();
         assert_eq!(format!("{event:?}"), format!("{cloned:?}"));
@@ -200,16 +147,7 @@ mod tests {
             node_name: "n".into(),
             output_snippet: Some("done".into()),
             timestamp: "2026-01-01T00:00:00Z".into(),
-            git_branch: None,
-            git_commit: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_files_changed: None,
-            pr_url: None,
-            error_status: None,
-            total_input_tokens: None,
-            total_output_tokens: None,
-            session_cost_usd: None,
+            ..Default::default()
         });
         let json = serde_json::to_string(&original).unwrap();
         let deserialized: PulpoEvent = serde_json::from_str(&json).unwrap();

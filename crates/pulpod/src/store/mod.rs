@@ -775,6 +775,38 @@ impl Store {
         Ok(())
     }
 
+    /// Update multiple metadata fields and optionally remove others in a single DB round-trip.
+    pub async fn batch_update_session_metadata(
+        &self,
+        id: &str,
+        updates: &[(&str, &str)],
+        removes: &[&str],
+    ) -> Result<()> {
+        let row = sqlx::query("SELECT metadata FROM sessions WHERE id = ?")
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await?;
+        let existing: Option<String> = row.get("metadata");
+        let mut map: std::collections::HashMap<String, String> = existing
+            .map(|s| serde_json::from_str(&s))
+            .transpose()?
+            .unwrap_or_default();
+        for &(key, value) in updates {
+            map.insert(key.to_owned(), value.to_owned());
+        }
+        for &key in removes {
+            map.remove(key);
+        }
+        let json = serde_json::to_string(&map)?;
+        sqlx::query("UPDATE sessions SET metadata = ?, updated_at = ? WHERE id = ?")
+            .bind(&json)
+            .bind(chrono::Utc::now().to_rfc3339())
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn update_backend_session_id(
         &self,
         session_id: &str,

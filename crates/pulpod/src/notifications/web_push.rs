@@ -205,20 +205,9 @@ mod tests {
             session_id: "abc-123".into(),
             session_name: "my-session".into(),
             status: status.into(),
-            previous_status: None,
             node_name: "node-1".into(),
-            output_snippet: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
-            git_branch: None,
-            git_commit: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_files_changed: None,
-            pr_url: None,
-            error_status: None,
-            total_input_tokens: None,
-            total_output_tokens: None,
-            session_cost_usd: None,
+            ..Default::default()
         }
     }
 
@@ -316,16 +305,7 @@ mod tests {
             node_name: "node".into(),
             output_snippet: None,
             timestamp: "t".into(),
-            git_branch: None,
-            git_commit: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_files_changed: None,
-            pr_url: None,
-            error_status: None,
-            total_input_tokens: None,
-            total_output_tokens: None,
-            session_cost_usd: None,
+            ..Default::default()
         };
         let payload_str = build_payload(&event);
         // Should produce valid JSON even with special characters
@@ -440,16 +420,7 @@ mod tests {
                 node_name: "n".into(),
                 output_snippet: None,
                 timestamp: "t".into(),
-                git_branch: None,
-                git_commit: None,
-                git_insertions: None,
-                git_deletions: None,
-                git_files_changed: None,
-                pr_url: None,
-                error_status: None,
-                total_input_tokens: None,
-                total_output_tokens: None,
-                session_cost_usd: None,
+                ..Default::default()
             }));
         }
 

@@ -1483,16 +1483,7 @@ mod tests {
                 node_name: "test-node".into(),
                 output_snippet: None,
                 timestamp: "2026-01-01T00:00:00Z".into(),
-                git_branch: None,
-                git_commit: None,
-                git_insertions: None,
-                git_deletions: None,
-                git_files_changed: None,
-                pr_url: None,
-                error_status: None,
-                total_input_tokens: None,
-                total_output_tokens: None,
-                session_cost_usd: None,
+                ..Default::default()
             }))
             .unwrap();
 

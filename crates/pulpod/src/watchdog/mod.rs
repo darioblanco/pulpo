@@ -578,16 +578,10 @@ async fn check_session_idle(
                         node_name: ready_ctx.node_name.clone(),
                         output_snippet: Some(current_output.clone()),
                         timestamp: chrono::Utc::now().to_rfc3339(),
-                        git_branch: None,
-                        git_commit: None,
-                        git_insertions: None,
-                        git_deletions: None,
-                        git_files_changed: None,
-                        pr_url: None,
-                        error_status: None,
                         total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
                         total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
                         session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
+                        ..Default::default()
                     };
                     let _ = tx.send(PulpoEvent::Session(event));
                 }
@@ -626,16 +620,10 @@ async fn handle_session_ready(store: &Store, session: &Session, ctx: &ReadyConte
             node_name: ctx.node_name.clone(),
             output_snippet: session.output_snapshot.clone(),
             timestamp: chrono::Utc::now().to_rfc3339(),
-            git_branch: None,
-            git_commit: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_files_changed: None,
-            pr_url: None,
-            error_status: None,
             total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
             total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
             session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
+            ..Default::default()
         };
         let _ = tx.send(PulpoEvent::Session(event));
     }
@@ -824,29 +812,19 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
     }
 }
 
-/// Accumulate a u64 token metadata field, handling agent restarts.
-/// If new value < stored value, the agent was restarted — accumulate.
-async fn accumulate_token_field(
-    store: &Store,
-    id: &str,
-    key: &str,
-    new_val: u64,
-    meta: Option<&std::collections::HashMap<String, String>>,
-) {
-    let stored = meta
-        .and_then(|m| m.get(key))
-        .and_then(|v| v.parse::<u64>().ok());
-    let final_val = match stored {
-        Some(prev) if new_val < prev => prev + new_val, // restart: accumulate
-        Some(prev) if new_val == prev => return,        // unchanged
-        _ => new_val,
-    };
-    let _ = store
-        .update_session_metadata_field(id, key, &final_val.to_string())
-        .await;
+/// Resolve a token field value with accumulation for agent restarts.
+/// If new value < stored, the agent was restarted — accumulate.
+/// Returns `None` if the value is unchanged.
+fn accumulate_token_value(new_val: u64, stored: Option<&str>) -> Option<u64> {
+    let prev = stored.and_then(|v| v.parse::<u64>().ok());
+    match prev {
+        Some(p) if new_val == p => None,             // unchanged
+        Some(p) if new_val < p => Some(p + new_val), // restart: accumulate
+        _ => Some(new_val),
+    }
 }
 
-/// Store agent usage data as metadata fields, with accumulation on restart.
+/// Store agent usage data as metadata fields in a single DB round-trip.
 ///
 /// When new token counts are lower than stored values, the agent was restarted —
 /// previous totals are added to new values instead of overwriting.
@@ -857,36 +835,52 @@ async fn store_agent_usage(
     usage: &output_patterns::AgentUsage,
 ) {
     let id = session.id.to_string();
+    let stored = |key: &str| meta_map.and_then(|m| m.get(key)).map(String::as_str);
 
-    // Store input tokens; fall back to total_tokens when no input/output split
+    let mut updates: Vec<(&str, String)> = Vec::new();
+
+    // Input tokens (fall back to total_tokens when no input/output split)
     let input = usage
         .input_tokens
         .or_else(|| usage.total_tokens.filter(|_| usage.output_tokens.is_none()));
-    if let Some(val) = input {
-        accumulate_token_field(store, &id, meta::TOTAL_INPUT_TOKENS, val, meta_map).await;
+    if let Some(val) = input
+        && let Some(final_val) = accumulate_token_value(val, stored(meta::TOTAL_INPUT_TOKENS))
+    {
+        updates.push((meta::TOTAL_INPUT_TOKENS, final_val.to_string()));
     }
-    if let Some(output) = usage.output_tokens {
-        accumulate_token_field(store, &id, meta::TOTAL_OUTPUT_TOKENS, output, meta_map).await;
+    if let Some(val) = usage.output_tokens
+        && let Some(final_val) = accumulate_token_value(val, stored(meta::TOTAL_OUTPUT_TOKENS))
+    {
+        updates.push((meta::TOTAL_OUTPUT_TOKENS, final_val.to_string()));
     }
-    if let Some(cache_write) = usage.cache_write_tokens {
-        accumulate_token_field(store, &id, meta::CACHE_WRITE_TOKENS, cache_write, meta_map).await;
+    if let Some(val) = usage.cache_write_tokens
+        && let Some(final_val) = accumulate_token_value(val, stored(meta::CACHE_WRITE_TOKENS))
+    {
+        updates.push((meta::CACHE_WRITE_TOKENS, final_val.to_string()));
     }
-    if let Some(cache_read) = usage.cache_read_tokens {
-        accumulate_token_field(store, &id, meta::CACHE_READ_TOKENS, cache_read, meta_map).await;
+    if let Some(val) = usage.cache_read_tokens
+        && let Some(final_val) = accumulate_token_value(val, stored(meta::CACHE_READ_TOKENS))
+    {
+        updates.push((meta::CACHE_READ_TOKENS, final_val.to_string()));
     }
     if let Some(cost) = usage.session_cost_usd {
-        let stored_cost = meta_map
-            .and_then(|m| m.get(meta::SESSION_COST_USD))
-            .and_then(|v| v.parse::<f64>().ok());
+        let stored_cost = stored(meta::SESSION_COST_USD).and_then(|v| v.parse::<f64>().ok());
         let final_cost = match stored_cost {
-            Some(prev) if cost < prev => prev + cost, // restart: accumulate
-            Some(prev) if (cost - prev).abs() < 1e-7 => return, // unchanged (matches .6 decimal storage)
-            _ => cost,
+            Some(prev) if (cost - prev).abs() < 1e-7 => None, // unchanged
+            Some(prev) if cost < prev => Some(prev + cost),   // restart: accumulate
+            _ => Some(cost),
         };
-        let _ = store
-            .update_session_metadata_field(&id, meta::SESSION_COST_USD, &format!("{final_cost:.6}"))
-            .await;
+        if let Some(c) = final_cost {
+            updates.push((meta::SESSION_COST_USD, format!("{c:.6}")));
+        }
     }
+
+    if updates.is_empty() {
+        return;
+    }
+
+    let refs: Vec<(&str, &str)> = updates.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let _ = store.batch_update_session_metadata(&id, &refs, &[]).await;
 }
 
 async fn handle_idle_session(
@@ -1162,16 +1156,7 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
                 node_name: ctx.node_name.clone(),
                 output_snippet: None,
                 timestamp: chrono::Utc::now().to_rfc3339(),
-                git_branch: None,
-                git_commit: None,
-                git_insertions: None,
-                git_deletions: None,
-                git_files_changed: None,
-                pr_url: None,
-                error_status: None,
-                total_input_tokens: None,
-                total_output_tokens: None,
-                session_cost_usd: None,
+                ..Default::default()
             };
             let _ = tx.send(PulpoEvent::Session(event));
         }
