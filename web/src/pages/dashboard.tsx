@@ -13,9 +13,11 @@ import {
   getFleetSessions,
   getSessions,
   cleanupSessions,
+  stopSession,
 } from '@/api/client';
 import { Button } from '@/components/ui/button';
-import { Trash2 } from 'lucide-react';
+import { Trash2, CheckSquare } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { useSSE } from '@/hooks/use-sse';
 import { useConnection } from '@/hooks/use-connection';
 import { detectStatusChanges, showDesktopNotification } from '@/lib/notifications';
@@ -37,6 +39,9 @@ export function DashboardPage() {
   const previousSessionsRef = useRef<Session[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(DEFAULT_STATUSES);
   const [searchQuery, setSearchQuery] = useState<string | undefined>(undefined);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchLoading, setBatchLoading] = useState(false);
 
   const fetchPeers = useCallback(async () => {
     try {
@@ -147,6 +152,62 @@ export function DashboardPage() {
     }
   }, [handleRefresh]);
 
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    const visibleIds = filteredSessions.map((s) => s.id);
+    const allSelected = visibleIds.every((id) => selectedIds.has(id));
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(visibleIds));
+    }
+  }, [filteredSessions, selectedIds]);
+
+  const handleBatchStop = useCallback(async () => {
+    setBatchLoading(true);
+    try {
+      for (const id of selectedIds) {
+        await stopSession(id);
+      }
+      toast(`Stopped ${selectedIds.size} session${selectedIds.size !== 1 ? 's' : ''}`);
+      setSelectedIds(new Set());
+      setSelectionMode(false);
+      handleRefresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to stop sessions');
+    } finally {
+      setBatchLoading(false);
+    }
+  }, [selectedIds, handleRefresh]);
+
+  const handleBatchDelete = useCallback(async () => {
+    setBatchLoading(true);
+    try {
+      for (const id of selectedIds) {
+        await stopSession(id, true);
+      }
+      toast(`Deleted ${selectedIds.size} session${selectedIds.size !== 1 ? 's' : ''}`);
+      setSelectedIds(new Set());
+      setSelectionMode(false);
+      handleRefresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete sessions');
+    } finally {
+      setBatchLoading(false);
+    }
+  }, [selectedIds, handleRefresh]);
+
   const hasMultipleNodes = peers.length > 0;
 
   return (
@@ -165,6 +226,17 @@ export function DashboardPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <StatusSummary sessions={sessions} />
               <div className="flex items-center gap-2">
+                <Button
+                  variant={selectionMode ? 'default' : 'outline'}
+                  data-testid="select-mode-button"
+                  onClick={() => {
+                    setSelectionMode((prev) => !prev);
+                    if (selectionMode) setSelectedIds(new Set());
+                  }}
+                >
+                  <CheckSquare className="mr-2 h-4 w-4" />
+                  Select
+                </Button>
                 {hasCleanable && (
                   <Button
                     variant="outline"
@@ -180,7 +252,28 @@ export function DashboardPage() {
               </div>
             </div>
 
-            <SessionFilter onFilter={handleFilter} />
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <SessionFilter onFilter={handleFilter} />
+              </div>
+              {selectionMode && (
+                <label
+                  data-testid="select-all-checkbox"
+                  className="flex shrink-0 cursor-pointer items-center gap-2 text-sm text-muted-foreground"
+                >
+                  <input
+                    type="checkbox"
+                    checked={
+                      filteredSessions.length > 0 &&
+                      filteredSessions.every((s) => selectedIds.has(s.id))
+                    }
+                    onChange={toggleSelectAll}
+                    className="h-4 w-4 rounded accent-primary"
+                  />
+                  All
+                </label>
+              )}
+            </div>
 
             {hasMultipleNodes ? (
               <Tabs defaultValue="all" data-testid="node-tabs">
@@ -218,15 +311,28 @@ export function DashboardPage() {
                     <TabsTrigger key={peer.name} value={peer.name} data-testid={`tab-${peer.name}`}>
                       <div className="flex flex-col items-start leading-tight">
                         <div className="flex items-center">
-                          <span
-                            className={`mr-1.5 inline-block h-2 w-2 rounded-full ${
-                              peer.status === 'online'
-                                ? 'bg-status-ready'
-                                : peer.status === 'offline'
-                                  ? 'bg-status-stopped'
-                                  : 'bg-muted-foreground'
-                            }`}
-                          />
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span
+                                  data-testid={`peer-dot-${peer.name}`}
+                                  className={`mr-1.5 inline-block h-2 w-2 rounded-full ${
+                                    peer.status === 'online'
+                                      ? 'bg-status-ready'
+                                      : peer.status === 'offline'
+                                        ? 'bg-status-stopped'
+                                        : 'bg-muted-foreground'
+                                  }`}
+                                />
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                {peer.name} ({peer.address}) —{' '}
+                                {peer.status === 'offline'
+                                  ? 'Offline — last probe failed'
+                                  : peer.status}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
                           {peer.name}
                           <span className="ml-1.5 text-xs text-muted-foreground">
                             ({(peerSessions[peer.name] ?? []).length})
@@ -305,6 +411,9 @@ export function DashboardPage() {
                       sessions={filteredSessions}
                       isLocal
                       onRefresh={handleRefresh}
+                      selectionMode={selectionMode}
+                      selectedIds={selectedIds}
+                      onToggleSelect={toggleSelect}
                     />
                   )}
                 </TabsContent>
@@ -318,6 +427,9 @@ export function DashboardPage() {
                       sessions={peerSessions[peer.name] ?? []}
                       address={peer.address}
                       onRefresh={handleRefresh}
+                      selectionMode={selectionMode}
+                      selectedIds={selectedIds}
+                      onToggleSelect={toggleSelect}
                     />
                   </TabsContent>
                 ))}
@@ -331,12 +443,42 @@ export function DashboardPage() {
                   sessions={filteredSessions}
                   isLocal
                   onRefresh={handleRefresh}
+                  selectionMode={selectionMode}
+                  selectedIds={selectedIds}
+                  onToggleSelect={toggleSelect}
                 />
               )
             )}
           </>
         )}
       </div>
+
+      {selectionMode && selectedIds.size > 0 && (
+        <div
+          data-testid="batch-action-bar"
+          className="fixed inset-x-0 bottom-0 z-50 flex items-center justify-center gap-3 border-t border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/60"
+        >
+          <span className="text-sm text-muted-foreground">{selectedIds.size} selected</span>
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="batch-stop-button"
+            disabled={batchLoading}
+            onClick={handleBatchStop}
+          >
+            Stop
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            data-testid="batch-delete-button"
+            disabled={batchLoading}
+            onClick={handleBatchDelete}
+          >
+            Delete
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

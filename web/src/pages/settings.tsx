@@ -6,9 +6,9 @@ import { InkSettings } from '@/components/settings/ink-settings';
 import { NotificationsSettings } from '@/components/settings/notifications-settings';
 import { PeerSettings } from '@/components/settings/peer-settings';
 import { SecretSettings } from '@/components/settings/secret-settings';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { getConfig, updateConfig, getPeers } from '@/api/client';
 import { toast } from 'sonner';
 import type { InkConfig, PeerInfo, UpdateConfigRequest } from '@/api/types';
@@ -166,19 +166,33 @@ export function SettingsPage() {
               </Button>
             </div>
 
-            <div className="space-y-10">
-              {/* Node-specific settings */}
-              <section data-testid="section-node">
-                <div className="mb-4 flex items-center gap-2">
-                  <h2 className="text-lg font-semibold">This node</h2>
-                  <Badge variant="outline">node-specific</Badge>
-                </div>
-                <p className="mb-4 text-sm text-muted-foreground">
-                  These settings apply only to this node. Each node in your fleet has its own
-                  identity and network configuration.
-                </p>
-                <div className="space-y-6">
-                  <SecretSettings />
+            <Tabs defaultValue="node" data-testid="settings-tabs">
+              <TabsList
+                variant="line"
+                className="h-auto min-h-10 w-auto max-w-full justify-start overflow-x-auto"
+              >
+                <TabsTrigger value="node" data-testid="settings-tab-node">
+                  Node
+                </TabsTrigger>
+                <TabsTrigger value="watchdog" data-testid="settings-tab-watchdog">
+                  Watchdog
+                </TabsTrigger>
+                <TabsTrigger value="inks" data-testid="settings-tab-inks">
+                  Inks
+                </TabsTrigger>
+                <TabsTrigger value="secrets" data-testid="settings-tab-secrets">
+                  Secrets
+                </TabsTrigger>
+                <TabsTrigger value="notifications" data-testid="settings-tab-notifications">
+                  Notifications
+                </TabsTrigger>
+                <TabsTrigger value="peers" data-testid="settings-tab-peers">
+                  Peers
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="node">
+                <section data-testid="section-node">
                   <NodeSettings
                     name={nodeName}
                     onNameChange={setNodeName}
@@ -193,22 +207,11 @@ export function SettingsPage() {
                     discoveryInterval={discoveryInterval}
                     onDiscoveryIntervalChange={setDiscoveryInterval}
                   />
-                </div>
-              </section>
+                </section>
+              </TabsContent>
 
-              {/* Global settings */}
-              <section data-testid="section-global">
-                <div className="mb-4 flex items-center gap-2">
-                  <h2 className="text-lg font-semibold">Global</h2>
-                  <Badge variant="secondary">synced to all nodes</Badge>
-                </div>
-                <p className="mb-4 text-sm text-muted-foreground">
-                  These settings are shared across all nodes. Changes here will be propagated to
-                  every connected peer.
-                </p>
-                <div className="space-y-6">
-                  <PeerSettings peers={peers} onUpdate={setPeers} bind={bind} />
-                  <InkSettings inks={inks} onInksChange={setInks} peers={peers} />
+              <TabsContent value="watchdog">
+                <section data-testid="section-global">
                   <WatchdogSettings
                     enabled={watchdogEnabled}
                     onEnabledChange={setWatchdogEnabled}
@@ -225,17 +228,32 @@ export function SettingsPage() {
                     adoptTmux={watchdogAdoptTmux}
                     onAdoptTmuxChange={setWatchdogAdoptTmux}
                   />
-                  <NotificationsSettings
-                    discordWebhookUrl={discordWebhookUrl}
-                    onDiscordWebhookUrlChange={setDiscordWebhookUrl}
-                    discordEvents={discordEvents}
-                    onDiscordEventsChange={setDiscordEvents}
-                    webhooks={webhooks}
-                    onWebhooksChange={setWebhooks}
-                  />
-                </div>
-              </section>
-            </div>
+                </section>
+              </TabsContent>
+
+              <TabsContent value="inks">
+                <InkSettings inks={inks} onInksChange={setInks} peers={peers} />
+              </TabsContent>
+
+              <TabsContent value="secrets">
+                <SecretSettings />
+              </TabsContent>
+
+              <TabsContent value="notifications">
+                <NotificationsSettings
+                  discordWebhookUrl={discordWebhookUrl}
+                  onDiscordWebhookUrlChange={setDiscordWebhookUrl}
+                  discordEvents={discordEvents}
+                  onDiscordEventsChange={setDiscordEvents}
+                  webhooks={webhooks}
+                  onWebhooksChange={setWebhooks}
+                />
+              </TabsContent>
+
+              <TabsContent value="peers">
+                <PeerSettings peers={peers} onUpdate={setPeers} bind={bind} />
+              </TabsContent>
+            </Tabs>
           </>
         )}
       </div>

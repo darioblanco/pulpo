@@ -47,6 +47,23 @@ function authFetch(url: string, init?: RequestInit): Promise<Response> {
   return fetch(url, { ...init, headers });
 }
 
+/** Extract a meaningful error message from a failed API response. */
+async function apiError(res: Response, fallback: string): Promise<Error> {
+  try {
+    const body = await res.text();
+    try {
+      const json = JSON.parse(body);
+      const msg = json.error || json.message;
+      if (msg) return new Error(msg);
+    } catch {
+      if (body) return new Error(body);
+    }
+  } catch {
+    // body read failed
+  }
+  return new Error(fallback);
+}
+
 export function resolveWsUrl(path: string): string {
   const base = getBaseUrl();
   const token = getAuthToken();
@@ -115,10 +132,7 @@ export async function createSession(data: CreateSessionRequest): Promise<CreateS
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to create session');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to create session');
   return res.json();
 }
 
@@ -132,28 +146,19 @@ export async function createRemoteSession(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to create session');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to create session');
   return res.json();
 }
 
 export async function stopSession(id: string, purge?: boolean): Promise<void> {
   const url = `${resolveBaseUrl()}/sessions/${id}/stop${purge ? '?purge=true' : ''}`;
   const res = await authFetch(url, { method: 'POST' });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to stop session');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to stop session');
 }
 
 export async function cleanupSessions(): Promise<CleanupSessionsResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/sessions/cleanup`, { method: 'POST' });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to cleanup sessions');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to cleanup sessions');
   return res.json();
 }
 
@@ -175,10 +180,7 @@ export async function sendInput(id: string, text: string): Promise<void> {
 
 export async function resumeSession(id: string): Promise<{ id: string; status: string }> {
   const res = await authFetch(`${resolveBaseUrl()}/sessions/${id}/resume`, { method: 'POST' });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to resume session');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to resume session');
   return res.json();
 }
 
@@ -198,10 +200,7 @@ export async function addPeer(name: string, address: string): Promise<PeersRespo
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, address }),
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to add peer');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to add peer');
   return res.json();
 }
 
@@ -209,10 +208,7 @@ export async function removePeer(name: string): Promise<void> {
   const res = await authFetch(`${resolveBaseUrl()}/peers/${encodeURIComponent(name)}`, {
     method: 'DELETE',
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to remove peer');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to remove peer');
 }
 
 export async function getConfig(): Promise<ConfigResponse> {
@@ -244,16 +240,13 @@ export async function updateRemoteConfig(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to update remote config');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to update remote config');
   return res.json();
 }
 
 export async function getVapidKey(): Promise<VapidPublicKeyResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/push/vapid-key`);
-  if (!res.ok) throw new Error('Failed to get VAPID key');
+  if (!res.ok) throw await apiError(res, 'Failed to get VAPID key');
   return res.json();
 }
 
@@ -266,7 +259,7 @@ export async function subscribePush(subscription: PushSubscriptionJSON): Promise
       keys: subscription.keys,
     }),
   });
-  if (!res.ok) throw new Error('Failed to subscribe');
+  if (!res.ok) throw await apiError(res, 'Failed to subscribe');
 }
 
 export async function unsubscribePush(endpoint: string): Promise<void> {
@@ -275,7 +268,7 @@ export async function unsubscribePush(endpoint: string): Promise<void> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ endpoint }),
   });
-  if (!res.ok) throw new Error('Failed to unsubscribe');
+  if (!res.ok) throw await apiError(res, 'Failed to unsubscribe');
 }
 
 export async function getSchedules(): Promise<ScheduleInfo[]> {
@@ -289,10 +282,7 @@ export async function createSchedule(data: CreateScheduleRequest): Promise<Sched
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to create schedule');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to create schedule');
   return res.json();
 }
 
@@ -305,19 +295,13 @@ export async function updateSchedule(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to update schedule');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to update schedule');
   return res.json();
 }
 
 export async function getScheduleRuns(id: string): Promise<Session[]> {
   const res = await authFetch(`${resolveBaseUrl()}/schedules/${encodeURIComponent(id)}/runs`);
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to fetch schedule runs');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to fetch schedule runs');
   return res.json();
 }
 
@@ -325,10 +309,7 @@ export async function deleteSchedule(id: string): Promise<void> {
   const res = await authFetch(`${resolveBaseUrl()}/schedules/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to delete schedule');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to delete schedule');
 }
 
 // -- Secrets API --
@@ -347,18 +328,12 @@ export async function setSecret(name: string, value: string, env?: string): Prom
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to set secret');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to set secret');
 }
 
 export async function deleteSecret(name: string): Promise<void> {
   const res = await authFetch(`${resolveBaseUrl()}/secrets/${encodeURIComponent(name)}`, {
     method: 'DELETE',
   });
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || 'Failed to delete secret');
-  }
+  if (!res.ok) throw await apiError(res, 'Failed to delete secret');
 }

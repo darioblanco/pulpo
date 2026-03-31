@@ -32,6 +32,9 @@ import { TerminalView } from '@/components/session/terminal-view';
 interface SessionCardProps {
   session: Session;
   onRefresh: () => void;
+  selectionMode?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
 function truncateCommand(command: string, maxLen = 40): string {
@@ -39,7 +42,13 @@ function truncateCommand(command: string, maxLen = 40): string {
   return command.slice(0, maxLen) + '...';
 }
 
-export function SessionCard({ session, onRefresh }: SessionCardProps) {
+export function SessionCard({
+  session,
+  onRefresh,
+  selectionMode,
+  selected,
+  onToggleSelect,
+}: SessionCardProps) {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -78,11 +87,24 @@ export function SessionCard({ session, onRefresh }: SessionCardProps) {
   }
 
   return (
-    <div className="overflow-clip rounded-lg border border-[#1e2d3d]">
+    <div className="relative overflow-clip rounded-lg border border-[#1e2d3d]">
+      {selectionMode && (
+        <label
+          data-testid="session-checkbox"
+          className="absolute left-1.5 top-1.5 z-10 flex cursor-pointer items-center"
+        >
+          <input
+            type="checkbox"
+            checked={!!selected}
+            onChange={() => onToggleSelect?.(session.id)}
+            className="h-4 w-4 rounded border-[#1e2d3d] accent-primary"
+          />
+        </label>
+      )}
       {/* Terminal title bar */}
       <div
         data-testid="session-header"
-        className="flex items-center gap-2 bg-[#0d1f33] px-3 py-1.5"
+        className={`flex items-center gap-2 bg-[#0d1f33] px-3 py-1.5 ${selectionMode ? 'pl-8' : ''}`}
       >
         {/* Traffic lights */}
         <div className="flex items-center gap-1.5">

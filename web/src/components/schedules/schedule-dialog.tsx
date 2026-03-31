@@ -142,7 +142,6 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
   }
 
   const inkNames = Object.keys(inks).sort();
-  const cronDescription = cronExpr && isValidCron(cronExpr) ? describeCron(cronExpr) : '';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -194,9 +193,20 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
               className="font-mono text-sm"
               data-testid="cron-expr-input"
             />
-            {cronDescription && (
-              <p className="text-xs text-muted-foreground" data-testid="cron-description">
-                {cronDescription}
+            {cronExpr.trim() === '' ? (
+              <p className="text-xs text-muted-foreground" data-testid="cron-hint">
+                minute hour day month weekday
+              </p>
+            ) : isValidCron(cronExpr) ? (
+              <p
+                className="text-xs text-green-600 dark:text-green-400"
+                data-testid="cron-description"
+              >
+                {describeCron(cronExpr)}
+              </p>
+            ) : (
+              <p className="text-xs text-destructive" data-testid="cron-invalid">
+                Invalid cron expression (must be 5 fields)
               </p>
             )}
           </div>

@@ -227,6 +227,8 @@ describe('createSession', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () =>
+        Promise.resolve(JSON.stringify({ error: 'working directory does not exist: /bad/path' })),
       json: () => Promise.resolve({ error: 'working directory does not exist: /bad/path' }),
     });
 
@@ -238,6 +240,7 @@ describe('createSession', () => {
   it('throws generic message when no error field', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
       json: () => Promise.resolve({}),
     });
 
@@ -266,6 +269,7 @@ describe('createRemoteSession', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'provider not installed' })),
       json: () => Promise.resolve({ error: 'provider not installed' }),
     });
 
@@ -305,6 +309,7 @@ describe('stopSession', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'session not found' })),
       json: () => Promise.resolve({ error: 'session not found' }),
     });
 
@@ -314,6 +319,7 @@ describe('stopSession', () => {
   it('throws generic message when no error field', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
       json: () => Promise.resolve({}),
     });
 
@@ -392,6 +398,7 @@ describe('resumeSession', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'session is not lost' })),
       json: () => Promise.resolve({ error: 'session is not lost' }),
     });
 
@@ -401,6 +408,7 @@ describe('resumeSession', () => {
   it('throws generic message when no error field', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
       json: () => Promise.resolve({}),
     });
 
@@ -524,6 +532,7 @@ describe('updateRemoteConfig', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'unauthorized' })),
       json: () => Promise.resolve({ error: 'unauthorized' }),
     });
 
@@ -533,6 +542,7 @@ describe('updateRemoteConfig', () => {
   it('throws generic message when no error field', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
       json: () => Promise.resolve({}),
     });
 
@@ -560,6 +570,7 @@ describe('addPeer', () => {
   it('throws on conflict', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'already exists' })),
       json: () => Promise.resolve({ error: 'already exists' }),
     });
 
@@ -582,6 +593,7 @@ describe('removePeer', () => {
   it('throws on not found', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'not found' })),
       json: () => Promise.resolve({ error: 'not found' }),
     });
 
@@ -771,6 +783,7 @@ describe('cleanupSessions', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'cleanup failed' })),
       json: () => Promise.resolve({ error: 'cleanup failed' }),
     });
 
@@ -780,6 +793,7 @@ describe('cleanupSessions', () => {
   it('throws generic message when no error field', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
       json: () => Promise.resolve({}),
     });
 
@@ -834,6 +848,7 @@ describe('createSchedule', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'duplicate name' })),
       json: () => Promise.resolve({ error: 'duplicate name' }),
     });
 
@@ -845,6 +860,7 @@ describe('createSchedule', () => {
   it('throws generic message when no error field', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
       json: () => Promise.resolve({}),
     });
 
@@ -872,6 +888,7 @@ describe('updateSchedule', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'not found' })),
       json: () => Promise.resolve({ error: 'not found' }),
     });
 
@@ -881,6 +898,7 @@ describe('updateSchedule', () => {
   it('throws generic message when no error field', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
       json: () => Promise.resolve({}),
     });
 
@@ -914,6 +932,7 @@ describe('deleteSchedule', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'not found' })),
       json: () => Promise.resolve({ error: 'not found' }),
     });
 
@@ -923,6 +942,7 @@ describe('deleteSchedule', () => {
   it('throws generic message when no error field', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
       json: () => Promise.resolve({}),
     });
 
@@ -944,6 +964,7 @@ describe('getScheduleRuns', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'not found' })),
       json: () => Promise.resolve({ error: 'not found' }),
     });
 
@@ -953,6 +974,7 @@ describe('getScheduleRuns', () => {
   it('throws generic message when no error field', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
       json: () => Promise.resolve({}),
     });
 
@@ -1018,6 +1040,7 @@ describe('setSecret', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'Invalid name' })),
       json: () => Promise.resolve({ error: 'Invalid name' }),
     });
 
@@ -1027,6 +1050,7 @@ describe('setSecret', () => {
   it('throws generic message when no error field', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
       json: () => Promise.resolve({}),
     });
 
@@ -1049,6 +1073,7 @@ describe('deleteSecret', () => {
   it('throws on error response', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'not found' })),
       json: () => Promise.resolve({ error: 'not found' }),
     });
 
@@ -1058,6 +1083,7 @@ describe('deleteSecret', () => {
   it('throws generic message when no error field', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
       json: () => Promise.resolve({}),
     });
 

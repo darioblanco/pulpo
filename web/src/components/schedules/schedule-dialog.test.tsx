@@ -283,20 +283,29 @@ describe('ScheduleDialog', () => {
 
   // Cron description
 
+  it('shows cron hint when expression is empty', () => {
+    renderDialog();
+    expect(screen.getByTestId('cron-hint')).toHaveTextContent('minute hour day month weekday');
+  });
+
   it('shows cron description for valid expression', () => {
     renderDialog();
     fireEvent.change(screen.getByTestId('cron-expr-input'), {
       target: { value: '0 3 * * *' },
     });
     expect(screen.getByTestId('cron-description')).toHaveTextContent('Every day at 3:00 AM');
+    expect(screen.queryByTestId('cron-hint')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('cron-invalid')).not.toBeInTheDocument();
   });
 
-  it('does not show cron description for invalid expression', () => {
+  it('shows error for invalid cron expression', () => {
     renderDialog();
     fireEvent.change(screen.getByTestId('cron-expr-input'), {
       target: { value: 'invalid' },
     });
+    expect(screen.getByTestId('cron-invalid')).toHaveTextContent('Invalid cron expression');
     expect(screen.queryByTestId('cron-description')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('cron-hint')).not.toBeInTheDocument();
   });
 
   // Preset selection

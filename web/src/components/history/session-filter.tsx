@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 
@@ -13,8 +14,50 @@ export function SessionFilter({
   statusOptions = ['active', 'idle', 'ready', 'stopped', 'lost'],
   defaultStatuses = ['active', 'idle', 'ready'],
 }: SessionFilterProps) {
-  const [search, setSearch] = useState('');
-  const [activeStatuses, setActiveStatuses] = useState<Set<string>>(() => new Set(defaultStatuses));
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const [search, setSearch] = useState(() => searchParams.get('q') ?? '');
+  const [activeStatuses, setActiveStatuses] = useState<Set<string>>(() => {
+    const fromUrl = searchParams.get('status');
+    if (fromUrl) {
+      return new Set(fromUrl.split(',').filter(Boolean));
+    }
+    return new Set(defaultStatuses);
+  });
+
+  const syncToUrl = useCallback(
+    (statuses: Set<string>, query: string) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          const statusStr = [...statuses].sort().join(',');
+          const defaultStr = [...defaultStatuses].sort().join(',');
+          if (statusStr === defaultStr) {
+            next.delete('status');
+          } else {
+            next.set('status', statusStr);
+          }
+          if (query) {
+            next.set('q', query);
+          } else {
+            next.delete('q');
+          }
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams, defaultStatuses],
+  );
+
+  // Emit initial filter from URL on mount
+  useEffect(() => {
+    onFilter({
+      search: search || undefined,
+      statuses: activeStatuses,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function emit(overrides: Partial<{ search: string; statuses: Set<string> }>) {
     const s = overrides.search ?? search;
@@ -23,6 +66,7 @@ export function SessionFilter({
       search: s || undefined,
       statuses: st,
     });
+    syncToUrl(st, s);
   }
 
   function toggleStatus(s: string) {

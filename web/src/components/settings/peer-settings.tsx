@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
 import { addPeer, removePeer } from '@/api/client';
 import { FormField } from './form-field';
 import type { PeerInfo } from '@/api/types';
@@ -74,9 +75,22 @@ export function PeerSettings({ peers, onUpdate, bind }: PeerSettingsProps) {
                     className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border px-3 py-2"
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <span
-                        className={`h-2 w-2 shrink-0 rounded-full ${statusDotColors[peer.status] ?? 'bg-muted-foreground'}`}
-                      />
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span
+                              data-testid={`peer-dot-${peer.name}`}
+                              className={`h-2 w-2 shrink-0 rounded-full ${statusDotColors[peer.status] ?? 'bg-muted-foreground'}`}
+                            />
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {peer.name} ({peer.address}) —{' '}
+                            {peer.status === 'offline'
+                              ? 'Offline — last probe failed'
+                              : peer.status}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                       <span className="text-sm font-medium">{peer.name}</span>
                       <span className="truncate text-xs text-muted-foreground">{peer.address}</span>
                     </div>

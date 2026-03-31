@@ -17,6 +17,9 @@ interface NodeCardProps {
   isLocal?: boolean;
   address?: string;
   onRefresh: () => void;
+  selectionMode?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
 }
 
 export function NodeCard({
@@ -27,6 +30,9 @@ export function NodeCard({
   isLocal = false,
   address,
   onRefresh,
+  selectionMode,
+  selectedIds,
+  onToggleSelect,
 }: NodeCardProps) {
   return (
     <div data-testid="node-card" className={status !== 'online' ? 'opacity-50' : ''}>
@@ -64,7 +70,14 @@ export function NodeCard({
         ) : (
           <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
             {sessions.map((session) => (
-              <SessionCard key={session.id} session={session} onRefresh={onRefresh} />
+              <SessionCard
+                key={session.id}
+                session={session}
+                onRefresh={onRefresh}
+                selectionMode={selectionMode}
+                selected={selectedIds?.has(session.id)}
+                onToggleSelect={onToggleSelect}
+              />
             ))}
           </div>
         )

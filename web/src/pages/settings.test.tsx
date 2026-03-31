@@ -86,6 +86,15 @@ function renderSettings() {
   );
 }
 
+function clickTab(testId: string) {
+  const tab = screen.getByTestId(testId);
+  fireEvent.pointerDown(tab, { button: 0, pointerType: 'mouse' });
+  fireEvent.pointerUp(tab, { button: 0, pointerType: 'mouse' });
+  fireEvent.mouseDown(tab, { button: 0 });
+  fireEvent.mouseUp(tab, { button: 0 });
+  fireEvent.click(tab);
+}
+
 describe('SettingsPage', () => {
   it('shows loading skeleton initially', () => {
     mockGetConfig.mockResolvedValue(testConfig);
@@ -106,33 +115,57 @@ describe('SettingsPage', () => {
     });
   });
 
-  it('loads all settings sections', async () => {
+  it('loads all settings tabs', async () => {
+    mockGetConfig.mockResolvedValue(testConfig);
+    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-tabs')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-tab-node')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-tab-watchdog')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-tab-inks')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-tab-secrets')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-tab-notifications')).toBeInTheDocument();
+      expect(screen.getByTestId('settings-tab-peers')).toBeInTheDocument();
+    });
+
+    // Node tab is default — node-settings should be visible
+    expect(screen.getByTestId('node-settings')).toBeInTheDocument();
+  });
+
+  it('shows settings for each tab when clicked', async () => {
     mockGetConfig.mockResolvedValue(testConfig);
     mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     renderSettings();
 
     await waitFor(() => {
       expect(screen.getByTestId('node-settings')).toBeInTheDocument();
+    });
+
+    clickTab('settings-tab-watchdog');
+    await waitFor(() => {
       expect(screen.getByTestId('watchdog-settings')).toBeInTheDocument();
+    });
+
+    clickTab('settings-tab-inks');
+    await waitFor(() => {
       expect(screen.getByTestId('ink-settings')).toBeInTheDocument();
-      expect(screen.getByTestId('notifications-settings')).toBeInTheDocument();
-      expect(screen.getByTestId('peer-settings')).toBeInTheDocument();
+    });
+
+    clickTab('settings-tab-secrets');
+    await waitFor(() => {
       expect(screen.getByTestId('secret-settings')).toBeInTheDocument();
     });
-  });
 
-  it('shows node-specific and global sections', async () => {
-    mockGetConfig.mockResolvedValue(testConfig);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
-    renderSettings();
-
+    clickTab('settings-tab-notifications');
     await waitFor(() => {
-      expect(screen.getByTestId('section-node')).toBeInTheDocument();
-      expect(screen.getByTestId('section-global')).toBeInTheDocument();
-      expect(screen.getByText('This node')).toBeInTheDocument();
-      expect(screen.getByText('node-specific')).toBeInTheDocument();
-      expect(screen.getByText('Global')).toBeInTheDocument();
-      expect(screen.getByText('synced to all nodes')).toBeInTheDocument();
+      expect(screen.getByTestId('notifications-settings')).toBeInTheDocument();
+    });
+
+    clickTab('settings-tab-peers');
+    await waitFor(() => {
+      expect(screen.getByTestId('peer-settings')).toBeInTheDocument();
     });
   });
 
@@ -140,6 +173,12 @@ describe('SettingsPage', () => {
     mockGetConfig.mockResolvedValue(testConfig);
     mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-tab-watchdog')).toBeInTheDocument();
+    });
+
+    clickTab('settings-tab-watchdog');
 
     await waitFor(() => {
       expect(screen.getByLabelText('Memory threshold (%)')).toHaveValue(85);
@@ -160,6 +199,12 @@ describe('SettingsPage', () => {
     mockGetConfig.mockResolvedValue(configWithDiscord);
     mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-tab-notifications')).toBeInTheDocument();
+    });
+
+    clickTab('settings-tab-notifications');
 
     await waitFor(() => {
       expect(screen.getByTestId('tab-discord')).toBeInTheDocument();
@@ -302,6 +347,12 @@ describe('SettingsPage', () => {
     renderSettings();
 
     await waitFor(() => {
+      expect(screen.getByTestId('settings-tab-inks')).toBeInTheDocument();
+    });
+
+    clickTab('settings-tab-inks');
+
+    await waitFor(() => {
       expect(screen.getByTestId('ink-settings')).toBeInTheDocument();
       expect(screen.getByTestId('ink-reviewer')).toBeInTheDocument();
     });
@@ -349,6 +400,12 @@ describe('SettingsPage', () => {
     mockGetConfig.mockResolvedValue(testConfig);
     mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('settings-tab-peers')).toBeInTheDocument();
+    });
+
+    clickTab('settings-tab-peers');
 
     await waitFor(() => {
       expect(screen.getByTestId('peers-disabled')).toBeInTheDocument();

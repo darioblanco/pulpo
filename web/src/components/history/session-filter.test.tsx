@@ -1,10 +1,34 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { SessionFilter } from './session-filter';
+
+function renderFilter(
+  props: {
+    onFilter?: (query: { search?: string; statuses: Set<string> }) => void;
+    statusOptions?: string[];
+    defaultStatuses?: string[];
+  } = {},
+  initialEntries: string[] = ['/'],
+) {
+  const onFilter = props.onFilter ?? vi.fn();
+  return {
+    onFilter,
+    ...render(
+      <MemoryRouter initialEntries={initialEntries}>
+        <SessionFilter
+          onFilter={onFilter}
+          statusOptions={props.statusOptions}
+          defaultStatuses={props.defaultStatuses}
+        />
+      </MemoryRouter>,
+    ),
+  };
+}
 
 describe('SessionFilter', () => {
   it('renders search input and default filter chips', () => {
-    render(<SessionFilter onFilter={vi.fn()} />);
+    renderFilter();
     expect(screen.getByTestId('search-input')).toBeInTheDocument();
     expect(screen.getByTestId('status-chip-active')).toBeInTheDocument();
     expect(screen.getByTestId('status-chip-idle')).toBeInTheDocument();
@@ -14,7 +38,7 @@ describe('SessionFilter', () => {
   });
 
   it('has default statuses selected (active, idle, ready)', () => {
-    render(<SessionFilter onFilter={vi.fn()} />);
+    renderFilter();
     expect(screen.getByTestId('status-chip-active')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('status-chip-idle')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('status-chip-ready')).toHaveAttribute('aria-pressed', 'true');
@@ -23,8 +47,7 @@ describe('SessionFilter', () => {
   });
 
   it('emits filter on search input', () => {
-    const onFilter = vi.fn();
-    render(<SessionFilter onFilter={onFilter} />);
+    const { onFilter } = renderFilter();
     fireEvent.change(screen.getByTestId('search-input'), { target: { value: 'my-api' } });
     expect(onFilter).toHaveBeenCalledWith({
       search: 'my-api',
@@ -33,8 +56,7 @@ describe('SessionFilter', () => {
   });
 
   it('emits filter with empty search as undefined', () => {
-    const onFilter = vi.fn();
-    render(<SessionFilter onFilter={onFilter} />);
+    const { onFilter } = renderFilter();
     fireEvent.change(screen.getByTestId('search-input'), { target: { value: 'test' } });
     fireEvent.change(screen.getByTestId('search-input'), { target: { value: '' } });
     expect(onFilter).toHaveBeenLastCalledWith({
@@ -44,8 +66,7 @@ describe('SessionFilter', () => {
   });
 
   it('toggles status chip off on click (multi-select)', () => {
-    const onFilter = vi.fn();
-    render(<SessionFilter onFilter={onFilter} />);
+    const { onFilter } = renderFilter();
     const chip = screen.getByTestId('status-chip-active');
     expect(chip).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(chip);
@@ -57,8 +78,7 @@ describe('SessionFilter', () => {
   });
 
   it('toggles status chip on when clicking unselected chip', () => {
-    const onFilter = vi.fn();
-    render(<SessionFilter onFilter={onFilter} />);
+    const { onFilter } = renderFilter();
     const chip = screen.getByTestId('status-chip-stopped');
     expect(chip).toHaveAttribute('aria-pressed', 'false');
     fireEvent.click(chip);
@@ -70,18 +90,29 @@ describe('SessionFilter', () => {
   });
 
   it('accepts custom status options and default statuses', () => {
-    render(
-      <SessionFilter onFilter={vi.fn()} statusOptions={['active']} defaultStatuses={['active']} />,
-    );
+    renderFilter({ statusOptions: ['active'], defaultStatuses: ['active'] });
     expect(screen.getByTestId('status-chip-active')).toBeInTheDocument();
     expect(screen.getByTestId('status-chip-active')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByTestId('status-chip-ready')).not.toBeInTheDocument();
   });
 
   it('accepts empty default statuses', () => {
-    render(<SessionFilter onFilter={vi.fn()} defaultStatuses={[]} />);
+    renderFilter({ defaultStatuses: [] });
     expect(screen.getByTestId('status-chip-active')).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByTestId('status-chip-idle')).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByTestId('status-chip-ready')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('reads initial filter state from URL params', () => {
+    const { onFilter } = renderFilter({}, ['/?status=active,stopped&q=search']);
+    expect(screen.getByTestId('search-input')).toHaveValue('search');
+    expect(screen.getByTestId('status-chip-active')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('status-chip-stopped')).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('status-chip-idle')).toHaveAttribute('aria-pressed', 'false');
+    // Should have emitted the initial filter from URL
+    expect(onFilter).toHaveBeenCalledWith({
+      search: 'search',
+      statuses: new Set(['active', 'stopped']),
+    });
   });
 });
