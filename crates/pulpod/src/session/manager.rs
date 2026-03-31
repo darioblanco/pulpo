@@ -309,22 +309,17 @@ impl SessionManager {
         #[cfg(not(coverage))]
         if let Some(auth_info) = crate::auth_info::detect_auth_for_command(&session.command) {
             let sid = id.to_string();
-            let _ = self
-                .store
-                .update_session_metadata_field(&sid, "auth_provider", &auth_info.provider)
-                .await;
+            let mut updates = vec![(meta::AUTH_PROVIDER, auth_info.provider.as_str())];
             if let Some(ref plan) = auth_info.plan {
-                let _ = self
-                    .store
-                    .update_session_metadata_field(&sid, "auth_plan", plan)
-                    .await;
+                updates.push((meta::AUTH_PLAN, plan.as_str()));
             }
             if let Some(ref email) = auth_info.email {
-                let _ = self
-                    .store
-                    .update_session_metadata_field(&sid, "auth_email", email)
-                    .await;
+                updates.push((meta::AUTH_EMAIL, email.as_str()));
             }
+            let _ = self
+                .store
+                .batch_update_session_metadata(&sid, &updates, &[])
+                .await;
             // Refresh session metadata to reflect the stored auth info
             if let Ok(Some(refreshed)) = self.store.get_session(&sid).await {
                 session.metadata = refreshed.metadata;

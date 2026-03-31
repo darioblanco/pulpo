@@ -178,6 +178,10 @@ pub mod meta {
     pub const ERROR_STATUS_AT: &str = "error_status_at";
     pub const RATE_LIMIT: &str = "rate_limit";
     pub const RATE_LIMIT_AT: &str = "rate_limit_at";
+    // Auth info
+    pub const AUTH_PROVIDER: &str = "auth_provider";
+    pub const AUTH_PLAN: &str = "auth_plan";
+    pub const AUTH_EMAIL: &str = "auth_email";
 }
 
 impl Session {

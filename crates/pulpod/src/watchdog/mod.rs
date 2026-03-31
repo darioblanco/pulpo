@@ -392,39 +392,39 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
 }
 
 /// Patterns that indicate the agent is waiting for user input.
-/// Matched case-insensitively as substrings against the last 5 lines of output.
+/// Pre-lowercased for efficient matching against lowercased output lines.
 const DEFAULT_WAITING_PATTERNS: &[&str] = &[
     // Generic confirmation prompts
     "(y/n)",
-    "[Y/n]",
+    "[y/n]",
     "[yes/no]",
     "(yes/no)",
-    "Yes / No",
-    "Do you trust",
-    "Press Enter",
+    "yes / no",
+    "do you trust",
+    "press enter",
     "approve this",
-    "Are you sure",
-    "Continue?",
-    "Confirm?",
-    "Proceed?",
+    "are you sure",
+    "continue?",
+    "confirm?",
+    "proceed?",
     // Claude Code
-    "(Y)es",
-    "(N)o",
-    "(A)lways",
-    "Do you want to proceed",
+    "(y)es",
+    "(n)o",
+    "(a)lways",
+    "do you want to proceed",
     // Codex CLI
-    "Allow command?",
+    "allow command?",
     // Gemini CLI
-    "Allow?",
-    "Approve?",
+    "allow?",
+    "approve?",
     // Aider
     "to the chat?",
-    "Apply edit?",
+    "apply edit?",
     "shell command?",
-    "Create new file",
+    "create new file",
     // Amazon Q
-    "Allow this action?",
-    "Accept suggestion?",
+    "allow this action?",
+    "accept suggestion?",
     // SSH/sudo
     "continue connecting (yes/no)",
     "'s password:",
@@ -437,8 +437,9 @@ pub fn detect_waiting_for_input(output: &str, extra_patterns: &[String]) -> bool
     let last_lines: Vec<&str> = output.lines().rev().take(5).collect();
     for line in &last_lines {
         let lower = line.to_lowercase();
+        // DEFAULT_WAITING_PATTERNS are pre-lowercased
         for pattern in DEFAULT_WAITING_PATTERNS {
-            if lower.contains(&pattern.to_lowercase()) {
+            if lower.contains(pattern) {
                 return true;
             }
         }
@@ -694,10 +695,8 @@ async fn handle_active_session(
 /// errors) are always updated and cleared when no longer detected.
 #[allow(clippy::too_many_lines)]
 async fn detect_and_store_output_metadata(store: &Store, session: &Session, output: &str) {
-    let meta = session.metadata.as_ref();
-
     // Check and store PR URL
-    let has_pr = meta.is_some_and(|m| m.contains_key(meta::PR_URL));
+    let has_pr = session.meta_str(meta::PR_URL).is_some();
     if !has_pr && let Some(pr_url) = output_patterns::extract_pr_url(output) {
         if let Err(e) = store
             .update_session_metadata_field(&session.id.to_string(), meta::PR_URL, &pr_url)
@@ -717,7 +716,7 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
     }
 
     // Check and store branch
-    let has_branch = meta.is_some_and(|m| m.contains_key(meta::BRANCH));
+    let has_branch = session.meta_str(meta::BRANCH).is_some();
     if !has_branch && let Some(branch) = output_patterns::extract_branch(output) {
         if let Err(e) = store
             .update_session_metadata_field(&session.id.to_string(), meta::BRANCH, &branch)
@@ -767,7 +766,7 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
 
     // Check for errors/failures (transient — clear when no longer in last 30 lines)
     let current_error = output_patterns::detect_error(output);
-    let stored_error = meta.and_then(|m| m.get(meta::ERROR_STATUS));
+    let stored_error = session.meta_str(meta::ERROR_STATUS);
     match (&current_error, stored_error) {
         (Some(err), _) => {
             let timestamp = chrono::Utc::now().to_rfc3339();
@@ -808,7 +807,7 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
 
     // Check for token usage and cost
     if let Some(usage) = output_patterns::extract_agent_usage(output) {
-        store_agent_usage(store, session, meta, &usage).await;
+        store_agent_usage(store, session, &usage).await;
     }
 }
 
@@ -828,14 +827,8 @@ fn accumulate_token_value(new_val: u64, stored: Option<&str>) -> Option<u64> {
 ///
 /// When new token counts are lower than stored values, the agent was restarted —
 /// previous totals are added to new values instead of overwriting.
-async fn store_agent_usage(
-    store: &Store,
-    session: &Session,
-    meta_map: Option<&std::collections::HashMap<String, String>>,
-    usage: &output_patterns::AgentUsage,
-) {
+async fn store_agent_usage(store: &Store, session: &Session, usage: &output_patterns::AgentUsage) {
     let id = session.id.to_string();
-    let stored = |key: &str| meta_map.and_then(|m| m.get(key)).map(String::as_str);
 
     let mut updates: Vec<(&str, String)> = Vec::new();
 
@@ -844,27 +837,33 @@ async fn store_agent_usage(
         .input_tokens
         .or_else(|| usage.total_tokens.filter(|_| usage.output_tokens.is_none()));
     if let Some(val) = input
-        && let Some(final_val) = accumulate_token_value(val, stored(meta::TOTAL_INPUT_TOKENS))
+        && let Some(final_val) =
+            accumulate_token_value(val, session.meta_str(meta::TOTAL_INPUT_TOKENS))
     {
         updates.push((meta::TOTAL_INPUT_TOKENS, final_val.to_string()));
     }
     if let Some(val) = usage.output_tokens
-        && let Some(final_val) = accumulate_token_value(val, stored(meta::TOTAL_OUTPUT_TOKENS))
+        && let Some(final_val) =
+            accumulate_token_value(val, session.meta_str(meta::TOTAL_OUTPUT_TOKENS))
     {
         updates.push((meta::TOTAL_OUTPUT_TOKENS, final_val.to_string()));
     }
     if let Some(val) = usage.cache_write_tokens
-        && let Some(final_val) = accumulate_token_value(val, stored(meta::CACHE_WRITE_TOKENS))
+        && let Some(final_val) =
+            accumulate_token_value(val, session.meta_str(meta::CACHE_WRITE_TOKENS))
     {
         updates.push((meta::CACHE_WRITE_TOKENS, final_val.to_string()));
     }
     if let Some(val) = usage.cache_read_tokens
-        && let Some(final_val) = accumulate_token_value(val, stored(meta::CACHE_READ_TOKENS))
+        && let Some(final_val) =
+            accumulate_token_value(val, session.meta_str(meta::CACHE_READ_TOKENS))
     {
         updates.push((meta::CACHE_READ_TOKENS, final_val.to_string()));
     }
     if let Some(cost) = usage.session_cost_usd {
-        let stored_cost = stored(meta::SESSION_COST_USD).and_then(|v| v.parse::<f64>().ok());
+        let stored_cost = session
+            .meta_str(meta::SESSION_COST_USD)
+            .and_then(|v| v.parse::<f64>().ok());
         let final_cost = match stored_cost {
             Some(prev) if (cost - prev).abs() < 1e-7 => None, // unchanged
             Some(prev) if cost < prev => Some(prev + cost),   // restart: accumulate
