@@ -94,8 +94,9 @@ Scheduling:
 Observability:
 - PR/branch detection from session output (GitHub/GitLab/Bitbucket)
 - Git branch/commit tracking, diff stats, commits ahead of remote
-- Token usage parsing, rate limit detection
-- Enriched notifications with git state, PR URLs, error status
+- Token and cost tracking: keyword-proximity parsing of agent output (input/output/cache tokens + cost), CLI USAGE column, web UI cost/token badges, accumulation across agent restarts
+- Rate limit detection
+- Enriched notifications with git state, PR URLs, error status, token/cost data
 - Fleet sessions endpoint for cross-node aggregation
 
 Developer experience:
@@ -107,17 +108,14 @@ Developer experience:
 
 ## What's Next
 
-### Cost Tracking (P5.1 — unparked)
+### Cost Tracking — Budget Limits (P5.1b)
 
-The #1 unsolved pain point in agent infrastructure. Gas Town users report $100/hour running parallel agents. A LangChain infinite loop generated a $47,000 bill.
+Token and cost tracking is shipped: keyword-proximity parsing extracts tokens and dollar costs from any agent's terminal output, displayed in CLI (`pulpo list` USAGE column) and web UI (cost/token badges). Accumulation handles agent restarts within a session.
 
-Token parsing from output is already shipped. Next steps:
-- Configurable cost rates per model/provider
-- Per-session cost display in CLI and dashboard
+Remaining work when demanded:
+- Per-session token/cost budget limits (watchdog auto-stops sessions exceeding thresholds)
 - Cumulative cost per day/node
-- Budget alerts that auto-stop sessions exceeding limits
-
-This turns Pulpo from "nice to have" into "can't run agents without this."
+- Budget alerts via notifications
 
 ### Agent Completion Callbacks
 
