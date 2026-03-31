@@ -47,7 +47,7 @@ The ecosystem has 100+ agent orchestrators. Almost all are scripts or TUI wrappe
 
 **Agent tools** (Claude Code, Codex, Aider, Goose): The agents themselves. Claude Code now has Agent Teams for multi-agent on one machine. Codex has subagents. These handle within-session orchestration. Pulpo runs them all, competes with none.
 
-**Pulpo's position: the only self-hosted, agent-agnostic infrastructure daemon** with session persistence, watchdog, scheduling, multi-node fleet management, and a mobile-first web UI. No cloud dependency. Works with any CLI agent.
+**Pulpo's position: the only self-hosted, agent-agnostic infrastructure daemon** with session persistence, watchdog, scheduling, fleet visibility, and a mobile-first web UI. No cloud dependency. Works with any CLI agent.
 
 ## Backend Progression
 
@@ -71,7 +71,7 @@ Core infrastructure:
 - Auto-adopt: discovers external tmux sessions and brings them under management
 - Command-agnostic sessions (any CLI tool, any command)
 - Inks: reusable session blueprints with command, description, secrets, and runtime defaults
-- Multi-node: Tailscale peer discovery + manual peer config
+- Multi-node (read-only): Tailscale peer discovery, manual peer config, fleet summary endpoint
 - SSE event stream, MCP server, Discord bot, webhook notifications
 - Web Push notifications for session events
 - Homebrew distribution (`brew install darioblanco/tap/pulpo`)
@@ -101,8 +101,7 @@ Observability:
 
 Developer experience:
 - CLI auto-start daemon (brew services / systemd / direct spawn)
-- Smart node selection (`pulpo spawn --auto` picks least-loaded peer)
-- CLI node name resolution (`pulpo --node mac-mini spawn`)
+- CLI node name resolution (`pulpo --node mac-mini list`)
 - Session liveness check before attach
 - Ocean gamification UI
 
@@ -137,15 +136,43 @@ This is more reliable than pattern matching and works with any agent, including 
 - Requires ≥75 GitHub stars
 - Source build, `brew audit` compliance
 
+### Multi-Node: Trim to Working Subset, Then Master Mode
+
+The current multi-node design is masterless — each node is independent, fleet visibility comes from on-demand HTTP polling. An honest audit revealed that the **infrastructure layer works** (Tailscale discovery, peer registry, health probing, fleet summary endpoint) but the **features built on top are broken** (web UI click-through to remote sessions 404s, CLI attach after remote spawn fails, `target_node` on schedules is ignored, cross-node auth is fragile).
+
+**Root cause:** You can't build cross-node actions on top of independent nodes without a coordination layer. Polling gives you read-only snapshots, not the ability to interact with remote sessions.
+
+**Phase 1 — Trim to honest working subset (immediate)**
+
+Remove broken features that frustrate users. Keep what works:
+- **Keep:** Tailscale discovery, peer registry, health probing, fleet summary endpoint
+- **Keep:** CLI `--node` for read-only commands (list, logs, status) with `--detach` for remote spawn
+- **Fix:** URL normalization bug (CLI `base_url` prepends `http://` to URLs with scheme)
+- **Remove:** Per-peer session tabs in web UI (browser-to-peer auth/CORS broken)
+- **Remove:** Fleet table click-through to remote session detail (404s)
+- **Remove:** `target_node` field from schedule UI (scheduler ignores it)
+- **Remove:** CLI attach after remote spawn (tmux is local-only)
+
+**Phase 2 — Master mode (future, when multi-node demand materializes)**
+
+Inspired by Elasticsearch's cluster architecture: every node runs the same binary, one node is promoted to master. The master holds the session index (metadata), not the sessions themselves (which are tmux processes on worker nodes).
+
+How it works:
+- `pulpod --role master` (or `role = "master"` in config)
+- Worker nodes push session events to master via outbound WebSocket (no inbound ports needed on workers)
+- Master maintains a unified session index in its SQLite
+- Web UI connects to master only — master proxies terminal/output WebSocket to the right worker
+- CLI connects to master — master routes commands to the right worker
+- Single auth: workers authenticate to master, users authenticate to master
+
+Why this is simpler than Elasticsearch:
+- No consensus protocol needed — losing the master loses visibility, not data. Sessions keep running.
+- No replication — sessions are ephemeral processes, not persistent data.
+- Eventually consistent — 5-second delay in status propagation is fine.
+
+Key property: **code never leaves the worker nodes.** The master sees session metadata (names, statuses, tokens consumed) but never terminal content unless explicitly proxied on user request. This preserves Pulpo's sovereignty guarantee.
+
 ### Parked Features (build when demanded)
-
-**Multi-node scheduling (P3.2)**
-- `target_node` on schedules for remote dispatch
-- Build when there are real users with multi-node fleets
-
-**Distributed discovery**
-- Seed-based gossip, mesh networking, or a coordinator node in the cloud
-- Build when manual peer config + Tailscale discovery isn't enough
 
 **Configurable output matchers (P5.2)**
 - User-defined regex → action rules in config.toml
@@ -191,12 +218,16 @@ Revisit when demanded by real usage, not by speculation.
 - ~~Provider-specific features~~ — agents handle their own capabilities.
 - ~~Guard/safety rails~~ — agents have their own permission models.
 - ~~Culture system~~ — agents read CLAUDE.md/AGENTS.md natively.
+- ~~Per-peer session tabs in web UI~~ — browser-to-peer HTTP requires auth/CORS that the masterless architecture can't provide. Replaced by fleet summary table (read-only).
+- ~~Fleet click-through to remote session detail~~ — local API returns 404 for sessions on other nodes. Requires master-mode proxying.
+- ~~`target_node` on schedules~~ — field was stored but never read by the scheduler. Requires master-mode job dispatch.
+- ~~Smart node selection (`--auto`)~~ — scoring was naive and excluded the local node. Revisit in master mode where the master has real-time fleet state.
 
 ## Success Criteria
 
 Pulpo is succeeding if:
 
-- You spawn agents on remote machines without SSH
+- You spawn agents on your machines and they run reliably as background workers
 - You check agent status from your phone while away from your desk
 - Watchdog catches runaway agents before they burn through your API budget
 - Sessions survive machine reboots and you resume them
@@ -210,7 +241,7 @@ Pulpo is succeeding if:
 - Infrastructure layer, not intelligence layer
 - Command-agnostic: runs any agent, any command
 - Sovereign by architecture: self-hosted, no cloud dependency
-- Multi-node native: sessions are not tied to localhost
+- Single-node excellence first, multi-node via master promotion
 - Mobile-first web UI: the phone is the primary management surface
 - Explicit failure semantics: every state transition is observable and auditable
 - Zero-config local start, progressive operational depth
