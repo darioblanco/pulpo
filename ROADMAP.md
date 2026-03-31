@@ -83,7 +83,7 @@ Session features:
 - Secret store: encrypted-at-rest env vars injected into sessions
 - Ink blueprints with secrets and runtime defaults
 - Per-session idle threshold (`--idle-threshold`)
-- Configurable waiting patterns (31 built-in + user-configurable)
+- Configurable waiting patterns (29 built-in + user-configurable)
 
 Scheduling:
 - DB-backed schedules with cron expressions (local timezone)
@@ -121,7 +121,7 @@ This turns Pulpo from "nice to have" into "can't run agents without this."
 
 ### Agent Completion Callbacks
 
-Replace the 31 regex patterns for idle detection with a reliable signal. Inject `PULPO_CALLBACK_URL` as an environment variable into every session. Any agent (or wrapper script) can call it to signal "I'm done."
+Replace the 29 waiting-for-input patterns with a reliable signal. Inject `PULPO_CALLBACK_URL` as an environment variable into every session. Any agent (or wrapper script) can call it to signal "I'm done."
 
 This is more reliable than pattern matching and works with any agent, including future ones we haven't seen yet.
 

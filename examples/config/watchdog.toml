@@ -23,7 +23,7 @@ ready_ttl_secs = 3600            # Kill tmux shell 1 hour after agent exits (0 =
 # Auto-adopt external tmux sessions
 adopt_tmux = true                # Discover and manage tmux sessions not created by pulpo
 
-# Extra waiting-for-input patterns (appended to 31 built-in patterns)
+# Extra waiting-for-input patterns (appended to 29 built-in patterns)
 # Built-in patterns cover: Claude Code, Codex, Gemini CLI, Aider, Amazon Q, SSH, sudo
 waiting_patterns = [
     "custom-tool>",              # Your custom tool's prompt

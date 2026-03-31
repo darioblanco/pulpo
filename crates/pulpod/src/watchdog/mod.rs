@@ -392,38 +392,40 @@ async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemoryS
 }
 
 /// Patterns that indicate the agent is waiting for user input.
+/// Matched case-insensitively as substrings against the last 5 lines of output.
 const DEFAULT_WAITING_PATTERNS: &[&str] = &[
-    // Existing
-    "Do you trust",
-    "Yes / No",
+    // Generic confirmation prompts
     "(y/n)",
-    "Press Enter",
     "[Y/n]",
     "[yes/no]",
     "(yes/no)",
-    "? [Y/n]",
-    "? (y/N)",
+    "Yes / No",
+    "Do you trust",
+    "Press Enter",
     "approve this",
+    "Are you sure",
+    "Continue?",
+    "Confirm?",
+    "Proceed?",
     // Claude Code
     "(Y)es",
     "(N)o",
     "(A)lways",
     "Do you want to proceed",
     // Codex CLI
-    "Confirm?",
+    "Allow command?",
     // Gemini CLI
     "Allow?",
-    "Proceed?",
+    "Approve?",
     // Aider
-    "Add these files?",
+    "to the chat?",
     "Apply edit?",
-    "Run command?",
+    "shell command?",
+    "Create new file",
     // Amazon Q
     "Allow this action?",
     "Accept suggestion?",
-    // Generic CLI
-    "Continue?",
-    "Are you sure",
+    // SSH/sudo
     "continue connecting (yes/no)",
     "'s password:",
     "[sudo] password",
@@ -3518,9 +3520,10 @@ mod tests {
 
     #[test]
     fn test_detect_waiting_aider_patterns() {
-        assert!(detect_waiting_for_input("Add these files?\n", &[]));
+        assert!(detect_waiting_for_input("Add foo.py to the chat?\n", &[]));
         assert!(detect_waiting_for_input("Apply edit?\n", &[]));
-        assert!(detect_waiting_for_input("Run command?\n", &[]));
+        assert!(detect_waiting_for_input("Run shell command?\n", &[]));
+        assert!(detect_waiting_for_input("Create new file bar.rs?\n", &[]));
     }
 
     #[test]
@@ -3529,6 +3532,17 @@ mod tests {
         assert!(detect_waiting_for_input("Are you sure (y/n)?\n", &[]));
         assert!(detect_waiting_for_input("user@host's password:\n", &[]));
         assert!(detect_waiting_for_input("[sudo] password for user:\n", &[]));
+    }
+
+    #[test]
+    fn test_detect_waiting_gemini_patterns() {
+        assert!(detect_waiting_for_input("Approve? (y/n/always) ->\n", &[]));
+        assert!(detect_waiting_for_input("Allow?\n", &[]));
+    }
+
+    #[test]
+    fn test_detect_waiting_codex_patterns() {
+        assert!(detect_waiting_for_input("Allow command?\n", &[]));
     }
 
     #[tokio::test]

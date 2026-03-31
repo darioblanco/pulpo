@@ -81,15 +81,15 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 
 ## Waiting Patterns (Idle Detection)
 
-The watchdog inspects the last 5 lines of terminal output for these patterns (case-insensitive). 31 built-in patterns cover major coding agents and common CLI prompts:
+The watchdog inspects the last 5 lines of terminal output for these patterns (case-insensitive). 29 built-in patterns cover major coding agents and common CLI prompts:
 
-- **General**: `Do you trust`, `Yes / No`, `(y/n)`, `[Y/n]`, `[yes/no]`, `(yes/no)`, `? [Y/n]`, `? (y/N)`, `Press Enter`, `approve this`
+- **Generic**: `(y/n)`, `[Y/n]`, `[yes/no]`, `(yes/no)`, `Yes / No`, `Do you trust`, `Press Enter`, `approve this`, `Are you sure`, `Continue?`, `Confirm?`, `Proceed?`
 - **Claude Code**: `(Y)es`, `(N)o`, `(A)lways`, `Do you want to proceed`
-- **Codex CLI**: `Confirm?`
-- **Gemini CLI**: `Allow?`, `Proceed?`
-- **Aider**: `Add these files?`, `Apply edit?`, `Run command?`
+- **Codex CLI**: `Allow command?`
+- **Gemini CLI**: `Allow?`, `Approve?`
+- **Aider**: `to the chat?`, `Apply edit?`, `shell command?`, `Create new file`
 - **Amazon Q**: `Allow this action?`, `Accept suggestion?`
-- **Generic CLI**: `Continue?`, `Are you sure`, `continue connecting (yes/no)`, `'s password:`, `[sudo] password`
+- **SSH/sudo**: `continue connecting (yes/no)`, `'s password:`, `[sudo] password`
 
 Add custom patterns via `waiting_patterns` in `[watchdog]` config — they are appended to the built-in list.
 
