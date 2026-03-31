@@ -112,12 +112,6 @@ Spawn on another machine by name:
 pulpo --node mac-mini spawn gpu-task -- python train.py
 ```
 
-Or auto-select the least loaded node:
-
-```bash
-pulpo spawn review --auto -- claude -p "security audit"
-```
-
 This is where Pulpo starts to feel different from a local session manager: the
 runtime can live on another machine, but the control model stays the same.
 

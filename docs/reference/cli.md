@@ -40,7 +40,6 @@ By default, `spawn` auto-attaches to the session. Use `--detach` / `-d` to skip 
 | `--worktree` | Create an isolated git worktree for the session |
 | `--worktree-base <BRANCH>` | Fork worktree from a specific branch (implies `--worktree`) |
 | `--runtime <RUNTIME>` | Session runtime: `tmux` (default) or `docker` |
-| `--auto` | Auto-select the least loaded node |
 | `--secret <NAME>` | Inject a stored secret as an environment variable |
 
 If no name is provided, Pulpo derives one from the workdir/path context. If no command is provided, Pulpo falls back to the ink command, `node.default_command`, or finally `$SHELL`.
@@ -120,8 +119,6 @@ pulpo --node mac-mini:7433 spawn my-task -- claude -p "fix bug"
 # By peer name (resolved via peer registry)
 pulpo --node mac-mini spawn my-task -- claude -p "fix bug"
 
-# Auto-select least loaded node
-pulpo spawn my-task --auto -- claude -p "fix bug"
 ```
 
 ## Scripting Recipes

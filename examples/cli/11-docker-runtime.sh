@@ -30,10 +30,6 @@ echo "=== Docker runtime on a remote node ==="
 echo "pulpo --node gpu-box spawn ml-task --runtime docker -- python train.py"
 echo ""
 
-echo "=== Docker runtime with auto node selection ==="
-echo "pulpo spawn heavy-task --runtime docker --auto -- codex 'optimize database queries'"
-echo ""
-
 echo "=== Check Docker runtime sessions ==="
 echo "pulpo list"
 echo "# Docker runtime sessions show 'docker:pulpo-<name>' as backend ID"
