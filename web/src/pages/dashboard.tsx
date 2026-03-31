@@ -17,7 +17,7 @@ import {
 } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { Trash2, CheckSquare } from 'lucide-react';
-import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip';
+import { PeerStatusDot } from '@/components/shared/peer-status-dot';
 import { useSSE } from '@/hooks/use-sse';
 import { useConnection } from '@/hooks/use-connection';
 import { detectStatusChanges, showDesktopNotification } from '@/lib/notifications';
@@ -142,6 +142,16 @@ export function DashboardPage() {
     [sessions],
   );
 
+  // Prune stale selections when sessions change
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const currentIds = new Set(sessions.map((s) => s.id));
+    const pruned = new Set([...selectedIds].filter((id) => currentIds.has(id)));
+    if (pruned.size !== selectedIds.size) {
+      setSelectedIds(pruned);
+    }
+  }, [sessions, selectedIds]);
+
   const handleCleanup = useCallback(async () => {
     try {
       const result = await cleanupSessions();
@@ -174,39 +184,32 @@ export function DashboardPage() {
     }
   }, [filteredSessions, selectedIds]);
 
-  const handleBatchStop = useCallback(async () => {
-    setBatchLoading(true);
-    try {
-      for (const id of selectedIds) {
-        await stopSession(id);
+  const handleBatchAction = useCallback(
+    async (purge: boolean) => {
+      const verb = purge ? 'Deleted' : 'Stopped';
+      const count = selectedIds.size;
+      setBatchLoading(true);
+      try {
+        const results = await Promise.allSettled(
+          [...selectedIds].map((id) => stopSession(id, purge || undefined)),
+        );
+        const failed = results.filter((r) => r.status === 'rejected').length;
+        if (failed === 0) {
+          toast(`${verb} ${count} session${count !== 1 ? 's' : ''}`);
+        } else {
+          toast.error(`${verb} ${count - failed}/${count} sessions (${failed} failed)`);
+        }
+        setSelectedIds(new Set());
+        setSelectionMode(false);
+        handleRefresh();
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : `Failed to ${verb.toLowerCase()} sessions`);
+      } finally {
+        setBatchLoading(false);
       }
-      toast(`Stopped ${selectedIds.size} session${selectedIds.size !== 1 ? 's' : ''}`);
-      setSelectedIds(new Set());
-      setSelectionMode(false);
-      handleRefresh();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to stop sessions');
-    } finally {
-      setBatchLoading(false);
-    }
-  }, [selectedIds, handleRefresh]);
-
-  const handleBatchDelete = useCallback(async () => {
-    setBatchLoading(true);
-    try {
-      for (const id of selectedIds) {
-        await stopSession(id, true);
-      }
-      toast(`Deleted ${selectedIds.size} session${selectedIds.size !== 1 ? 's' : ''}`);
-      setSelectedIds(new Set());
-      setSelectionMode(false);
-      handleRefresh();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to delete sessions');
-    } finally {
-      setBatchLoading(false);
-    }
-  }, [selectedIds, handleRefresh]);
+    },
+    [selectedIds, handleRefresh],
+  );
 
   const hasMultipleNodes = peers.length > 0;
 
@@ -311,28 +314,14 @@ export function DashboardPage() {
                     <TabsTrigger key={peer.name} value={peer.name} data-testid={`tab-${peer.name}`}>
                       <div className="flex flex-col items-start leading-tight">
                         <div className="flex items-center">
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span
-                                  data-testid={`peer-dot-${peer.name}`}
-                                  className={`mr-1.5 inline-block h-2 w-2 rounded-full ${
-                                    peer.status === 'online'
-                                      ? 'bg-status-ready'
-                                      : peer.status === 'offline'
-                                        ? 'bg-status-stopped'
-                                        : 'bg-muted-foreground'
-                                  }`}
-                                />
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                {peer.name} ({peer.address}) —{' '}
-                                {peer.status === 'offline'
-                                  ? 'Offline — last probe failed'
-                                  : peer.status}
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
+                          <span className="mr-1.5">
+                            <PeerStatusDot
+                              name={peer.name}
+                              address={peer.address}
+                              status={peer.status}
+                              testId={`peer-dot-${peer.name}`}
+                            />
+                          </span>
                           {peer.name}
                           <span className="ml-1.5 text-xs text-muted-foreground">
                             ({(peerSessions[peer.name] ?? []).length})
@@ -464,7 +453,7 @@ export function DashboardPage() {
             size="sm"
             data-testid="batch-stop-button"
             disabled={batchLoading}
-            onClick={handleBatchStop}
+            onClick={() => handleBatchAction(false)}
           >
             Stop
           </Button>
@@ -473,7 +462,7 @@ export function DashboardPage() {
             size="sm"
             data-testid="batch-delete-button"
             disabled={batchLoading}
-            onClick={handleBatchDelete}
+            onClick={() => handleBatchAction(true)}
           >
             Delete
           </Button>
