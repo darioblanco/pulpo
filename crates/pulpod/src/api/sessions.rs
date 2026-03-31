@@ -278,7 +278,6 @@ mod tests {
     use super::*;
     use crate::api::AppState;
     use crate::backend::Backend;
-    use pulpo_common::session::Runtime;
     use std::collections::HashMap;
 
     use crate::config::{Config, NodeConfig};
@@ -1036,31 +1035,12 @@ mod tests {
             id,
             name: "snap-test".into(),
             workdir: "/tmp".into(),
-            status: SessionStatus::Stopped,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: Some("saved output from snapshot".into()),
-            metadata: None,
             command: "echo test".into(),
-            description: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
+            status: SessionStatus::Stopped,
+            output_snapshot: Some("saved output from snapshot".into()),
             created_at: now,
             updated_at: now,
+            ..Default::default()
         };
         state
             .session_manager

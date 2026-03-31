@@ -10,7 +10,7 @@ use pulpo_common::session::SessionStatus;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
-use pulpo_common::session::{InterventionCode, Runtime, Session, meta};
+use pulpo_common::session::{InterventionCode, Session, meta};
 
 use crate::backend::Backend;
 use crate::store::Store;
@@ -571,19 +571,13 @@ async fn check_session_idle(
                         session.name
                     );
                 } else if let Some(tx) = &ready_ctx.event_tx {
-                    let event = SessionEvent {
-                        session_id: session.id.to_string(),
-                        session_name: session.name.clone(),
-                        status: SessionStatus::Idle.to_string(),
-                        previous_status: Some(SessionStatus::Active.to_string()),
-                        node_name: ready_ctx.node_name.clone(),
-                        output_snippet: Some(current_output.clone()),
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                        total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
-                        total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
-                        session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
-                        ..Default::default()
-                    };
+                    let event = build_session_event(
+                        session,
+                        SessionStatus::Idle,
+                        Some(SessionStatus::Active),
+                        &ready_ctx.node_name,
+                        Some(current_output.clone()),
+                    );
                     let _ = tx.send(PulpoEvent::Session(event));
                 }
                 return;
@@ -613,19 +607,13 @@ async fn handle_session_ready(store: &Store, session: &Session, ctx: &ReadyConte
 
     // Emit SSE event
     if let Some(tx) = &ctx.event_tx {
-        let event = SessionEvent {
-            session_id: session.id.to_string(),
-            session_name: session.name.clone(),
-            status: SessionStatus::Ready.to_string(),
-            previous_status: Some(previous.to_string()),
-            node_name: ctx.node_name.clone(),
-            output_snippet: session.output_snapshot.clone(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
-            total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
-            session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
-            ..Default::default()
-        };
+        let event = build_session_event(
+            session,
+            SessionStatus::Ready,
+            Some(previous),
+            &ctx.node_name,
+            session.output_snapshot.clone(),
+        );
         let _ = tx.send(PulpoEvent::Session(event));
     }
 }
@@ -650,25 +638,13 @@ async fn handle_active_session(
                 session.name
             );
         } else if let Some(tx) = &ready_ctx.event_tx {
-            let event = SessionEvent {
-                session_id: session.id.to_string(),
-                session_name: session.name.clone(),
-                status: SessionStatus::Active.to_string(),
-                previous_status: Some(SessionStatus::Idle.to_string()),
-                node_name: ready_ctx.node_name.clone(),
-                output_snippet: session.output_snapshot.clone(),
-                timestamp: chrono::Utc::now().to_rfc3339(),
-                git_branch: None,
-                git_commit: None,
-                git_insertions: None,
-                git_deletions: None,
-                git_files_changed: None,
-                pr_url: None,
-                error_status: None,
-                total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
-                total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
-                session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
-            };
+            let event = build_session_event(
+                session,
+                SessionStatus::Active,
+                Some(SessionStatus::Idle),
+                &ready_ctx.node_name,
+                session.output_snapshot.clone(),
+            );
             let _ = tx.send(PulpoEvent::Session(event));
         }
     }
@@ -814,6 +790,29 @@ async fn detect_and_store_output_metadata(store: &Store, session: &Session, outp
 /// Resolve a token field value with accumulation for agent restarts.
 /// If new value < stored, the agent was restarted — accumulate.
 /// Returns `None` if the value is unchanged.
+/// Build a `SessionEvent` from a session, populating token/cost enrichment from metadata.
+fn build_session_event(
+    session: &Session,
+    status: SessionStatus,
+    previous: Option<SessionStatus>,
+    node_name: &str,
+    output: Option<String>,
+) -> SessionEvent {
+    SessionEvent {
+        session_id: session.id.to_string(),
+        session_name: session.name.clone(),
+        status: status.to_string(),
+        previous_status: previous.map(|s| s.to_string()),
+        node_name: node_name.to_owned(),
+        output_snippet: output,
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
+        total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
+        session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
+        ..Default::default()
+    }
+}
+
 fn accumulate_token_value(new_val: u64, stored: Option<&str>) -> Option<u64> {
     let prev = stored.and_then(|v| v.parse::<u64>().ok());
     match prev {
@@ -1101,28 +1100,8 @@ async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &Re
             command,
             description: Some("Adopted from tmux".into()),
             status,
-            exit_code: None,
             backend_session_id: Some(tmux_id.clone()),
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
 
         if let Err(e) = store.insert_session(&session).await {
@@ -1339,28 +1318,8 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some(name.to_owned()),
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
         session
@@ -1813,28 +1772,7 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
 
@@ -2144,28 +2082,10 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("idle-session".into()),
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         // Set the output_snapshot to match what MockBackend returns
         session.output_snapshot = Some("test output".into());
@@ -2204,28 +2124,11 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Idle,
-            exit_code: None,
             backend_session_id: Some("kill-idle".into()),
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
 
@@ -2272,28 +2175,11 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("active-again".into()),
             output_snapshot: Some("old output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(100)),
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
 
@@ -2331,27 +2217,7 @@ mod tests {
             description: Some("test".into()),
             status: SessionStatus::Ready,
             exit_code: Some(0),
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
 
@@ -2408,28 +2274,10 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("recent-session".into()),
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now()), // very recent
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
 
@@ -2466,28 +2314,11 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Idle,
-            exit_code: None,
             backend_session_id: Some("already-idle".into()),
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(idle_time),
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
 
@@ -2525,28 +2356,11 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Idle,
-            exit_code: None,
             backend_session_id: Some("kill-fail-idle".into()),
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
 
@@ -2605,28 +2419,10 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("no-output-ts".into()),
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
             created_at: chrono::Utc::now() - chrono::Duration::seconds(700),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
 
@@ -2687,28 +2483,10 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("loop-idle".into()),
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
 
@@ -2769,28 +2547,11 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("clear-fail".into()),
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now()),
             idle_since: Some(chrono::Utc::now()),
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
 
         // Drop sessions table to make store operations fail
@@ -2814,28 +2575,10 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("not-idle".into()),
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now()),
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
 
         // idle_since is None — early return, no store call
@@ -2956,28 +2699,10 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("alert-fail".into()),
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
 
         // Drop sessions table to make store operations fail
@@ -3021,28 +2746,10 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("kill-record-fail".into()),
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
 
         // Drop sessions table to make store operations fail (kill succeeds, store fails)
@@ -3087,28 +2794,9 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
 
@@ -3276,28 +2964,10 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("vanishing".into()),
             output_snapshot: Some("test output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
 
         // Don't insert — simulate the session vanishing between list and kill.
@@ -3545,28 +3215,10 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("active-to-idle".into()),
             output_snapshot: Some("Building...\nDo you trust this file?".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now()),
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
 
@@ -3602,28 +3254,11 @@ mod tests {
             command: "echo hello".into(),
             description: Some("test".into()),
             status: SessionStatus::Idle,
-            exit_code: None,
             backend_session_id: Some("idle-to-active".into()),
             output_snapshot: Some("old stale output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now()),
             idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(60)),
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&session).await.unwrap();
 
@@ -3656,30 +3291,12 @@ mod tests {
             name: name.into(),
             workdir: "/tmp/repo".into(),
             command: "echo test".into(),
-            description: None,
             status,
-            exit_code: None,
             backend_session_id: Some(name.into()),
             output_snapshot: Some("unchanged output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
             last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
             idle_since,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         }
     }
 
@@ -4319,30 +3936,9 @@ mod tests {
             name: "reused-name".into(),
             workdir: "/old".into(),
             command: "old-command".into(),
-            description: None,
             status: SessionStatus::Stopped,
-            exit_code: None,
             backend_session_id: Some("reused-name".into()),
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         };
         store.insert_session(&stopped_session).await.unwrap();
 

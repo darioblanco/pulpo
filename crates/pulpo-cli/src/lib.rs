@@ -7,7 +7,7 @@ use pulpo_common::api::{
 };
 #[cfg(test)]
 use pulpo_common::session::Runtime;
-use pulpo_common::session::Session;
+use pulpo_common::session::{Session, SessionStatus};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -944,9 +944,9 @@ async fn check_session_alive(
             && let Ok(text) = ok_or_api_error(resp).await
             && let Ok(session) = serde_json::from_str::<Session>(&text)
         {
-            match session.status.to_string().as_str() {
-                "creating" => continue,
-                "lost" | "stopped" => {
+            match session.status {
+                SessionStatus::Creating => continue,
+                SessionStatus::Lost | SessionStatus::Stopped => {
                     anyhow::bail!(
                         "Session \"{}\" exited immediately — the command may have failed.\n  Check logs: pulpo logs {}",
                         session.name,
@@ -1717,13 +1717,13 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             .map_err(|e| friendly_error(&e, node))?;
             let text = ok_or_api_error(resp).await?;
             let session: Session = serde_json::from_str(&text)?;
-            match session.status.to_string().as_str() {
-                "lost" => {
+            match session.status {
+                SessionStatus::Lost => {
                     anyhow::bail!(
                         "Session \"{name}\" is lost (agent process died). Resume it first:\n  pulpo resume {name}"
                     );
                 }
-                "stopped" => {
+                SessionStatus::Stopped => {
                     anyhow::bail!(
                         "Session \"{name}\" is {} — cannot attach to a stopped session.",
                         session.status
@@ -2023,34 +2023,12 @@ mod tests {
     /// Helper to build a minimal `Session` for `format_branch` tests.
     fn repo_session(workdir: &str, branch: Option<&str>) -> Session {
         Session {
-            id: uuid::Uuid::nil(),
             name: "test".into(),
             workdir: workdir.into(),
             command: "echo".into(),
-            description: None,
             status: pulpo_common::session::SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
             git_branch: branch.map(Into::into),
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         }
     }
 
@@ -2315,39 +2293,16 @@ mod tests {
 
     #[test]
     fn test_format_worktree_sessions_with_data() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
-        use uuid::Uuid;
 
         let session = Session {
-            id: Uuid::nil(),
             name: "fix-auth".into(),
             workdir: "/tmp/repo".into(),
             command: "claude -p 'fix auth'".into(),
-            description: None,
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
             worktree_path: Some("/home/user/.pulpo/worktrees/fix-auth".into()),
             worktree_branch: Some("fix-auth".into()),
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         };
         let sessions = vec![&session];
         let output = format_worktree_sessions(&sessions);
@@ -2362,39 +2317,15 @@ mod tests {
 
     #[test]
     fn test_format_worktree_sessions_no_branch() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
-        use uuid::Uuid;
 
         let session = Session {
-            id: Uuid::nil(),
             name: "old-session".into(),
             workdir: "/tmp".into(),
             command: "echo".into(),
-            description: None,
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
             worktree_path: Some("/home/user/.pulpo/worktrees/old-session".into()),
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         };
         let sessions = vec![&session];
         let output = format_worktree_sessions(&sessions);
@@ -3226,39 +3157,15 @@ mod tests {
 
     #[test]
     fn test_format_sessions_with_data() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
-        use uuid::Uuid;
 
         let sessions = vec![Session {
-            id: Uuid::nil(),
             name: "my-api".into(),
             workdir: "/tmp/repo".into(),
             command: "claude -p 'Fix the bug'".into(),
             description: Some("Fix the bug".into()),
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("ID"));
@@ -3319,39 +3226,16 @@ mod tests {
 
     #[test]
     fn test_format_sessions_with_git_branch() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
-        use uuid::Uuid;
 
         let sessions = vec![Session {
-            id: Uuid::nil(),
             name: "my-api".into(),
             workdir: "/tmp/repo".into(),
             command: "echo hello".into(),
-            description: None,
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
             git_branch: Some("main".into()),
             git_commit: Some("abc1234".into()),
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("main"), "should show branch: {output}");
@@ -3359,41 +3243,17 @@ mod tests {
 
     #[test]
     fn test_format_sessions_with_error_status() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
-        use uuid::Uuid;
 
         let mut meta = std::collections::HashMap::new();
         meta.insert("error_status".into(), "Compile error".into());
         let sessions = vec![Session {
-            id: Uuid::nil(),
             name: "my-api".into(),
             workdir: "/tmp/repo".into(),
             command: "echo hello".into(),
-            description: None,
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
             metadata: Some(meta),
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("[!]"));
@@ -3401,39 +3261,16 @@ mod tests {
 
     #[test]
     fn test_format_sessions_docker_runtime() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
-        use uuid::Uuid;
 
         let sessions = vec![Session {
-            id: Uuid::nil(),
             name: "sandbox-test".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            description: None,
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("docker:pulpo-sandbox-test".into()),
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
             runtime: Runtime::Docker,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         }];
         let output = format_sessions(&sessions);
         assert!(
@@ -3448,41 +3285,16 @@ mod tests {
 
     #[test]
     fn test_format_sessions_long_command_truncated() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
-        use uuid::Uuid;
 
         let sessions = vec![Session {
-            id: Uuid::nil(),
             name: "test".into(),
             workdir: "/tmp".into(),
             command:
                 "claude -p 'A very long command that exceeds fifty characters in total length here'"
                     .into(),
-            description: None,
             status: SessionStatus::Ready,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("..."));
@@ -3490,39 +3302,16 @@ mod tests {
 
     #[test]
     fn test_format_sessions_worktree_indicator() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
-        use uuid::Uuid;
 
         let sessions = vec![Session {
-            id: Uuid::nil(),
             name: "wt-task".into(),
             workdir: "/repo".into(),
             command: "claude".into(),
-            description: None,
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
             worktree_path: Some("/home/user/.pulpo/worktrees/wt-task".into()),
             worktree_branch: Some("wt-task".into()),
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         }];
         let output = format_sessions(&sessions);
         assert!(
@@ -3534,42 +3323,18 @@ mod tests {
 
     #[test]
     fn test_format_sessions_pr_indicator() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
         use std::collections::HashMap;
-        use uuid::Uuid;
 
         let mut meta = HashMap::new();
         meta.insert("pr_url".into(), "https://github.com/a/b/pull/1".into());
         let sessions = vec![Session {
-            id: Uuid::nil(),
             name: "pr-task".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            description: None,
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
             metadata: Some(meta),
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         }];
         let output = format_sessions(&sessions);
         assert!(
@@ -3581,42 +3346,20 @@ mod tests {
 
     #[test]
     fn test_format_sessions_worktree_and_pr_indicator() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
         use std::collections::HashMap;
-        use uuid::Uuid;
 
         let mut meta = HashMap::new();
         meta.insert("pr_url".into(), "https://github.com/a/b/pull/1".into());
         let sessions = vec![Session {
-            id: Uuid::nil(),
             name: "both-task".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            description: None,
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
             metadata: Some(meta),
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
             worktree_path: Some("/home/user/.pulpo/worktrees/both-task".into()),
             worktree_branch: Some("both-task".into()),
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         }];
         let output = format_sessions(&sessions);
         assert!(
@@ -3627,39 +3370,14 @@ mod tests {
 
     #[test]
     fn test_format_sessions_no_pr_without_metadata() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
-        use uuid::Uuid;
 
         let sessions = vec![Session {
-            id: Uuid::nil(),
             name: "no-pr".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            description: None,
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         }];
         let output = format_sessions(&sessions);
         assert!(
@@ -5458,40 +5176,15 @@ mod tests {
 
     #[test]
     fn test_format_sessions_multibyte_command_truncation() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
-        use uuid::Uuid;
 
         // Command with multi-byte chars exceeding 50 bytes; must not panic
         let sessions = vec![Session {
-            id: Uuid::nil(),
             name: "test".into(),
             workdir: "/tmp".into(),
             command: "echo '\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}\u{1F600}'".into(),
-            description: None,
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("..."));
@@ -5879,39 +5572,14 @@ mod tests {
 
     #[test]
     fn test_format_sessions_includes_usage_header() {
-        use chrono::Utc;
         use pulpo_common::session::SessionStatus;
-        use uuid::Uuid;
 
         let sessions = vec![Session {
-            id: Uuid::nil(),
             name: "test".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
-            description: None,
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("USAGE"));

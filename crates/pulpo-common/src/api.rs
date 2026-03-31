@@ -1192,38 +1192,13 @@ mod tests {
 
     #[test]
     fn test_create_session_response_serialize() {
-        use crate::session::{Runtime, Session, SessionStatus};
-        use chrono::Utc;
-        use uuid::Uuid;
+        use crate::session::{Session, SessionStatus};
         let session = Session {
-            id: Uuid::nil(),
             name: "test".into(),
             workdir: "/tmp".into(),
             command: "echo hi".into(),
-            description: None,
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         };
         let resp = CreateSessionResponse { session };
         let json = serde_json::to_string(&resp).unwrap();
@@ -1299,41 +1274,16 @@ mod tests {
     // -- Fleet type tests --
 
     fn make_fleet_session() -> FleetSession {
-        use crate::session::{Runtime, Session, SessionStatus};
-        use chrono::Utc;
-        use uuid::Uuid;
+        use crate::session::{Session, SessionStatus};
         FleetSession {
             node_name: "node-a".into(),
             node_address: "10.0.0.1:7433".into(),
             session: Session {
-                id: Uuid::nil(),
                 name: "my-session".into(),
                 workdir: "/tmp".into(),
                 command: "echo hi".into(),
-                description: None,
                 status: SessionStatus::Active,
-                exit_code: None,
-                backend_session_id: None,
-                output_snapshot: None,
-                metadata: None,
-                ink: None,
-                intervention_code: None,
-                intervention_reason: None,
-                intervention_at: None,
-                last_output_at: None,
-                idle_since: None,
-                idle_threshold_secs: None,
-                worktree_path: None,
-                worktree_branch: None,
-                git_branch: None,
-                git_commit: None,
-                git_files_changed: None,
-                git_insertions: None,
-                git_deletions: None,
-                git_ahead: None,
-                runtime: Runtime::Tmux,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
+                ..Default::default()
             },
         }
     }

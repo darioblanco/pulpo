@@ -880,7 +880,6 @@ mod tests {
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
-    use pulpo_common::session::Runtime;
     use std::collections::HashMap;
     use std::sync::Mutex;
 
@@ -1712,34 +1711,13 @@ mod tests {
     fn test_wait_result_debug() {
         let result = WaitResult {
             session: Session {
-                id: uuid::Uuid::nil(),
                 name: "test".into(),
                 workdir: "/tmp".into(),
                 command: "echo hello".into(),
                 description: Some("test".into()),
                 status: SessionStatus::Ready,
                 exit_code: Some(0),
-                backend_session_id: None,
-                output_snapshot: None,
-                metadata: None,
-                ink: None,
-                intervention_code: None,
-                intervention_reason: None,
-                intervention_at: None,
-                last_output_at: None,
-                idle_since: None,
-                idle_threshold_secs: None,
-                worktree_path: None,
-                worktree_branch: None,
-                git_branch: None,
-                git_commit: None,
-                git_files_changed: None,
-                git_insertions: None,
-                git_deletions: None,
-                git_ahead: None,
-                runtime: Runtime::Tmux,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
+                ..Default::default()
             },
             output: "done".into(),
             timed_out: false,
@@ -1844,34 +1822,12 @@ mod tests {
     fn test_wait_result_serialize() {
         let result = WaitResult {
             session: Session {
-                id: uuid::Uuid::nil(),
                 name: "test".into(),
                 workdir: "/tmp".into(),
                 command: "echo hello".into(),
                 description: Some("test".into()),
                 status: SessionStatus::Ready,
-                exit_code: None,
-                backend_session_id: None,
-                output_snapshot: None,
-                metadata: None,
-                ink: None,
-                intervention_code: None,
-                intervention_reason: None,
-                intervention_at: None,
-                last_output_at: None,
-                idle_since: None,
-                idle_threshold_secs: None,
-                worktree_path: None,
-                worktree_branch: None,
-                git_branch: None,
-                git_commit: None,
-                git_files_changed: None,
-                git_insertions: None,
-                git_deletions: None,
-                git_ahead: None,
-                runtime: Runtime::Tmux,
-                created_at: chrono::Utc::now(),
-                updated_at: chrono::Utc::now(),
+                ..Default::default()
             },
             output: "done".into(),
             timed_out: false,
@@ -2074,28 +2030,7 @@ mod tests {
             command: "echo hello".into(),
             description: Some("remote test".into()),
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         }
     }
 
@@ -2108,27 +2043,7 @@ mod tests {
             description: Some("done".into()),
             status: SessionStatus::Ready,
             exit_code: Some(0),
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
+            ..Default::default()
         }
     }
 

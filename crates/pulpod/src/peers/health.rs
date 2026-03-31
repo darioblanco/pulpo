@@ -203,8 +203,6 @@ impl<P: PeerProber> CachedProber<P> {
 mod tests {
     use super::*;
     use pulpo_common::peer::PeerEntry;
-    use pulpo_common::session::Runtime;
-
     struct MockProber {
         results: HashMap<String, Result<ProbeResult, String>>,
     }
@@ -441,8 +439,6 @@ mod tests {
     #[tokio::test]
     async fn test_http_peer_prober_probe_real_server() {
         use axum::{Router, routing::get};
-        use chrono::Utc;
-
         let node_json = serde_json::to_string(&make_node_info("test-peer")).unwrap();
         let sessions = vec![
             Session {
@@ -450,62 +446,16 @@ mod tests {
                 name: "s1".into(),
                 workdir: "/tmp".into(),
                 command: "echo test".into(),
-                description: None,
                 status: pulpo_common::session::SessionStatus::Active,
-                exit_code: None,
-                backend_session_id: None,
-
-                output_snapshot: None,
-                metadata: None,
-                ink: None,
-                intervention_code: None,
-                intervention_reason: None,
-                intervention_at: None,
-                last_output_at: None,
-                idle_since: None,
-                idle_threshold_secs: None,
-                worktree_path: None,
-                worktree_branch: None,
-                git_branch: None,
-                git_commit: None,
-                git_files_changed: None,
-                git_insertions: None,
-                git_deletions: None,
-                git_ahead: None,
-                runtime: Runtime::Tmux,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
+                ..Default::default()
             },
             Session {
                 id: uuid::Uuid::new_v4(),
                 name: "s2".into(),
                 workdir: "/tmp".into(),
                 command: "echo test".into(),
-                description: None,
                 status: pulpo_common::session::SessionStatus::Active,
-                exit_code: None,
-                backend_session_id: None,
-
-                output_snapshot: None,
-                metadata: None,
-                ink: None,
-                intervention_code: None,
-                intervention_reason: None,
-                intervention_at: None,
-                last_output_at: None,
-                idle_since: None,
-                idle_threshold_secs: None,
-                worktree_path: None,
-                worktree_branch: None,
-                git_branch: None,
-                git_commit: None,
-                git_files_changed: None,
-                git_insertions: None,
-                git_deletions: None,
-                git_ahead: None,
-                runtime: Runtime::Tmux,
-                created_at: Utc::now(),
-                updated_at: Utc::now(),
+                ..Default::default()
             },
         ];
         let sessions_json = serde_json::to_string(&sessions).unwrap();

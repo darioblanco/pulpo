@@ -76,9 +76,10 @@ impl FromStr for InterventionCode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
+    #[default]
     Creating,
     Active,
     Idle,
@@ -162,6 +163,42 @@ pub struct Session {
     pub updated_at: DateTime<Utc>,
 }
 
+impl Default for Session {
+    fn default() -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::nil(),
+            name: String::new(),
+            workdir: String::new(),
+            command: String::new(),
+            description: None,
+            status: SessionStatus::default(),
+            exit_code: None,
+            backend_session_id: None,
+            output_snapshot: None,
+            metadata: None,
+            ink: None,
+            intervention_code: None,
+            intervention_reason: None,
+            intervention_at: None,
+            last_output_at: None,
+            idle_since: None,
+            idle_threshold_secs: None,
+            worktree_path: None,
+            worktree_branch: None,
+            git_branch: None,
+            git_commit: None,
+            git_files_changed: None,
+            git_insertions: None,
+            git_deletions: None,
+            git_ahead: None,
+            runtime: Runtime::default(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
 /// Well-known metadata keys used across the codebase.
 pub mod meta {
     // Token and cost tracking
@@ -199,7 +236,6 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
 
     fn make_session() -> Session {
         Session {
@@ -209,28 +245,9 @@ mod tests {
             command: "claude -p 'Fix the bug'".into(),
             description: Some("Fix the bug".into()),
             status: SessionStatus::Active,
-            exit_code: None,
             backend_session_id: Some("test-session".into()),
             output_snapshot: Some("some output".into()),
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         }
     }
 
@@ -360,28 +377,7 @@ mod tests {
             command: "echo hello".into(),
             description: None,
             status: SessionStatus::Creating,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&session).unwrap();
@@ -413,28 +409,7 @@ mod tests {
             command: "echo test".into(),
             description: None,
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         };
         let debug = format!("{session:?}");
         assert!(debug.contains("test"));
@@ -447,30 +422,9 @@ mod tests {
             name: "clone-test".into(),
             workdir: "/tmp".into(),
             command: "echo test".into(),
-            description: None,
             status: SessionStatus::Ready,
             exit_code: Some(0),
-            backend_session_id: None,
-            output_snapshot: None,
-            metadata: None,
-            ink: None,
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         };
         let cloned = session.clone();
         assert_eq!(cloned.id, session.id);
@@ -488,28 +442,9 @@ mod tests {
             command: "claude -p 'test'".into(),
             description: Some("Testing".into()),
             status: SessionStatus::Active,
-            exit_code: None,
-            backend_session_id: None,
-            output_snapshot: None,
             metadata: Some(meta),
             ink: Some("coder".into()),
-            intervention_code: None,
-            intervention_reason: None,
-            intervention_at: None,
-            last_output_at: None,
-            idle_since: None,
-            idle_threshold_secs: None,
-            worktree_path: None,
-            worktree_branch: None,
-            git_branch: None,
-            git_commit: None,
-            git_files_changed: None,
-            git_insertions: None,
-            git_deletions: None,
-            git_ahead: None,
-            runtime: Runtime::Tmux,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            ..Default::default()
         };
         let json = serde_json::to_string(&session).unwrap();
         let deserialized: Session = serde_json::from_str(&json).unwrap();
