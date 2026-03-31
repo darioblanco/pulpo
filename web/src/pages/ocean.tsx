@@ -2,11 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { AppHeader } from '@/components/layout/app-header';
 import { TidePool } from '@/components/ocean/tide-pool';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getPeers, getRemoteSessions, stopSession } from '@/api/client';
+import { getPeers, getFleetSessions, stopSession } from '@/api/client';
 import { loadAllSprites, type Sprites } from '@/components/ocean/engine/sprites';
 import { NODE_COLORS } from '@/components/ocean/engine/world';
 import { useSSE } from '@/hooks/use-sse';
-import type { NodeInfo, PeerInfo, Session } from '@/api/types';
+import type { FleetSession, NodeInfo, PeerInfo, Session } from '@/api/types';
 
 interface TidePoolEntry {
   nodeName: string;
@@ -20,7 +20,7 @@ export function OceanPage() {
   const { sessions } = useSSE();
   const [localNode, setLocalNode] = useState<NodeInfo | null>(null);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
-  const [peerSessions, setPeerSessions] = useState<Record<string, Session[]>>({});
+  const [fleetSessions, setFleetSessions] = useState<FleetSession[]>([]);
   const [sprites, setSprites] = useState<Sprites | null>(null);
   const [focusedNode, setFocusedNode] = useState<string | null>(null);
 
@@ -39,18 +39,9 @@ export function OceanPage() {
       setLocalNode(resp.local);
       setPeers(resp.peers);
 
-      const results: Record<string, Session[]> = {};
-      const promises = resp.peers
-        .filter((p) => p.status === 'online')
-        .map(async (peer) => {
-          try {
-            results[peer.name] = await getRemoteSessions(peer.address);
-          } catch {
-            results[peer.name] = [];
-          }
-        });
-      await Promise.all(promises);
-      setPeerSessions(results);
+      await getFleetSessions()
+        .then((r) => setFleetSessions(r.sessions))
+        .catch(() => setFleetSessions([]));
     } catch {
       // Silently ignore — will retry on next poll
     }
@@ -77,7 +68,7 @@ export function OceanPage() {
         nodeName: peers[i].name,
         isLocal: false,
         nodeStatus: peers[i].status,
-        sessions: peerSessions[peers[i].name] ?? [],
+        sessions: fleetSessions.filter((s) => s.node_name === peers[i].name),
         nodeColor: NODE_COLORS[(i + 1) % NODE_COLORS.length],
       });
     }

@@ -54,7 +54,7 @@ function RunHistoryPanel({ scheduleId, expanded }: { scheduleId: string; expande
   if (loading) {
     return (
       <tr data-testid={`runs-loading-${scheduleId}`}>
-        <td colSpan={7} className="px-6 py-3">
+        <td colSpan={6} className="px-6 py-3">
           <div className="space-y-1">
             <Skeleton className="h-6 w-full" />
             <Skeleton className="h-6 w-full" />
@@ -67,7 +67,7 @@ function RunHistoryPanel({ scheduleId, expanded }: { scheduleId: string; expande
   if (runs.length === 0) {
     return (
       <tr data-testid={`runs-empty-${scheduleId}`}>
-        <td colSpan={7} className="px-6 py-3 text-center text-sm text-muted-foreground">
+        <td colSpan={6} className="px-6 py-3 text-center text-sm text-muted-foreground">
           No runs yet
         </td>
       </tr>
@@ -76,7 +76,7 @@ function RunHistoryPanel({ scheduleId, expanded }: { scheduleId: string; expande
 
   return (
     <tr data-testid={`runs-panel-${scheduleId}`}>
-      <td colSpan={7} className="bg-muted/30 px-3 py-2">
+      <td colSpan={6} className="bg-muted/30 px-3 py-2">
         <table className="w-full text-xs">
           <thead>
             <tr className="text-left text-muted-foreground">
@@ -290,7 +290,6 @@ export function SchedulesPage() {
                     <th className="px-3 py-2 font-medium">Cron</th>
                     <th className="hidden px-3 py-2 font-medium md:table-cell">Next Run</th>
                     <th className="hidden px-3 py-2 font-medium sm:table-cell">Last Run</th>
-                    <th className="hidden px-3 py-2 font-medium lg:table-cell">Node</th>
                     <th className="px-3 py-2 font-medium">Status</th>
                     <th className="px-3 py-2 text-right font-medium">Actions</th>
                   </tr>
@@ -380,11 +379,6 @@ export function SchedulesPage() {
                             ) : (
                               <span className="text-xs text-muted-foreground">never</span>
                             )}
-                          </td>
-
-                          {/* Target Node */}
-                          <td className="hidden px-3 py-2 lg:table-cell">
-                            <span className="text-xs">{s.target_node ?? 'local'}</span>
                           </td>
 
                           {/* Status badge */}

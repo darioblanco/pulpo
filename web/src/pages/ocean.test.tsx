@@ -11,7 +11,7 @@ import * as api from '@/api/client';
 vi.mock('@/api/client', () => ({
   getPeers: vi.fn(),
   getSessions: vi.fn(),
-  getRemoteSessions: vi.fn(),
+  getFleetSessions: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
@@ -87,12 +87,13 @@ vi.stubGlobal(
 
 const mockGetPeers = vi.mocked(api.getPeers);
 const mockGetSessions = vi.mocked(api.getSessions);
-const mockGetRemoteSessions = vi.mocked(api.getRemoteSessions);
+const mockGetFleetSessions = vi.mocked(api.getFleetSessions);
 
 beforeEach(() => {
   mockGetPeers.mockReset();
   mockGetSessions.mockReset();
-  mockGetRemoteSessions.mockReset();
+  mockGetFleetSessions.mockReset();
+  mockGetFleetSessions.mockResolvedValue({ sessions: [] });
   mockGetPeers.mockResolvedValue({
     local: {
       name: 'mac-studio',
@@ -186,7 +187,7 @@ describe('OceanPage', () => {
         },
       ],
     });
-    mockGetRemoteSessions.mockResolvedValue([]);
+    mockGetFleetSessions.mockResolvedValue({ sessions: [] });
 
     renderOcean();
     await waitFor(() => {

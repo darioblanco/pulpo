@@ -84,7 +84,6 @@ describe('ScheduleDialog', () => {
         cron: '0 3 * * *',
         command: 'test cmd',
         workdir: '/my/repo',
-        target_node: 'remote',
         description: 'My description',
       }),
     });
@@ -92,7 +91,6 @@ describe('ScheduleDialog', () => {
     expect(screen.getByTestId('cron-expr-input')).toHaveValue('0 3 * * *');
     expect(screen.getByTestId('schedule-command-input')).toHaveValue('test cmd');
     expect(screen.getByTestId('schedule-workdir-input')).toHaveValue('/my/repo');
-    expect(screen.getByTestId('schedule-target-node-input')).toHaveValue('remote');
     expect(screen.getByTestId('schedule-description-input')).toHaveValue('My description');
   });
 
@@ -411,9 +409,6 @@ describe('ScheduleDialog', () => {
     fireEvent.change(screen.getByTestId('schedule-workdir-input'), {
       target: { value: '/my/repo' },
     });
-    fireEvent.change(screen.getByTestId('schedule-target-node-input'), {
-      target: { value: 'remote-node' },
-    });
     fireEvent.change(screen.getByTestId('schedule-description-input'), {
       target: { value: 'My schedule' },
     });
@@ -426,7 +421,6 @@ describe('ScheduleDialog', () => {
         cron: '0 3 * * *',
         command: 'test cmd',
         workdir: '/my/repo',
-        target_node: 'remote-node',
         description: 'My schedule',
       });
     });
@@ -450,7 +444,6 @@ describe('ScheduleDialog', () => {
 
     await waitFor(() => {
       const call = mockCreateSchedule.mock.calls[0][0];
-      expect(call).not.toHaveProperty('target_node');
       expect(call).not.toHaveProperty('description');
       expect(call).not.toHaveProperty('ink');
     });

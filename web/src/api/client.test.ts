@@ -4,7 +4,6 @@ import {
   getNode,
   getPeers,
   getSessions,
-  getRemoteSessions,
   getFleetSessions,
   getSession,
   createSession,
@@ -161,18 +160,6 @@ describe('getSessions', () => {
     expect(mockFetch).toHaveBeenCalledWith('http://mac-mini:7433/api/v1/sessions', {
       headers: {},
     });
-  });
-});
-
-describe('getRemoteSessions', () => {
-  it('fetches sessions from remote address', async () => {
-    const sessions = [{ id: '2', name: 'remote-test' }];
-    mockFetch.mockResolvedValue(jsonResponse(sessions));
-
-    const result = await getRemoteSessions('win-pc:7433');
-
-    expect(mockFetch).toHaveBeenCalledWith('http://win-pc:7433/api/v1/sessions', { headers: {} });
-    expect(result).toEqual(sessions);
   });
 });
 

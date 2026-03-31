@@ -9,7 +9,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   getPeers,
-  getRemoteSessions,
   getFleetSessions,
   getSessions,
   cleanupSessions,
@@ -33,7 +32,6 @@ export function DashboardPage() {
   const { sessions, setSessions, connected } = useSSE();
   const [localNode, setLocalNode] = useState<NodeInfo | null>(null);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
-  const [peerSessions, setPeerSessions] = useState<Record<string, Session[]>>({});
   const [fleetSessions, setFleetSessions] = useState<FleetSession[]>([]);
   const [error, setError] = useState<string | null>(null);
   const previousSessionsRef = useRef<Session[]>([]);
@@ -49,22 +47,10 @@ export function DashboardPage() {
       setLocalNode(resp.local);
       setPeers(resp.peers);
 
-      const peerResults: Record<string, Session[]> = {};
-      const promises = resp.peers
-        .filter((p) => p.status === 'online')
-        .map(async (peer) => {
-          try {
-            peerResults[peer.name] = await getRemoteSessions(peer.address);
-          } catch {
-            peerResults[peer.name] = [];
-          }
-        });
-      // Fetch fleet sessions in parallel with peer sessions
-      const fleetPromise = getFleetSessions()
+      // Fetch fleet sessions
+      await getFleetSessions()
         .then((r) => setFleetSessions(r.sessions))
         .catch(() => setFleetSessions([]));
-      await Promise.all([...promises, fleetPromise]);
-      setPeerSessions(peerResults);
       setError(null);
     } catch {
       if (!isConnected) {
@@ -324,7 +310,13 @@ export function DashboardPage() {
                           </span>
                           {peer.name}
                           <span className="ml-1.5 text-xs text-muted-foreground">
-                            ({(peerSessions[peer.name] ?? []).length})
+                            (
+                            {
+                              fleetSessions.filter(
+                                (s) => s.node_name === peer.name && visibleStatuses.has(s.status),
+                              ).length
+                            }
+                            )
                           </span>
                         </div>
                         {peer.node_info && (
@@ -363,27 +355,34 @@ export function DashboardPage() {
                           <tbody>
                             {fleetSessions
                               .filter((s) => visibleStatuses.has(s.status))
-                              .map((s) => (
-                                <tr
-                                  key={`${s.node_name}-${s.id}`}
-                                  className="cursor-pointer border-b last:border-0 hover:bg-muted/30"
-                                  onClick={() => navigate(`/sessions/${s.id}`)}
-                                >
-                                  <td className="px-3 py-2 text-muted-foreground">{s.node_name}</td>
-                                  <td className="px-3 py-2 font-medium">{s.name}</td>
-                                  <td className="px-3 py-2">
-                                    <span className="inline-flex items-center gap-1.5 text-xs">
-                                      <span
-                                        className={`h-1.5 w-1.5 rounded-full ${statusColors[s.status] ?? 'bg-muted-foreground'}`}
-                                      />
-                                      {s.status}
-                                    </span>
-                                  </td>
-                                  <td className="hidden max-w-xs truncate px-3 py-2 text-muted-foreground sm:table-cell">
-                                    {s.command}
-                                  </td>
-                                </tr>
-                              ))}
+                              .map((s) => {
+                                const isLocal = s.node_name === localNode?.name;
+                                return (
+                                  <tr
+                                    key={`${s.node_name}-${s.id}`}
+                                    className={`border-b last:border-0 ${isLocal ? 'cursor-pointer hover:bg-muted/30' : ''}`}
+                                    onClick={
+                                      isLocal ? () => navigate(`/sessions/${s.id}`) : undefined
+                                    }
+                                  >
+                                    <td className="px-3 py-2 text-muted-foreground">
+                                      {s.node_name}
+                                    </td>
+                                    <td className="px-3 py-2 font-medium">{s.name}</td>
+                                    <td className="px-3 py-2">
+                                      <span className="inline-flex items-center gap-1.5 text-xs">
+                                        <span
+                                          className={`h-1.5 w-1.5 rounded-full ${statusColors[s.status] ?? 'bg-muted-foreground'}`}
+                                        />
+                                        {s.status}
+                                      </span>
+                                    </td>
+                                    <td className="hidden max-w-xs truncate px-3 py-2 text-muted-foreground sm:table-cell">
+                                      {s.command}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
                           </tbody>
                         </table>
                       </div>
@@ -407,21 +406,52 @@ export function DashboardPage() {
                   )}
                 </TabsContent>
 
-                {peers.map((peer) => (
-                  <TabsContent key={peer.name} value={peer.name}>
-                    <NodeCard
-                      name={peer.name}
-                      nodeInfo={peer.node_info}
-                      status={peer.status}
-                      sessions={peerSessions[peer.name] ?? []}
-                      address={peer.address}
-                      onRefresh={handleRefresh}
-                      selectionMode={selectionMode}
-                      selectedIds={selectedIds}
-                      onToggleSelect={toggleSelect}
-                    />
-                  </TabsContent>
-                ))}
+                {peers.map((peer) => {
+                  const peerFleetSessions = fleetSessions.filter(
+                    (s) => s.node_name === peer.name && visibleStatuses.has(s.status),
+                  );
+                  return (
+                    <TabsContent key={peer.name} value={peer.name}>
+                      {peerFleetSessions.length === 0 ? (
+                        <p className="py-8 text-center text-muted-foreground">
+                          No matching sessions on this node.
+                        </p>
+                      ) : (
+                        <div className="rounded-lg border">
+                          <table className="w-full text-sm" data-testid={`peer-table-${peer.name}`}>
+                            <thead>
+                              <tr className="border-b text-left text-muted-foreground">
+                                <th className="px-3 py-2 font-medium">Session</th>
+                                <th className="px-3 py-2 font-medium">Status</th>
+                                <th className="hidden px-3 py-2 font-medium sm:table-cell">
+                                  Command
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {peerFleetSessions.map((s) => (
+                                <tr key={s.id} className="border-b last:border-0">
+                                  <td className="px-3 py-2 font-medium">{s.name}</td>
+                                  <td className="px-3 py-2">
+                                    <span className="inline-flex items-center gap-1.5 text-xs">
+                                      <span
+                                        className={`h-1.5 w-1.5 rounded-full ${statusColors[s.status] ?? 'bg-muted-foreground'}`}
+                                      />
+                                      {s.status}
+                                    </span>
+                                  </td>
+                                  <td className="hidden max-w-xs truncate px-3 py-2 text-muted-foreground sm:table-cell">
+                                    {s.command}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </TabsContent>
+                  );
+                })}
               </Tabs>
             ) : (
               localNode && (

@@ -110,12 +110,6 @@ export async function getSessions(params?: ListSessionsParams): Promise<Session[
   return res.json();
 }
 
-export async function getRemoteSessions(address: string): Promise<Session[]> {
-  const base = address.includes('://') ? address : `http://${address}`;
-  const res = await authFetch(`${base}/api/v1/sessions`);
-  return res.json();
-}
-
 export async function getFleetSessions(): Promise<FleetSessionsResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/fleet/sessions`);
   return res.json();

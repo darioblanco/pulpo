@@ -31,7 +31,6 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
   const [cronExpr, setCronExpr] = useState('');
   const [command, setCommand] = useState('');
   const [workdir, setWorkdir] = useState('');
-  const [targetNode, setTargetNode] = useState('');
   const [selectedInk, setSelectedInk] = useState('');
   const [description, setDescription] = useState('');
   const [inks, setInks] = useState<Record<string, InkConfig>>({});
@@ -56,7 +55,6 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
       setCronExpr(schedule.cron);
       setCommand(schedule.command || '');
       setWorkdir(schedule.workdir || '');
-      setTargetNode(schedule.target_node || '');
       setSelectedInk(schedule.ink || '');
       setDescription(schedule.description || '');
       // Check if cron matches a preset
@@ -68,7 +66,6 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
       setCronExpr('');
       setCommand('');
       setWorkdir('');
-      setTargetNode('');
       setSelectedInk('');
       setDescription('');
       setError(null);
@@ -120,7 +117,6 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
         workdir: workdir.trim() || '.',
         ...(command.trim() ? { command: command.trim() } : {}),
         ...(selectedInk ? { ink: selectedInk } : {}),
-        ...(targetNode ? { target_node: targetNode } : {}),
         ...(description.trim() ? { description: description.trim() } : {}),
       };
 
@@ -252,17 +248,6 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
               </Select>
             </div>
           )}
-
-          <div className="space-y-1.5">
-            <Label htmlFor="schedule-target-node">Target Node (optional)</Label>
-            <Input
-              id="schedule-target-node"
-              placeholder="Leave empty for local"
-              value={targetNode}
-              onChange={(e) => setTargetNode(e.target.value)}
-              data-testid="schedule-target-node-input"
-            />
-          </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="schedule-description">Description</Label>

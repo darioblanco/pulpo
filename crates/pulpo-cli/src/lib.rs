@@ -78,10 +78,6 @@ pub enum Commands {
         #[arg(long)]
         idle_threshold: Option<u32>,
 
-        /// Auto-select the least loaded node
-        #[arg(long)]
-        auto: bool,
-
         /// Create an isolated git worktree for the session
         #[arg(long)]
         worktree: bool,
@@ -412,7 +408,11 @@ async fn deduplicate_session_name(
 
 /// Format the base URL from the node address.
 pub fn base_url(node: &str) -> String {
-    format!("http://{node}")
+    if node.starts_with("http://") || node.starts_with("https://") {
+        node.to_string()
+    } else {
+        format!("http://{node}")
+    }
 }
 
 /// Response shape for the output endpoint.
@@ -1522,56 +1522,6 @@ fn format_local_time(rfc3339: &str) -> String {
     )
 }
 
-/// Select the best node from the peer registry based on load.
-/// Returns the node address and name of the least loaded online peer.
-/// Scoring: lower memory usage + fewer active sessions = better.
-#[cfg(not(coverage))]
-async fn select_best_node(
-    client: &reqwest::Client,
-    base: &str,
-    token: Option<&str>,
-) -> Result<(String, String)> {
-    let resp = authed_get(client, format!("{base}/api/v1/peers"), token)
-        .send()
-        .await?;
-    let text = ok_or_api_error(resp).await?;
-    let peers_resp: PeersResponse = serde_json::from_str(&text)?;
-
-    // Score: fewer active sessions is better, more memory is better
-    let mut best: Option<(String, String, f64)> = None; // (address, name, score)
-
-    for peer in &peers_resp.peers {
-        if peer.status != pulpo_common::peer::PeerStatus::Online {
-            continue;
-        }
-        let sessions = peer.session_count.unwrap_or(0);
-        let mem = peer.node_info.as_ref().map_or(0, |n| n.memory_mb);
-        // Lower score = better (fewer sessions, more memory)
-        #[allow(clippy::cast_precision_loss)]
-        let score = sessions as f64 - (mem as f64 / 1024.0);
-        if best.as_ref().is_none_or(|(_, _, s)| score < *s) {
-            best = Some((peer.address.clone(), peer.name.clone(), score));
-        }
-    }
-
-    // Fall back to local if no online peers
-    match best {
-        Some((addr, name, _)) => Ok((addr, name)),
-        None => Ok(("localhost:7433".into(), peers_resp.local.name)),
-    }
-}
-
-/// Coverage stub — auto-select always falls back to local.
-#[cfg(coverage)]
-#[allow(clippy::unnecessary_wraps)]
-async fn select_best_node(
-    _client: &reqwest::Client,
-    _base: &str,
-    _token: Option<&str>,
-) -> Result<(String, String)> {
-    Ok(("localhost:7433".into(), "local".into()))
-}
-
 /// Try to start pulpod if it's not reachable on localhost.
 /// Returns true if the daemon was started (or was already running).
 #[cfg(not(coverage))]
@@ -1780,7 +1730,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             description,
             detach,
             idle_threshold,
-            auto,
             worktree,
             worktree_base,
             runtime,
@@ -1840,29 +1789,21 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             if !secret.is_empty() {
                 body["secrets"] = serde_json::json!(secret);
             }
-            let spawn_url = if *auto {
-                let (auto_addr, auto_name) =
-                    select_best_node(&client, &url, token.as_deref()).await?;
-                eprintln!("Auto-selected node: {auto_name} ({auto_addr})");
-                base_url(&auto_addr)
-            } else {
-                url.clone()
-            };
-            let resp = authed_post(
-                &client,
-                format!("{spawn_url}/api/v1/sessions"),
-                token.as_deref(),
-            )
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| friendly_error(&e, node))?;
+            let resp = authed_post(&client, format!("{url}/api/v1/sessions"), token.as_deref())
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
             let text = ok_or_api_error(resp).await?;
             let resp: CreateSessionResponse = serde_json::from_str(&text)?;
             let msg = format!(
                 "Created session \"{}\" ({})",
                 resp.session.name, resp.session.id
             );
+            // Auto-detach for remote spawn — can't attach to a remote tmux session
+            if !is_localhost(node) {
+                return Ok(msg);
+            }
             if !detach {
                 let backend_id = resp
                     .session
@@ -2036,6 +1977,12 @@ mod tests {
     fn test_base_url() {
         assert_eq!(base_url("localhost:7433"), "http://localhost:7433");
         assert_eq!(base_url("my-machine:9999"), "http://my-machine:9999");
+        // Already has scheme — pass through unchanged
+        assert_eq!(base_url("http://localhost:7433"), "http://localhost:7433");
+        assert_eq!(
+            base_url("https://pulpo.example.com"),
+            "https://pulpo.example.com"
+        );
     }
 
     #[test]
@@ -2616,7 +2563,7 @@ mod tests {
                 description: None,
                 detach: true,
                 idle_threshold: None,
-                auto: false,
+
                 worktree: false,
                 worktree_base: None,
                 runtime: None,
@@ -2643,7 +2590,7 @@ mod tests {
                 description: Some("Fix the bug".into()),
                 detach: true,
                 idle_threshold: None,
-                auto: false,
+
                 worktree: false,
                 worktree_base: None,
                 runtime: None,
@@ -2669,7 +2616,7 @@ mod tests {
                 description: Some("Full options".into()),
                 detach: true,
                 idle_threshold: Some(120),
-                auto: false,
+
                 worktree: true,
                 worktree_base: None,
                 runtime: Some("docker".into()),
@@ -2695,7 +2642,7 @@ mod tests {
                 description: None,
                 detach: true,
                 idle_threshold: None,
-                auto: false,
+
                 worktree: false,
                 worktree_base: None,
                 runtime: None,
@@ -2721,7 +2668,7 @@ mod tests {
                 description: None,
                 detach: true,
                 idle_threshold: None,
-                auto: false,
+
                 worktree: false,
                 worktree_base: None,
                 runtime: None,
@@ -2747,7 +2694,7 @@ mod tests {
                 description: None,
                 detach: true,
                 idle_threshold: None,
-                auto: false,
+
                 worktree: false,
                 worktree_base: None,
                 runtime: None,
@@ -2773,7 +2720,7 @@ mod tests {
                 description: None,
                 detach: false,
                 idle_threshold: None,
-                auto: false,
+
                 worktree: false,
                 worktree_base: None,
                 runtime: None,
@@ -2988,7 +2935,7 @@ mod tests {
                 description: None,
                 detach: true,
                 idle_threshold: None,
-                auto: false,
+
                 worktree: false,
                 worktree_base: None,
                 runtime: None,
@@ -3475,7 +3422,7 @@ mod tests {
                 description: None,
                 detach: true,
                 idle_threshold: None,
-                auto: false,
+
                 worktree: false,
                 worktree_base: None,
                 runtime: None,
@@ -4872,188 +4819,6 @@ mod tests {
         let result = execute(&cli).await;
         // Should try to connect to nonexistent-peer:7433 and fail
         assert!(result.is_err());
-    }
-
-    // -- Auto node selection tests --
-
-    #[test]
-    fn test_cli_parse_spawn_auto() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--auto"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Spawn { auto, .. }) if *auto
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_spawn_auto_default() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Spawn { auto, .. }) if !auto
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_select_best_node_coverage_stub() {
-        // Exercise the coverage stub (or real function in non-coverage builds)
-        let client = reqwest::Client::new();
-        // In coverage builds, the stub returns ("localhost:7433", "local")
-        // In non-coverage builds, this fails because no server is running — that's OK
-        let _result = select_best_node(&client, "http://127.0.0.1:19999", None).await;
-    }
-
-    #[cfg(not(coverage))]
-    #[tokio::test]
-    async fn test_select_best_node_picks_least_loaded() {
-        use axum::{Router, routing::get};
-
-        let app = Router::new().route(
-            "/api/v1/peers",
-            get(|| async {
-                r#"{"local":{"name":"local","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":16384,"gpu":null},"peers":[{"name":"busy","address":"busy:7433","status":"online","node_info":{"name":"busy","hostname":"h","os":"linux","arch":"x86_64","cpus":4,"memory_mb":8192,"gpu":null},"session_count":5,"source":"configured"},{"name":"idle","address":"idle:7433","status":"online","node_info":{"name":"idle","hostname":"h","os":"linux","arch":"x86_64","cpus":8,"memory_mb":16384,"gpu":null},"session_count":1,"source":"configured"}]}"#.to_owned()
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
-        let base = format!("http://127.0.0.1:{}", addr.port());
-
-        let client = reqwest::Client::new();
-        let (addr, name) = select_best_node(&client, &base, None).await.unwrap();
-        // "idle" has 1 session + 16384 MB → score = 1 - 16 = -15
-        // "busy" has 5 sessions + 8192 MB → score = 5 - 8 = -3
-        // idle wins (lower score)
-        assert_eq!(name, "idle");
-        assert_eq!(addr, "idle:7433");
-    }
-
-    #[cfg(not(coverage))]
-    #[tokio::test]
-    async fn test_select_best_node_no_online_peers_falls_back_to_local() {
-        use axum::{Router, routing::get};
-
-        let app = Router::new().route(
-            "/api/v1/peers",
-            get(|| async {
-                r#"{"local":{"name":"my-mac","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":16384,"gpu":null},"peers":[{"name":"offline-peer","address":"offline:7433","status":"offline","node_info":null,"session_count":null,"source":"configured"}]}"#.to_owned()
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
-        let base = format!("http://127.0.0.1:{}", addr.port());
-
-        let client = reqwest::Client::new();
-        let (addr, name) = select_best_node(&client, &base, None).await.unwrap();
-        assert_eq!(name, "my-mac");
-        assert_eq!(addr, "localhost:7433");
-    }
-
-    #[cfg(not(coverage))]
-    #[tokio::test]
-    async fn test_select_best_node_empty_peers_falls_back_to_local() {
-        use axum::{Router, routing::get};
-
-        let app = Router::new().route(
-            "/api/v1/peers",
-            get(|| async {
-                r#"{"local":{"name":"solo","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":16384,"gpu":null},"peers":[]}"#.to_owned()
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
-        let base = format!("http://127.0.0.1:{}", addr.port());
-
-        let client = reqwest::Client::new();
-        let (addr, name) = select_best_node(&client, &base, None).await.unwrap();
-        assert_eq!(name, "solo");
-        assert_eq!(addr, "localhost:7433");
-    }
-
-    #[cfg(not(coverage))]
-    #[tokio::test]
-    async fn test_execute_spawn_auto_selects_node() {
-        use axum::{
-            Router,
-            http::StatusCode,
-            routing::{get, post},
-        };
-
-        let create_json = test_create_response_json();
-
-        // Bind early so we know the address to embed in the peers response
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let node = format!("127.0.0.1:{}", addr.port());
-        let peer_addr = node.clone();
-
-        let app = Router::new()
-            .route(
-                "/api/v1/peers",
-                get(move || {
-                    let peer_addr = peer_addr.clone();
-                    async move {
-                        format!(
-                            r#"{{"local":{{"name":"local","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":16384,"gpu":null}},"peers":[{{"name":"remote","address":"{peer_addr}","status":"online","node_info":{{"name":"remote","hostname":"h","os":"linux","arch":"x86_64","cpus":8,"memory_mb":32768,"gpu":null}},"session_count":0,"source":"configured"}}]}}"#
-                        )
-                    }
-                }),
-            )
-            .route(
-                "/api/v1/sessions",
-                post(move || async move {
-                    (StatusCode::CREATED, create_json.clone())
-                }),
-            );
-
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
-
-        let cli = Cli {
-            node,
-            token: None,
-            command: Some(Commands::Spawn {
-                name: Some("test".into()),
-                workdir: Some("/tmp/repo".into()),
-                ink: None,
-                description: None,
-                detach: true,
-                idle_threshold: None,
-                auto: true,
-                worktree: false,
-                worktree_base: None,
-                runtime: None,
-                secret: vec![],
-                command: vec!["echo".into(), "hello".into()],
-            }),
-            path: None,
-        };
-        let result = execute(&cli).await.unwrap();
-        assert!(result.contains("Created session"));
-    }
-
-    #[cfg(not(coverage))]
-    #[tokio::test]
-    async fn test_select_best_node_peer_no_session_count() {
-        use axum::{Router, routing::get};
-
-        let app = Router::new().route(
-            "/api/v1/peers",
-            get(|| async {
-                r#"{"local":{"name":"local","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":16384,"gpu":null},"peers":[{"name":"fresh","address":"fresh:7433","status":"online","node_info":null,"session_count":null,"source":"configured"}]}"#.to_owned()
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
-        let base = format!("http://127.0.0.1:{}", addr.port());
-
-        let client = reqwest::Client::new();
-        let (addr, name) = select_best_node(&client, &base, None).await.unwrap();
-        // Online peer with no session_count (0) and no node_info (0 mem) → score = 0
-        assert_eq!(name, "fresh");
-        assert_eq!(addr, "fresh:7433");
     }
 
     // -- Secret CLI parse tests --

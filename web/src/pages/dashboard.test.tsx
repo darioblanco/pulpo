@@ -209,7 +209,7 @@ describe('DashboardPage', () => {
     expect(peerSubtitle).toHaveTextContent('Linux · 8 CPU · 32 GB');
   });
 
-  it('handles remote session fetch failure gracefully', async () => {
+  it('handles peer with no sessions gracefully', async () => {
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes('/peers')) {
         return {
@@ -240,8 +240,7 @@ describe('DashboardPage', () => {
       if (url.includes('/fleet/sessions')) {
         return { ok: true, json: () => Promise.resolve({ sessions: [] }) };
       }
-      // getRemoteSessions for the peer will fail
-      throw new Error('Connection refused');
+      return { ok: true, json: () => Promise.resolve([]) };
     });
 
     render(

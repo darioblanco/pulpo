@@ -588,18 +588,6 @@ describe('SchedulesPage', () => {
     });
   });
 
-  it('shows target node or "local"', async () => {
-    mockGetSchedules.mockResolvedValue([
-      makeSchedule({ target_node: 'remote-server' }),
-      makeSchedule({ id: 'sched-2', name: 'local-sched', target_node: null }),
-    ]);
-    renderPage();
-    await waitFor(() => {
-      expect(screen.getByText('remote-server')).toBeInTheDocument();
-      expect(screen.getByText('local')).toBeInTheDocument();
-    });
-  });
-
   it('shows "paused" instead of next run for disabled schedules', async () => {
     mockGetSchedules.mockResolvedValue([makeSchedule({ enabled: false })]);
     renderPage();
