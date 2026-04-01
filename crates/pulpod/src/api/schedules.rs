@@ -42,6 +42,25 @@ fn internal_error(msg: &str) -> ApiError {
     )
 }
 
+async fn validate_target_node(
+    state: &Arc<AppState>,
+    target_node: Option<&str>,
+) -> Result<(), ApiError> {
+    let Some(target_node) = target_node else {
+        return Ok(());
+    };
+    let role = state.config.read().await.role();
+    if role != crate::config::NodeRole::Master {
+        return Err(bad_request(&format!(
+            "target_node requires master mode (got {role:?})"
+        )));
+    }
+    if target_node.is_empty() {
+        return Err(bad_request("target_node cannot be empty"));
+    }
+    Ok(())
+}
+
 pub async fn list(State(state): State<Arc<AppState>>) -> Result<Json<Vec<Schedule>>, ApiError> {
     let schedules = state
         .store
@@ -71,6 +90,8 @@ pub async fn create(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateScheduleRequest>,
 ) -> Result<(StatusCode, Json<Schedule>), ApiError> {
+    validate_target_node(&state, req.target_node.as_deref()).await?;
+
     // Validate name: schedule names become session name prefixes (e.g. "nightly-20260331-0300"),
     // so they must be safe for shell interpolation — same rules as session names.
     if req.name.is_empty()
@@ -137,6 +158,12 @@ pub async fn update(
     Path(id): Path<String>,
     Json(req): Json<UpdateScheduleRequest>,
 ) -> Result<Json<Schedule>, ApiError> {
+    validate_target_node(
+        &state,
+        req.target_node.as_ref().and_then(|node| node.as_deref()),
+    )
+    .await?;
+
     let mut schedule = state
         .store
         .get_schedule(&id)
@@ -249,7 +276,7 @@ mod tests {
     use super::*;
     use crate::api::AppState;
     use crate::backend::StubBackend;
-    use crate::config::{Config, NodeConfig};
+    use crate::config::{Config, MasterConfig, NodeConfig};
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
@@ -257,6 +284,18 @@ mod tests {
     use std::collections::HashMap;
 
     async fn test_server() -> TestServer {
+        test_server_with_master(MasterConfig::default()).await
+    }
+
+    async fn master_test_server() -> TestServer {
+        test_server_with_master(MasterConfig {
+            enabled: true,
+            ..MasterConfig::default()
+        })
+        .await
+    }
+
+    async fn test_server_with_master(master: MasterConfig) -> TestServer {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -274,7 +313,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            master,
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -519,7 +558,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_schedule_with_all_fields() {
-        let server = test_server().await;
+        let server = master_test_server().await;
         let resp = server
             .post("/api/v1/schedules")
             .json(&serde_json::json!({
@@ -541,7 +580,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_schedule_all_fields() {
-        let server = test_server().await;
+        let server = master_test_server().await;
         let create_resp = server
             .post("/api/v1/schedules")
             .json(&serde_json::json!({
@@ -573,6 +612,48 @@ mod tests {
         assert_eq!(body["target_node"], "raven");
         assert_eq!(body["ink"], "reviewer");
         assert_eq!(body["description"], "Updated desc");
+    }
+
+    #[tokio::test]
+    async fn test_create_schedule_target_node_requires_master() {
+        let server = test_server().await;
+        let resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "remote-nightly",
+                "cron": "0 3 * * *",
+                "command": "echo hello",
+                "workdir": "/tmp",
+                "target_node": "worker-1"
+            }))
+            .await;
+        resp.assert_status(StatusCode::BAD_REQUEST);
+        assert!(resp.text().contains("target_node requires master mode"));
+    }
+
+    #[tokio::test]
+    async fn test_update_schedule_target_node_requires_master() {
+        let server = test_server().await;
+        let create_resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "local-nightly",
+                "cron": "0 3 * * *",
+                "command": "echo",
+                "workdir": "/tmp"
+            }))
+            .await;
+        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
+        let id = created["id"].as_str().unwrap();
+
+        let resp = server
+            .put(&format!("/api/v1/schedules/{id}"))
+            .json(&serde_json::json!({
+                "target_node": "worker-1"
+            }))
+            .await;
+        resp.assert_status(StatusCode::BAD_REQUEST);
+        assert!(resp.text().contains("target_node requires master mode"));
     }
 
     #[tokio::test]

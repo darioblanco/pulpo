@@ -147,14 +147,13 @@ Each session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the 
 
 ### Built-in Scheduler
 
-Cron-based schedules run inside `pulpod` (no crontab manipulation). Schedules support multi-node targeting:
+Cron-based schedules run inside `pulpod` (no crontab manipulation). Remote schedule targeting goes through the master control plane:
 
 ```bash
 pulpo schedule add nightly "0 3 * * *" --node gpu-box -- claude -p "review"
-pulpo schedule add scan "0 0 * * 0" --node auto -- claude -p "security audit"
 ```
 
-`--node auto` picks the least-loaded online peer at fire time. Schedules are visible in the web UI dashboard at `/schedules`.
+To target another node reliably, send the schedule request to the master. Worker nodes keep their own local schedules, but they are not the canonical place for cross-node dispatch. Schedules are visible in the web UI dashboard at `/schedules`.
 
 ### Multi-Node Architecture
 
