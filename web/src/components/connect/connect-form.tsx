@@ -9,17 +9,24 @@ type NodeStatus = 'unknown' | 'checking' | 'online' | 'offline';
 interface ConnectFormProps {
   onConnect: (url: string, token: string, nodeName: string) => void;
   initialToken?: string;
+  initialUrl?: string;
 }
 
 const DEFAULT_URL = 'http://localhost:7433';
 
-export function ConnectForm({ onConnect, initialToken = '' }: ConnectFormProps) {
-  const [url, setUrl] = useState(DEFAULT_URL);
+export function ConnectForm({ onConnect, initialToken = '', initialUrl = '' }: ConnectFormProps) {
+  const [url, setUrl] = useState(initialUrl || DEFAULT_URL);
   const [token, setToken] = useState(initialToken);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nodeStatus, setNodeStatus] = useState<NodeStatus>('unknown');
   const probeTimer = useRef<ReturnType<typeof setTimeout>>(null);
+
+  useEffect(() => {
+    if (initialUrl) {
+      setUrl(initialUrl);
+    }
+  }, [initialUrl]);
 
   const probeHealth = useCallback(async (targetUrl: string) => {
     if (!targetUrl.trim()) {

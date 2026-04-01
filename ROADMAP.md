@@ -159,10 +159,11 @@ Inspired by Elasticsearch's cluster architecture: every node runs the same binar
 
 How it works:
 - `pulpod --role master` (or `role = "master"` in config)
-- Worker nodes push session events to master via outbound WebSocket (no inbound ports needed on workers)
+- Worker nodes push session events to master over outbound HTTP and poll for commands (no inbound control ports needed on workers)
 - Master maintains a unified session index in its SQLite
-- Web UI connects to master only — master proxies terminal/output WebSocket to the right worker
-- CLI connects to master — master routes commands to the right worker
+- Web UI connects to master only for fleet-wide visibility and cross-node actions
+- Worker UIs stay local-first: local sessions remain visible, but fleet-wide control belongs to the master
+- CLI connects to master for cross-node actions — master routes commands to the right worker
 - Single auth: workers authenticate to master, users authenticate to master
 
 Why this is simpler than Elasticsearch:
@@ -170,7 +171,7 @@ Why this is simpler than Elasticsearch:
 - No replication — sessions are ephemeral processes, not persistent data.
 - Eventually consistent — 5-second delay in status propagation is fine.
 
-Key property: **code never leaves the worker nodes.** The master sees session metadata (names, statuses, tokens consumed) but never terminal content unless explicitly proxied on user request. This preserves Pulpo's sovereignty guarantee.
+Key property: **code never leaves the worker nodes.** The master sees session metadata (names, statuses, tokens consumed) and can proxy log-style HTTP detail views, but it is not intended to become a distributed terminal multiplexer by default. This preserves Pulpo's sovereignty guarantee and keeps the control plane simpler.
 
 ### Parked Features (build when demanded)
 

@@ -235,6 +235,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
+                master: crate::config::MasterConfig::default(),
             },
             manager,
             peer_registry,
@@ -268,6 +269,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
+                master: crate::config::MasterConfig::default(),
             },
             config_path,
             manager,
@@ -453,6 +455,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig::default(),
         };
         let resp = config_to_response(&config);
         assert_eq!(resp.node.name, "test");
@@ -719,6 +722,7 @@ mod tests {
                 ..Default::default()
             },
             docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig::default(),
         };
         let resp = config_to_response(&config);
         // Node fields
@@ -773,6 +777,7 @@ mod tests {
                 ..Default::default()
             },
             docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig::default(),
         };
         let resp = config_to_response(&config);
         assert_eq!(resp.notifications.webhooks.len(), 2);
@@ -904,6 +909,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
+                master: crate::config::MasterConfig::default(),
             },
             std::path::PathBuf::from("/dev/null/impossible/config.toml"),
             manager,

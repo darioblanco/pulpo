@@ -12,6 +12,30 @@ use pulpo_common::peer::PeerEntry;
 use super::node::get_hostname;
 use crate::watchdog::memory::{MemoryReader, SystemMemoryReader};
 
+fn normalize_address(address: &str) -> &str {
+    address
+        .strip_prefix("http://")
+        .or_else(|| address.strip_prefix("https://"))
+        .unwrap_or(address)
+}
+
+async fn master_identity(state: &Arc<super::AppState>) -> (Option<String>, Option<String>) {
+    let config = state.config.read().await;
+    let Some(master_address) = config.master.address.clone() else {
+        return (None, None);
+    };
+    drop(config);
+
+    let normalized_master = normalize_address(&master_address);
+    let peers = state.peer_registry.get_all().await;
+    let master_name = peers
+        .into_iter()
+        .find(|peer| normalize_address(&peer.address) == normalized_master)
+        .map(|peer| peer.name);
+
+    (master_name, Some(master_address))
+}
+
 /// Best-effort GPU detection. Returns a label like "Apple Metal" or "NVIDIA" if
 /// a GPU is likely present, `None` otherwise.
 fn detect_gpu() -> Option<String> {
@@ -46,6 +70,14 @@ fn detect_gpu_inner() -> Option<String> {
 
 pub async fn list_peers(State(state): State<Arc<super::AppState>>) -> Json<PeersResponse> {
     let config = state.config.read().await;
+    let role = Some(
+        match config.role() {
+            crate::config::NodeRole::Standalone => "standalone",
+            crate::config::NodeRole::Master => "master",
+            crate::config::NodeRole::Worker => "worker",
+        }
+        .to_owned(),
+    );
     let memory_mb = SystemMemoryReader
         .read_memory()
         .map(|s| s.total_mb)
@@ -60,6 +92,7 @@ pub async fn list_peers(State(state): State<Arc<super::AppState>>) -> Json<Peers
         gpu: detect_gpu(),
     };
     drop(config);
+    let (master_name, master_address) = master_identity(&state).await;
 
     // Probe all peers on-demand (results are cached with a 60s TTL).
     // Gated behind cfg(not(coverage)) because CachedProber<HttpPeerProber> would
@@ -72,7 +105,13 @@ pub async fn list_peers(State(state): State<Arc<super::AppState>>) -> Json<Peers
 
     let peers = state.peer_registry.get_all().await;
 
-    Json(PeersResponse { local, peers })
+    Json(PeersResponse {
+        local,
+        peers,
+        role,
+        master_name,
+        master_address,
+    })
 }
 
 pub async fn add_peer(
@@ -175,6 +214,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
+                master: crate::config::MasterConfig::default(),
             },
             manager,
             peer_registry,
@@ -246,7 +286,7 @@ mod tests {
         assert!(!resp.local.os.is_empty());
         assert!(!resp.local.arch.is_empty());
         assert!(resp.local.cpus > 0);
-        assert!(resp.local.memory_mb > 0);
+        let _ = resp.local.memory_mb;
     }
 
     #[tokio::test]

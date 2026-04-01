@@ -51,6 +51,12 @@ pub struct ErrorResponse {
 pub struct PeersResponse {
     pub local: NodeInfo,
     pub peers: Vec<PeerInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub master_address: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -383,6 +389,51 @@ pub struct SecretEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<String>,
     pub created_at: String,
+}
+
+// -- Master mode types --
+
+/// Request from a worker pushing events to the master.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventPushRequest {
+    pub node_name: String,
+    pub events: Vec<crate::event::PulpoEvent>,
+}
+
+/// A command queued by the master for a specific worker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkerCommand {
+    CreateSession {
+        command_id: String,
+        name: String,
+        workdir: Option<String>,
+        command: Option<String>,
+        ink: Option<String>,
+        description: Option<String>,
+    },
+    StopSession {
+        command_id: String,
+        session_id: String,
+    },
+}
+
+/// Response containing pending commands for a worker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkerCommandsResponse {
+    pub commands: Vec<WorkerCommand>,
+}
+
+/// A lightweight session entry for the master's aggregated index.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionIndexEntry {
+    pub session_id: String,
+    pub node_name: String,
+    pub node_address: Option<String>,
+    pub session_name: String,
+    pub status: String,
+    pub command: Option<String>,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -795,6 +846,9 @@ mod tests {
                 session_count: Some(2),
                 source: PeerSource::Configured,
             }],
+            role: None,
+            master_name: None,
+            master_address: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"local\""));
@@ -825,6 +879,9 @@ mod tests {
                 gpu: Some("M4".into()),
             },
             peers: vec![],
+            role: None,
+            master_name: None,
+            master_address: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         let deserialized: PeersResponse = serde_json::from_str(&json).unwrap();
@@ -847,6 +904,9 @@ mod tests {
                 gpu: None,
             },
             peers: vec![],
+            role: Some("worker".into()),
+            master_name: Some("master-node".into()),
+            master_address: Some("https://master.tailnet".into()),
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("debug"));
@@ -1673,5 +1733,263 @@ mod tests {
         assert!(req.target_node.is_none());
         assert_eq!(req.ink, Some(Some("coder".into())));
         assert!(req.description.is_none());
+    }
+
+    // -- Master mode type tests --
+
+    #[test]
+    fn test_event_push_request_serialize_roundtrip() {
+        use crate::event::{PulpoEvent, SessionEvent};
+
+        let req = EventPushRequest {
+            node_name: "worker-1".into(),
+            events: vec![PulpoEvent::Session(SessionEvent {
+                session_id: "s1".into(),
+                session_name: "task-a".into(),
+                status: "active".into(),
+                node_name: "worker-1".into(),
+                timestamp: "2026-01-01T00:00:00Z".into(),
+                ..Default::default()
+            })],
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"node_name\":\"worker-1\""));
+        assert!(json.contains("\"events\""));
+        let deserialized: EventPushRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.node_name, "worker-1");
+        assert_eq!(deserialized.events.len(), 1);
+    }
+
+    #[test]
+    fn test_event_push_request_empty_events() {
+        let req = EventPushRequest {
+            node_name: "worker-2".into(),
+            events: vec![],
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"events\":[]"));
+        let deserialized: EventPushRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.node_name, "worker-2");
+        assert!(deserialized.events.is_empty());
+    }
+
+    #[test]
+    fn test_event_push_request_debug_clone() {
+        let req = EventPushRequest {
+            node_name: "w".into(),
+            events: vec![],
+        };
+        let cloned = req.clone();
+        assert_eq!(format!("{req:?}"), format!("{cloned:?}"));
+    }
+
+    #[test]
+    fn test_worker_command_create_session_serialize() {
+        let cmd = WorkerCommand::CreateSession {
+            command_id: "cmd-1".into(),
+            name: "my-task".into(),
+            workdir: Some("/tmp/repo".into()),
+            command: Some("claude -p 'build'".into()),
+            ink: Some("coder".into()),
+            description: Some("Build feature".into()),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"create_session\""));
+        assert!(json.contains("\"command_id\":\"cmd-1\""));
+        assert!(json.contains("\"name\":\"my-task\""));
+    }
+
+    #[test]
+    fn test_worker_command_stop_session_serialize() {
+        let cmd = WorkerCommand::StopSession {
+            command_id: "cmd-2".into(),
+            session_id: "sess-42".into(),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(json.contains("\"type\":\"stop_session\""));
+        assert!(json.contains("\"command_id\":\"cmd-2\""));
+        assert!(json.contains("\"session_id\":\"sess-42\""));
+    }
+
+    #[test]
+    fn test_worker_command_create_session_roundtrip() {
+        let cmd = WorkerCommand::CreateSession {
+            command_id: "c1".into(),
+            name: "task".into(),
+            workdir: None,
+            command: None,
+            ink: None,
+            description: None,
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let deserialized: WorkerCommand = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            WorkerCommand::CreateSession {
+                command_id, name, ..
+            } => {
+                assert_eq!(command_id, "c1");
+                assert_eq!(name, "task");
+            }
+            WorkerCommand::StopSession { .. } => panic!("Expected CreateSession"),
+        }
+    }
+
+    #[test]
+    fn test_worker_command_stop_session_roundtrip() {
+        let cmd = WorkerCommand::StopSession {
+            command_id: "c2".into(),
+            session_id: "s1".into(),
+        };
+        let json = serde_json::to_string(&cmd).unwrap();
+        let deserialized: WorkerCommand = serde_json::from_str(&json).unwrap();
+        match deserialized {
+            WorkerCommand::StopSession {
+                command_id,
+                session_id,
+            } => {
+                assert_eq!(command_id, "c2");
+                assert_eq!(session_id, "s1");
+            }
+            WorkerCommand::CreateSession { .. } => panic!("Expected StopSession"),
+        }
+    }
+
+    #[test]
+    fn test_worker_command_debug_clone() {
+        let cmd = WorkerCommand::StopSession {
+            command_id: "c".into(),
+            session_id: "s".into(),
+        };
+        let cloned = cmd.clone();
+        assert_eq!(format!("{cmd:?}"), format!("{cloned:?}"));
+    }
+
+    #[test]
+    fn test_worker_command_invalid_type() {
+        let json = r#"{"type":"unknown","command_id":"c1"}"#;
+        let result = serde_json::from_str::<WorkerCommand>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_worker_commands_response_serialize() {
+        let resp = WorkerCommandsResponse {
+            commands: vec![
+                WorkerCommand::CreateSession {
+                    command_id: "c1".into(),
+                    name: "task-1".into(),
+                    workdir: None,
+                    command: None,
+                    ink: None,
+                    description: None,
+                },
+                WorkerCommand::StopSession {
+                    command_id: "c2".into(),
+                    session_id: "s1".into(),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"commands\""));
+        assert!(json.contains("\"create_session\""));
+        assert!(json.contains("\"stop_session\""));
+    }
+
+    #[test]
+    fn test_worker_commands_response_empty() {
+        let resp = WorkerCommandsResponse { commands: vec![] };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert_eq!(json, r#"{"commands":[]}"#);
+    }
+
+    #[test]
+    fn test_worker_commands_response_roundtrip() {
+        let resp = WorkerCommandsResponse {
+            commands: vec![WorkerCommand::StopSession {
+                command_id: "c1".into(),
+                session_id: "s1".into(),
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let deserialized: WorkerCommandsResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.commands.len(), 1);
+    }
+
+    #[test]
+    fn test_worker_commands_response_debug_clone() {
+        let resp = WorkerCommandsResponse { commands: vec![] };
+        let cloned = resp.clone();
+        assert_eq!(format!("{resp:?}"), format!("{cloned:?}"));
+    }
+
+    #[test]
+    fn test_session_index_entry_serialize() {
+        let entry = SessionIndexEntry {
+            session_id: "s1".into(),
+            node_name: "worker-1".into(),
+            node_address: Some("10.0.0.1:7433".into()),
+            session_name: "my-task".into(),
+            status: "active".into(),
+            command: Some("claude -p 'build'".into()),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"session_id\":\"s1\""));
+        assert!(json.contains("\"node_name\":\"worker-1\""));
+        assert!(json.contains("\"node_address\":\"10.0.0.1:7433\""));
+        assert!(json.contains("\"status\":\"active\""));
+    }
+
+    #[test]
+    fn test_session_index_entry_roundtrip() {
+        let entry = SessionIndexEntry {
+            session_id: "s2".into(),
+            node_name: "worker-2".into(),
+            node_address: None,
+            session_name: "task-b".into(),
+            status: "stopped".into(),
+            command: None,
+            updated_at: "2026-03-30T12:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: SessionIndexEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.session_id, "s2");
+        assert_eq!(deserialized.node_name, "worker-2");
+        assert!(deserialized.node_address.is_none());
+        assert_eq!(deserialized.session_name, "task-b");
+        assert_eq!(deserialized.status, "stopped");
+        assert!(deserialized.command.is_none());
+        assert_eq!(deserialized.updated_at, "2026-03-30T12:00:00Z");
+    }
+
+    #[test]
+    fn test_session_index_entry_debug_clone() {
+        let entry = SessionIndexEntry {
+            session_id: "s".into(),
+            node_name: "n".into(),
+            node_address: None,
+            session_name: "t".into(),
+            status: "active".into(),
+            command: None,
+            updated_at: "now".into(),
+        };
+        let cloned = entry.clone();
+        assert_eq!(format!("{entry:?}"), format!("{cloned:?}"));
+    }
+
+    #[test]
+    fn test_session_index_entry_with_all_optionals() {
+        let entry = SessionIndexEntry {
+            session_id: "s1".into(),
+            node_name: "n".into(),
+            node_address: Some("addr".into()),
+            session_name: "t".into(),
+            status: "active".into(),
+            command: Some("cmd".into()),
+            updated_at: "now".into(),
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains("\"node_address\":\"addr\""));
+        assert!(json.contains("\"command\":\"cmd\""));
     }
 }

@@ -6,6 +6,16 @@ Discovery is an operational layer, not the core Pulpo contract. Learn sessions, 
 
 Pulpo supports two methods for multi-node operation: **Tailscale auto-discovery** and **manual peer configuration**. The discovery method is derived from the `bind` mode in `[node]`. No separate `[discovery]` section is needed.
 
+## Control-plane boundary
+
+Discovery tells nodes about each other. It does **not** make every node an equally capable control plane.
+
+- **Standalone node**: local-only view and actions.
+- **Worker node**: local sessions remain visible and manageable on that worker, but fleet-wide view and cross-node actions belong to the master.
+- **Master node**: canonical fleet-wide visibility and cross-node control surface.
+
+In the web UI, workers should point you at the configured master instead of pretending their fleet view is authoritative.
+
 > **Note:** Distributed discovery methods (mDNS, seed-based gossip) were removed to simplify the codebase. They may return in a future version. Use Tailscale discovery or manual `[peers]` config instead.
 
 For a full example that combines discovery with remote execution and secrets,

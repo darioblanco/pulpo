@@ -3356,6 +3356,9 @@ mod tests {
                 session_count: Some(3),
                 source: PeerSource::Configured,
             }],
+            role: None,
+            master_name: None,
+            master_address: None,
         };
         let output = format_nodes(&resp);
         assert!(output.contains("mac-mini"));
@@ -3387,6 +3390,9 @@ mod tests {
                 session_count: None,
                 source: PeerSource::Configured,
             }],
+            role: None,
+            master_name: None,
+            master_address: None,
         };
         let output = format_nodes(&resp);
         assert!(output.contains("offline"));

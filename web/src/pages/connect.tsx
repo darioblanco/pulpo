@@ -11,6 +11,7 @@ export function ConnectPage() {
     useConnection();
 
   const tokenFromUrl = searchParams.get('token') ?? '';
+  const urlFromQuery = searchParams.get('url') ?? '';
 
   const handleConnect = useCallback(
     (url: string, token: string, nodeName: string) => {
@@ -42,7 +43,11 @@ export function ConnectPage() {
       <div className="w-full max-w-sm space-y-6 p-6">
         <h1 className="text-center font-display text-2xl font-bold">Connect to Pulpo</h1>
 
-        <ConnectForm onConnect={handleConnect} initialToken={tokenFromUrl} />
+        <ConnectForm
+          onConnect={handleConnect}
+          initialToken={tokenFromUrl}
+          initialUrl={urlFromQuery}
+        />
 
         <SavedConnections
           connections={savedConnections}

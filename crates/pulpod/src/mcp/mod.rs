@@ -957,6 +957,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig::default(),
         }
     }
 

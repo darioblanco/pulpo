@@ -3,6 +3,7 @@ pub mod auth_info;
 pub mod backend;
 pub mod config;
 pub mod discovery;
+pub mod master;
 
 pub mod mcp;
 pub mod notifications;
@@ -12,6 +13,7 @@ pub mod scheduler;
 pub mod session;
 pub mod store;
 pub mod watchdog;
+pub mod worker;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -495,15 +497,82 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     #[cfg(coverage)]
     let wd_tx: Option<tokio::sync::watch::Sender<watchdog::WatchdogRuntimeConfig>> = None;
 
-    let state = api::AppState::with_watchdog_tx(
-        config,
+    // Build AppState based on node role
+    let role = config.role();
+    let (session_index, command_queue) = match role {
+        config::NodeRole::Master => {
+            let si = Arc::new(master::SessionIndex::new());
+            let cq = Arc::new(master::CommandQueue::new());
+            info!("Master mode enabled");
+            #[cfg(not(coverage))]
+            {
+                let stale_si = si.clone();
+                let stale_timeout =
+                    std::time::Duration::from_secs(config.master.stale_timeout_secs);
+                let stale_interval = std::time::Duration::from_secs(60);
+                let stale_event_tx = event_tx.clone();
+                let (stale_shutdown_tx, stale_shutdown_rx) = watch::channel(false);
+                tokio::spawn(master::run_stale_cleanup_loop(
+                    stale_si,
+                    stale_timeout,
+                    stale_interval,
+                    stale_event_tx,
+                    stale_shutdown_rx,
+                ));
+                shutdown_handle.add_sender(stale_shutdown_tx);
+                info!(
+                    stale_timeout_secs = config.master.stale_timeout_secs,
+                    "Master stale cleanup enabled"
+                );
+            }
+            (Some(si), Some(cq))
+        }
+        config::NodeRole::Worker | config::NodeRole::Standalone => (None, None),
+    };
+
+    let state = api::AppState::with_all(
+        config.clone(),
         config_path,
-        manager,
+        manager.clone(),
         peer_registry,
-        event_tx,
+        event_tx.clone(),
         wd_tx,
         store.clone(),
+        session_index,
+        command_queue,
     );
+
+    // Spawn worker loops when running in Worker mode
+    #[cfg(not(coverage))]
+    if role == config::NodeRole::Worker {
+        let master_url = config.master.address.clone().unwrap_or_default();
+        let master_token = config.master.token.clone();
+        let node_name = config.node.name.clone();
+
+        // Event push loop
+        let push_rx = event_tx.subscribe();
+        let (push_shutdown_tx, push_shutdown_rx) = watch::channel(false);
+        tokio::spawn(worker::event_push::run_event_push_loop(
+            master_url.clone(),
+            master_token.clone(),
+            node_name.clone(),
+            push_rx,
+            push_shutdown_rx,
+        ));
+        shutdown_handle.add_sender(push_shutdown_tx);
+
+        // Command poll loop
+        let (poll_shutdown_tx, poll_shutdown_rx) = watch::channel(false);
+        tokio::spawn(worker::command_poll::run_command_poll_loop(
+            master_url,
+            master_token,
+            node_name,
+            manager,
+            poll_shutdown_rx,
+        ));
+        shutdown_handle.add_sender(poll_shutdown_tx);
+        info!("Worker mode enabled — pushing events and polling commands");
+    }
 
     let app = api::router(state);
 

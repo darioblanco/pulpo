@@ -33,6 +33,9 @@ export function DashboardPage() {
   const [localNode, setLocalNode] = useState<NodeInfo | null>(null);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [fleetSessions, setFleetSessions] = useState<FleetSession[]>([]);
+  const [nodeRole, setNodeRole] = useState<'standalone' | 'master' | 'worker'>('standalone');
+  const [masterName, setMasterName] = useState<string | null>(null);
+  const [masterAddress, setMasterAddress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const previousSessionsRef = useRef<Session[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(DEFAULT_STATUSES);
@@ -46,11 +49,17 @@ export function DashboardPage() {
       const resp = await getPeers();
       setLocalNode(resp.local);
       setPeers(resp.peers);
+      setNodeRole((resp.role as 'standalone' | 'master' | 'worker') ?? 'standalone');
+      setMasterName(resp.master_name ?? null);
+      setMasterAddress(resp.master_address ?? null);
 
-      // Fetch fleet sessions
-      await getFleetSessions()
-        .then((r) => setFleetSessions(r.sessions))
-        .catch(() => setFleetSessions([]));
+      if (resp.role === 'master') {
+        await getFleetSessions()
+          .then((r) => setFleetSessions(r.sessions))
+          .catch(() => setFleetSessions([]));
+      } else {
+        setFleetSessions([]);
+      }
       setError(null);
     } catch {
       if (!isConnected) {
@@ -198,6 +207,9 @@ export function DashboardPage() {
   );
 
   const hasMultipleNodes = peers.length > 0;
+  const isMasterNode = nodeRole === 'master';
+  const isWorkerNode = nodeRole === 'worker';
+  const allowRemoteActions = isMasterNode;
 
   return (
     <div data-testid="dashboard-page">
@@ -237,9 +249,39 @@ export function DashboardPage() {
                     Cleanup
                   </Button>
                 )}
-                <NewSessionDialog peers={peers} onCreated={handleSessionCreated} />
+                <NewSessionDialog
+                  peers={allowRemoteActions ? peers : []}
+                  onCreated={handleSessionCreated}
+                />
               </div>
             </div>
+
+            {isWorkerNode && (
+              <div
+                data-testid="worker-master-banner"
+                className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">This node is a worker.</p>
+                  <p className="text-sm text-muted-foreground">
+                    Fleet-wide view and cross-node control live on the master.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {masterName ? `Master: ${masterName}` : 'Master node configured'}
+                    {masterAddress ? ` · ${masterAddress}` : ''}
+                  </p>
+                </div>
+                {masterAddress && (
+                  <Button
+                    data-testid="connect-master-button"
+                    variant="outline"
+                    onClick={() => navigate(`/connect?url=${encodeURIComponent(masterAddress)}`)}
+                  >
+                    Connect to master
+                  </Button>
+                )}
+              </div>
+            )}
 
             <div className="flex items-center gap-3">
               <div className="flex-1">
@@ -264,7 +306,7 @@ export function DashboardPage() {
               )}
             </div>
 
-            {hasMultipleNodes ? (
+            {isMasterNode && hasMultipleNodes ? (
               <Tabs defaultValue="all" data-testid="node-tabs">
                 <TabsList className="h-auto min-h-12 w-auto max-w-full justify-start overflow-x-auto py-1.5">
                   <TabsTrigger value="all" data-testid="tab-all">

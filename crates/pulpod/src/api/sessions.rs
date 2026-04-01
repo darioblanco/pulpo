@@ -7,10 +7,12 @@ use axum::{
 };
 use pulpo_common::api::{
     CreateSessionRequest, CreateSessionResponse, ErrorResponse, ListSessionsQuery, OutputQuery,
-    SendInputRequest,
+    SendInputRequest, SessionIndexEntry, WorkerCommand,
 };
+use pulpo_common::peer::PeerInfo;
 use pulpo_common::session::{Session, SessionStatus};
 use serde::Deserialize;
+use uuid::Uuid;
 
 type ApiError = (StatusCode, Json<ErrorResponse>);
 
@@ -21,6 +23,112 @@ fn internal_error(msg: &str) -> ApiError {
             error: msg.to_owned(),
         }),
     )
+}
+
+fn bad_gateway(msg: &str) -> ApiError {
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(ErrorResponse {
+            error: msg.to_owned(),
+        }),
+    )
+}
+
+fn session_from_index_entry(entry: SessionIndexEntry) -> Session {
+    let status = entry
+        .status
+        .parse::<SessionStatus>()
+        .unwrap_or(SessionStatus::Lost);
+
+    Session {
+        id: Uuid::parse_str(&entry.session_id).unwrap_or_else(|_| Uuid::nil()),
+        name: entry.session_name,
+        command: entry.command.unwrap_or_default(),
+        status,
+        updated_at: chrono::DateTime::parse_from_rfc3339(&entry.updated_at)
+            .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc)),
+        ..Session::default()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RemoteWorkerTarget {
+    session_id: String,
+    node_name: String,
+    base_url: String,
+    token: Option<String>,
+}
+
+fn normalize_http_base(address: &str) -> String {
+    if address.contains("://") {
+        address.to_owned()
+    } else {
+        format!("http://{address}")
+    }
+}
+
+fn reqwest_status_to_axum(status: reqwest::StatusCode) -> StatusCode {
+    StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY)
+}
+
+async fn reqwest_error_response(resp: reqwest::Response, fallback: &str) -> ApiError {
+    let status = reqwest_status_to_axum(resp.status());
+    let error = match resp.json::<ErrorResponse>().await {
+        Ok(body) => body.error,
+        Err(_) => fallback.to_owned(),
+    };
+    (status, Json(ErrorResponse { error }))
+}
+
+async fn resolve_remote_worker_target(
+    state: &Arc<super::AppState>,
+    id: &str,
+) -> Result<Option<RemoteWorkerTarget>, ApiError> {
+    let Some(session_index) = &state.session_index else {
+        return Ok(None);
+    };
+    let Some(entry) = session_index.get(id).await else {
+        return Ok(None);
+    };
+
+    let peer: Option<PeerInfo> = state.peer_registry.get(&entry.node_name).await;
+    let address = peer
+        .as_ref()
+        .map(|p| p.address.clone())
+        .or_else(|| entry.node_address.clone());
+
+    let Some(address) = address else {
+        return Err(bad_gateway(&format!(
+            "worker address unknown for remote session {id} on node {}",
+            entry.node_name
+        )));
+    };
+
+    let token = state.peer_registry.get_token(&entry.node_name).await;
+    Ok(Some(RemoteWorkerTarget {
+        session_id: entry.session_id,
+        node_name: entry.node_name,
+        base_url: normalize_http_base(&address),
+        token,
+    }))
+}
+
+fn apply_remote_auth(
+    request: reqwest::RequestBuilder,
+    token: Option<&String>,
+) -> reqwest::RequestBuilder {
+    if let Some(token) = token {
+        request.bearer_auth(token)
+    } else {
+        request
+    }
+}
+
+fn remote_client() -> Result<reqwest::Client, ApiError> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| internal_error(&format!("failed to build HTTP client: {e}")))
 }
 
 pub async fn list(
@@ -54,12 +162,19 @@ pub async fn get(
 ) -> Result<Json<Session>, ApiError> {
     match state.session_manager.get_session(&id).await {
         Ok(Some(session)) => Ok(Json(session)),
-        Ok(None) => Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("session not found: {id}"),
-            }),
-        )),
+        Ok(None) => {
+            if let Some(session_index) = &state.session_index
+                && let Some(entry) = session_index.get(&id).await
+            {
+                return Ok(Json(session_from_index_entry(entry)));
+            }
+            Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("session not found: {id}"),
+                }),
+            ))
+        }
         Err(e) => Err(internal_error(&e.to_string())),
     }
 }
@@ -93,19 +208,37 @@ pub async fn stop(
     Path(id): Path<String>,
     Query(query): Query<StopQuery>,
 ) -> Result<StatusCode, ApiError> {
-    state
+    match state
         .session_manager
         .stop_session(&id, query.purge.unwrap_or(false))
         .await
-        .map_err(|e| {
+    {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
             let msg = e.to_string();
             if msg.contains("not found") {
-                (StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg }))
+                if let (Some(session_index), Some(command_queue)) =
+                    (&state.session_index, &state.command_queue)
+                    && let Some(entry) = session_index.get(&id).await
+                {
+                    command_queue
+                        .enqueue(
+                            &entry.node_name,
+                            WorkerCommand::StopSession {
+                                command_id: Uuid::new_v4().to_string(),
+                                session_id: id,
+                            },
+                        )
+                        .await;
+                    return Ok(StatusCode::ACCEPTED);
+                }
+
+                Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg })))
             } else {
-                internal_error(&msg)
+                Err(internal_error(&msg))
             }
-        })?;
-    Ok(StatusCode::NO_CONTENT)
+        }
+    }
 }
 
 pub async fn cleanup(
@@ -124,19 +257,45 @@ pub async fn output(
     Path(id): Path<String>,
     Query(query): Query<OutputQuery>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let session = state
+    let Some(session) = state
         .session_manager
         .get_session(&id)
         .await
         .map_err(|e| internal_error(&e.to_string()))?
-        .ok_or_else(|| {
-            (
+    else {
+        let Some(target) = resolve_remote_worker_target(&state, &id).await? else {
+            return Err((
                 StatusCode::NOT_FOUND,
                 Json(ErrorResponse {
                     error: format!("session not found: {id}"),
                 }),
-            )
-        })?;
+            ));
+        };
+
+        let lines = query.lines.unwrap_or(100);
+        let client = remote_client()?;
+        let url = format!(
+            "{}/api/v1/sessions/{}/output?lines={lines}",
+            target.base_url, target.session_id
+        );
+        let resp = apply_remote_auth(client.get(url), target.token.as_ref())
+            .send()
+            .await
+            .map_err(|e| {
+                bad_gateway(&format!(
+                    "failed to fetch output from worker {}: {e}",
+                    target.node_name
+                ))
+            })?;
+        if !resp.status().is_success() {
+            return Err(reqwest_error_response(resp, "failed to fetch remote output").await);
+        }
+        let body = resp
+            .json::<serde_json::Value>()
+            .await
+            .map_err(|e| internal_error(&format!("failed to parse remote output: {e}")))?;
+        return Ok(Json(body));
+    };
 
     let lines = query.lines.unwrap_or(100);
     let backend_id = state.session_manager.resolve_backend_id(&session);
@@ -151,23 +310,48 @@ pub async fn resume(
     State(state): State<Arc<super::AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<Session>, ApiError> {
-    state
-        .session_manager
-        .resume_session(&id)
-        .await
-        .map(Json)
-        .map_err(|e| {
+    match state.session_manager.resume_session(&id).await {
+        Ok(session) => Ok(Json(session)),
+        Err(e) => {
             let msg = e.to_string();
             if msg.contains("not found") {
-                (StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg }))
+                if let Some(target) = resolve_remote_worker_target(&state, &id).await? {
+                    let client = remote_client()?;
+                    let url = format!(
+                        "{}/api/v1/sessions/{}/resume",
+                        target.base_url, target.session_id
+                    );
+                    let resp = apply_remote_auth(client.post(url), target.token.as_ref())
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            bad_gateway(&format!(
+                                "failed to resume session on worker {}: {e}",
+                                target.node_name
+                            ))
+                        })?;
+                    if !resp.status().is_success() {
+                        return Err(reqwest_error_response(
+                            resp,
+                            "failed to resume remote session",
+                        )
+                        .await);
+                    }
+                    let session = resp.json::<Session>().await.map_err(|e| {
+                        internal_error(&format!("failed to parse remote resume response: {e}"))
+                    })?;
+                    return Ok(Json(session));
+                }
+                Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg })))
             } else if msg.contains("cannot be resumed") {
-                (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg }))
+                Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg })))
             } else if msg.contains("already active") {
-                (StatusCode::CONFLICT, Json(ErrorResponse { error: msg }))
+                Err((StatusCode::CONFLICT, Json(ErrorResponse { error: msg })))
             } else {
-                internal_error(&msg)
+                Err(internal_error(&msg))
             }
-        })
+        }
+    }
 }
 
 pub async fn download_output(
@@ -181,19 +365,66 @@ pub async fn download_output(
     ),
     ApiError,
 > {
-    let session = state
+    let Some(session) = state
         .session_manager
         .get_session(&id)
         .await
         .map_err(|e| internal_error(&e.to_string()))?
-        .ok_or_else(|| {
-            (
+    else {
+        let Some(target) = resolve_remote_worker_target(&state, &id).await? else {
+            return Err((
                 StatusCode::NOT_FOUND,
                 Json(ErrorResponse {
                     error: format!("session not found: {id}"),
                 }),
-            )
-        })?;
+            ));
+        };
+
+        let client = remote_client()?;
+        let url = format!(
+            "{}/api/v1/sessions/{}/output/download",
+            target.base_url, target.session_id
+        );
+        let resp = apply_remote_auth(client.get(url), target.token.as_ref())
+            .send()
+            .await
+            .map_err(|e| {
+                bad_gateway(&format!(
+                    "failed to download output from worker {}: {e}",
+                    target.node_name
+                ))
+            })?;
+        if !resp.status().is_success() {
+            return Err(
+                reqwest_error_response(resp, "failed to download remote session output").await,
+            );
+        }
+
+        let headers = resp.headers().clone();
+        let content_type = headers
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("text/plain; charset=utf-8")
+            .to_owned();
+        let content_disposition = headers
+            .get(reqwest::header::CONTENT_DISPOSITION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("attachment; filename=\"session.log\"")
+            .to_owned();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| internal_error(&format!("failed to read remote output download: {e}")))?;
+
+        return Ok((
+            StatusCode::OK,
+            [
+                (axum::http::header::CONTENT_TYPE, content_type),
+                (axum::http::header::CONTENT_DISPOSITION, content_disposition),
+            ],
+            body,
+        ));
+    };
 
     let output = if session.status == SessionStatus::Active || session.status == SessionStatus::Lost
     {
@@ -250,19 +481,46 @@ pub async fn input(
     Path(id): Path<String>,
     Json(req): Json<SendInputRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let session = state
+    let Some(session) = state
         .session_manager
         .get_session(&id)
         .await
         .map_err(|e| internal_error(&e.to_string()))?
-        .ok_or_else(|| {
-            (
+    else {
+        let Some(target) = resolve_remote_worker_target(&state, &id).await? else {
+            return Err((
                 StatusCode::NOT_FOUND,
                 Json(ErrorResponse {
                     error: format!("session not found: {id}"),
                 }),
-            )
+            ));
+        };
+        let client = remote_client()?;
+        let url = format!(
+            "{}/api/v1/sessions/{}/input",
+            target.base_url, target.session_id
+        );
+        let resp = apply_remote_auth(
+            client
+                .post(url)
+                .json(&serde_json::json!({ "text": req.text })),
+            target.token.as_ref(),
+        )
+        .send()
+        .await
+        .map_err(|e| {
+            bad_gateway(&format!(
+                "failed to send input to worker {}: {e}",
+                target.node_name
+            ))
         })?;
+        if !resp.status().is_success() {
+            return Err(
+                reqwest_error_response(resp, "failed to send input to remote session").await,
+            );
+        }
+        return Ok(StatusCode::NO_CONTENT);
+    };
 
     let backend_id = state.session_manager.resolve_backend_id(&session);
     state
@@ -278,7 +536,9 @@ mod tests {
     use super::*;
     use crate::api::AppState;
     use crate::backend::Backend;
+    use crate::master::{CommandQueue, SessionIndex};
     use std::collections::HashMap;
+    use tokio::sync::broadcast;
 
     use crate::config::{Config, NodeConfig};
     use crate::peers::PeerRegistry;
@@ -333,6 +593,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
+                master: crate::config::MasterConfig::default(),
             },
             manager,
             peer_registry,
@@ -344,6 +605,53 @@ mod tests {
     async fn test_state() -> Arc<AppState> {
         let (state, _) = test_state_with_pool().await;
         state
+    }
+
+    async fn master_state_with_index(entry: SessionIndexEntry) -> Arc<AppState> {
+        master_state_with_index_and_peers(entry, HashMap::new()).await
+    }
+
+    async fn master_state_with_index_and_peers(
+        entry: SessionIndexEntry,
+        peers: HashMap<String, pulpo_common::peer::PeerEntry>,
+    ) -> Arc<AppState> {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let backend = Arc::new(StubBackend);
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let peer_registry = PeerRegistry::new(&peers);
+        let (event_tx, _) = broadcast::channel(16);
+        let session_index = Arc::new(SessionIndex::new());
+        session_index.upsert(entry).await;
+        let command_queue = Arc::new(CommandQueue::new());
+
+        AppState::with_event_tx_master(
+            Config {
+                node: NodeConfig {
+                    name: "master-node".into(),
+                    port: 7433,
+                    data_dir: tmpdir.path().to_str().unwrap().into(),
+                    ..NodeConfig::default()
+                },
+                auth: crate::config::AuthConfig::default(),
+                peers,
+                watchdog: crate::config::WatchdogConfig::default(),
+                inks: HashMap::new(),
+                notifications: crate::config::NotificationsConfig::default(),
+                docker: crate::config::DockerConfig::default(),
+                master: crate::config::MasterConfig::default(),
+            },
+            tmpdir.path().join("config.toml"),
+            manager,
+            peer_registry,
+            event_tx,
+            store,
+            Some(session_index),
+            Some(command_queue),
+        )
     }
 
     #[tokio::test]
@@ -395,6 +703,26 @@ mod tests {
         let (status, Json(err)) = result.unwrap_err();
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert!(err.error.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_get_returns_remote_session_from_master_index() {
+        let session_id = Uuid::new_v4().to_string();
+        let state = master_state_with_index(SessionIndexEntry {
+            session_id: session_id.clone(),
+            node_name: "worker-1".into(),
+            node_address: Some("worker-1.tailnet:7433".into()),
+            session_name: "remote-task".into(),
+            status: "active".into(),
+            command: Some("claude -p build".into()),
+            updated_at: "2026-03-30T12:00:00Z".into(),
+        })
+        .await;
+
+        let Json(session) = get(State(state), Path(session_id)).await.unwrap();
+        assert_eq!(session.name, "remote-task");
+        assert_eq!(session.status, SessionStatus::Active);
+        assert_eq!(session.command, "claude -p build");
     }
 
     #[tokio::test]
@@ -452,6 +780,42 @@ mod tests {
         assert!(result.is_err());
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_stop_enqueues_remote_command_when_session_is_indexed_on_master() {
+        let session_id = Uuid::new_v4().to_string();
+        let state = master_state_with_index(SessionIndexEntry {
+            session_id: session_id.clone(),
+            node_name: "worker-1".into(),
+            node_address: Some("worker-1.tailnet:7433".into()),
+            session_name: "remote-task".into(),
+            status: "active".into(),
+            command: Some("claude -p build".into()),
+            updated_at: "2026-03-30T12:00:00Z".into(),
+        })
+        .await;
+        let query = StopQuery { purge: None };
+
+        let status = stop(State(state.clone()), Path(session_id.clone()), Query(query))
+            .await
+            .unwrap();
+        assert_eq!(status, StatusCode::ACCEPTED);
+
+        let commands = state
+            .command_queue
+            .as_ref()
+            .unwrap()
+            .drain("worker-1")
+            .await;
+        assert_eq!(commands.len(), 1);
+        match &commands[0] {
+            WorkerCommand::StopSession {
+                session_id: queued_id,
+                ..
+            } => assert_eq!(queued_id, &session_id),
+            WorkerCommand::CreateSession { .. } => panic!("expected stop command"),
+        }
     }
 
     #[tokio::test]
@@ -550,6 +914,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_resolve_remote_worker_target_uses_peer_registry() {
+        let session_id = Uuid::new_v4().to_string();
+        let mut peers = HashMap::new();
+        peers.insert(
+            "worker-1".into(),
+            pulpo_common::peer::PeerEntry::Full {
+                address: "worker-1.tailnet:7433".into(),
+                token: Some("secret-token".into()),
+            },
+        );
+        let master_state = master_state_with_index_and_peers(
+            SessionIndexEntry {
+                session_id: session_id.clone(),
+                node_name: "worker-1".into(),
+                node_address: None,
+                session_name: "remote-output".into(),
+                status: "active".into(),
+                command: Some("echo test".into()),
+                updated_at: "2026-03-30T12:00:00Z".into(),
+            },
+            peers,
+        )
+        .await;
+
+        let target = resolve_remote_worker_target(&master_state, &session_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(target.node_name, "worker-1");
+        assert_eq!(target.base_url, "http://worker-1.tailnet:7433");
+        assert_eq!(target.token.as_deref(), Some("secret-token"));
+    }
+
+    #[tokio::test]
     async fn test_input_for_session() {
         let state = test_state().await;
         let req = CreateSessionRequest {
@@ -586,6 +984,28 @@ mod tests {
         assert!(result.is_err());
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_remote_worker_target_falls_back_to_index_address() {
+        let session_id = Uuid::new_v4().to_string();
+        let master_state = master_state_with_index(SessionIndexEntry {
+            session_id: session_id.clone(),
+            node_name: "worker-1".into(),
+            node_address: Some("https://worker-1.example.com".into()),
+            session_name: "remote-input".into(),
+            status: "active".into(),
+            command: Some("echo test".into()),
+            updated_at: "2026-03-30T12:00:00Z".into(),
+        })
+        .await;
+
+        let target = resolve_remote_worker_target(&master_state, &session_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(target.base_url, "https://worker-1.example.com");
+        assert!(target.token.is_none());
     }
 
     /// Backend where all methods except `create_session` return errors.
@@ -683,6 +1103,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
+                master: crate::config::MasterConfig::default(),
             },
             manager,
             peer_registry,
@@ -769,6 +1190,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
+                master: crate::config::MasterConfig::default(),
             },
             manager,
             peer_registry,
@@ -873,6 +1295,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
+                master: crate::config::MasterConfig::default(),
             },
             manager,
             peer_registry,
@@ -1100,6 +1523,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_resolve_remote_worker_target_errors_without_any_address() {
+        let session_id = Uuid::new_v4().to_string();
+        let master_state = master_state_with_index(SessionIndexEntry {
+            session_id: session_id.clone(),
+            node_name: "worker-1".into(),
+            node_address: None,
+            session_name: "remote-download".into(),
+            status: "active".into(),
+            command: Some("echo test".into()),
+            updated_at: "2026-03-30T12:00:00Z".into(),
+        })
+        .await;
+
+        let result = resolve_remote_worker_target(&master_state, &session_id).await;
+        assert!(result.is_err());
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(err.error.contains("worker address unknown"));
+    }
+
+    #[tokio::test]
     async fn test_download_output_internal_error() {
         let state = failing_state().await;
         let req = CreateSessionRequest {
@@ -1302,6 +1746,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
+                master: crate::config::MasterConfig::default(),
             },
             manager,
             peer_registry,
@@ -1360,6 +1805,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
+                master: crate::config::MasterConfig::default(),
             },
             manager,
             peer_registry,
@@ -1485,6 +1931,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
+                master: crate::config::MasterConfig::default(),
             },
             manager,
             peer_registry,

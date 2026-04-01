@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router';
 import { AppHeader } from '@/components/layout/app-header';
 import { TidePool } from '@/components/ocean/tide-pool';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
 import { getPeers, getFleetSessions, stopSession } from '@/api/client';
 import { loadAllSprites, type Sprites } from '@/components/ocean/engine/sprites';
 import { NODE_COLORS } from '@/components/ocean/engine/world';
@@ -17,10 +19,14 @@ interface TidePoolEntry {
 }
 
 export function OceanPage() {
+  const navigate = useNavigate();
   const { sessions } = useSSE();
   const [localNode, setLocalNode] = useState<NodeInfo | null>(null);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [fleetSessions, setFleetSessions] = useState<FleetSession[]>([]);
+  const [nodeRole, setNodeRole] = useState<'standalone' | 'master' | 'worker'>('standalone');
+  const [masterName, setMasterName] = useState<string | null>(null);
+  const [masterAddress, setMasterAddress] = useState<string | null>(null);
   const [sprites, setSprites] = useState<Sprites | null>(null);
   const [focusedNode, setFocusedNode] = useState<string | null>(null);
 
@@ -38,10 +44,17 @@ export function OceanPage() {
       const resp = await getPeers();
       setLocalNode(resp.local);
       setPeers(resp.peers);
+      setNodeRole((resp.role as 'standalone' | 'master' | 'worker') ?? 'standalone');
+      setMasterName(resp.master_name ?? null);
+      setMasterAddress(resp.master_address ?? null);
 
-      await getFleetSessions()
-        .then((r) => setFleetSessions(r.sessions))
-        .catch(() => setFleetSessions([]));
+      if (resp.role === 'master') {
+        await getFleetSessions()
+          .then((r) => setFleetSessions(r.sessions))
+          .catch(() => setFleetSessions([]));
+      } else {
+        setFleetSessions([]);
+      }
     } catch {
       // Silently ignore — will retry on next poll
     }
@@ -63,14 +76,16 @@ export function OceanPage() {
       sessions,
       nodeColor: NODE_COLORS[0 % NODE_COLORS.length],
     });
-    for (let i = 0; i < peers.length; i++) {
-      pools.push({
-        nodeName: peers[i].name,
-        isLocal: false,
-        nodeStatus: peers[i].status,
-        sessions: fleetSessions.filter((s) => s.node_name === peers[i].name),
-        nodeColor: NODE_COLORS[(i + 1) % NODE_COLORS.length],
-      });
+    if (nodeRole === 'master') {
+      for (let i = 0; i < peers.length; i++) {
+        pools.push({
+          nodeName: peers[i].name,
+          isLocal: false,
+          nodeStatus: peers[i].status,
+          sessions: fleetSessions.filter((s) => s.node_name === peers[i].name),
+          nodeColor: NODE_COLORS[(i + 1) % NODE_COLORS.length],
+        });
+      }
     }
   }
 
@@ -117,6 +132,32 @@ export function OceanPage() {
           </div>
         ) : (
           <>
+            {nodeRole === 'worker' && (
+              <div
+                data-testid="ocean-worker-banner"
+                className="mb-4 flex flex-col gap-3 rounded-lg border bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="space-y-1">
+                  <p className="text-sm font-medium">This node is a worker.</p>
+                  <p className="text-sm text-muted-foreground">
+                    The full fleet ocean is available on the master.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {masterName ? `Master: ${masterName}` : 'Master node configured'}
+                    {masterAddress ? ` · ${masterAddress}` : ''}
+                  </p>
+                </div>
+                {masterAddress && (
+                  <Button
+                    data-testid="ocean-connect-master-button"
+                    variant="outline"
+                    onClick={() => navigate(`/connect?url=${encodeURIComponent(masterAddress)}`)}
+                  >
+                    Connect to master
+                  </Button>
+                )}
+              </div>
+            )}
             <div
               className={`grid ${focusedNode ? 'grid-cols-1' : gridCols} gap-4`}
               data-testid="tide-pool-grid"

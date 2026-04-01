@@ -1,0 +1,272 @@
+use std::sync::Arc;
+
+use axum::Json;
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use pulpo_common::api::{ErrorResponse, EventPushRequest, SessionIndexEntry};
+use pulpo_common::event::PulpoEvent;
+
+use super::AppState;
+
+/// Workers push batched events to the master via this endpoint.
+pub async fn push_events(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<EventPushRequest>,
+) -> impl IntoResponse {
+    let Some(session_index) = &state.session_index else {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "This node is not in master mode".into(),
+            }),
+        )
+            .into_response();
+    };
+
+    for event in &req.events {
+        let PulpoEvent::Session(se) = event;
+        let node_address = state
+            .peer_registry
+            .get(&req.node_name)
+            .await
+            .map(|peer| peer.address);
+        let entry = SessionIndexEntry {
+            session_id: se.session_id.clone(),
+            node_name: req.node_name.clone(),
+            node_address,
+            session_name: se.session_name.clone(),
+            status: se.status.clone(),
+            command: None,
+            updated_at: se.timestamp.clone(),
+        };
+        session_index.upsert(entry).await;
+        let _ = state.event_tx.send(event.clone());
+    }
+
+    session_index.touch_worker(&req.node_name).await;
+
+    StatusCode::NO_CONTENT.into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use axum_test::TestServer;
+    use pulpo_common::api::{EventPushRequest, FleetSessionsResponse};
+    use pulpo_common::event::{PulpoEvent, SessionEvent};
+
+    use crate::api::AppState;
+    use crate::api::routes;
+    use crate::backend::StubBackend;
+    use crate::config::{Config, NodeConfig};
+    use crate::master::{CommandQueue, SessionIndex};
+    use crate::peers::PeerRegistry;
+    use crate::session::manager::SessionManager;
+    use crate::store::Store;
+
+    async fn master_test_server() -> TestServer {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "master-node".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig {
+                enabled: true,
+                ..crate::config::MasterConfig::default()
+            },
+        };
+        let backend = Arc::new(StubBackend);
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (event_tx, _) = tokio::sync::broadcast::channel(16);
+        let session_index = Arc::new(SessionIndex::new());
+        let command_queue = Arc::new(CommandQueue::new());
+        let state = AppState::with_event_tx_master(
+            config,
+            tmpdir.path().join("config.toml"),
+            manager,
+            peer_registry,
+            event_tx,
+            store,
+            Some(session_index),
+            Some(command_queue),
+        );
+        let app = routes::build(state);
+        TestServer::new(app).unwrap()
+    }
+
+    async fn standalone_test_server() -> TestServer {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "standalone-node".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig {
+                enabled: true,
+                ..crate::config::MasterConfig::default()
+            },
+        };
+        let backend = Arc::new(StubBackend);
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let state = AppState::new(config, manager, peer_registry, store);
+        let app = routes::build(state);
+        TestServer::new(app).unwrap()
+    }
+
+    fn make_session_event(session_id: &str, name: &str, status: &str) -> PulpoEvent {
+        PulpoEvent::Session(SessionEvent {
+            session_id: session_id.into(),
+            session_name: name.into(),
+            status: status.into(),
+            previous_status: None,
+            node_name: "worker-1".into(),
+            output_snippet: None,
+            timestamp: "2026-03-30T12:00:00Z".into(),
+            ..Default::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn test_push_events_updates_index() {
+        let server = master_test_server().await;
+
+        let req = EventPushRequest {
+            node_name: "worker-1".into(),
+            events: vec![
+                make_session_event("s1", "task-a", "active"),
+                make_session_event("s2", "task-b", "idle"),
+            ],
+        };
+        let resp = server.post("/api/v1/events/push").json(&req).await;
+        resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+        // Verify fleet endpoint returns the indexed sessions
+        let fleet_resp = server.get("/api/v1/fleet/sessions").await;
+        fleet_resp.assert_status_ok();
+        let body: FleetSessionsResponse = fleet_resp.json();
+        assert_eq!(body.sessions.len(), 2);
+
+        let mut names: Vec<String> = body
+            .sessions
+            .iter()
+            .map(|s| s.session.name.clone())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["task-a", "task-b"]);
+    }
+
+    #[tokio::test]
+    async fn test_push_events_rebroadcasts_to_sse() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "master-node".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig {
+                enabled: true,
+                ..crate::config::MasterConfig::default()
+            },
+        };
+        let backend = Arc::new(StubBackend);
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (event_tx, _) = tokio::sync::broadcast::channel(16);
+        let session_index = Arc::new(SessionIndex::new());
+        let command_queue = Arc::new(CommandQueue::new());
+        let state = AppState::with_event_tx_master(
+            config,
+            tmpdir.path().join("config.toml"),
+            manager,
+            peer_registry,
+            event_tx.clone(),
+            store,
+            Some(session_index),
+            Some(command_queue),
+        );
+
+        // Subscribe to the broadcast channel before pushing
+        let mut rx = event_tx.subscribe();
+
+        let app = routes::build(state);
+        let server = TestServer::new(app).unwrap();
+
+        let req = EventPushRequest {
+            node_name: "worker-1".into(),
+            events: vec![make_session_event("s1", "task-a", "active")],
+        };
+        server.post("/api/v1/events/push").json(&req).await;
+
+        let received = rx.recv().await.unwrap();
+        match received {
+            PulpoEvent::Session(se) => {
+                assert_eq!(se.session_id, "s1");
+                assert_eq!(se.status, "active");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_push_events_forbidden_on_standalone() {
+        let server = standalone_test_server().await;
+        let req = EventPushRequest {
+            node_name: "worker-1".into(),
+            events: vec![make_session_event("s1", "task-a", "active")],
+        };
+        let resp = server.post("/api/v1/events/push").json(&req).await;
+        resp.assert_status(axum::http::StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_push_events_empty_batch() {
+        let server = master_test_server().await;
+        let req = EventPushRequest {
+            node_name: "worker-1".into(),
+            events: vec![],
+        };
+        let resp = server.post("/api/v1/events/push").json(&req).await;
+        resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+    }
+}

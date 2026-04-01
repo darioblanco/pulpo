@@ -105,6 +105,7 @@ beforeEach(() => {
       gpu: null,
     },
     peers: [],
+    role: 'standalone',
   });
   mockGetSessions.mockResolvedValue([]);
 });
@@ -186,6 +187,7 @@ describe('OceanPage', () => {
           session_count: null,
         },
       ],
+      role: 'master',
     });
     mockGetFleetSessions.mockResolvedValue({ sessions: [] });
 

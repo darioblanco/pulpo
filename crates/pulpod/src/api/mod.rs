@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod config;
 mod embed;
+pub mod event_push;
 pub mod events;
 pub mod fleet;
 pub mod health;
@@ -16,6 +17,7 @@ pub mod secrets;
 pub mod sessions;
 pub mod static_files;
 pub mod watchdog;
+pub mod worker_commands;
 pub mod ws;
 
 use std::path::PathBuf;
@@ -26,6 +28,7 @@ use pulpo_common::event::PulpoEvent;
 use tokio::sync::{RwLock, broadcast};
 
 use crate::config::Config;
+use crate::master::{CommandQueue, SessionIndex};
 use crate::peers::PeerRegistry;
 use crate::session::manager::SessionManager;
 use crate::store::Store;
@@ -49,6 +52,10 @@ pub struct AppState {
     pub event_tx: broadcast::Sender<PulpoEvent>,
     /// Watch channel sender for pushing watchdog config changes to the running loop.
     pub watchdog_config_tx: Option<tokio::sync::watch::Sender<WatchdogRuntimeConfig>>,
+    /// In-memory session index for master mode (aggregates worker sessions).
+    pub session_index: Option<Arc<SessionIndex>>,
+    /// Command queue for master mode (pending commands for workers).
+    pub command_queue: Option<Arc<CommandQueue>>,
 }
 
 impl AppState {
@@ -69,6 +76,8 @@ impl AppState {
             cached_prober: None,
             event_tx,
             watchdog_config_tx: None,
+            session_index: None,
+            command_queue: None,
         })
     }
 
@@ -93,6 +102,67 @@ impl AppState {
             )),
             event_tx,
             watchdog_config_tx: None,
+            session_index: None,
+            command_queue: None,
+        })
+    }
+
+    pub fn with_event_tx_master(
+        config: Config,
+        config_path: PathBuf,
+        session_manager: SessionManager,
+        peer_registry: PeerRegistry,
+        event_tx: broadcast::Sender<PulpoEvent>,
+        store: Store,
+        session_index: Option<Arc<SessionIndex>>,
+        command_queue: Option<Arc<CommandQueue>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            config: Arc::new(RwLock::new(config)),
+            config_path,
+            session_manager,
+            peer_registry,
+            store,
+            #[cfg(not(coverage))]
+            cached_prober: Some(crate::peers::health::CachedProber::new(
+                crate::peers::health::HttpPeerProber::new(),
+                std::time::Duration::from_secs(60),
+            )),
+            event_tx,
+            watchdog_config_tx: None,
+            session_index,
+            command_queue,
+        })
+    }
+
+    /// Full constructor with all optional fields (watchdog + master mode).
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_all(
+        config: Config,
+        config_path: PathBuf,
+        session_manager: SessionManager,
+        peer_registry: PeerRegistry,
+        event_tx: broadcast::Sender<PulpoEvent>,
+        watchdog_config_tx: Option<tokio::sync::watch::Sender<WatchdogRuntimeConfig>>,
+        store: Store,
+        session_index: Option<Arc<SessionIndex>>,
+        command_queue: Option<Arc<CommandQueue>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            config: Arc::new(RwLock::new(config)),
+            config_path,
+            session_manager,
+            peer_registry,
+            store,
+            #[cfg(not(coverage))]
+            cached_prober: Some(crate::peers::health::CachedProber::new(
+                crate::peers::health::HttpPeerProber::new(),
+                std::time::Duration::from_secs(60),
+            )),
+            event_tx,
+            watchdog_config_tx,
+            session_index,
+            command_queue,
         })
     }
 
@@ -118,6 +188,8 @@ impl AppState {
             )),
             event_tx,
             watchdog_config_tx,
+            session_index: None,
+            command_queue: None,
         })
     }
 }
@@ -155,6 +227,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -184,6 +257,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig::default(),
         };
         let config_path = tmpdir.path().join("config.toml");
         let backend = Arc::new(StubBackend);
@@ -222,6 +296,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -269,6 +344,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -285,6 +361,91 @@ mod tests {
             store,
         );
         assert!(state.watchdog_config_tx.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_app_state_with_event_tx_master() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig::default(),
+        };
+        let config_path = tmpdir.path().join("config.toml");
+        let backend = Arc::new(StubBackend);
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (event_tx, _) = tokio::sync::broadcast::channel(16);
+        let session_index = Arc::new(crate::master::SessionIndex::new());
+        let command_queue = Arc::new(crate::master::CommandQueue::new());
+        let state = AppState::with_event_tx_master(
+            config,
+            config_path.clone(),
+            manager,
+            peer_registry,
+            event_tx,
+            store,
+            Some(session_index),
+            Some(command_queue),
+        );
+        assert_eq!(state.config.read().await.node.name, "test");
+        assert_eq!(state.config_path, config_path);
+        assert!(state.session_index.is_some());
+        assert!(state.command_queue.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_app_state_with_event_tx_master_none() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig::default(),
+        };
+        let backend = Arc::new(StubBackend);
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (event_tx, _) = tokio::sync::broadcast::channel(16);
+        let state = AppState::with_event_tx_master(
+            config,
+            tmpdir.path().join("config.toml"),
+            manager,
+            peer_registry,
+            event_tx,
+            store,
+            None,
+            None,
+        );
+        assert!(state.session_index.is_none());
+        assert!(state.command_queue.is_none());
     }
 
     #[tokio::test]
@@ -306,6 +467,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
