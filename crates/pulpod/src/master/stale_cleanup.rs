@@ -5,6 +5,8 @@ use tokio::sync::broadcast;
 #[cfg(not(coverage))]
 use tracing::{debug, info};
 
+use crate::store::Store;
+
 /// Run the stale cleanup loop on the master node.
 ///
 /// Every `check_interval` seconds, calls `mark_stale_workers` on the session index.
@@ -13,6 +15,7 @@ use tracing::{debug, info};
 #[cfg(not(coverage))]
 pub async fn run_stale_cleanup_loop(
     session_index: std::sync::Arc<super::SessionIndex>,
+    store: Store,
     stale_timeout: Duration,
     check_interval: Duration,
     event_tx: broadcast::Sender<PulpoEvent>,
@@ -32,6 +35,9 @@ pub async fn run_stale_cleanup_loop(
                     info!(count = affected.len(), "Marked stale worker sessions as lost");
                 }
                 for entry in affected {
+                    if let Err(e) = store.upsert_master_session_index_entry(&entry).await {
+                        debug!(session_id = %entry.session_id, error = %e, "Failed to persist stale session index entry");
+                    }
                     debug!(session_id = %entry.session_id, node = %entry.node_name, "Session marked lost (stale worker)");
                     let event = PulpoEvent::Session(SessionEvent {
                         session_id: entry.session_id,
@@ -58,6 +64,7 @@ pub async fn run_stale_cleanup_loop(
 #[cfg(coverage)]
 pub async fn run_stale_cleanup_loop(
     _session_index: std::sync::Arc<super::SessionIndex>,
+    _store: Store,
     _stale_timeout: Duration,
     _check_interval: Duration,
     _event_tx: broadcast::Sender<PulpoEvent>,
@@ -87,7 +94,14 @@ pub fn build_lost_event(
 mod tests {
     use super::*;
     use crate::master::SessionIndex;
+    use chrono::{DateTime, Utc};
     use pulpo_common::api::SessionIndexEntry;
+
+    fn ts(value: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
 
     fn make_entry(session_id: &str, node_name: &str) -> SessionIndexEntry {
         SessionIndexEntry {
@@ -112,6 +126,9 @@ mod tests {
             std::time::Duration::from_secs(2),
             run_stale_cleanup_loop(
                 index,
+                crate::store::Store::new(tempfile::tempdir().unwrap().path().to_str().unwrap())
+                    .await
+                    .unwrap(),
                 Duration::from_secs(300),
                 Duration::from_secs(60),
                 tx,
@@ -152,18 +169,17 @@ mod tests {
     /// This tests the core logic used by `run_stale_cleanup_loop` without running the loop.
     #[tokio::test]
     async fn test_stale_entries_produce_lost_events() {
-        tokio::time::pause();
-
         let index = SessionIndex::new();
-        index.touch_worker("worker-1").await;
+        index
+            .touch_worker_at("worker-1", ts("2026-03-30T12:00:00Z"))
+            .await;
         index.upsert(make_entry("s1", "worker-1")).await;
         index.upsert(make_entry("s2", "worker-1")).await;
 
-        // Advance time past the stale timeout
-        tokio::time::advance(Duration::from_secs(400)).await;
-
         let (event_tx, mut event_rx) = broadcast::channel(16);
-        let affected = index.mark_stale_workers(Duration::from_secs(300)).await;
+        let affected = index
+            .mark_stale_workers_at(ts("2026-03-30T12:06:40Z"), Duration::from_secs(300))
+            .await;
         assert_eq!(affected.len(), 2);
 
         // Simulate what the loop does: emit an event for each affected entry
@@ -189,16 +205,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_events_when_no_stale_workers() {
-        tokio::time::pause();
-
         let index = SessionIndex::new();
-        index.touch_worker("worker-1").await;
+        index
+            .touch_worker_at("worker-1", ts("2026-03-30T12:00:00Z"))
+            .await;
         index.upsert(make_entry("s1", "worker-1")).await;
 
-        // Only advance 30s — not past the 300s stale timeout
-        tokio::time::advance(Duration::from_secs(30)).await;
-
-        let affected = index.mark_stale_workers(Duration::from_secs(300)).await;
+        let affected = index
+            .mark_stale_workers_at(ts("2026-03-30T12:00:30Z"), Duration::from_secs(300))
+            .await;
         assert!(affected.is_empty());
 
         // Session should still be active

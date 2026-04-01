@@ -40,10 +40,32 @@ pub async fn push_events(
             command: None,
             updated_at: se.timestamp.clone(),
         };
+        if let Err(e) = state.store.upsert_master_session_index_entry(&entry).await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("failed to persist master session index entry: {e}"),
+                }),
+            )
+                .into_response();
+        }
         session_index.upsert(entry).await;
         let _ = state.event_tx.send(event.clone());
     }
 
+    if let Err(e) = state
+        .store
+        .touch_master_worker(&req.node_name, &chrono::Utc::now().to_rfc3339())
+        .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("failed to persist master worker heartbeat: {e}"),
+            }),
+        )
+            .into_response();
+    }
     session_index.touch_worker(&req.node_name).await;
 
     StatusCode::NO_CONTENT.into_response()

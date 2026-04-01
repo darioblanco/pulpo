@@ -2,7 +2,7 @@ use std::fmt::Write;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use pulpo_common::api::ListSessionsQuery;
+use pulpo_common::api::{ListSessionsQuery, SessionIndexEntry};
 use pulpo_common::session::{Session, SessionStatus};
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 use uuid::Uuid;
@@ -340,6 +340,31 @@ impl Store {
                 .await?;
             }
         }
+
+        // Idempotent migration: persistent master session index
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS master_session_index (
+                session_id TEXT PRIMARY KEY,
+                node_name TEXT NOT NULL,
+                node_address TEXT,
+                session_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                command TEXT,
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Idempotent migration: worker heartbeat timestamps for master mode
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS master_workers (
+                node_name TEXT PRIMARY KEY,
+                last_seen_at TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
 
         // Idempotent migration: git_branch and git_commit columns
         let has_git_branch: i32 = sqlx::query_scalar(
@@ -970,6 +995,67 @@ impl Store {
         Ok(())
     }
 
+    // -- Master session index methods --
+
+    pub async fn upsert_master_session_index_entry(&self, entry: &SessionIndexEntry) -> Result<()> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO master_session_index
+             (session_id, node_name, node_address, session_name, status, command, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&entry.session_id)
+        .bind(&entry.node_name)
+        .bind(&entry.node_address)
+        .bind(&entry.session_name)
+        .bind(&entry.status)
+        .bind(&entry.command)
+        .bind(&entry.updated_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_master_session_index_entry(&self, session_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM master_session_index WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn list_master_session_index_entries(&self) -> Result<Vec<SessionIndexEntry>> {
+        let rows = sqlx::query("SELECT * FROM master_session_index ORDER BY session_name")
+            .fetch_all(&self.pool)
+            .await?;
+        rows.iter().map(row_to_session_index_entry).collect()
+    }
+
+    pub async fn touch_master_worker(&self, node_name: &str, seen_at: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT OR REPLACE INTO master_workers (node_name, last_seen_at) VALUES (?, ?)",
+        )
+        .bind(node_name)
+        .bind(seen_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn list_master_workers(&self) -> Result<Vec<(String, DateTime<Utc>)>> {
+        let rows =
+            sqlx::query("SELECT node_name, last_seen_at FROM master_workers ORDER BY node_name")
+                .fetch_all(&self.pool)
+                .await?;
+        rows.into_iter()
+            .map(|row| {
+                let node_name: String = row.get("node_name");
+                let last_seen_at: String = row.get("last_seen_at");
+                let parsed = DateTime::parse_from_rfc3339(&last_seen_at)?.with_timezone(&Utc);
+                Ok((node_name, parsed))
+            })
+            .collect()
+    }
+
     // -- Secret methods --
 
     /// Upsert a secret (INSERT OR REPLACE).
@@ -1175,6 +1261,18 @@ fn row_to_schedule(row: &SqliteRow) -> Result<pulpo_common::api::Schedule> {
         last_run_at: row.try_get("last_run_at").unwrap_or(None),
         last_session_id: row.try_get("last_session_id").unwrap_or(None),
         created_at: row.try_get("created_at").unwrap_or_default(),
+    })
+}
+
+fn row_to_session_index_entry(row: &SqliteRow) -> Result<SessionIndexEntry> {
+    Ok(SessionIndexEntry {
+        session_id: row.try_get("session_id")?,
+        node_name: row.try_get("node_name")?,
+        node_address: row.try_get("node_address").unwrap_or(None),
+        session_name: row.try_get("session_name")?,
+        status: row.try_get("status")?,
+        command: row.try_get("command").unwrap_or(None),
+        updated_at: row.try_get("updated_at")?,
     })
 }
 
@@ -3540,5 +3638,81 @@ mod tests {
         assert_eq!(fetched.git_insertions, Some(100));
         assert_eq!(fetched.git_deletions, Some(50));
         assert_eq!(fetched.git_ahead, Some(7));
+    }
+
+    #[tokio::test]
+    async fn test_master_session_index_roundtrip() {
+        let store = test_store().await;
+        let entry = SessionIndexEntry {
+            session_id: "remote-1".into(),
+            node_name: "worker-1".into(),
+            node_address: Some("worker-1.tail:7433".into()),
+            session_name: "nightly-review".into(),
+            status: "active".into(),
+            command: Some("claude -p 'review'".into()),
+            updated_at: "2026-04-01T20:00:00Z".into(),
+        };
+
+        store
+            .upsert_master_session_index_entry(&entry)
+            .await
+            .unwrap();
+        let entries = store.list_master_session_index_entries().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].session_id, "remote-1");
+        assert_eq!(entries[0].node_name, "worker-1");
+        assert_eq!(
+            entries[0].node_address.as_deref(),
+            Some("worker-1.tail:7433")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_master_session_index_delete() {
+        let store = test_store().await;
+        let entry = SessionIndexEntry {
+            session_id: "remote-2".into(),
+            node_name: "worker-2".into(),
+            node_address: None,
+            session_name: "batch-run".into(),
+            status: "idle".into(),
+            command: None,
+            updated_at: "2026-04-01T21:00:00Z".into(),
+        };
+
+        store
+            .upsert_master_session_index_entry(&entry)
+            .await
+            .unwrap();
+        store
+            .delete_master_session_index_entry("remote-2")
+            .await
+            .unwrap();
+        assert!(
+            store
+                .list_master_session_index_entries()
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_master_workers_roundtrip() {
+        let store = test_store().await;
+        store
+            .touch_master_worker("worker-1", "2026-04-01T22:00:00Z")
+            .await
+            .unwrap();
+        store
+            .touch_master_worker("worker-2", "2026-04-01T22:05:00Z")
+            .await
+            .unwrap();
+
+        let workers = store.list_master_workers().await.unwrap();
+        assert_eq!(workers.len(), 2);
+        assert_eq!(workers[0].0, "worker-1");
+        assert_eq!(workers[1].0, "worker-2");
+        assert_eq!(workers[0].1.to_rfc3339(), "2026-04-01T22:00:00+00:00");
     }
 }

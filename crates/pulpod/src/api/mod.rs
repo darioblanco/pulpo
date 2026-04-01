@@ -52,7 +52,7 @@ pub struct AppState {
     pub event_tx: broadcast::Sender<PulpoEvent>,
     /// Watch channel sender for pushing watchdog config changes to the running loop.
     pub watchdog_config_tx: Option<tokio::sync::watch::Sender<WatchdogRuntimeConfig>>,
-    /// In-memory session index for master mode (aggregates worker sessions).
+    /// Master session index, hydrated from `SQLite` on startup and kept hot in memory.
     pub session_index: Option<Arc<SessionIndex>>,
     /// Command queue for master mode (pending commands for workers).
     pub command_queue: Option<Arc<CommandQueue>>,

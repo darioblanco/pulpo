@@ -2,15 +2,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::time::Instant;
-
+use chrono::{DateTime, Utc};
 use pulpo_common::api::SessionIndexEntry;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
 pub struct SessionIndex {
     entries: Arc<RwLock<HashMap<String, SessionIndexEntry>>>,
-    workers: Arc<RwLock<HashMap<String, Instant>>>,
+    workers: Arc<RwLock<HashMap<String, DateTime<Utc>>>>,
 }
 
 impl SessionIndex {
@@ -57,19 +56,36 @@ impl SessionIndex {
 
     /// Update the last-seen timestamp for a worker.
     pub async fn touch_worker(&self, node_name: &str) {
+        self.touch_worker_at(node_name, Utc::now()).await;
+    }
+
+    /// Update the last-seen timestamp for a worker using an explicit timestamp.
+    pub async fn touch_worker_at(&self, node_name: &str, seen_at: DateTime<Utc>) {
         let mut workers = self.workers.write().await;
-        workers.insert(node_name.to_owned(), Instant::now());
+        workers.insert(node_name.to_owned(), seen_at);
     }
 
     /// Find workers whose last-seen is older than `timeout`, mark their sessions
     /// as `"lost"`, and return the affected entries.
     pub async fn mark_stale_workers(&self, timeout: Duration) -> Vec<SessionIndexEntry> {
-        let now = Instant::now();
+        self.mark_stale_workers_at(Utc::now(), timeout).await
+    }
+
+    /// Find workers whose last-seen is older than `timeout`, using the provided time.
+    pub async fn mark_stale_workers_at(
+        &self,
+        now: DateTime<Utc>,
+        timeout: Duration,
+    ) -> Vec<SessionIndexEntry> {
         let workers = self.workers.read().await;
 
         let stale_nodes: Vec<String> = workers
             .iter()
-            .filter(|(_, last_seen)| now.duration_since(**last_seen) > timeout)
+            .filter(|(_, last_seen)| {
+                now.signed_duration_since(**last_seen)
+                    .to_std()
+                    .is_ok_and(|age| age > timeout)
+            })
             .map(|(name, _)| name.clone())
             .collect();
         drop(workers);
@@ -97,6 +113,11 @@ impl SessionIndex {
         let workers = self.workers.read().await;
         workers.keys().cloned().collect()
     }
+
+    /// Restore a persisted worker heartbeat into the in-memory cache.
+    pub async fn restore_worker(&self, node_name: &str, seen_at: DateTime<Utc>) {
+        self.touch_worker_at(node_name, seen_at).await;
+    }
 }
 
 impl Default for SessionIndex {
@@ -108,6 +129,12 @@ impl Default for SessionIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ts(value: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Utc)
+    }
 
     fn make_entry(session_id: &str, node_name: &str, status: &str) -> SessionIndexEntry {
         SessionIndexEntry {
@@ -197,17 +224,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_touch_and_stale() {
-        tokio::time::pause();
-
         let index = SessionIndex::new();
-        index.touch_worker("worker-1").await;
+        index
+            .touch_worker_at("worker-1", ts("2026-03-30T12:00:00Z"))
+            .await;
         index.upsert(make_entry("s1", "worker-1", "active")).await;
         index.upsert(make_entry("s2", "worker-1", "idle")).await;
 
-        // Advance time past the timeout
-        tokio::time::advance(Duration::from_secs(120)).await;
-
-        let affected = index.mark_stale_workers(Duration::from_secs(60)).await;
+        let affected = index
+            .mark_stale_workers_at(ts("2026-03-30T12:02:00Z"), Duration::from_secs(60))
+            .await;
         assert_eq!(affected.len(), 2);
         assert!(affected.iter().all(|e| e.status == "lost"));
 
@@ -218,16 +244,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_stale_does_not_affect_fresh_workers() {
-        tokio::time::pause();
-
         let index = SessionIndex::new();
-        index.touch_worker("worker-1").await;
+        index
+            .touch_worker_at("worker-1", ts("2026-03-30T12:00:00Z"))
+            .await;
         index.upsert(make_entry("s1", "worker-1", "active")).await;
 
-        // Advance less than the timeout
-        tokio::time::advance(Duration::from_secs(30)).await;
-
-        let affected = index.mark_stale_workers(Duration::from_secs(60)).await;
+        let affected = index
+            .mark_stale_workers_at(ts("2026-03-30T12:00:30Z"), Duration::from_secs(60))
+            .await;
         assert!(affected.is_empty());
 
         // Entry should still be active
@@ -305,16 +330,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_mark_stale_skips_already_lost() {
-        tokio::time::pause();
-
         let index = SessionIndex::new();
-        index.touch_worker("worker-1").await;
+        index
+            .touch_worker_at("worker-1", ts("2026-03-30T12:00:00Z"))
+            .await;
         index.upsert(make_entry("s1", "worker-1", "lost")).await;
 
-        tokio::time::advance(Duration::from_secs(120)).await;
-
         // Already-lost sessions should not appear in the affected list
-        let affected = index.mark_stale_workers(Duration::from_secs(60)).await;
+        let affected = index
+            .mark_stale_workers_at(ts("2026-03-30T12:02:00Z"), Duration::from_secs(60))
+            .await;
         assert!(affected.is_empty());
     }
 }

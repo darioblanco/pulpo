@@ -509,10 +509,31 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         config::NodeRole::Master => {
             let si = Arc::new(master::SessionIndex::new());
             let cq = Arc::new(master::CommandQueue::new());
+            match store.list_master_session_index_entries().await {
+                Ok(entries) => {
+                    for entry in entries {
+                        si.upsert(entry).await;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to hydrate master session index from store: {e}");
+                }
+            }
+            match store.list_master_workers().await {
+                Ok(workers) => {
+                    for (node_name, seen_at) in workers {
+                        si.restore_worker(&node_name, seen_at).await;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to hydrate master worker heartbeats from store: {e}");
+                }
+            }
             info!("Master mode enabled");
             #[cfg(not(coverage))]
             {
                 let stale_si = si.clone();
+                let stale_store = store.clone();
                 let stale_timeout =
                     std::time::Duration::from_secs(config.master.stale_timeout_secs);
                 let stale_interval = std::time::Duration::from_secs(60);
@@ -520,6 +541,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                 let (stale_shutdown_tx, stale_shutdown_rx) = watch::channel(false);
                 tokio::spawn(master::run_stale_cleanup_loop(
                     stale_si,
+                    stale_store,
                     stale_timeout,
                     stale_interval,
                     stale_event_tx,
@@ -759,6 +781,9 @@ pub async fn build_mcp_server(cli: &Cli) -> Result<mcp::PulpoMcp> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::Store;
+    use axum_test::TestServer;
+    use pulpo_common::api::{FleetSessionsResponse, SessionIndexEntry};
 
     #[test]
     fn test_shutdown_handle_signals_loops() {
@@ -954,6 +979,72 @@ data_dir = "{}"
 
         let (_app, addr, _handle) = build_app(&cli).await.unwrap();
         assert_eq!(addr, "127.0.0.1:9876");
+    }
+
+    #[tokio::test]
+    async fn test_build_app_hydrates_master_session_index_from_store() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let config_path = tmpdir.path().join("config.toml");
+        let data_dir = tmpdir.path().join("data");
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[node]
+name = "master-node"
+port = 0
+data_dir = "{}"
+
+[auth]
+token = "master-token"
+
+[master]
+enabled = true
+"#,
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let store = Store::new(data_dir.to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let persisted_id = "11111111-1111-1111-1111-111111111111";
+        store
+            .upsert_master_session_index_entry(&SessionIndexEntry {
+                session_id: persisted_id.into(),
+                node_name: "worker-1".into(),
+                node_address: Some("worker-1.tail:7433".into()),
+                session_name: "persisted-session".into(),
+                status: "active".into(),
+                command: Some("claude -p 'review'".into()),
+                updated_at: "2026-04-01T20:00:00Z".into(),
+            })
+            .await
+            .unwrap();
+        store
+            .touch_master_worker("worker-1", "2026-04-01T20:00:00Z")
+            .await
+            .unwrap();
+
+        let cli = Cli {
+            config: config_path.to_str().unwrap().into(),
+            port: Some(0),
+            command: None,
+        };
+
+        let (app, _addr, handle) = build_app(&cli).await.unwrap();
+        let server = TestServer::new(app).unwrap();
+        let resp = server.get("/api/v1/fleet/sessions").await;
+        resp.assert_status_ok();
+        let body: FleetSessionsResponse = resp.json();
+        let persisted = body
+            .sessions
+            .iter()
+            .find(|session| session.session.name == "persisted-session")
+            .unwrap();
+        assert_eq!(persisted.session.id.to_string(), persisted_id);
+        assert_eq!(persisted.node_name, "worker-1");
+        handle.shutdown();
     }
 
     #[tokio::test]

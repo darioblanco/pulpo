@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
 use axum::{Json, extract::State};
+use chrono::{DateTime, Utc};
 use pulpo_common::api::{ErrorResponse, FleetSession, FleetSessionsResponse};
 use pulpo_common::session::{Session, SessionStatus};
+use uuid::Uuid;
 
 use super::AppState;
 use crate::config::NodeRole;
@@ -46,10 +48,20 @@ pub async fn fleet_sessions(
                 .status
                 .parse::<SessionStatus>()
                 .unwrap_or(SessionStatus::Lost);
+            let session_id = entry
+                .session_id
+                .parse::<Uuid>()
+                .unwrap_or_else(|_| Uuid::nil());
+            let updated_at = entry
+                .updated_at
+                .parse::<DateTime<Utc>>()
+                .unwrap_or_else(|_| Utc::now());
             let session = Session {
+                id: session_id,
                 name: entry.session_name,
                 command: entry.command.unwrap_or_default(),
                 status,
+                updated_at,
                 ..Session::default()
             };
             all_sessions.push(FleetSession {
