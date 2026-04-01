@@ -411,6 +411,7 @@ impl PulpoMcp {
                 worktree_base: None,
                 runtime: None,
                 secrets: None,
+                target_node: None,
             };
             self.session_manager.create_session(req).await
         } else {
@@ -486,6 +487,7 @@ impl PulpoMcp {
                 worktree_base: None,
                 runtime: None,
                 secrets: None,
+                target_node: None,
             };
             self.session_manager.create_session(req).await
         } else {

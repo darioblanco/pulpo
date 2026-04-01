@@ -1094,6 +1094,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         }
     }
 
@@ -1133,6 +1134,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -1172,6 +1174,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -1208,6 +1211,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Explicit command wins over ink command
@@ -1230,6 +1234,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let result = mgr.create_session(req).await;
         let err = result.unwrap_err().to_string();
@@ -1297,6 +1302,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let err = mgr.create_session(req).await.unwrap_err().to_string();
         assert!(err.contains("lowercase"), "got: {err}");
@@ -1317,6 +1323,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert!(!session.workdir.is_empty());
@@ -2200,6 +2207,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let resolved = mgr.resolve_ink(&req).unwrap();
         // Falls back to $SHELL or /bin/sh
@@ -2237,6 +2245,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.description, Some("Ink desc".into()));
@@ -2272,6 +2281,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         // Ink with no command falls back to $SHELL
         let session = mgr.create_session(req).await.unwrap();
@@ -2300,6 +2310,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude");
@@ -2327,6 +2338,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "custom-agent");
@@ -2363,6 +2375,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -2401,6 +2414,7 @@ mod tests {
             worktree_base: None,
             runtime: None, // Not set — should inherit from ink
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.runtime, Runtime::Docker);
@@ -2436,6 +2450,7 @@ mod tests {
             worktree_base: None,
             runtime: Some(Runtime::Tmux), // Override ink's docker runtime
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.runtime, Runtime::Tmux);
@@ -2474,6 +2489,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: Some(vec!["REQ_SECRET".into()]),
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Secret values should NOT appear in the command string (security fix)
@@ -2621,6 +2637,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -2754,6 +2771,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let err = mgr.create_session(req).await.unwrap_err();
         assert!(
@@ -2785,6 +2803,7 @@ mod tests {
             worktree_base: None,
             runtime: Some(Runtime::Docker),
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.runtime, Runtime::Docker);
@@ -2836,6 +2855,7 @@ mod tests {
             worktree_base: None,
             runtime: Some(Runtime::Docker),
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.runtime, Runtime::Docker);
@@ -2875,6 +2895,7 @@ mod tests {
             worktree_base: None,
             runtime: Some(Runtime::Docker),
             secrets: None,
+            target_node: None,
         };
         let err = mgr.create_session(req).await.unwrap_err();
         assert!(
@@ -2905,6 +2926,7 @@ mod tests {
             worktree_base: None,
             runtime: Some(Runtime::Docker),
             secrets: None,
+            target_node: None,
         };
         mgr.create_session(req).await.unwrap();
         // Docker command should NOT be wrapped with bash -l -c
@@ -3029,6 +3051,7 @@ mod tests {
             worktree_base: None,
             runtime: Some(Runtime::Docker),
             secrets: None,
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Mark it active (create_session left it as Active) — backend is dead
@@ -3150,6 +3173,7 @@ mod tests {
             runtime: None,
             // SHARED_SECRET overlaps with ink, REQ_ONLY is new
             secrets: Some(vec!["SHARED_SECRET".into(), "REQ_ONLY".into()]),
+            target_node: None,
         };
         let session = mgr.create_session(req).await.unwrap();
 

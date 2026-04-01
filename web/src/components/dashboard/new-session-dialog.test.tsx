@@ -7,7 +7,6 @@ import type { PeerInfo } from '@/api/types';
 
 vi.mock('@/api/client', () => ({
   createSession: vi.fn(),
-  createRemoteSession: vi.fn(),
   getInks: vi.fn(),
   getSecrets: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
@@ -16,7 +15,6 @@ vi.mock('@/api/client', () => ({
 }));
 
 const mockCreateSession = vi.mocked(api.createSession);
-const mockCreateRemoteSession = vi.mocked(api.createRemoteSession);
 const mockGetInks = vi.mocked(api.getInks);
 const mockGetSecrets = vi.mocked(api.getSecrets);
 
@@ -38,7 +36,6 @@ const defaultSession = {
 
 beforeEach(() => {
   mockCreateSession.mockReset();
-  mockCreateRemoteSession.mockReset();
   mockGetInks.mockReset();
   mockGetSecrets.mockReset();
   mockGetInks.mockResolvedValue({ inks: {} });
@@ -145,8 +142,8 @@ describe('NewSessionDialog', () => {
     });
   });
 
-  it('calls createRemoteSession for remote target', async () => {
-    mockCreateRemoteSession.mockResolvedValue({
+  it('routes remote target through createSession', async () => {
+    mockCreateSession.mockResolvedValue({
       session: { ...defaultSession, id: '2', name: 'remote-test' },
     });
     const peers: PeerInfo[] = [
@@ -180,9 +177,10 @@ describe('NewSessionDialog', () => {
     fireEvent.submit(form);
 
     await waitFor(() => {
-      expect(mockCreateRemoteSession).toHaveBeenCalledWith('remote:7433', {
+      expect(mockCreateSession).toHaveBeenCalledWith({
         name: 'remote-test',
         workdir: '/repo',
+        target_node: 'remote-node',
       });
     });
   });

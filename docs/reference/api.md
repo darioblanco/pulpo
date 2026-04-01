@@ -56,6 +56,7 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
   "name": "my-api",
   "command": "claude -p 'Fix the auth bug'",
   "workdir": "/path/to/repo",
+  "target_node": "worker-1",
   "ink": "reviewer",
   "description": "Fix auth bug in login endpoint",
   "metadata": {},
@@ -68,6 +69,8 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 ```
 
 `name` is required. All other fields are optional. If `ink` is specified, its `command` is used as the default (explicit `command` overrides it). `idle_threshold_secs` overrides the global idle threshold for this session (`null` = use global, `0` = never idle). `worktree_base` specifies the branch to fork from (implies `worktree: true`). Session responses include `worktree_branch` with the branch name when a worktree is active.
+
+`target_node` is only honored when the API request reaches a master node. In standalone or worker mode, create requests run locally and cross-node targeting is rejected.
 
 ## Inks
 

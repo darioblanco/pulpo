@@ -20,7 +20,7 @@ import {
 import { Plus, GitBranch, X } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { createSession, createRemoteSession, getInks, getSecrets } from '@/api/client';
+import { createSession, getInks, getSecrets } from '@/api/client';
 import type { InkConfig, PeerInfo, SecretEntry, Session } from '@/api/types';
 
 interface NewSessionDialogProps {
@@ -99,14 +99,9 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         ...(selectedSecrets.length > 0 ? { secrets: selectedSecrets } : {}),
       };
 
-      let resp;
-      if (targetNode === 'local') {
-        resp = await createSession(data);
-      } else {
-        const peer = peers.find((p) => p.name === targetNode);
-        if (!peer) return;
-        resp = await createRemoteSession(peer.address, data);
-      }
+      const resp = await createSession(
+        targetNode === 'local' ? data : { ...data, target_node: targetNode },
+      );
 
       setName('');
       setRepoPath('');

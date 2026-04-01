@@ -59,6 +59,13 @@ struct RemoteWorkerTarget {
     token: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+struct RemoteNodeTarget {
+    node_name: String,
+    base_url: String,
+    token: Option<String>,
+}
+
 fn normalize_http_base(address: &str) -> String {
     if address.contains("://") {
         address.to_owned()
@@ -131,6 +138,32 @@ fn remote_client() -> Result<reqwest::Client, ApiError> {
         .map_err(|e| internal_error(&format!("failed to build HTTP client: {e}")))
 }
 
+async fn resolve_remote_node_target(
+    state: &Arc<super::AppState>,
+    target_node: &str,
+) -> Result<Option<RemoteNodeTarget>, ApiError> {
+    let local_name = state.config.read().await.node.name.clone();
+    if target_node == local_name {
+        return Ok(None);
+    }
+
+    let Some(peer) = state.peer_registry.get(target_node).await else {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("target node not found: {target_node}"),
+            }),
+        ));
+    };
+
+    let token = state.peer_registry.get_token(target_node).await;
+    Ok(Some(RemoteNodeTarget {
+        node_name: target_node.to_owned(),
+        base_url: normalize_http_base(&peer.address),
+        token,
+    }))
+}
+
 pub async fn list(
     State(state): State<Arc<super::AppState>>,
     Query(query): Query<ListSessionsQuery>,
@@ -181,8 +214,46 @@ pub async fn get(
 
 pub async fn create(
     State(state): State<Arc<super::AppState>>,
-    Json(req): Json<CreateSessionRequest>,
+    Json(mut req): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<CreateSessionResponse>), ApiError> {
+    if let Some(target_node) = req.target_node.clone() {
+        let role = state.config.read().await.role();
+        if role != crate::config::NodeRole::Master {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "target_node requires master mode".into(),
+                }),
+            ));
+        }
+
+        if let Some(target) = resolve_remote_node_target(&state, &target_node).await? {
+            req.target_node = None;
+            let client = remote_client()?;
+            let resp = apply_remote_auth(
+                client
+                    .post(format!("{}/api/v1/sessions", target.base_url))
+                    .json(&req),
+                target.token.as_ref(),
+            )
+            .send()
+            .await
+            .map_err(|e| {
+                bad_gateway(&format!(
+                    "failed to create session on worker {}: {e}",
+                    target.node_name
+                ))
+            })?;
+            if !resp.status().is_success() {
+                return Err(reqwest_error_response(resp, "failed to create remote session").await);
+            }
+            let body = resp.json::<CreateSessionResponse>().await.map_err(|e| {
+                internal_error(&format!("failed to parse remote create response: {e}"))
+            })?;
+            return Ok((StatusCode::CREATED, Json(body)));
+        }
+    }
+
     let session = state
         .session_manager
         .create_session(req)
@@ -642,7 +713,10 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
-                master: crate::config::MasterConfig::default(),
+                master: crate::config::MasterConfig {
+                    enabled: true,
+                    ..crate::config::MasterConfig::default()
+                },
             },
             tmpdir.path().join("config.toml"),
             manager,
@@ -677,6 +751,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let _ = create(State(state.clone()), Json(req)).await.unwrap();
 
@@ -740,12 +815,70 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_ok());
         let (status, Json(resp)) = result.unwrap();
         assert_eq!(status, StatusCode::CREATED);
         assert_eq!(resp.session.name, "test");
+    }
+
+    #[tokio::test]
+    async fn test_create_target_node_requires_master() {
+        let state = test_state().await;
+        let req = CreateSessionRequest {
+            name: "remote-create".into(),
+            workdir: Some("/repo".into()),
+            metadata: None,
+            command: Some("claude code".into()),
+            description: None,
+            ink: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            worktree_base: None,
+            runtime: None,
+            secrets: None,
+            target_node: Some("worker-1".into()),
+        };
+
+        let result = create(State(state), Json(req)).await;
+        assert!(result.is_err());
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(err.error.contains("target_node requires master mode"));
+    }
+
+    #[tokio::test]
+    async fn test_create_target_node_matching_master_name_creates_locally() {
+        let state = master_state_with_index(SessionIndexEntry {
+            session_id: Uuid::new_v4().to_string(),
+            node_name: "master-node".into(),
+            node_address: None,
+            session_name: "existing-local".into(),
+            status: "active".into(),
+            command: Some("echo".into()),
+            updated_at: "2026-03-30T12:00:00Z".into(),
+        })
+        .await;
+        let req = CreateSessionRequest {
+            name: "master-local".into(),
+            workdir: Some("/tmp".into()),
+            metadata: None,
+            command: Some("echo local".into()),
+            description: None,
+            ink: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            worktree_base: None,
+            runtime: None,
+            secrets: None,
+            target_node: Some("master-node".into()),
+        };
+
+        let (status, Json(resp)) = create(State(state), Json(req)).await.unwrap();
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(resp.session.name, "master-local");
     }
 
     #[tokio::test]
@@ -763,6 +896,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let _ = create(State(state.clone()), Json(req())).await.unwrap();
         let result = create(State(state), Json(req())).await;
@@ -833,6 +967,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -857,6 +992,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -892,6 +1028,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -962,6 +1099,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1127,6 +1265,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1153,6 +1292,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1209,6 +1349,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let result = create(State(state), Json(req)).await;
         assert!(result.is_err());
@@ -1231,6 +1372,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1258,6 +1400,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1318,6 +1461,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1345,6 +1489,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1436,6 +1581,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1494,6 +1640,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1558,6 +1705,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1584,6 +1732,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1608,6 +1757,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1676,6 +1826,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1766,6 +1917,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;
@@ -1825,6 +1977,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let old_id = resp.session.id.to_string();
@@ -1847,6 +2000,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let _ = create(State(state.clone()), Json(req2)).await.unwrap();
 
@@ -1951,6 +2105,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
         let session = resp.session;

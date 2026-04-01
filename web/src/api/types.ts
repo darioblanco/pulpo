@@ -170,6 +170,7 @@ export interface CreateSessionRequest {
   runtime?: 'tmux' | 'docker';
   idle_threshold_secs?: number;
   secrets?: string[];
+  target_node?: string;
 }
 
 export interface CleanupSessionsResponse {

@@ -7,7 +7,6 @@ import {
   getFleetSessions,
   getSession,
   createSession,
-  createRemoteSession,
   stopSession,
   getSessionOutput,
   downloadSessionOutput,
@@ -237,15 +236,20 @@ describe('createSession', () => {
   });
 });
 
-describe('createRemoteSession', () => {
-  it('posts to remote address with JSON body', async () => {
-    const created = { id: 'remote-1', name: 'remote-api' };
+describe('createSession target_node', () => {
+  it('posts target_node through the local API', async () => {
+    const created = { session: { id: 'remote-1', name: 'remote-api' } };
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(created) });
 
-    const data = { name: 'remote-test', workdir: '/repo', command: 'claude code' };
-    const result = await createRemoteSession('macbook:7433', data);
+    const data = {
+      name: 'remote-test',
+      workdir: '/repo',
+      command: 'claude code',
+      target_node: 'macbook',
+    };
+    const result = await createSession(data);
 
-    expect(mockFetch).toHaveBeenCalledWith('http://macbook:7433/api/v1/sessions', {
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
@@ -261,10 +265,11 @@ describe('createRemoteSession', () => {
     });
 
     await expect(
-      createRemoteSession('macbook:7433', {
+      createSession({
         name: 'remote-err',
         workdir: '/repo',
         command: 'test',
+        target_node: 'macbook',
       }),
     ).rejects.toThrow('provider not installed');
   });

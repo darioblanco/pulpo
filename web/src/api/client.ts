@@ -130,20 +130,6 @@ export async function createSession(data: CreateSessionRequest): Promise<CreateS
   return res.json();
 }
 
-export async function createRemoteSession(
-  address: string,
-  data: CreateSessionRequest,
-): Promise<CreateSessionResponse> {
-  const base = address.includes('://') ? address : `http://${address}`;
-  const res = await authFetch(`${base}/api/v1/sessions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw await apiError(res, 'Failed to create session');
-  return res.json();
-}
-
 export async function stopSession(id: string, purge?: boolean): Promise<void> {
   const url = `${resolveBaseUrl()}/sessions/${id}/stop${purge ? '?purge=true' : ''}`;
   const res = await authFetch(url, { method: 'POST' });

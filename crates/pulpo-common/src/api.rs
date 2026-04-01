@@ -7,7 +7,7 @@ use crate::node::NodeInfo;
 use crate::peer::{PeerEntry, PeerInfo};
 use crate::session::Session;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSessionRequest {
     pub name: String,
     pub workdir: Option<String>,
@@ -25,6 +25,9 @@ pub struct CreateSessionRequest {
     /// Secret names to inject as environment variables.
     #[serde(default)]
     pub secrets: Option<Vec<String>>,
+    /// Target worker node name when routing creation through a master.
+    #[serde(default)]
+    pub target_node: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -701,6 +704,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("/tmp"));
@@ -729,6 +733,7 @@ mod tests {
             req.secrets,
             Some(vec!["GITHUB_TOKEN".into(), "NPM_TOKEN".into()])
         );
+        assert!(req.target_node.is_none());
     }
 
     #[test]

@@ -17,6 +17,8 @@ use tracing::{debug, info, warn};
 use crate::session::manager::SessionManager;
 #[cfg(not(coverage))]
 use crate::store::Store;
+#[cfg(not(coverage))]
+use crate::{config::NodeRole, peers::PeerRegistry};
 
 /// Normalize a cron expression to the 7-field format expected by the `cron` crate.
 /// Accepts standard 5-field (`min hour dom month dow`) and prepends `0` for seconds
@@ -74,6 +76,9 @@ fn is_due(schedule: &Schedule) -> bool {
 pub async fn run_scheduler_loop(
     session_manager: SessionManager,
     store: Store,
+    role: NodeRole,
+    local_node_name: String,
+    peer_registry: PeerRegistry,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
     mut shutdown_rx: watch::Receiver<bool>,
 ) {
@@ -83,7 +88,15 @@ pub async fn run_scheduler_loop(
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                fire_due_schedules(&session_manager, &store, event_tx.as_ref()).await;
+                fire_due_schedules(
+                    &session_manager,
+                    &store,
+                    role,
+                    &local_node_name,
+                    &peer_registry,
+                    event_tx.as_ref(),
+                )
+                .await;
             }
             _ = shutdown_rx.changed() => {
                 info!("Scheduler shutting down");
@@ -97,6 +110,9 @@ pub async fn run_scheduler_loop(
 async fn fire_due_schedules(
     session_manager: &SessionManager,
     store: &Store,
+    role: NodeRole,
+    local_node_name: &str,
+    peer_registry: &PeerRegistry,
     _event_tx: Option<&broadcast::Sender<PulpoEvent>>,
 ) {
     let schedules = match store.list_schedules().await {
@@ -149,9 +165,20 @@ async fn fire_due_schedules(
             worktree_base: schedule.worktree_base.clone(),
             runtime,
             secrets,
+            target_node: None,
         };
 
-        match session_manager.create_session(req).await {
+        let result = dispatch_schedule_create(
+            session_manager,
+            role,
+            local_node_name,
+            peer_registry,
+            &schedule,
+            req,
+        )
+        .await;
+
+        match result {
             Ok(session) => {
                 info!(
                     schedule_name = %schedule.name,
@@ -176,6 +203,76 @@ async fn fire_due_schedules(
                 );
             }
         }
+    }
+}
+
+#[cfg(not(coverage))]
+async fn dispatch_schedule_create(
+    session_manager: &SessionManager,
+    role: NodeRole,
+    local_node_name: &str,
+    peer_registry: &PeerRegistry,
+    schedule: &Schedule,
+    req: CreateSessionRequest,
+) -> anyhow::Result<pulpo_common::session::Session> {
+    match schedule.target_node.as_deref() {
+        Some(target_node) if role == NodeRole::Master && target_node != local_node_name => {
+            create_remote_scheduled_session(peer_registry, schedule.name.as_str(), target_node, req)
+                .await
+        }
+        _ => session_manager.create_session(req).await,
+    }
+}
+
+#[cfg(not(coverage))]
+async fn create_remote_scheduled_session(
+    peer_registry: &PeerRegistry,
+    schedule_name: &str,
+    target_node: &str,
+    req: CreateSessionRequest,
+) -> anyhow::Result<pulpo_common::session::Session> {
+    let Some(peer) = peer_registry.get(target_node).await else {
+        warn!(
+            schedule_name = %schedule_name,
+            target_node = %target_node,
+            "Schedule target node not found"
+        );
+        return Err(anyhow::anyhow!("target node not found: {target_node}"));
+    };
+
+    let base_url = if peer.address.contains("://") {
+        peer.address
+    } else {
+        format!("http://{}", peer.address)
+    };
+    let token = peer_registry.get_token(target_node).await;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to build scheduler HTTP client: {e}"))?;
+
+    let mut request = client
+        .post(format!("{base_url}/api/v1/sessions"))
+        .json(&req);
+    if let Some(token) = token.as_ref() {
+        request = request.bearer_auth(token);
+    }
+
+    match request.send().await {
+        Ok(resp) if resp.status().is_success() => resp
+            .json::<pulpo_common::api::CreateSessionResponse>()
+            .await
+            .map(|body| body.session)
+            .map_err(|e| anyhow::anyhow!("failed to parse remote schedule create response: {e}")),
+        Ok(resp) => {
+            let status = resp.status();
+            let message = match resp.json::<pulpo_common::api::ErrorResponse>().await {
+                Ok(body) => body.error,
+                Err(_) => format!("worker responded with {status}"),
+            };
+            Err(anyhow::anyhow!(message))
+        }
+        Err(e) => Err(anyhow::anyhow!("failed to reach worker {target_node}: {e}")),
     }
 }
 

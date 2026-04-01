@@ -12,9 +12,9 @@ Discovery tells nodes about each other. It does **not** make every node an equal
 
 - **Standalone node**: local-only view and actions.
 - **Worker node**: local sessions remain visible and manageable on that worker, but fleet-wide view and cross-node actions belong to the master.
-- **Master node**: canonical fleet-wide visibility and cross-node control surface.
+- **Master node**: canonical fleet-wide visibility and cross-node control surface, including remote create and targeted schedule execution.
 
-In the web UI, workers should point you at the configured master instead of pretending their fleet view is authoritative.
+In the web UI, workers should point you at the configured master instead of pretending their fleet view is authoritative. The worker dashboard remains useful for local sessions, but any fleet-wide create, stop, resume, or scheduled execution flow should go through the master.
 
 > **Note:** Distributed discovery methods (mDNS, seed-based gossip) were removed to simplify the codebase. They may return in a future version. Use Tailscale discovery or manual `[peers]` config instead.
 

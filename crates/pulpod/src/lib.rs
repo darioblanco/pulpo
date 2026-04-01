@@ -355,11 +355,17 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     {
         let sched_manager = manager.clone();
         let sched_store = store.clone();
+        let sched_role = config.role();
+        let sched_local_node_name = node_name.clone();
+        let sched_peer_registry = peer_registry.clone();
         let sched_event_tx = Some(event_tx.clone());
         let (sched_shutdown_tx, sched_shutdown_rx) = watch::channel(false);
         tokio::spawn(scheduler::run_scheduler_loop(
             sched_manager,
             sched_store,
+            sched_role,
+            sched_local_node_name,
+            sched_peer_registry,
             sched_event_tx,
             sched_shutdown_rx,
         ));

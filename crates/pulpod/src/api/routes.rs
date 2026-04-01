@@ -883,6 +883,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
         state
@@ -986,6 +987,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1020,6 +1022,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1053,6 +1056,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1096,6 +1100,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1137,6 +1142,7 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
+            target_node: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
