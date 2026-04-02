@@ -349,9 +349,58 @@ impl Store {
             }
         }
 
-        // Idempotent migration: persistent master session index
+        // Idempotent migration: rename legacy multi-node tables to controller terminology.
+        let has_master_session_index: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'master_session_index'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let has_controller_session_index: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'controller_session_index'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_master_session_index > 0 && has_controller_session_index == 0 {
+            sqlx::query("ALTER TABLE master_session_index RENAME TO controller_session_index")
+                .execute(&self.pool)
+                .await?;
+        }
+
+        let has_master_nodes: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'master_workers'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let has_controller_nodes: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'controller_nodes'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_master_nodes > 0 && has_controller_nodes == 0 {
+            sqlx::query("ALTER TABLE master_workers RENAME TO controller_nodes")
+                .execute(&self.pool)
+                .await?;
+        }
+
+        let has_master_enrolled_nodes: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'master_enrolled_workers'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let has_controller_enrolled_nodes: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'controller_enrolled_nodes'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_master_enrolled_nodes > 0 && has_controller_enrolled_nodes == 0 {
+            sqlx::query("ALTER TABLE master_enrolled_workers RENAME TO controller_enrolled_nodes")
+                .execute(&self.pool)
+                .await?;
+        }
+
+        // Idempotent migration: persistent controller session index
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS master_session_index (
+            "CREATE TABLE IF NOT EXISTS controller_session_index (
                 session_id TEXT PRIMARY KEY,
                 node_name TEXT NOT NULL,
                 node_address TEXT,
@@ -364,9 +413,9 @@ impl Store {
         .execute(&self.pool)
         .await?;
 
-        // Idempotent migration: worker heartbeat timestamps for master mode
+        // Idempotent migration: node heartbeat timestamps for controller mode
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS master_workers (
+            "CREATE TABLE IF NOT EXISTS controller_nodes (
                 node_name TEXT PRIMARY KEY,
                 last_seen_at TEXT NOT NULL
             )",
@@ -375,7 +424,7 @@ impl Store {
         .await?;
 
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS master_enrolled_workers (
+            "CREATE TABLE IF NOT EXISTS controller_enrolled_nodes (
                 node_name TEXT PRIMARY KEY,
                 token_hash TEXT NOT NULL UNIQUE,
                 last_seen_at TEXT,
@@ -1014,11 +1063,14 @@ impl Store {
         Ok(())
     }
 
-    // -- Master session index methods --
+    // -- Controller session index methods --
 
-    pub async fn upsert_master_session_index_entry(&self, entry: &SessionIndexEntry) -> Result<()> {
+    pub async fn upsert_controller_session_index_entry(
+        &self,
+        entry: &SessionIndexEntry,
+    ) -> Result<()> {
         sqlx::query(
-            "INSERT OR REPLACE INTO master_session_index
+            "INSERT OR REPLACE INTO controller_session_index
              (session_id, node_name, node_address, session_name, status, command, updated_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)",
         )
@@ -1034,24 +1086,24 @@ impl Store {
         Ok(())
     }
 
-    pub async fn delete_master_session_index_entry(&self, session_id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM master_session_index WHERE session_id = ?")
+    pub async fn delete_controller_session_index_entry(&self, session_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM controller_session_index WHERE session_id = ?")
             .bind(session_id)
             .execute(&self.pool)
             .await?;
         Ok(())
     }
 
-    pub async fn list_master_session_index_entries(&self) -> Result<Vec<SessionIndexEntry>> {
-        let rows = sqlx::query("SELECT * FROM master_session_index ORDER BY session_name")
+    pub async fn list_controller_session_index_entries(&self) -> Result<Vec<SessionIndexEntry>> {
+        let rows = sqlx::query("SELECT * FROM controller_session_index ORDER BY session_name")
             .fetch_all(&self.pool)
             .await?;
         rows.iter().map(row_to_session_index_entry).collect()
     }
 
-    pub async fn touch_master_worker(&self, node_name: &str, seen_at: &str) -> Result<()> {
+    pub async fn touch_controller_node(&self, node_name: &str, seen_at: &str) -> Result<()> {
         sqlx::query(
-            "INSERT OR REPLACE INTO master_workers (node_name, last_seen_at) VALUES (?, ?)",
+            "INSERT OR REPLACE INTO controller_nodes (node_name, last_seen_at) VALUES (?, ?)",
         )
         .bind(node_name)
         .bind(seen_at)
@@ -1060,9 +1112,9 @@ impl Store {
         Ok(())
     }
 
-    pub async fn list_master_workers(&self) -> Result<Vec<(String, DateTime<Utc>)>> {
+    pub async fn list_controller_nodes(&self) -> Result<Vec<(String, DateTime<Utc>)>> {
         let rows =
-            sqlx::query("SELECT node_name, last_seen_at FROM master_workers ORDER BY node_name")
+            sqlx::query("SELECT node_name, last_seen_at FROM controller_nodes ORDER BY node_name")
                 .fetch_all(&self.pool)
                 .await?;
         rows.into_iter()
@@ -1075,7 +1127,7 @@ impl Store {
             .collect()
     }
 
-    pub async fn enroll_master_worker(
+    pub async fn enroll_controller_node(
         &self,
         node_name: &str,
         token_hash: &str,
@@ -1083,7 +1135,7 @@ impl Store {
         last_seen_address: Option<&str>,
     ) -> Result<()> {
         sqlx::query(
-            "INSERT INTO master_enrolled_workers (node_name, token_hash, last_seen_at, last_seen_address)
+            "INSERT INTO controller_enrolled_nodes (node_name, token_hash, last_seen_at, last_seen_address)
              VALUES (?, ?, ?, ?)
              ON CONFLICT(node_name) DO UPDATE SET
                token_hash = excluded.token_hash,
@@ -1099,13 +1151,13 @@ impl Store {
         Ok(())
     }
 
-    pub async fn get_enrolled_master_worker_by_name(
+    pub async fn get_enrolled_controller_node_by_name(
         &self,
         node_name: &str,
     ) -> Result<Option<EnrolledNode>> {
         let row = sqlx::query(
             "SELECT node_name, token_hash, last_seen_at, last_seen_address
-             FROM master_enrolled_workers WHERE node_name = ?",
+             FROM controller_enrolled_nodes WHERE node_name = ?",
         )
         .bind(node_name)
         .fetch_optional(&self.pool)
@@ -1113,13 +1165,13 @@ impl Store {
         row.map(|row| row_to_enrolled_worker(&row)).transpose()
     }
 
-    pub async fn get_enrolled_master_worker_by_token_hash(
+    pub async fn get_enrolled_controller_node_by_token_hash(
         &self,
         token_hash: &str,
     ) -> Result<Option<EnrolledNode>> {
         let row = sqlx::query(
             "SELECT node_name, token_hash, last_seen_at, last_seen_address
-             FROM master_enrolled_workers WHERE token_hash = ?",
+             FROM controller_enrolled_nodes WHERE token_hash = ?",
         )
         .bind(token_hash)
         .fetch_optional(&self.pool)
@@ -1127,24 +1179,24 @@ impl Store {
         row.map(|row| row_to_enrolled_worker(&row)).transpose()
     }
 
-    pub async fn list_enrolled_master_workers(&self) -> Result<Vec<EnrolledNode>> {
+    pub async fn list_enrolled_controller_nodes(&self) -> Result<Vec<EnrolledNode>> {
         let rows = sqlx::query(
             "SELECT node_name, token_hash, last_seen_at, last_seen_address
-             FROM master_enrolled_workers ORDER BY node_name",
+             FROM controller_enrolled_nodes ORDER BY node_name",
         )
         .fetch_all(&self.pool)
         .await?;
         rows.iter().map(row_to_enrolled_worker).collect()
     }
 
-    pub async fn touch_enrolled_master_worker(
+    pub async fn touch_enrolled_controller_node(
         &self,
         node_name: &str,
         seen_at: &str,
         last_seen_address: Option<&str>,
     ) -> Result<()> {
         sqlx::query(
-            "UPDATE master_enrolled_workers
+            "UPDATE controller_enrolled_nodes
              SET last_seen_at = ?, last_seen_address = COALESCE(?, last_seen_address)
              WHERE node_name = ?",
         )
@@ -3754,7 +3806,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_master_session_index_roundtrip() {
+    async fn test_controller_session_index_roundtrip() {
         let store = test_store().await;
         let entry = SessionIndexEntry {
             session_id: "remote-1".into(),
@@ -3767,10 +3819,10 @@ mod tests {
         };
 
         store
-            .upsert_master_session_index_entry(&entry)
+            .upsert_controller_session_index_entry(&entry)
             .await
             .unwrap();
-        let entries = store.list_master_session_index_entries().await.unwrap();
+        let entries = store.list_controller_session_index_entries().await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].session_id, "remote-1");
         assert_eq!(entries[0].node_name, "worker-1");
@@ -3781,7 +3833,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_master_session_index_delete() {
+    async fn test_controller_session_index_delete() {
         let store = test_store().await;
         let entry = SessionIndexEntry {
             session_id: "remote-2".into(),
@@ -3794,16 +3846,16 @@ mod tests {
         };
 
         store
-            .upsert_master_session_index_entry(&entry)
+            .upsert_controller_session_index_entry(&entry)
             .await
             .unwrap();
         store
-            .delete_master_session_index_entry("remote-2")
+            .delete_controller_session_index_entry("remote-2")
             .await
             .unwrap();
         assert!(
             store
-                .list_master_session_index_entries()
+                .list_controller_session_index_entries()
                 .await
                 .unwrap()
                 .is_empty()
@@ -3811,18 +3863,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_master_workers_roundtrip() {
+    async fn test_controller_nodes_roundtrip() {
         let store = test_store().await;
         store
-            .touch_master_worker("worker-1", "2026-04-01T22:00:00Z")
+            .touch_controller_node("worker-1", "2026-04-01T22:00:00Z")
             .await
             .unwrap();
         store
-            .touch_master_worker("worker-2", "2026-04-01T22:05:00Z")
+            .touch_controller_node("worker-2", "2026-04-01T22:05:00Z")
             .await
             .unwrap();
 
-        let workers = store.list_master_workers().await.unwrap();
+        let workers = store.list_controller_nodes().await.unwrap();
         assert_eq!(workers.len(), 2);
         assert_eq!(workers[0].0, "worker-1");
         assert_eq!(workers[1].0, "worker-2");
@@ -3830,10 +3882,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_master_enrolled_workers_roundtrip() {
+    async fn test_controller_enrolled_nodes_roundtrip() {
         let store = test_store().await;
         store
-            .enroll_master_worker(
+            .enroll_controller_node(
                 "worker-1",
                 "hash-1",
                 Some("2026-04-01T22:00:00Z"),
@@ -3843,7 +3895,7 @@ mod tests {
             .unwrap();
 
         let by_name = store
-            .get_enrolled_master_worker_by_name("worker-1")
+            .get_enrolled_controller_node_by_name("worker-1")
             .await
             .unwrap()
             .unwrap();
@@ -3852,7 +3904,7 @@ mod tests {
         assert_eq!(by_name.last_seen_address.as_deref(), Some("10.0.0.10"));
 
         let by_hash = store
-            .get_enrolled_master_worker_by_token_hash("hash-1")
+            .get_enrolled_controller_node_by_token_hash("hash-1")
             .await
             .unwrap()
             .unwrap();
@@ -3860,19 +3912,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_touch_enrolled_master_worker_updates_seen_fields() {
+    async fn test_touch_enrolled_controller_node_updates_seen_fields() {
         let store = test_store().await;
         store
-            .enroll_master_worker("worker-2", "hash-2", None, None)
+            .enroll_controller_node("worker-2", "hash-2", None, None)
             .await
             .unwrap();
         store
-            .touch_enrolled_master_worker("worker-2", "2026-04-01T22:30:00Z", Some("10.0.0.20"))
+            .touch_enrolled_controller_node("worker-2", "2026-04-01T22:30:00Z", Some("10.0.0.20"))
             .await
             .unwrap();
 
         let worker = store
-            .get_enrolled_master_worker_by_name("worker-2")
+            .get_enrolled_controller_node_by_name("worker-2")
             .await
             .unwrap()
             .unwrap();
@@ -3881,5 +3933,111 @@ mod tests {
             "2026-04-01T22:30:00+00:00"
         );
         assert_eq!(worker.last_seen_address.as_deref(), Some("10.0.0.20"));
+    }
+
+    #[tokio::test]
+    async fn test_migrate_renames_legacy_master_tables_to_controller_tables() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+
+        sqlx::query(
+            "CREATE TABLE master_session_index (
+                session_id TEXT PRIMARY KEY,
+                node_name TEXT NOT NULL,
+                node_address TEXT,
+                session_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                command TEXT,
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO master_session_index
+             (session_id, node_name, node_address, session_name, status, command, updated_at)
+             VALUES ('s-1', 'node-1', 'node-1.tail:7433', 'nightly-review', 'active', 'claude', '2026-04-01T20:00:00Z')",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE master_workers (
+                node_name TEXT PRIMARY KEY,
+                last_seen_at TEXT NOT NULL
+            )",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO master_workers (node_name, last_seen_at)
+             VALUES ('node-1', '2026-04-01T21:00:00Z')",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "CREATE TABLE master_enrolled_workers (
+                node_name TEXT PRIMARY KEY,
+                token_hash TEXT NOT NULL UNIQUE,
+                last_seen_at TEXT,
+                last_seen_address TEXT
+            )",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO master_enrolled_workers (node_name, token_hash, last_seen_at, last_seen_address)
+             VALUES ('node-1', 'hash-1', '2026-04-01T21:05:00Z', '10.0.0.10')",
+        )
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        store.migrate().await.unwrap();
+
+        let old_session_table: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'master_session_index'",
+        )
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        let old_nodes_table: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'master_workers'",
+        )
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        let old_enrolled_table: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'master_enrolled_workers'",
+        )
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(old_session_table, 0);
+        assert_eq!(old_nodes_table, 0);
+        assert_eq!(old_enrolled_table, 0);
+
+        let sessions = store.list_controller_session_index_entries().await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "s-1");
+        assert_eq!(sessions[0].node_name, "node-1");
+
+        let nodes = store.list_controller_nodes().await.unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].0, "node-1");
+
+        let enrolled = store
+            .get_enrolled_controller_node_by_name("node-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(enrolled.token_hash, "hash-1");
+        assert_eq!(enrolled.last_seen_address.as_deref(), Some("10.0.0.10"));
     }
 }

@@ -224,7 +224,7 @@ mod tests {
         let token = enroll_node(&server, "worker-1").await;
         let enrolled = state
             .store
-            .get_enrolled_master_worker_by_name("worker-1")
+            .get_enrolled_controller_node_by_name("worker-1")
             .await
             .unwrap()
             .unwrap();

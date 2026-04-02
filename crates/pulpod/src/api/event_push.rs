@@ -50,7 +50,11 @@ pub async fn push_events(
                     command: None,
                     updated_at: se.timestamp.clone(),
                 };
-                if let Err(e) = state.store.upsert_master_session_index_entry(&entry).await {
+                if let Err(e) = state
+                    .store
+                    .upsert_controller_session_index_entry(&entry)
+                    .await
+                {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
@@ -64,7 +68,7 @@ pub async fn push_events(
             PulpoEvent::SessionDeleted(se) => {
                 if let Err(e) = state
                     .store
-                    .delete_master_session_index_entry(&se.session_id)
+                    .delete_controller_session_index_entry(&se.session_id)
                     .await
                 {
                     return (
@@ -83,7 +87,7 @@ pub async fn push_events(
 
     if let Err(e) = state
         .store
-        .touch_master_worker(&node_name, &chrono::Utc::now().to_rfc3339())
+        .touch_controller_node(&node_name, &chrono::Utc::now().to_rfc3339())
         .await
     {
         return (
@@ -96,7 +100,7 @@ pub async fn push_events(
     }
     if let Err(e) = state
         .store
-        .touch_enrolled_master_worker(&node_name, &chrono::Utc::now().to_rfc3339(), None)
+        .touch_enrolled_controller_node(&node_name, &chrono::Utc::now().to_rfc3339(), None)
         .await
     {
         return (
@@ -406,7 +410,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         store
-            .upsert_master_session_index_entry(&SessionIndexEntry {
+            .upsert_controller_session_index_entry(&SessionIndexEntry {
                 session_id: recovered_id.into(),
                 node_name: "worker-1".into(),
                 node_address: Some("worker-1.tail:7433".into()),
@@ -487,7 +491,7 @@ mod tests {
             .unwrap();
         assert_eq!(recovered.session.status.to_string(), "active");
 
-        let entries = store.list_master_session_index_entries().await.unwrap();
+        let entries = store.list_controller_session_index_entries().await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].status, "active");
     }
@@ -561,7 +565,7 @@ mod tests {
             .await;
         resp.assert_status(axum::http::StatusCode::NO_CONTENT);
 
-        let entries = store.list_master_session_index_entries().await.unwrap();
+        let entries = store.list_controller_session_index_entries().await.unwrap();
         assert!(entries.is_empty());
     }
 }

@@ -50,7 +50,7 @@ pub async fn authenticate_node(
     let token_hash = hash_node_token(token);
     let enrolled_node = state
         .store
-        .get_enrolled_master_worker_by_token_hash(&token_hash)
+        .get_enrolled_controller_node_by_token_hash(&token_hash)
         .await
         .map_err(|e| {
             (
@@ -86,7 +86,7 @@ pub async fn enroll_node(
 
     match state
         .store
-        .get_enrolled_master_worker_by_name(&req.node_name)
+        .get_enrolled_controller_node_by_name(&req.node_name)
         .await
     {
         Ok(Some(_)) => {
@@ -112,7 +112,7 @@ pub async fn enroll_node(
 
     if let Err(e) = state
         .store
-        .enroll_master_worker(&req.node_name, &token_hash, None, None)
+        .enroll_controller_node(&req.node_name, &token_hash, None, None)
         .await
     {
         return (
@@ -145,7 +145,7 @@ pub async fn list_enrolled_nodes(State(state): State<Arc<AppState>>) -> impl Int
             .into_response();
     }
 
-    let nodes = match state.store.list_enrolled_master_workers().await {
+    let nodes = match state.store.list_enrolled_controller_nodes().await {
         Ok(nodes) => nodes,
         Err(e) => {
             return (
@@ -283,7 +283,7 @@ mod tests {
 
         let enrolled = state
             .store
-            .get_enrolled_master_worker_by_name("worker-1")
+            .get_enrolled_controller_node_by_name("worker-1")
             .await
             .unwrap()
             .unwrap();

@@ -35,7 +35,7 @@ pub async fn run_stale_cleanup_loop(
                     info!(count = affected.len(), "Marked stale node sessions as lost");
                 }
                 for entry in affected {
-                    if let Err(e) = store.upsert_master_session_index_entry(&entry).await {
+                    if let Err(e) = store.upsert_controller_session_index_entry(&entry).await {
                         debug!(session_id = %entry.session_id, error = %e, "Failed to persist stale session index entry");
                     }
                     debug!(session_id = %entry.session_id, node = %entry.node_name, "Session marked lost (stale node)");
@@ -243,7 +243,7 @@ mod tests {
         let active_entry = make_entry("s1", "worker-1");
         index.upsert(active_entry.clone()).await;
         store
-            .upsert_master_session_index_entry(&active_entry)
+            .upsert_controller_session_index_entry(&active_entry)
             .await
             .unwrap();
 
@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(affected.len(), 1);
         assert_eq!(affected[0].status, "lost");
         store
-            .upsert_master_session_index_entry(&affected[0])
+            .upsert_controller_session_index_entry(&affected[0])
             .await
             .unwrap();
 
@@ -267,7 +267,7 @@ mod tests {
         };
         index.upsert(recovered_entry.clone()).await;
         store
-            .upsert_master_session_index_entry(&recovered_entry)
+            .upsert_controller_session_index_entry(&recovered_entry)
             .await
             .unwrap();
 
@@ -281,7 +281,7 @@ mod tests {
 
         let entry = index.get("s1").await.unwrap();
         assert_eq!(entry.status, "active");
-        let persisted = store.list_master_session_index_entries().await.unwrap();
+        let persisted = store.list_controller_session_index_entries().await.unwrap();
         assert_eq!(persisted.len(), 1);
         assert_eq!(persisted[0].status, "active");
     }

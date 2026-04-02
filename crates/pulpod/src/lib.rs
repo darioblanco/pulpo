@@ -509,7 +509,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         config::NodeRole::Controller => {
             let si = Arc::new(controller::SessionIndex::new());
             let cq = Arc::new(controller::CommandQueue::new());
-            match store.list_master_session_index_entries().await {
+            match store.list_controller_session_index_entries().await {
                 Ok(entries) => {
                     for entry in entries {
                         si.upsert(entry).await;
@@ -519,7 +519,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                     tracing::warn!("Failed to hydrate controller session index from store: {e}");
                 }
             }
-            match store.list_master_workers().await {
+            match store.list_controller_nodes().await {
                 Ok(workers) => {
                     for (node_name, seen_at) in workers {
                         si.restore_worker(&node_name, seen_at).await;
@@ -1064,7 +1064,7 @@ enabled = true
         store.migrate().await.unwrap();
         let persisted_id = "11111111-1111-1111-1111-111111111111";
         store
-            .upsert_master_session_index_entry(&SessionIndexEntry {
+            .upsert_controller_session_index_entry(&SessionIndexEntry {
                 session_id: persisted_id.into(),
                 node_name: "worker-1".into(),
                 node_address: Some("worker-1.tail:7433".into()),
@@ -1076,7 +1076,7 @@ enabled = true
             .await
             .unwrap();
         store
-            .touch_master_worker("worker-1", "2026-04-01T20:00:00Z")
+            .touch_controller_node("worker-1", "2026-04-01T20:00:00Z")
             .await
             .unwrap();
 
@@ -1185,7 +1185,7 @@ enabled = true
         assert_eq!(updated.session.status.to_string(), "idle");
 
         let store = Store::new(data_dir.to_str().unwrap()).await.unwrap();
-        let entries = store.list_master_session_index_entries().await.unwrap();
+        let entries = store.list_controller_session_index_entries().await.unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].status, "idle");
 
