@@ -530,6 +530,9 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                 }
             }
             info!("Master mode enabled");
+            info!(
+                "Master command queue is in-memory only; pending worker commands do not survive master restart"
+            );
             #[cfg(not(coverage))]
             {
                 let stale_si = si.clone();

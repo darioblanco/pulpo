@@ -157,12 +157,25 @@ To target another node reliably, send the schedule request to the master. Worker
 
 ### Multi-Node Architecture
 
-Pulpo nodes discover each other and present a unified view:
+Pulpo supports a master/worker control-plane model for multi-node operation:
 
-- **Tailscale**: Discovers peers via local Tailscale API, serves HTTPS via `tailscale serve`
-- **Manual**: Explicit peer entries in config
+- **Standalone**: local sessions only
+- **Master**: canonical fleet-wide view and cross-node control surface
+- **Worker**: local sessions plus handoff to the configured master
 
-Each node runs independently with its own SQLite store. Session state stays local to each node — the unified view is assembled at query time by the UI/CLI.
+Discovery still matters:
+
+- **Tailscale**: discovers peers via local Tailscale API and serves HTTPS via `tailscale serve`
+- **Manual**: explicit peer entries in config
+
+But discovery does not make every node equally authoritative. The master holds a persisted session index built from worker heartbeats and event pushes. Sessions themselves still run on worker-local backends and remain local to each node's SQLite store.
+
+Important limits:
+
+- fleet state is eventually consistent rather than strongly consistent
+- worker UIs are local-first, not canonical fleet dashboards
+- the master command queue is currently in-memory, so pending worker commands do not survive master restart
+- distributed terminal attach is intentionally out of scope; remote detail remains HTTP/log-oriented
 
 ## Data Flow
 

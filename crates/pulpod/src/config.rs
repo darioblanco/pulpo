@@ -401,8 +401,10 @@ impl Config {
     /// Validate the master configuration.
     ///
     /// - A node cannot be both master and worker (enabled + address).
-    /// - Master mode requires an auth token so workers can authenticate.
-    /// - Worker mode requires an auth token so the worker can authenticate to master.
+    /// - In `public` bind mode, master mode requires `auth.token`.
+    /// - In `public` bind mode, worker mode requires `master.token`.
+    /// - In trusted-network modes (`local`, `tailscale`, `container`), bearer
+    ///   auth is optional because network isolation is the auth layer.
     pub fn validate_master(&self) -> Result<()> {
         if self.master.enabled && self.master.address.is_some() {
             anyhow::bail!(
@@ -410,21 +412,21 @@ impl Config {
                  a node cannot be both master and worker"
             );
         }
-        if self.master.enabled {
-            // Master node: must have auth.token so workers can authenticate.
+        if self.master.enabled && self.node.bind == BindMode::Public {
+            // Public master: must have auth.token so workers/users can authenticate.
             if self.auth.token.is_empty() {
                 anyhow::bail!(
                     "master.enabled requires auth.token to be set: \
-                     workers authenticate to master using the master's bearer token"
+                     public master nodes require bearer auth for users and workers"
                 );
             }
         }
-        if self.master.address.is_some() {
-            // Worker node: must have master.token to authenticate to master.
+        if self.master.address.is_some() && self.node.bind == BindMode::Public {
+            // Public worker deployments are expected to authenticate to a public master.
             if self.master.token.is_none() || self.master.token.as_deref() == Some("") {
                 anyhow::bail!(
                     "master.address requires master.token to be set: \
-                     the worker authenticates to master using master.token"
+                     public worker deployments require bearer auth to reach the master"
                 );
             }
         }
@@ -3015,7 +3017,10 @@ enabled = true
     #[test]
     fn test_validate_master_enabled_without_auth_token_errors() {
         let config = Config {
-            node: NodeConfig::default(),
+            node: NodeConfig {
+                bind: BindMode::Public,
+                ..NodeConfig::default()
+            },
             auth: AuthConfig::default(), // token is empty
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
@@ -3033,9 +3038,34 @@ enabled = true
     }
 
     #[test]
+    fn test_validate_master_enabled_without_auth_token_ok_on_tailscale() {
+        let config = Config {
+            node: NodeConfig {
+                bind: BindMode::Tailscale,
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig::default(),
+            docker: DockerConfig::default(),
+            master: MasterConfig {
+                enabled: true,
+                address: None,
+                ..MasterConfig::default()
+            },
+        };
+        assert!(config.validate_master().is_ok());
+    }
+
+    #[test]
     fn test_validate_master_worker_without_master_token_errors() {
         let config = Config {
-            node: NodeConfig::default(),
+            node: NodeConfig {
+                bind: BindMode::Public,
+                ..NodeConfig::default()
+            },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
@@ -3054,9 +3084,35 @@ enabled = true
     }
 
     #[test]
+    fn test_validate_master_worker_without_master_token_ok_on_tailscale() {
+        let config = Config {
+            node: NodeConfig {
+                bind: BindMode::Tailscale,
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: NotificationsConfig::default(),
+            docker: DockerConfig::default(),
+            master: MasterConfig {
+                enabled: false,
+                address: Some("https://master.tailnet.ts.net".into()),
+                token: None,
+                ..MasterConfig::default()
+            },
+        };
+        assert!(config.validate_master().is_ok());
+    }
+
+    #[test]
     fn test_validate_master_worker_with_empty_master_token_errors() {
         let config = Config {
-            node: NodeConfig::default(),
+            node: NodeConfig {
+                bind: BindMode::Public,
+                ..NodeConfig::default()
+            },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),

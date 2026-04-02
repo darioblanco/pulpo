@@ -31,7 +31,7 @@ tag = "pulpo"              # optional: filter by ACL tag
 discovery_interval_secs = 30  # default: 30
 ```
 
-Binds to the Tailscale interface IP, skips auth (delegated to WireGuard), and discovers peers via the local Tailscale API.
+Binds locally, exposes itself over the tailnet via `tailscale serve`, skips bearer auth (delegated to WireGuard), and discovers peers via the local Tailscale API.
 
 ## Manual peers
 

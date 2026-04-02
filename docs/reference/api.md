@@ -47,7 +47,7 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | GET | `/api/v1/sessions/:id/interventions` | List watchdog interventions |
 | GET | `/api/v1/sessions/:id/stream` | WebSocket terminal stream |
 | POST | `/api/v1/sessions/cleanup` | Remove all stopped and lost sessions |
-| GET | `/api/v1/fleet/sessions` | Aggregate sessions across peers |
+| GET | `/api/v1/fleet/sessions` | Canonical fleet view on master; local sessions only elsewhere |
 
 ### Create Session (POST /api/v1/sessions)
 
@@ -71,6 +71,13 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 `name` is required. All other fields are optional. If `ink` is specified, its `command` is used as the default (explicit `command` overrides it). `idle_threshold_secs` overrides the global idle threshold for this session (`null` = use global, `0` = never idle). `worktree_base` specifies the branch to fork from (implies `worktree: true`). Session responses include `worktree_branch` with the branch name when a worktree is active.
 
 `target_node` is only honored when the API request reaches a master node. In standalone or worker mode, create requests run locally and cross-node targeting is rejected.
+
+Multi-node notes:
+
+- `GET /api/v1/fleet/sessions` is authoritative only on a master node
+- worker and standalone nodes return local sessions there
+- `GET /api/v1/sessions/:id/stream` remains local-only; remote terminal proxying is intentionally out of scope
+- remote `output`, `input`, `resume`, and `download` are HTTP-proxied through the master for indexed remote sessions
 
 ## Inks
 

@@ -25,7 +25,7 @@ default_command = "claude"   # Optional fallback when spawn has no command
 Bind modes:
 - `local` (default) — binds to `127.0.0.1`, no auth, no discovery
 - `public` — binds to `0.0.0.0`, requires auth token. Use manual `[peers]` config for multi-node.
-- `tailscale` — binds to Tailscale IP, auto-serves HTTPS via `tailscale serve`, peer discovery via Tailscale API
+- `tailscale` — binds locally, auto-serves HTTPS via `tailscale serve`, peer discovery via Tailscale API
 - `container` — binds to `0.0.0.0`, no auth (trusts container network isolation)
 
 ## Inks
@@ -124,6 +124,38 @@ token = "auto-generated-uuid"
 ```
 
 For `local`, `tailscale`, and `container` modes, auth is skipped.
+
+## Master / Worker Mode
+
+Multi-node control uses the `[master]` section:
+
+```toml
+[master]
+enabled = true
+stale_timeout_secs = 300
+```
+
+or on a worker:
+
+```toml
+[master]
+address = "https://master-node.tailnet.ts.net"
+token = "optional-for-public-masters"
+```
+
+Rules:
+
+- `enabled = true` promotes the node to master
+- `address = ...` makes the node a worker
+- leaving both unset keeps the node standalone
+- worker and master mode are mutually exclusive
+
+Practical behavior:
+
+- the master is the canonical fleet view and cross-node write path
+- workers remain useful for local sessions only
+- in `tailscale` mode, bearer auth between worker and master is optional because the tailnet is the trust boundary
+- the master session index survives restart, but queued worker commands do not
 
 ## Docker Runtime
 

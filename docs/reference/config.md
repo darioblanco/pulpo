@@ -22,7 +22,28 @@ All sections are optional. Pulpo runs with zero config.
 |-------|------|---------|-------------|
 | `token` | string | auto-generated | Auth token for `bind = "public"` |
 
-Not needed for `local`, `tailscale`, or `container` modes.
+Not needed for `local`, `tailscale`, or `container` modes. Pulpo still auto-generates one on first run so a node can be switched to `public` later without manual bootstrap.
+
+## `[master]`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `false` | Promote this node to master mode |
+| `address` | string | — | Master URL for worker mode; when set, this node becomes a worker |
+| `token` | string | — | Optional bearer token used by workers when talking to a public master |
+| `stale_timeout_secs` | u64 | `300` | Seconds before the master marks a silent worker as lost |
+
+Role rules:
+
+- `enabled = true` and `address` unset => master node
+- `address` set and `enabled = false` => worker node
+- neither set => standalone node
+- `enabled` and `address` are mutually exclusive
+
+Auth rules:
+
+- In `public` mode, a master should expose `auth.token`, and workers should set `master.token`.
+- In `tailscale`, `local`, and `container` modes, bearer auth is optional because network isolation is the trust boundary.
 
 ## `[watchdog]`
 

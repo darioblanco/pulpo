@@ -158,13 +158,13 @@ Remove broken features that frustrate users. Keep what works:
 Inspired by Elasticsearch's cluster architecture: every node runs the same binary, one node is promoted to master. The master holds the session index (metadata), not the sessions themselves (which are tmux processes on worker nodes).
 
 How it works:
-- `pulpod --role master` (or `role = "master"` in config)
+- `master.enabled = true` promotes a node to master mode
+- `master.address = "https://..."` makes a node a worker
 - Worker nodes push session events to master over outbound HTTP and poll for commands (no inbound control ports needed on workers)
 - Master maintains a unified session index in its SQLite
 - Web UI connects to master only for fleet-wide visibility and cross-node actions
 - Worker UIs stay local-first: local sessions remain visible, but fleet-wide control belongs to the master
-- CLI connects to master for cross-node actions — master routes commands to the right worker
-- Single auth: workers authenticate to master, users authenticate to master
+- Public deployments use bearer auth; tailscale deployments trust the tailnet instead of layering tokens by default
 
 Current implementation status:
 - Master-routed fleet reads, create, stop, resume, and scheduled dispatch are implemented
