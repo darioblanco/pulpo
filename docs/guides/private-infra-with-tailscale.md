@@ -53,7 +53,14 @@ This makes the node:
 - bind to the local loopback interface and expose itself over the tailnet with `tailscale serve`
 - discover peer Pulpo nodes via the local Tailscale API
 - act as the canonical fleet control plane
-- trust Tailnet-level access instead of separate bearer auth
+- issue and verify enrolled worker identities for fleet membership
+
+Before configuring a worker, enroll it on the master and mint its worker token:
+
+```bash
+pulpo --node mac-mini workers enroll gpu-box
+pulpo --node mac-mini workers list
+```
 
 ## 2. Configure A Worker
 
@@ -79,6 +86,7 @@ Check from your laptop against the master:
 
 ```bash
 pulpo --node mac-mini nodes
+pulpo --node mac-mini workers list
 ```
 
 ## 3. Store Secrets On The Worker That Will Execute The Work
@@ -99,16 +107,17 @@ session.
 
 ## 4. Run A Session On The Worker
 
-For ad-hoc CLI spawns today, connect directly to the worker that will execute the work:
+For cross-node work, target the master and tell it which worker should execute the session:
 
 ```bash
-pulpo --node gpu-box spawn review-backend \
+pulpo --node mac-mini spawn review-backend \
   --workdir ~/repos/backend \
+  --node gpu-box \
   --secret GH_WORK \
   -- claude -p "Review this service for correctness, security issues, and missing tests."
 ```
 
-From your laptop, you are still in control, but the runtime lives on `gpu-box`. The master becomes the canonical fleet view and remote control surface once the session is running.
+From your laptop, you are still in control, but the runtime lives on `gpu-box`. The master is the canonical fleet view and the cross-node write path.
 
 That means:
 
@@ -157,15 +166,16 @@ secrets = ["GH_WORK"]
 runtime = "docker"
 ```
 
-Then spawn it on the worker:
+Then spawn it through the master:
 
 ```bash
-pulpo --node gpu-box spawn review-backend --workdir ~/repos/backend --ink private-review
+pulpo --node mac-mini spawn review-backend --workdir ~/repos/backend --node gpu-box --ink private-review
 ```
 
 ## Operational Notes
 
 - Tailscale discovery is recommended when you want Pulpo across your own private machines.
+- Discovery and enrollment are separate: discovery finds worker addresses, enrollment authorizes fleet membership.
 - Secrets are per-node, so manage them on the node that will execute the work.
 - Remote `--workdir` paths must exist on the target node, not just on your local machine.
 - If multiple nodes use different repo paths, prefer node-specific operational conventions rather than assuming one universal path layout.

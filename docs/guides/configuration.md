@@ -158,6 +158,23 @@ Practical behavior:
 - worker tokens identify enrolled workers on the master, even in `tailscale` mode
 - the master session index survives restart, but queued worker commands do not
 
+Enrollment flow:
+
+```bash
+pulpo --node master-node workers enroll gpu-box
+pulpo --node master-node workers list
+```
+
+Then place the issued token on the worker:
+
+```toml
+[master]
+address = "https://master-node.tailnet.ts.net"
+token = "worker-token-issued-by-master"
+```
+
+Restart `pulpod` on the worker after updating the token. The master will then show that worker in `pulpo workers list` with its last seen timestamp and address.
+
 ## Docker Runtime
 
 Run agents in Docker containers for isolation:

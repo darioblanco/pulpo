@@ -32,6 +32,22 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | GET | `/api/v1/auth/token` | Get current auth token |
 | GET | `/api/v1/auth/pairing-url` | Get pairing URL for web UI connection |
 
+## Worker Enrollment
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/master/workers` | List workers enrolled on the master |
+| POST | `/api/v1/master/workers` | Enroll a worker and mint its bearer token |
+| POST | `/api/v1/events/push` | Worker-only endpoint for lifecycle and heartbeat pushes |
+| GET | `/api/v1/worker/commands` | Worker-only endpoint for polling queued master commands |
+
+Worker enrollment notes:
+
+- `POST /api/v1/master/workers` is a master-only administrative endpoint
+- worker identity is derived from the presented bearer token, not from path or payload claims
+- enrolled worker tokens are required for worker mode in both `public` and `tailscale`
+- `[peers]` remains routing metadata and is not the authority source for worker identity
+
 ## Sessions
 
 | Method | Path | Description |

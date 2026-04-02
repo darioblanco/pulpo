@@ -415,6 +415,20 @@ pub struct EnrollWorkerResponse {
     pub token: String,
 }
 
+/// Enrolled worker metadata exposed by the master.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrolledWorkerInfo {
+    pub node_name: String,
+    pub last_seen_at: Option<String>,
+    pub last_seen_address: Option<String>,
+}
+
+/// Response listing enrolled workers known to the master.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrolledWorkersResponse {
+    pub workers: Vec<EnrolledWorkerInfo>,
+}
+
 /// A command queued by the master for a specific worker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -1813,6 +1827,23 @@ mod tests {
         let deserialized: EnrollWorkerResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.node_name, "worker-1");
         assert_eq!(deserialized.token, "secret-token");
+    }
+
+    #[test]
+    fn test_enrolled_workers_response_roundtrip() {
+        let resp = EnrolledWorkersResponse {
+            workers: vec![EnrolledWorkerInfo {
+                node_name: "worker-1".into(),
+                last_seen_at: Some("2026-04-02T17:00:00Z".into()),
+                last_seen_address: Some("10.0.0.10".into()),
+            }],
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"workers\""));
+        assert!(json.contains("\"node_name\":\"worker-1\""));
+        let deserialized: EnrolledWorkersResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.workers.len(), 1);
+        assert_eq!(deserialized.workers[0].node_name, "worker-1");
     }
 
     #[test]

@@ -16,6 +16,15 @@ Discovery tells nodes about each other. It does **not** make every node an equal
 
 In the web UI, workers should point you at the configured master instead of pretending their fleet view is authoritative. The worker dashboard remains useful for local sessions, but any fleet-wide create, stop, resume, or scheduled execution flow should go through the master.
 
+Before a worker can participate in the fleet, enroll it on the master and issue its worker token:
+
+```bash
+pulpo --node master-node workers enroll gpu-box
+pulpo --node master-node workers list
+```
+
+Discovery tells the master where a worker is. Enrollment tells the master which workers are trusted members of the fleet.
+
 > **Note:** Distributed discovery methods (mDNS, seed-based gossip) were removed to simplify the codebase. They may return in a future version. Use Tailscale discovery or manual `[peers]` config instead.
 
 For a full example that combines discovery with remote execution and secrets,

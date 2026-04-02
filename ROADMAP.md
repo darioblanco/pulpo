@@ -170,6 +170,7 @@ Current implementation status:
 - Master-routed fleet reads, create, stop, resume, and scheduled dispatch are implemented
 - Worker nodes push session lifecycle events and poll the master for commands
 - Worker identity is bound to enrolled per-worker tokens in both `public` and `tailscale` deployments
+- Worker enrollment is operable through `pulpo workers enroll <name>` and `pulpo workers list`
 - The master session index is persisted and restored across restarts
 - Worker UIs expose local sessions plus a handoff to the master, rather than a best-effort fleet view
 - Distributed terminal attach remains intentionally out of scope; remote detail stays HTTP/log-oriented

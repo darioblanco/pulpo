@@ -111,7 +111,10 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/push/unsubscribe", post(push::unsubscribe_push))
         .route("/api/v1/events", get(events::stream))
         .route("/api/v1/events/push", post(event_push::push_events))
-        .route("/api/v1/master/workers", post(worker_auth::enroll_worker))
+        .route(
+            "/api/v1/master/workers",
+            get(worker_auth::list_enrolled_workers).post(worker_auth::enroll_worker),
+        )
         .route(
             "/api/v1/worker/commands",
             get(worker_commands::get_commands),

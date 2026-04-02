@@ -4,7 +4,10 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use pulpo_common::api::{EnrollWorkerRequest, EnrollWorkerResponse, ErrorResponse};
+use pulpo_common::api::{
+    EnrollWorkerRequest, EnrollWorkerResponse, EnrolledWorkerInfo, EnrolledWorkersResponse,
+    ErrorResponse,
+};
 use sha2::{Digest, Sha256};
 
 use super::AppState;
@@ -132,6 +135,43 @@ pub async fn enroll_worker(
         .into_response()
 }
 
+pub async fn list_enrolled_workers(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    if state.command_queue.is_none() || state.session_index.is_none() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "This node is not in master mode".into(),
+            }),
+        )
+            .into_response();
+    }
+
+    let workers = match state.store.list_enrolled_master_workers().await {
+        Ok(workers) => workers,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("failed to list enrolled workers: {e}"),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    Json(EnrolledWorkersResponse {
+        workers: workers
+            .into_iter()
+            .map(|worker| EnrolledWorkerInfo {
+                node_name: worker.node_name,
+                last_seen_at: worker.last_seen_at.map(|dt| dt.to_rfc3339()),
+                last_seen_address: worker.last_seen_address,
+            })
+            .collect(),
+    })
+    .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,7 +179,7 @@ mod tests {
     use std::sync::Arc;
 
     use axum_test::TestServer;
-    use pulpo_common::api::{EnrollWorkerRequest, EnrollWorkerResponse};
+    use pulpo_common::api::{EnrollWorkerRequest, EnrollWorkerResponse, EnrolledWorkersResponse};
 
     use crate::api::routes;
     use crate::backend::StubBackend;
@@ -272,6 +312,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_list_enrolled_workers_returns_workers() {
+        let (server, _) = master_test_server().await;
+        let enroll_resp = server
+            .post("/api/v1/master/workers")
+            .json(&EnrollWorkerRequest {
+                node_name: "worker-1".into(),
+            })
+            .await;
+        enroll_resp.assert_status(StatusCode::CREATED);
+        let body: EnrollWorkerResponse = enroll_resp.json();
+
+        server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {}", body.token))
+            .json(&pulpo_common::api::EventPushRequest { events: vec![] })
+            .await
+            .assert_status(StatusCode::NO_CONTENT);
+
+        let resp = server.get("/api/v1/master/workers").await;
+        resp.assert_status(StatusCode::OK);
+        let list: EnrolledWorkersResponse = resp.json();
+        assert_eq!(list.workers.len(), 1);
+        assert_eq!(list.workers[0].node_name, "worker-1");
+        assert!(list.workers[0].last_seen_at.is_some());
+    }
+
+    #[tokio::test]
     async fn test_enroll_worker_forbidden_on_standalone() {
         let server = standalone_test_server().await;
         let resp = server
@@ -280,6 +347,13 @@ mod tests {
                 node_name: "worker-1".into(),
             })
             .await;
+        resp.assert_status(StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_list_enrolled_workers_forbidden_on_standalone() {
+        let server = standalone_test_server().await;
+        let resp = server.get("/api/v1/master/workers").await;
         resp.assert_status(StatusCode::FORBIDDEN);
     }
 }
