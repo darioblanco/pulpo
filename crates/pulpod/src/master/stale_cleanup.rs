@@ -94,6 +94,7 @@ pub fn build_lost_event(
 mod tests {
     use super::*;
     use crate::master::SessionIndex;
+    use crate::store::Store;
     use chrono::{DateTime, Utc};
     use pulpo_common::api::SessionIndexEntry;
 
@@ -227,5 +228,86 @@ mod tests {
         // Session should still be active
         let s1 = index.get("s1").await.unwrap();
         assert_eq!(s1.status, "active");
+    }
+
+    #[tokio::test]
+    async fn test_recovered_worker_is_not_re_marked_lost_after_stale_cleanup() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let index = SessionIndex::new();
+
+        index
+            .touch_worker_at("worker-1", ts("2026-03-30T12:00:00Z"))
+            .await;
+        let active_entry = make_entry("s1", "worker-1");
+        index.upsert(active_entry.clone()).await;
+        store
+            .upsert_master_session_index_entry(&active_entry)
+            .await
+            .unwrap();
+
+        let affected = index
+            .mark_stale_workers_at(ts("2026-03-30T12:06:40Z"), Duration::from_secs(300))
+            .await;
+        assert_eq!(affected.len(), 1);
+        assert_eq!(affected[0].status, "lost");
+        store
+            .upsert_master_session_index_entry(&affected[0])
+            .await
+            .unwrap();
+
+        index
+            .touch_worker_at("worker-1", ts("2026-03-30T12:07:00Z"))
+            .await;
+        let recovered_entry = SessionIndexEntry {
+            status: "active".into(),
+            updated_at: "2026-03-30T12:07:00Z".into(),
+            ..active_entry
+        };
+        index.upsert(recovered_entry.clone()).await;
+        store
+            .upsert_master_session_index_entry(&recovered_entry)
+            .await
+            .unwrap();
+
+        let affected = index
+            .mark_stale_workers_at(ts("2026-03-30T12:08:00Z"), Duration::from_secs(300))
+            .await;
+        assert!(
+            affected.is_empty(),
+            "freshly recovered worker should not be re-marked lost"
+        );
+
+        let entry = index.get("s1").await.unwrap();
+        assert_eq!(entry.status, "active");
+        let persisted = store.list_master_session_index_entries().await.unwrap();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].status, "active");
+    }
+
+    #[tokio::test]
+    async fn test_stale_cleanup_only_marks_workers_with_expired_heartbeat() {
+        let index = SessionIndex::new();
+        index
+            .touch_worker_at("worker-1", ts("2026-03-30T12:00:00Z"))
+            .await;
+        index
+            .touch_worker_at("worker-2", ts("2026-03-30T12:06:30Z"))
+            .await;
+        index.upsert(make_entry("s1", "worker-1")).await;
+        index.upsert(make_entry("s2", "worker-2")).await;
+
+        let affected = index
+            .mark_stale_workers_at(ts("2026-03-30T12:06:40Z"), Duration::from_secs(300))
+            .await;
+        assert_eq!(affected.len(), 1);
+        assert_eq!(affected[0].session_id, "s1");
+        assert_eq!(affected[0].status, "lost");
+
+        let worker_1 = index.get("s1").await.unwrap();
+        let worker_2 = index.get("s2").await.unwrap();
+        assert_eq!(worker_1.status, "lost");
+        assert_eq!(worker_2.status, "active");
     }
 }
