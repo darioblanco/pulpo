@@ -31,7 +31,7 @@ tag = "pulpo"              # optional: filter by ACL tag
 discovery_interval_secs = 30  # default: 30
 ```
 
-Binds locally, exposes itself over the tailnet via `tailscale serve`, skips bearer auth (delegated to WireGuard), and discovers peers via the local Tailscale API.
+Binds locally, exposes itself over the tailnet via `tailscale serve`, discovers peers via the local Tailscale API, and still uses enrolled worker tokens for worker-to-master identity.
 
 ## Manual peers
 

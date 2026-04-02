@@ -140,7 +140,7 @@ or on a worker:
 ```toml
 [master]
 address = "https://master-node.tailnet.ts.net"
-token = "optional-for-public-masters"
+token = "worker-token-issued-by-master"
 ```
 
 Rules:
@@ -149,12 +149,13 @@ Rules:
 - `address = ...` makes the node a worker
 - leaving both unset keeps the node standalone
 - worker and master mode are mutually exclusive
+- worker mode always requires `master.token`
 
 Practical behavior:
 
 - the master is the canonical fleet view and cross-node write path
 - workers remain useful for local sessions only
-- in `tailscale` mode, bearer auth between worker and master is optional because the tailnet is the trust boundary
+- worker tokens identify enrolled workers on the master, even in `tailscale` mode
 - the master session index survives restart, but queued worker commands do not
 
 ## Docker Runtime

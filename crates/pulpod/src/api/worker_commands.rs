@@ -1,17 +1,19 @@
 use std::sync::Arc;
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use pulpo_common::api::{ErrorResponse, WorkerCommand, WorkerCommandsResponse};
+use pulpo_common::api::{ErrorResponse, WorkerCommandsResponse};
 
 use super::AppState;
+use super::worker_auth::authenticate_worker;
 
 /// Workers poll this endpoint to receive pending commands from the master.
 pub async fn get_commands(
     State(state): State<Arc<AppState>>,
-    Path(node_name): Path<String>,
+    headers: HeaderMap,
 ) -> impl IntoResponse {
     let Some(command_queue) = &state.command_queue else {
         return (
@@ -23,28 +25,13 @@ pub async fn get_commands(
             .into_response();
     };
 
-    let commands = command_queue.drain(&node_name).await;
+    let worker = match authenticate_worker(&state, &headers).await {
+        Ok(worker) => worker,
+        Err(err) => return err.into_response(),
+    };
+
+    let commands = command_queue.drain(&worker.node_name).await;
     Json(WorkerCommandsResponse { commands }).into_response()
-}
-
-/// Enqueue a command for a specific worker node.
-pub async fn enqueue_command(
-    State(state): State<Arc<AppState>>,
-    Path(node_name): Path<String>,
-    Json(command): Json<WorkerCommand>,
-) -> impl IntoResponse {
-    let Some(command_queue) = &state.command_queue else {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(ErrorResponse {
-                error: "This node is not in master mode".into(),
-            }),
-        )
-            .into_response();
-    };
-
-    command_queue.enqueue(&node_name, command).await;
-    StatusCode::CREATED.into_response()
 }
 
 #[cfg(test)]
@@ -53,10 +40,13 @@ mod tests {
     use std::sync::Arc;
 
     use axum_test::TestServer;
-    use pulpo_common::api::{WorkerCommand, WorkerCommandsResponse};
+    use pulpo_common::api::{
+        EnrollWorkerRequest, EnrollWorkerResponse, WorkerCommand, WorkerCommandsResponse,
+    };
 
     use crate::api::AppState;
     use crate::api::routes;
+    use crate::api::worker_auth::hash_worker_token;
     use crate::backend::StubBackend;
     use crate::config::{Config, NodeConfig};
     use crate::master::{CommandQueue, SessionIndex};
@@ -64,7 +54,7 @@ mod tests {
     use crate::session::manager::SessionManager;
     use crate::store::Store;
 
-    async fn master_test_server() -> TestServer {
+    async fn master_test_server() -> (TestServer, Arc<AppState>) {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -101,8 +91,8 @@ mod tests {
             Some(session_index),
             Some(command_queue),
         );
-        let app = routes::build(state);
-        TestServer::new(app).unwrap()
+        let app = routes::build(state.clone());
+        (TestServer::new(app).unwrap(), state)
     }
 
     async fn standalone_test_server() -> TestServer {
@@ -134,11 +124,25 @@ mod tests {
         TestServer::new(app).unwrap()
     }
 
+    #[allow(clippy::future_not_send)]
+    async fn enroll_worker(server: &TestServer, node_name: &str) -> String {
+        let resp = server
+            .post("/api/v1/master/workers")
+            .json(&EnrollWorkerRequest {
+                node_name: node_name.into(),
+            })
+            .await;
+        resp.assert_status(axum::http::StatusCode::CREATED);
+        let body: EnrollWorkerResponse = resp.json();
+        body.token
+    }
+
     #[tokio::test]
     async fn test_enqueue_and_poll_commands() {
-        let server = master_test_server().await;
-
-        // Enqueue two commands
+        let (server, state) = master_test_server().await;
+        let token = enroll_worker(&server, "worker-1").await;
+        // Enqueue two commands directly into the master's queue
+        let queue = state.command_queue.as_ref().unwrap().clone();
         let cmd1 = WorkerCommand::CreateSession {
             command_id: "c1".into(),
             name: "task-1".into(),
@@ -147,24 +151,19 @@ mod tests {
             ink: None,
             description: None,
         };
-        let resp = server
-            .post("/api/v1/workers/worker-1/commands")
-            .json(&cmd1)
-            .await;
-        resp.assert_status(axum::http::StatusCode::CREATED);
+        queue.enqueue("worker-1", cmd1).await;
 
         let cmd2 = WorkerCommand::StopSession {
             command_id: "c2".into(),
             session_id: "s1".into(),
         };
-        let resp = server
-            .post("/api/v1/workers/worker-1/commands")
-            .json(&cmd2)
-            .await;
-        resp.assert_status(axum::http::StatusCode::CREATED);
+        queue.enqueue("worker-1", cmd2).await;
 
         // Poll for commands
-        let resp = server.get("/api/v1/workers/worker-1/commands").await;
+        let resp = server
+            .get("/api/v1/worker/commands")
+            .add_header("authorization", format!("Bearer {token}"))
+            .await;
         resp.assert_status_ok();
         let body: WorkerCommandsResponse = resp.json();
         assert_eq!(body.commands.len(), 2);
@@ -180,7 +179,10 @@ mod tests {
         }
 
         // Second poll should return empty
-        let resp = server.get("/api/v1/workers/worker-1/commands").await;
+        let resp = server
+            .get("/api/v1/worker/commands")
+            .add_header("authorization", format!("Bearer {token}"))
+            .await;
         resp.assert_status_ok();
         let body: WorkerCommandsResponse = resp.json();
         assert!(body.commands.is_empty());
@@ -188,8 +190,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_poll_empty_commands() {
-        let server = master_test_server().await;
-        let resp = server.get("/api/v1/workers/worker-1/commands").await;
+        let (server, _) = master_test_server().await;
+        let token = enroll_worker(&server, "worker-1").await;
+        let resp = server
+            .get("/api/v1/worker/commands")
+            .add_header("authorization", format!("Bearer {token}"))
+            .await;
         resp.assert_status_ok();
         let body: WorkerCommandsResponse = resp.json();
         assert!(body.commands.is_empty());
@@ -198,21 +204,30 @@ mod tests {
     #[tokio::test]
     async fn test_get_commands_forbidden_on_standalone() {
         let server = standalone_test_server().await;
-        let resp = server.get("/api/v1/workers/worker-1/commands").await;
+        let resp = server.get("/api/v1/worker/commands").await;
         resp.assert_status(axum::http::StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
-    async fn test_enqueue_command_forbidden_on_standalone() {
-        let server = standalone_test_server().await;
-        let cmd = WorkerCommand::StopSession {
-            command_id: "c1".into(),
-            session_id: "s1".into(),
-        };
+    async fn test_get_commands_requires_registered_worker() {
+        let (server, _) = master_test_server().await;
         let resp = server
-            .post("/api/v1/workers/worker-1/commands")
-            .json(&cmd)
+            .get("/api/v1/worker/commands")
+            .add_header("authorization", "Bearer unknown-worker")
             .await;
-        resp.assert_status(axum::http::StatusCode::FORBIDDEN);
+        resp.assert_status(axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_enroll_worker_binds_token_to_name() {
+        let (server, state) = master_test_server().await;
+        let token = enroll_worker(&server, "worker-1").await;
+        let enrolled = state
+            .store
+            .get_enrolled_master_worker_by_name("worker-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(enrolled.token_hash, hash_worker_token(&token));
     }
 }

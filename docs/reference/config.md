@@ -30,7 +30,7 @@ Not needed for `local`, `tailscale`, or `container` modes. Pulpo still auto-gene
 |-------|------|---------|-------------|
 | `enabled` | bool | `false` | Promote this node to master mode |
 | `address` | string | — | Master URL for worker mode; when set, this node becomes a worker |
-| `token` | string | — | Optional bearer token used by workers when talking to a public master |
+| `token` | string | — | Required bearer token bound to an enrolled worker identity on the master |
 | `stale_timeout_secs` | u64 | `300` | Seconds before the master marks a silent worker as lost |
 
 Role rules:
@@ -42,8 +42,9 @@ Role rules:
 
 Auth rules:
 
-- In `public` mode, a master should expose `auth.token`, and workers should set `master.token`.
-- In `tailscale`, `local`, and `container` modes, bearer auth is optional because network isolation is the trust boundary.
+- In `public` mode, a master should expose `auth.token` for users, and workers must set `master.token`.
+- In worker mode, `master.token` is always required, including `tailscale`.
+- Worker tokens identify enrolled workers on the master. They are separate from optional `[peers]` routing hints.
 
 ## `[watchdog]`
 
@@ -90,6 +91,8 @@ token = "secret"
 |-------|------|---------|-------------|
 | `address` | string | — | `host:port` of the peer |
 | `token` | string | — | Auth token for this peer (optional) |
+
+`[peers]` is discovery and routing metadata. In master/worker mode it is not the authority source for worker identity.
 
 ## `[docker]`
 

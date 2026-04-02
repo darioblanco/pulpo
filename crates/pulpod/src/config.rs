@@ -402,9 +402,7 @@ impl Config {
     ///
     /// - A node cannot be both master and worker (enabled + address).
     /// - In `public` bind mode, master mode requires `auth.token`.
-    /// - In `public` bind mode, worker mode requires `master.token`.
-    /// - In trusted-network modes (`local`, `tailscale`, `container`), bearer
-    ///   auth is optional because network isolation is the auth layer.
+    /// - In worker mode, `master.token` is always required.
     pub fn validate_master(&self) -> Result<()> {
         if self.master.enabled && self.master.address.is_some() {
             anyhow::bail!(
@@ -421,14 +419,13 @@ impl Config {
                 );
             }
         }
-        if self.master.address.is_some() && self.node.bind == BindMode::Public {
-            // Public worker deployments are expected to authenticate to a public master.
-            if self.master.token.is_none() || self.master.token.as_deref() == Some("") {
-                anyhow::bail!(
-                    "master.address requires master.token to be set: \
-                     public worker deployments require bearer auth to reach the master"
-                );
-            }
+        if self.master.address.is_some()
+            && (self.master.token.is_none() || self.master.token.as_deref() == Some(""))
+        {
+            anyhow::bail!(
+                "master.address requires master.token to be set: \
+                 worker nodes require a bound bearer token to authenticate with the master"
+            );
         }
         Ok(())
     }
@@ -3084,7 +3081,7 @@ enabled = true
     }
 
     #[test]
-    fn test_validate_master_worker_without_master_token_ok_on_tailscale() {
+    fn test_validate_master_worker_without_master_token_errors_on_tailscale() {
         let config = Config {
             node: NodeConfig {
                 bind: BindMode::Tailscale,
@@ -3103,7 +3100,8 @@ enabled = true
                 ..MasterConfig::default()
             },
         };
-        assert!(config.validate_master().is_ok());
+        let err = config.validate_master().unwrap_err();
+        assert!(err.to_string().contains("master.token"));
     }
 
     #[test]

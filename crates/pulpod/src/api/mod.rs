@@ -17,6 +17,7 @@ pub mod secrets;
 pub mod sessions;
 pub mod static_files;
 pub mod watchdog;
+pub mod worker_auth;
 pub mod worker_commands;
 pub mod ws;
 

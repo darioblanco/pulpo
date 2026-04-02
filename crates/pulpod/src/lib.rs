@@ -577,7 +577,11 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     #[cfg(not(coverage))]
     if role == config::NodeRole::Worker {
         let master_url = config.master.address.clone().unwrap_or_default();
-        let master_token = config.master.token.clone();
+        let master_token = config
+            .master
+            .token
+            .clone()
+            .expect("worker mode requires master.token");
         let node_name = config.node.name.clone();
 
         // Event push loop
@@ -787,10 +791,53 @@ mod tests {
     use crate::store::Store;
     use axum_test::TestServer;
     use pulpo_common::api::{
-        EventPushRequest, FleetSessionsResponse, SessionIndexEntry, WorkerCommand,
-        WorkerCommandsResponse,
+        EnrollWorkerRequest, EnrollWorkerResponse, EventPushRequest, FleetSessionsResponse,
+        SessionIndexEntry, WorkerCommand, WorkerCommandsResponse,
     };
     use pulpo_common::event::{PulpoEvent, SessionEvent};
+
+    #[allow(clippy::future_not_send)]
+    async fn enroll_worker(server: &TestServer, node_name: &str) -> String {
+        let resp = server
+            .post("/api/v1/master/workers")
+            .json(&EnrollWorkerRequest {
+                node_name: node_name.into(),
+            })
+            .await;
+        resp.assert_status(axum::http::StatusCode::CREATED);
+        let body: EnrollWorkerResponse = resp.json();
+        body.token
+    }
+
+    #[allow(clippy::future_not_send)]
+    async fn push_session_event(
+        server: &TestServer,
+        token: &str,
+        session_id: &str,
+        session_name: &str,
+        status: &str,
+        previous_status: Option<&str>,
+        timestamp: &str,
+    ) {
+        let req = EventPushRequest {
+            events: vec![PulpoEvent::Session(SessionEvent {
+                session_id: session_id.into(),
+                session_name: session_name.into(),
+                status: status.into(),
+                previous_status: previous_status.map(str::to_owned),
+                node_name: "worker-1".into(),
+                output_snippet: None,
+                timestamp: timestamp.into(),
+                ..Default::default()
+            })],
+        };
+        server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&req)
+            .await
+            .assert_status(axum::http::StatusCode::NO_CONTENT);
+    }
 
     #[test]
     fn test_shutdown_handle_signals_loops() {
@@ -1087,21 +1134,17 @@ enabled = true
 
         let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
         let server1 = TestServer::new(app1).unwrap();
-        let req = EventPushRequest {
-            node_name: "worker-1".into(),
-            events: vec![PulpoEvent::Session(SessionEvent {
-                session_id: "11111111-1111-1111-1111-111111111111".into(),
-                session_name: "persisted-session".into(),
-                status: "active".into(),
-                previous_status: None,
-                node_name: "worker-1".into(),
-                output_snippet: None,
-                timestamp: "2026-04-02T08:00:00Z".into(),
-                ..Default::default()
-            })],
-        };
-        let resp = server1.post("/api/v1/events/push").json(&req).await;
-        resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+        let worker_token = enroll_worker(&server1, "worker-1").await;
+        push_session_event(
+            &server1,
+            &worker_token,
+            "11111111-1111-1111-1111-111111111111",
+            "persisted-session",
+            "active",
+            None,
+            "2026-04-02T08:00:00Z",
+        )
+        .await;
         handle1.shutdown();
 
         let (app2, _addr2, handle2) = build_app(&cli).await.unwrap();
@@ -1120,21 +1163,16 @@ enabled = true
         );
         assert_eq!(restored.session.status.to_string(), "active");
 
-        let update_req = EventPushRequest {
-            node_name: "worker-1".into(),
-            events: vec![PulpoEvent::Session(SessionEvent {
-                session_id: "11111111-1111-1111-1111-111111111111".into(),
-                session_name: "persisted-session".into(),
-                status: "idle".into(),
-                previous_status: Some("active".into()),
-                node_name: "worker-1".into(),
-                output_snippet: None,
-                timestamp: "2026-04-02T08:05:00Z".into(),
-                ..Default::default()
-            })],
-        };
-        let update_resp = server2.post("/api/v1/events/push").json(&update_req).await;
-        update_resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+        push_session_event(
+            &server2,
+            &worker_token,
+            "11111111-1111-1111-1111-111111111111",
+            "persisted-session",
+            "idle",
+            Some("active"),
+            "2026-04-02T08:05:00Z",
+        )
+        .await;
 
         let fleet_resp = server2.get("/api/v1/fleet/sessions").await;
         fleet_resp.assert_status_ok();
@@ -1187,20 +1225,29 @@ enabled = true
 
         let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
         let server1 = TestServer::new(app1).unwrap();
-        let command = WorkerCommand::StopSession {
-            command_id: "restart-gap".into(),
-            session_id: "session-1".into(),
-        };
-        let enqueue_resp = server1
-            .post("/api/v1/workers/worker-1/commands")
-            .json(&command)
-            .await;
-        enqueue_resp.assert_status(axum::http::StatusCode::CREATED);
+        let worker_token = enroll_worker(&server1, "worker-1").await;
+        push_session_event(
+            &server1,
+            &worker_token,
+            "session-1",
+            "restart-gap",
+            "active",
+            None,
+            "2026-04-02T08:10:00Z",
+        )
+        .await;
+        server1
+            .post("/api/v1/sessions/session-1/stop")
+            .await
+            .assert_status(axum::http::StatusCode::ACCEPTED);
         handle1.shutdown();
 
         let (app2, _addr2, handle2) = build_app(&cli).await.unwrap();
         let server2 = TestServer::new(app2).unwrap();
-        let poll_resp = server2.get("/api/v1/workers/worker-1/commands").await;
+        let poll_resp = server2
+            .get("/api/v1/worker/commands")
+            .add_header("authorization", format!("Bearer {worker_token}"))
+            .await;
         poll_resp.assert_status_ok();
         let body: WorkerCommandsResponse = poll_resp.json();
         assert!(
@@ -1243,34 +1290,47 @@ enabled = true
 
         let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
         let server1 = TestServer::new(app1).unwrap();
-
-        let worker_1_command = WorkerCommand::StopSession {
-            command_id: "delivered-before-restart".into(),
-            session_id: "session-1".into(),
-        };
+        let worker_1_token = enroll_worker(&server1, "worker-1").await;
+        let worker_2_token = enroll_worker(&server1, "worker-2").await;
+        push_session_event(
+            &server1,
+            &worker_1_token,
+            "session-1",
+            "delivered-before-restart",
+            "active",
+            None,
+            "2026-04-02T08:15:00Z",
+        )
+        .await;
+        push_session_event(
+            &server1,
+            &worker_2_token,
+            "session-2",
+            "pending-at-restart",
+            "active",
+            None,
+            "2026-04-02T08:16:00Z",
+        )
+        .await;
         server1
-            .post("/api/v1/workers/worker-1/commands")
-            .json(&worker_1_command)
+            .post("/api/v1/sessions/session-1/stop")
             .await
-            .assert_status(axum::http::StatusCode::CREATED);
-
-        let worker_2_command = WorkerCommand::StopSession {
-            command_id: "pending-at-restart".into(),
-            session_id: "session-2".into(),
-        };
+            .assert_status(axum::http::StatusCode::ACCEPTED);
         server1
-            .post("/api/v1/workers/worker-2/commands")
-            .json(&worker_2_command)
+            .post("/api/v1/sessions/session-2/stop")
             .await
-            .assert_status(axum::http::StatusCode::CREATED);
+            .assert_status(axum::http::StatusCode::ACCEPTED);
 
-        let worker_1_poll = server1.get("/api/v1/workers/worker-1/commands").await;
+        let worker_1_poll = server1
+            .get("/api/v1/worker/commands")
+            .add_header("authorization", format!("Bearer {worker_1_token}"))
+            .await;
         worker_1_poll.assert_status_ok();
         let body: WorkerCommandsResponse = worker_1_poll.json();
         assert_eq!(body.commands.len(), 1);
         match &body.commands[0] {
-            WorkerCommand::StopSession { command_id, .. } => {
-                assert_eq!(command_id, "delivered-before-restart");
+            WorkerCommand::StopSession { session_id, .. } => {
+                assert_eq!(session_id, "session-1");
             }
             WorkerCommand::CreateSession { .. } => panic!("expected StopSession"),
         }
@@ -1280,7 +1340,10 @@ enabled = true
         let (app2, _addr2, handle2) = build_app(&cli).await.unwrap();
         let server2 = TestServer::new(app2).unwrap();
 
-        let worker_1_poll_after_restart = server2.get("/api/v1/workers/worker-1/commands").await;
+        let worker_1_poll_after_restart = server2
+            .get("/api/v1/worker/commands")
+            .add_header("authorization", format!("Bearer {worker_1_token}"))
+            .await;
         worker_1_poll_after_restart.assert_status_ok();
         let body: WorkerCommandsResponse = worker_1_poll_after_restart.json();
         assert!(
@@ -1288,7 +1351,10 @@ enabled = true
             "commands already drained before restart should not reappear"
         );
 
-        let worker_2_poll_after_restart = server2.get("/api/v1/workers/worker-2/commands").await;
+        let worker_2_poll_after_restart = server2
+            .get("/api/v1/worker/commands")
+            .add_header("authorization", format!("Bearer {worker_2_token}"))
+            .await;
         worker_2_poll_after_restart.assert_status_ok();
         let body: WorkerCommandsResponse = worker_2_poll_after_restart.json();
         assert!(

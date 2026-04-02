@@ -11,8 +11,8 @@ const MAX_BATCH_SIZE: usize = 10;
 #[cfg(not(coverage))]
 pub async fn run_event_push_loop(
     master_url: String,
-    master_token: Option<String>,
-    node_name: String,
+    master_token: String,
+    _node_name: String,
     mut event_rx: tokio::sync::broadcast::Receiver<PulpoEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
@@ -38,15 +38,12 @@ pub async fn run_event_push_loop(
                             }
                         }
 
-                        let req_body = EventPushRequest {
-                            node_name: node_name.clone(),
-                            events: batch,
-                        };
+                        let req_body = EventPushRequest { events: batch };
 
-                        let mut request = client.post(&push_url).json(&req_body);
-                        if let Some(ref token) = master_token {
-                            request = request.bearer_auth(token);
-                        }
+                        let request = client
+                            .post(&push_url)
+                            .bearer_auth(&master_token)
+                            .json(&req_body);
 
                         match request.send().await {
                             Ok(resp) if resp.status().is_success() => {
@@ -87,17 +84,17 @@ pub async fn run_event_push_loop(
 #[cfg(coverage)]
 pub async fn run_event_push_loop(
     _master_url: String,
-    _master_token: Option<String>,
+    _master_token: String,
     _node_name: String,
     _event_rx: tokio::sync::broadcast::Receiver<PulpoEvent>,
     _shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
 }
 
-/// Build an `EventPushRequest` from a node name and list of events.
+/// Build an `EventPushRequest` from a list of events.
 #[cfg_attr(coverage, allow(dead_code))]
-pub const fn build_push_request(node_name: String, events: Vec<PulpoEvent>) -> EventPushRequest {
-    EventPushRequest { node_name, events }
+pub const fn build_push_request(events: Vec<PulpoEvent>) -> EventPushRequest {
+    EventPushRequest { events }
 }
 
 #[cfg(test)]
@@ -116,7 +113,7 @@ mod tests {
             std::time::Duration::from_secs(2),
             run_event_push_loop(
                 "http://localhost:9999".into(),
-                None,
+                "worker-token".into(),
                 "test-node".into(),
                 rx,
                 shutdown_rx,
@@ -139,15 +136,13 @@ mod tests {
             ..Default::default()
         })];
 
-        let req = build_push_request("node-1".into(), events);
-        assert_eq!(req.node_name, "node-1");
+        let req = build_push_request(events);
         assert_eq!(req.events.len(), 1);
     }
 
     #[test]
     fn test_build_push_request_empty() {
-        let req = build_push_request("node-2".into(), vec![]);
-        assert_eq!(req.node_name, "node-2");
+        let req = build_push_request(vec![]);
         assert!(req.events.is_empty());
     }
 

@@ -153,7 +153,7 @@ Remove broken features that frustrate users. Keep what works:
 - **Remove:** `target_node` field from schedule UI (scheduler ignores it)
 - **Remove:** CLI attach after remote spawn (tmux is local-only)
 
-**Phase 2 — Master mode (experimental)**
+**Phase 2 — Master mode**
 
 Inspired by Elasticsearch's cluster architecture: every node runs the same binary, one node is promoted to master. The master holds the session index (metadata), not the sessions themselves (which are tmux processes on worker nodes).
 
@@ -164,11 +164,12 @@ How it works:
 - Master maintains a unified session index in its SQLite
 - Web UI connects to master only for fleet-wide visibility and cross-node actions
 - Worker UIs stay local-first: local sessions remain visible, but fleet-wide control belongs to the master
-- Public deployments use bearer auth; tailscale deployments trust the tailnet instead of layering tokens by default
+- Workers authenticate with per-worker bearer tokens issued by the master; `[peers]` remains routing metadata, not an authority source
 
 Current implementation status:
 - Master-routed fleet reads, create, stop, resume, and scheduled dispatch are implemented
 - Worker nodes push session lifecycle events and poll the master for commands
+- Worker identity is bound to enrolled per-worker tokens in both `public` and `tailscale` deployments
 - The master session index is persisted and restored across restarts
 - Worker UIs expose local sessions plus a handoff to the master, rather than a best-effort fleet view
 - Distributed terminal attach remains intentionally out of scope; remote detail stays HTTP/log-oriented

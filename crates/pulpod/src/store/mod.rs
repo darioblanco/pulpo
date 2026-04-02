@@ -27,6 +27,14 @@ pub struct InterventionEvent {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone)]
+pub struct EnrolledWorker {
+    pub node_name: String,
+    pub token_hash: String,
+    pub last_seen_at: Option<DateTime<Utc>>,
+    pub last_seen_address: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct Store {
     pool: SqlitePool,
@@ -361,6 +369,17 @@ impl Store {
             "CREATE TABLE IF NOT EXISTS master_workers (
                 node_name TEXT PRIMARY KEY,
                 last_seen_at TEXT NOT NULL
+            )",
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS master_enrolled_workers (
+                node_name TEXT PRIMARY KEY,
+                token_hash TEXT NOT NULL UNIQUE,
+                last_seen_at TEXT,
+                last_seen_address TEXT
             )",
         )
         .execute(&self.pool)
@@ -1056,6 +1075,87 @@ impl Store {
             .collect()
     }
 
+    pub async fn enroll_master_worker(
+        &self,
+        node_name: &str,
+        token_hash: &str,
+        seen_at: Option<&str>,
+        last_seen_address: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO master_enrolled_workers (node_name, token_hash, last_seen_at, last_seen_address)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(node_name) DO UPDATE SET
+               token_hash = excluded.token_hash,
+               last_seen_at = excluded.last_seen_at,
+               last_seen_address = excluded.last_seen_address",
+        )
+        .bind(node_name)
+        .bind(token_hash)
+        .bind(seen_at)
+        .bind(last_seen_address)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_enrolled_master_worker_by_name(
+        &self,
+        node_name: &str,
+    ) -> Result<Option<EnrolledWorker>> {
+        let row = sqlx::query(
+            "SELECT node_name, token_hash, last_seen_at, last_seen_address
+             FROM master_enrolled_workers WHERE node_name = ?",
+        )
+        .bind(node_name)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| row_to_enrolled_worker(&row)).transpose()
+    }
+
+    pub async fn get_enrolled_master_worker_by_token_hash(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<EnrolledWorker>> {
+        let row = sqlx::query(
+            "SELECT node_name, token_hash, last_seen_at, last_seen_address
+             FROM master_enrolled_workers WHERE token_hash = ?",
+        )
+        .bind(token_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| row_to_enrolled_worker(&row)).transpose()
+    }
+
+    pub async fn list_enrolled_master_workers(&self) -> Result<Vec<EnrolledWorker>> {
+        let rows = sqlx::query(
+            "SELECT node_name, token_hash, last_seen_at, last_seen_address
+             FROM master_enrolled_workers ORDER BY node_name",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_enrolled_worker).collect()
+    }
+
+    pub async fn touch_enrolled_master_worker(
+        &self,
+        node_name: &str,
+        seen_at: &str,
+        last_seen_address: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE master_enrolled_workers
+             SET last_seen_at = ?, last_seen_address = COALESCE(?, last_seen_address)
+             WHERE node_name = ?",
+        )
+        .bind(seen_at)
+        .bind(last_seen_address)
+        .bind(node_name)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     // -- Secret methods --
 
     /// Upsert a secret (INSERT OR REPLACE).
@@ -1291,6 +1391,19 @@ fn row_to_intervention_event(row: &SqliteRow) -> Result<InterventionEvent> {
         code,
         reason: row.get("reason"),
         created_at: DateTime::parse_from_rfc3339(&created_str)?.with_timezone(&Utc),
+    })
+}
+
+fn row_to_enrolled_worker(row: &SqliteRow) -> Result<EnrolledWorker> {
+    let last_seen_at = row
+        .try_get::<Option<String>, _>("last_seen_at")?
+        .map(|value| DateTime::parse_from_rfc3339(&value).map(|dt| dt.with_timezone(&Utc)))
+        .transpose()?;
+    Ok(EnrolledWorker {
+        node_name: row.try_get("node_name")?,
+        token_hash: row.try_get("token_hash")?,
+        last_seen_at,
+        last_seen_address: row.try_get("last_seen_address").unwrap_or(None),
     })
 }
 
@@ -3714,5 +3827,59 @@ mod tests {
         assert_eq!(workers[0].0, "worker-1");
         assert_eq!(workers[1].0, "worker-2");
         assert_eq!(workers[0].1.to_rfc3339(), "2026-04-01T22:00:00+00:00");
+    }
+
+    #[tokio::test]
+    async fn test_master_enrolled_workers_roundtrip() {
+        let store = test_store().await;
+        store
+            .enroll_master_worker(
+                "worker-1",
+                "hash-1",
+                Some("2026-04-01T22:00:00Z"),
+                Some("10.0.0.10"),
+            )
+            .await
+            .unwrap();
+
+        let by_name = store
+            .get_enrolled_master_worker_by_name("worker-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_name.node_name, "worker-1");
+        assert_eq!(by_name.token_hash, "hash-1");
+        assert_eq!(by_name.last_seen_address.as_deref(), Some("10.0.0.10"));
+
+        let by_hash = store
+            .get_enrolled_master_worker_by_token_hash("hash-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_hash.node_name, "worker-1");
+    }
+
+    #[tokio::test]
+    async fn test_touch_enrolled_master_worker_updates_seen_fields() {
+        let store = test_store().await;
+        store
+            .enroll_master_worker("worker-2", "hash-2", None, None)
+            .await
+            .unwrap();
+        store
+            .touch_enrolled_master_worker("worker-2", "2026-04-01T22:30:00Z", Some("10.0.0.20"))
+            .await
+            .unwrap();
+
+        let worker = store
+            .get_enrolled_master_worker_by_name("worker-2")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            worker.last_seen_at.unwrap().to_rfc3339(),
+            "2026-04-01T22:30:00+00:00"
+        );
+        assert_eq!(worker.last_seen_address.as_deref(), Some("10.0.0.20"));
     }
 }

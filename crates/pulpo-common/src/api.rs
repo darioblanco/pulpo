@@ -399,8 +399,20 @@ pub struct SecretEntry {
 /// Request from a worker pushing events to the master.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventPushRequest {
-    pub node_name: String,
     pub events: Vec<crate::event::PulpoEvent>,
+}
+
+/// Request to enroll a worker on the master.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrollWorkerRequest {
+    pub node_name: String,
+}
+
+/// Response returned when the master enrolls a worker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnrollWorkerResponse {
+    pub node_name: String,
+    pub token: String,
 }
 
 /// A command queued by the master for a specific worker.
@@ -1747,7 +1759,6 @@ mod tests {
         use crate::event::{PulpoEvent, SessionEvent};
 
         let req = EventPushRequest {
-            node_name: "worker-1".into(),
             events: vec![PulpoEvent::Session(SessionEvent {
                 session_id: "s1".into(),
                 session_name: "task-a".into(),
@@ -1758,34 +1769,50 @@ mod tests {
             })],
         };
         let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"node_name\":\"worker-1\""));
         assert!(json.contains("\"events\""));
         let deserialized: EventPushRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.node_name, "worker-1");
         assert_eq!(deserialized.events.len(), 1);
     }
 
     #[test]
     fn test_event_push_request_empty_events() {
-        let req = EventPushRequest {
-            node_name: "worker-2".into(),
-            events: vec![],
-        };
+        let req = EventPushRequest { events: vec![] };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"events\":[]"));
         let deserialized: EventPushRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.node_name, "worker-2");
         assert!(deserialized.events.is_empty());
     }
 
     #[test]
     fn test_event_push_request_debug_clone() {
-        let req = EventPushRequest {
-            node_name: "w".into(),
-            events: vec![],
-        };
+        let req = EventPushRequest { events: vec![] };
         let cloned = req.clone();
         assert_eq!(format!("{req:?}"), format!("{cloned:?}"));
+    }
+
+    #[test]
+    fn test_enroll_worker_request_roundtrip() {
+        let req = EnrollWorkerRequest {
+            node_name: "worker-1".into(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"node_name\":\"worker-1\""));
+        let deserialized: EnrollWorkerRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.node_name, "worker-1");
+    }
+
+    #[test]
+    fn test_enroll_worker_response_roundtrip() {
+        let resp = EnrollWorkerResponse {
+            node_name: "worker-1".into(),
+            token: "secret-token".into(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"node_name\":\"worker-1\""));
+        assert!(json.contains("\"token\":\"secret-token\""));
+        let deserialized: EnrollWorkerResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.node_name, "worker-1");
+        assert_eq!(deserialized.token, "secret-token");
     }
 
     #[test]

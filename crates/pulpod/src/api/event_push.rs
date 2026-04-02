@@ -2,16 +2,19 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use pulpo_common::api::{ErrorResponse, EventPushRequest, SessionIndexEntry};
 use pulpo_common::event::PulpoEvent;
 
 use super::AppState;
+use super::worker_auth::authenticate_worker;
 
 /// Workers push batched events to the master via this endpoint.
 pub async fn push_events(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(req): Json<EventPushRequest>,
 ) -> impl IntoResponse {
     let Some(session_index) = &state.session_index else {
@@ -24,17 +27,23 @@ pub async fn push_events(
             .into_response();
     };
 
+    let worker = match authenticate_worker(&state, &headers).await {
+        Ok(worker) => worker,
+        Err(err) => return err.into_response(),
+    };
+    let node_name = worker.node_name;
+
     for event in &req.events {
         match event {
             PulpoEvent::Session(se) => {
                 let node_address = state
                     .peer_registry
-                    .get(&req.node_name)
+                    .get(&node_name)
                     .await
                     .map(|peer| peer.address);
                 let entry = SessionIndexEntry {
                     session_id: se.session_id.clone(),
-                    node_name: req.node_name.clone(),
+                    node_name: node_name.clone(),
                     node_address,
                     session_name: se.session_name.clone(),
                     status: se.status.clone(),
@@ -74,7 +83,7 @@ pub async fn push_events(
 
     if let Err(e) = state
         .store
-        .touch_master_worker(&req.node_name, &chrono::Utc::now().to_rfc3339())
+        .touch_master_worker(&node_name, &chrono::Utc::now().to_rfc3339())
         .await
     {
         return (
@@ -85,7 +94,20 @@ pub async fn push_events(
         )
             .into_response();
     }
-    session_index.touch_worker(&req.node_name).await;
+    if let Err(e) = state
+        .store
+        .touch_enrolled_master_worker(&node_name, &chrono::Utc::now().to_rfc3339(), None)
+        .await
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("failed to persist enrolled worker heartbeat: {e}"),
+            }),
+        )
+            .into_response();
+    }
+    session_index.touch_worker(&node_name).await;
 
     StatusCode::NO_CONTENT.into_response()
 }
@@ -96,7 +118,10 @@ mod tests {
     use std::sync::Arc;
 
     use axum_test::TestServer;
-    use pulpo_common::api::{EventPushRequest, FleetSessionsResponse, SessionIndexEntry};
+    use pulpo_common::api::{
+        EnrollWorkerRequest, EnrollWorkerResponse, EventPushRequest, FleetSessionsResponse,
+        SessionIndexEntry,
+    };
     use pulpo_common::event::{PulpoEvent, SessionDeletedEvent, SessionEvent};
 
     use crate::api::AppState;
@@ -108,7 +133,7 @@ mod tests {
     use crate::session::manager::SessionManager;
     use crate::store::Store;
 
-    async fn master_test_server() -> TestServer {
+    async fn master_test_server() -> (TestServer, Arc<AppState>) {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -148,8 +173,8 @@ mod tests {
             Some(session_index),
             Some(command_queue),
         );
-        let app = routes::build(state);
-        TestServer::new(app).unwrap()
+        let app = routes::build(state.clone());
+        (TestServer::new(app).unwrap(), state)
     }
 
     async fn standalone_test_server() -> TestServer {
@@ -206,18 +231,35 @@ mod tests {
         })
     }
 
+    #[allow(clippy::future_not_send)]
+    async fn enroll_worker(server: &TestServer, node_name: &str) -> String {
+        let resp = server
+            .post("/api/v1/master/workers")
+            .json(&EnrollWorkerRequest {
+                node_name: node_name.into(),
+            })
+            .await;
+        resp.assert_status(axum::http::StatusCode::CREATED);
+        let body: EnrollWorkerResponse = resp.json();
+        body.token
+    }
+
     #[tokio::test]
     async fn test_push_events_updates_index() {
-        let server = master_test_server().await;
+        let (server, _) = master_test_server().await;
+        let token = enroll_worker(&server, "worker-1").await;
 
         let req = EventPushRequest {
-            node_name: "worker-1".into(),
             events: vec![
                 make_session_event("s1", "task-a", "active"),
                 make_session_event("s2", "task-b", "idle"),
             ],
         };
-        let resp = server.post("/api/v1/events/push").json(&req).await;
+        let resp = server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&req)
+            .await;
         resp.assert_status(axum::http::StatusCode::NO_CONTENT);
 
         // Verify fleet endpoint returns the indexed sessions
@@ -283,11 +325,15 @@ mod tests {
         let app = routes::build(state);
         let server = TestServer::new(app).unwrap();
 
+        let token = enroll_worker(&server, "worker-1").await;
         let req = EventPushRequest {
-            node_name: "worker-1".into(),
             events: vec![make_session_event("s1", "task-a", "active")],
         };
-        server.post("/api/v1/events/push").json(&req).await;
+        server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&req)
+            .await;
 
         let received = rx.recv().await.unwrap();
         match received {
@@ -303,7 +349,6 @@ mod tests {
     async fn test_push_events_forbidden_on_standalone() {
         let server = standalone_test_server().await;
         let req = EventPushRequest {
-            node_name: "worker-1".into(),
             events: vec![make_session_event("s1", "task-a", "active")],
         };
         let resp = server.post("/api/v1/events/push").json(&req).await;
@@ -312,30 +357,39 @@ mod tests {
 
     #[tokio::test]
     async fn test_push_events_empty_batch() {
-        let server = master_test_server().await;
-        let req = EventPushRequest {
-            node_name: "worker-1".into(),
-            events: vec![],
-        };
-        let resp = server.post("/api/v1/events/push").json(&req).await;
+        let (server, _) = master_test_server().await;
+        let token = enroll_worker(&server, "worker-1").await;
+        let req = EventPushRequest { events: vec![] };
+        let resp = server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&req)
+            .await;
         resp.assert_status(axum::http::StatusCode::NO_CONTENT);
     }
 
     #[tokio::test]
     async fn test_push_deleted_event_removes_index_entry() {
-        let server = master_test_server().await;
+        let (server, _) = master_test_server().await;
+        let token = enroll_worker(&server, "worker-1").await;
 
         let create_req = EventPushRequest {
-            node_name: "worker-1".into(),
             events: vec![make_session_event("s1", "task-a", "active")],
         };
-        server.post("/api/v1/events/push").json(&create_req).await;
+        server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&create_req)
+            .await;
 
         let delete_req = EventPushRequest {
-            node_name: "worker-1".into(),
             events: vec![make_deleted_event("s1", "task-a")],
         };
-        let resp = server.post("/api/v1/events/push").json(&delete_req).await;
+        let resp = server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&delete_req)
+            .await;
         resp.assert_status(axum::http::StatusCode::NO_CONTENT);
 
         let fleet_resp = server.get("/api/v1/fleet/sessions").await;
@@ -412,11 +466,15 @@ mod tests {
         let app = routes::build(state);
         let server = TestServer::new(app).unwrap();
 
+        let token = enroll_worker(&server, "worker-1").await;
         let req = EventPushRequest {
-            node_name: "worker-1".into(),
             events: vec![make_session_event(recovered_id, "task-a", "active")],
         };
-        let resp = server.post("/api/v1/events/push").json(&req).await;
+        let resp = server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&req)
+            .await;
         resp.assert_status(axum::http::StatusCode::NO_CONTENT);
 
         let fleet_resp = server.get("/api/v1/fleet/sessions").await;
@@ -478,18 +536,29 @@ mod tests {
         let app = routes::build(state);
         let server = TestServer::new(app).unwrap();
 
+        let token = enroll_worker(&server, "worker-1").await;
         let create_req = EventPushRequest {
-            node_name: "worker-1".into(),
             events: vec![make_session_event("s1", "task-a", "active")],
         };
-        server.post("/api/v1/events/push").json(&create_req).await;
+        server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&create_req)
+            .await;
 
         let delete_req = EventPushRequest {
-            node_name: "worker-1".into(),
             events: vec![make_deleted_event("s1", "task-a")],
         };
-        server.post("/api/v1/events/push").json(&delete_req).await;
-        let resp = server.post("/api/v1/events/push").json(&delete_req).await;
+        server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&delete_req)
+            .await;
+        let resp = server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&delete_req)
+            .await;
         resp.assert_status(axum::http::StatusCode::NO_CONTENT);
 
         let entries = store.list_master_session_index_entries().await.unwrap();

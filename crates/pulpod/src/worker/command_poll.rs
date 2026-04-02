@@ -71,8 +71,8 @@ async fn execute_command(
 #[cfg(not(coverage))]
 pub async fn run_command_poll_loop(
     master_url: String,
-    master_token: Option<String>,
-    node_name: String,
+    master_token: String,
+    _node_name: String,
     session_manager: crate::session::manager::SessionManager,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) {
@@ -81,17 +81,14 @@ pub async fn run_command_poll_loop(
         .build()
         .expect("failed to build reqwest client");
 
-    let poll_url = format!("{master_url}/api/v1/workers/{node_name}/commands");
+    let poll_url = format!("{master_url}/api/v1/worker/commands");
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     info!("Worker command poll loop started (master={master_url})");
 
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                let mut request = client.get(&poll_url);
-                if let Some(ref token) = master_token {
-                    request = request.bearer_auth(token);
-                }
+                let request = client.get(&poll_url).bearer_auth(&master_token);
 
                 let response = match request.send().await {
                     Ok(resp) if resp.status().is_success() => resp,
@@ -129,7 +126,7 @@ pub async fn run_command_poll_loop(
 #[cfg(coverage)]
 pub async fn run_command_poll_loop(
     _master_url: String,
-    _master_token: Option<String>,
+    _master_token: String,
     _node_name: String,
     _session_manager: crate::session::manager::SessionManager,
     _shutdown_rx: tokio::sync::watch::Receiver<bool>,
@@ -168,7 +165,7 @@ mod tests {
             std::time::Duration::from_secs(2),
             run_command_poll_loop(
                 "http://localhost:9999".into(),
-                None,
+                "worker-token".into(),
                 "test-node".into(),
                 manager,
                 shutdown_rx,

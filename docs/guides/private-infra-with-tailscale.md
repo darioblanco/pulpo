@@ -68,9 +68,10 @@ discovery_interval_secs = 30
 
 [master]
 address = "https://mac-mini.tailnet-name.ts.net"
+token = "worker-token-issued-by-master"
 ```
 
-In tailscale mode, `master.token` is optional because the tailnet is already the trust boundary. If your master uses `bind = "public"`, also set `master.token`.
+Even in tailscale mode, `master.token` is required. Tailscale protects network reachability; the worker token identifies the enrolled worker inside the fleet.
 
 Once both nodes are running, the master should discover the worker and start receiving worker events.
 

@@ -25,9 +25,11 @@ use super::secrets;
 use super::sessions;
 use super::static_files;
 use super::watchdog;
+use super::worker_auth;
 use super::worker_commands;
 use super::ws;
 
+#[allow(clippy::too_many_lines)]
 pub fn build(state: Arc<AppState>) -> Router {
     // In Public mode, restrict CORS to same-origin only (the embedded web UI
     // is served from the same origin and doesn't need permissive CORS).
@@ -109,9 +111,10 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/push/unsubscribe", post(push::unsubscribe_push))
         .route("/api/v1/events", get(events::stream))
         .route("/api/v1/events/push", post(event_push::push_events))
+        .route("/api/v1/master/workers", post(worker_auth::enroll_worker))
         .route(
-            "/api/v1/workers/{node}/commands",
-            get(worker_commands::get_commands).post(worker_commands::enqueue_command),
+            "/api/v1/worker/commands",
+            get(worker_commands::get_commands),
         )
         .route(
             "/api/v1/schedules",
