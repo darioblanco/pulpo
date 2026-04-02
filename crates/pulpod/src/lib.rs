@@ -783,7 +783,10 @@ mod tests {
     use super::*;
     use crate::store::Store;
     use axum_test::TestServer;
-    use pulpo_common::api::{EventPushRequest, FleetSessionsResponse, SessionIndexEntry};
+    use pulpo_common::api::{
+        EventPushRequest, FleetSessionsResponse, SessionIndexEntry, WorkerCommand,
+        WorkerCommandsResponse,
+    };
     use pulpo_common::event::{PulpoEvent, SessionEvent};
 
     #[test]
@@ -1145,6 +1148,62 @@ enabled = true
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].status, "idle");
 
+        handle2.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_build_app_drops_pending_worker_commands_after_master_restart() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let config_path = tmpdir.path().join("config.toml");
+        let data_dir = tmpdir.path().join("data");
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[node]
+name = "master-node"
+port = 0
+data_dir = "{}"
+
+[auth]
+token = "master-token"
+
+[master]
+enabled = true
+"#,
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let cli = Cli {
+            config: config_path.to_str().unwrap().into(),
+            port: Some(0),
+            command: None,
+        };
+
+        let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
+        let server1 = TestServer::new(app1).unwrap();
+        let command = WorkerCommand::StopSession {
+            command_id: "restart-gap".into(),
+            session_id: "session-1".into(),
+        };
+        let enqueue_resp = server1
+            .post("/api/v1/workers/worker-1/commands")
+            .json(&command)
+            .await;
+        enqueue_resp.assert_status(axum::http::StatusCode::CREATED);
+        handle1.shutdown();
+
+        let (app2, _addr2, handle2) = build_app(&cli).await.unwrap();
+        let server2 = TestServer::new(app2).unwrap();
+        let poll_resp = server2.get("/api/v1/workers/worker-1/commands").await;
+        poll_resp.assert_status_ok();
+        let body: WorkerCommandsResponse = poll_resp.json();
+        assert!(
+            body.commands.is_empty(),
+            "worker command queue should be empty after master restart"
+        );
         handle2.shutdown();
     }
 

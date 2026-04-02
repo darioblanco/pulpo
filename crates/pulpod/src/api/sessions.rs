@@ -1691,6 +1691,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_output_remote_worker_connection_failure_returns_bad_gateway() {
+        let session_id = Uuid::new_v4().to_string();
+        let state = master_state_with_index(SessionIndexEntry {
+            session_id: session_id.clone(),
+            node_name: "worker-1".into(),
+            node_address: Some("127.0.0.1:9".into()),
+            session_name: "remote-output".into(),
+            status: "active".into(),
+            command: Some("echo test".into()),
+            updated_at: "2026-03-30T12:00:00Z".into(),
+        })
+        .await;
+
+        let result = output(
+            State(state),
+            Path(session_id),
+            Query(OutputQuery { lines: Some(50) }),
+        )
+        .await;
+        assert!(result.is_err());
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(
+            err.error
+                .contains("failed to fetch output from worker worker-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_input_remote_worker_connection_failure_returns_bad_gateway() {
+        let session_id = Uuid::new_v4().to_string();
+        let state = master_state_with_index(SessionIndexEntry {
+            session_id: session_id.clone(),
+            node_name: "worker-1".into(),
+            node_address: Some("127.0.0.1:9".into()),
+            session_name: "remote-input".into(),
+            status: "active".into(),
+            command: Some("echo test".into()),
+            updated_at: "2026-03-30T12:00:00Z".into(),
+        })
+        .await;
+
+        let result = input(
+            State(state),
+            Path(session_id),
+            Json(SendInputRequest {
+                text: "continue".into(),
+            }),
+        )
+        .await;
+        assert!(result.is_err());
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(
+            err.error
+                .contains("failed to send input to worker worker-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_download_output_remote_worker_connection_failure_returns_bad_gateway() {
+        let session_id = Uuid::new_v4().to_string();
+        let state = master_state_with_index(SessionIndexEntry {
+            session_id: session_id.clone(),
+            node_name: "worker-1".into(),
+            node_address: Some("127.0.0.1:9".into()),
+            session_name: "remote-download".into(),
+            status: "active".into(),
+            command: Some("echo test".into()),
+            updated_at: "2026-03-30T12:00:00Z".into(),
+        })
+        .await;
+
+        let result = download_output(State(state), Path(session_id)).await;
+        assert!(result.is_err());
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(
+            err.error
+                .contains("failed to download output from worker worker-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resume_remote_worker_connection_failure_returns_bad_gateway() {
+        let session_id = Uuid::new_v4().to_string();
+        let state = master_state_with_index(SessionIndexEntry {
+            session_id: session_id.clone(),
+            node_name: "worker-1".into(),
+            node_address: Some("127.0.0.1:9".into()),
+            session_name: "remote-resume".into(),
+            status: "lost".into(),
+            command: Some("echo test".into()),
+            updated_at: "2026-03-30T12:00:00Z".into(),
+        })
+        .await;
+
+        let result = resume(State(state), Path(session_id)).await;
+        assert!(result.is_err());
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(
+            err.error
+                .contains("failed to resume session on worker worker-1")
+        );
+    }
+
+    #[tokio::test]
     async fn test_download_output_internal_error() {
         let state = failing_state().await;
         let req = CreateSessionRequest {
