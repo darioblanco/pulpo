@@ -281,8 +281,14 @@ async fn create_remote_scheduled_session(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
+    #[cfg(not(coverage))]
+    use crate::peers::PeerRegistry;
     use chrono::Utc;
+    #[cfg(not(coverage))]
+    use pulpo_common::{api::CreateSessionRequest, peer::PeerEntry};
 
     #[test]
     fn test_normalize_cron_5_fields() {
@@ -405,5 +411,70 @@ mod tests {
             created_at: (Utc::now() - chrono::Duration::hours(1)).to_rfc3339(),
         };
         assert!(is_due(&schedule));
+    }
+
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_create_remote_scheduled_session_target_not_found() {
+        let registry = PeerRegistry::new(&HashMap::new());
+        let err = create_remote_scheduled_session(
+            &registry,
+            "nightly-review",
+            "missing-worker",
+            CreateSessionRequest {
+                name: "nightly-review".into(),
+                workdir: Some("/repo".into()),
+                metadata: None,
+                command: Some("claude code".into()),
+                description: None,
+                ink: None,
+                idle_threshold_secs: None,
+                worktree: None,
+                worktree_base: None,
+                runtime: None,
+                secrets: None,
+                target_node: None,
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(err.to_string(), "target node not found: missing-worker");
+    }
+
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_create_remote_scheduled_session_unreachable_worker() {
+        let configured = HashMap::from([(
+            "worker-1".to_owned(),
+            PeerEntry::Full {
+                address: "127.0.0.1:9".into(),
+                token: Some("secret-token".into()),
+            },
+        )]);
+        let registry = PeerRegistry::new(&configured);
+        let err = create_remote_scheduled_session(
+            &registry,
+            "nightly-review",
+            "worker-1",
+            CreateSessionRequest {
+                name: "nightly-review".into(),
+                workdir: Some("/repo".into()),
+                metadata: None,
+                command: Some("claude code".into()),
+                description: None,
+                ink: None,
+                idle_threshold_secs: None,
+                worktree: None,
+                worktree_base: None,
+                runtime: None,
+                secrets: None,
+                target_node: None,
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("failed to reach worker worker-1"));
     }
 }

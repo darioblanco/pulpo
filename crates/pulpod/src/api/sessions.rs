@@ -882,6 +882,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_create_target_node_offline_worker_returns_bad_gateway() {
+        let peers = HashMap::from([(
+            "worker-1".to_owned(),
+            pulpo_common::peer::PeerEntry::Full {
+                address: "127.0.0.1:9".into(),
+                token: Some("secret-token".into()),
+            },
+        )]);
+        let state = master_state_with_index_and_peers(
+            SessionIndexEntry {
+                session_id: Uuid::new_v4().to_string(),
+                node_name: "master-node".into(),
+                node_address: None,
+                session_name: "existing-local".into(),
+                status: "active".into(),
+                command: Some("echo".into()),
+                updated_at: "2026-03-30T12:00:00Z".into(),
+            },
+            peers,
+        )
+        .await;
+        let req = CreateSessionRequest {
+            name: "remote-create".into(),
+            workdir: Some("/repo".into()),
+            metadata: None,
+            command: Some("claude code".into()),
+            description: None,
+            ink: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            worktree_base: None,
+            runtime: None,
+            secrets: None,
+            target_node: Some("worker-1".into()),
+        };
+
+        let result = create(State(state), Json(req)).await;
+        assert!(result.is_err());
+        let (status, Json(err)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert!(
+            err.error
+                .contains("failed to create session on worker worker-1")
+        );
+    }
+
+    #[tokio::test]
     async fn test_create_duplicate_name_returns_conflict() {
         let state = test_state().await;
         let req = || CreateSessionRequest {
