@@ -25,31 +25,50 @@ pub async fn push_events(
     };
 
     for event in &req.events {
-        let PulpoEvent::Session(se) = event;
-        let node_address = state
-            .peer_registry
-            .get(&req.node_name)
-            .await
-            .map(|peer| peer.address);
-        let entry = SessionIndexEntry {
-            session_id: se.session_id.clone(),
-            node_name: req.node_name.clone(),
-            node_address,
-            session_name: se.session_name.clone(),
-            status: se.status.clone(),
-            command: None,
-            updated_at: se.timestamp.clone(),
-        };
-        if let Err(e) = state.store.upsert_master_session_index_entry(&entry).await {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: format!("failed to persist master session index entry: {e}"),
-                }),
-            )
-                .into_response();
+        match event {
+            PulpoEvent::Session(se) => {
+                let node_address = state
+                    .peer_registry
+                    .get(&req.node_name)
+                    .await
+                    .map(|peer| peer.address);
+                let entry = SessionIndexEntry {
+                    session_id: se.session_id.clone(),
+                    node_name: req.node_name.clone(),
+                    node_address,
+                    session_name: se.session_name.clone(),
+                    status: se.status.clone(),
+                    command: None,
+                    updated_at: se.timestamp.clone(),
+                };
+                if let Err(e) = state.store.upsert_master_session_index_entry(&entry).await {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: format!("failed to persist master session index entry: {e}"),
+                        }),
+                    )
+                        .into_response();
+                }
+                session_index.upsert(entry).await;
+            }
+            PulpoEvent::SessionDeleted(se) => {
+                if let Err(e) = state
+                    .store
+                    .delete_master_session_index_entry(&se.session_id)
+                    .await
+                {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: format!("failed to delete master session index entry: {e}"),
+                        }),
+                    )
+                        .into_response();
+                }
+                session_index.remove(&se.session_id).await;
+            }
         }
-        session_index.upsert(entry).await;
         let _ = state.event_tx.send(event.clone());
     }
 
@@ -78,7 +97,7 @@ mod tests {
 
     use axum_test::TestServer;
     use pulpo_common::api::{EventPushRequest, FleetSessionsResponse};
-    use pulpo_common::event::{PulpoEvent, SessionEvent};
+    use pulpo_common::event::{PulpoEvent, SessionDeletedEvent, SessionEvent};
 
     use crate::api::AppState;
     use crate::api::routes;
@@ -178,6 +197,15 @@ mod tests {
         })
     }
 
+    fn make_deleted_event(session_id: &str, name: &str) -> PulpoEvent {
+        PulpoEvent::SessionDeleted(SessionDeletedEvent {
+            session_id: session_id.into(),
+            session_name: name.into(),
+            node_name: "worker-1".into(),
+            timestamp: "2026-03-30T12:00:00Z".into(),
+        })
+    }
+
     #[tokio::test]
     async fn test_push_events_updates_index() {
         let server = master_test_server().await;
@@ -267,6 +295,7 @@ mod tests {
                 assert_eq!(se.session_id, "s1");
                 assert_eq!(se.status, "active");
             }
+            PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
         }
     }
 
@@ -290,5 +319,28 @@ mod tests {
         };
         let resp = server.post("/api/v1/events/push").json(&req).await;
         resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn test_push_deleted_event_removes_index_entry() {
+        let server = master_test_server().await;
+
+        let create_req = EventPushRequest {
+            node_name: "worker-1".into(),
+            events: vec![make_session_event("s1", "task-a", "active")],
+        };
+        server.post("/api/v1/events/push").json(&create_req).await;
+
+        let delete_req = EventPushRequest {
+            node_name: "worker-1".into(),
+            events: vec![make_deleted_event("s1", "task-a")],
+        };
+        let resp = server.post("/api/v1/events/push").json(&delete_req).await;
+        resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+        let fleet_resp = server.get("/api/v1/fleet/sessions").await;
+        fleet_resp.assert_status_ok();
+        let body: FleetSessionsResponse = fleet_resp.json();
+        assert!(body.sessions.is_empty());
     }
 }

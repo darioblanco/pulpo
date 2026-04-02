@@ -33,10 +33,20 @@ pub struct SessionEvent {
     pub session_cost_usd: Option<f64>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SessionDeletedEvent {
+    pub session_id: String,
+    pub session_name: String,
+    pub node_name: String,
+    pub timestamp: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+#[allow(clippy::large_enum_variant)]
 pub enum PulpoEvent {
     Session(SessionEvent),
+    SessionDeleted(SessionDeletedEvent),
 }
 
 #[cfg(test)]
@@ -117,6 +127,34 @@ mod tests {
     }
 
     #[test]
+    fn test_session_deleted_event_serialize_roundtrip() {
+        let event = SessionDeletedEvent {
+            session_id: "abc-123".into(),
+            session_name: "my-session".into(),
+            node_name: "node-1".into(),
+            timestamp: "2026-01-01T00:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let deserialized: SessionDeletedEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.session_id, "abc-123");
+        assert_eq!(deserialized.session_name, "my-session");
+        assert_eq!(deserialized.node_name, "node-1");
+    }
+
+    #[test]
+    fn test_pulpo_event_serialize_session_deleted() {
+        let event = PulpoEvent::SessionDeleted(SessionDeletedEvent {
+            session_id: "s1".into(),
+            session_name: "test".into(),
+            node_name: "n".into(),
+            timestamp: "t".into(),
+        });
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"kind\":\"session_deleted\""));
+        assert!(json.contains("\"session_id\":\"s1\""));
+    }
+
+    #[test]
     fn test_pulpo_event_invalid_kind() {
         let json = r#"{"kind":"unknown","data":"test"}"#;
         let result = serde_json::from_str::<PulpoEvent>(json);
@@ -154,5 +192,21 @@ mod tests {
         assert!(
             matches!(&deserialized, PulpoEvent::Session(se) if se.session_id == "s1" && se.status == "ready")
         );
+    }
+
+    #[test]
+    fn test_pulpo_event_roundtrip_session_deleted() {
+        let original = PulpoEvent::SessionDeleted(SessionDeletedEvent {
+            session_id: "s1".into(),
+            session_name: "test".into(),
+            node_name: "n".into(),
+            timestamp: "2026-01-01T00:00:00Z".into(),
+        });
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: PulpoEvent = serde_json::from_str(&json).unwrap();
+        assert!(matches!(
+            &deserialized,
+            PulpoEvent::SessionDeleted(se) if se.session_id == "s1" && se.session_name == "test"
+        ));
     }
 }

@@ -142,7 +142,9 @@ mod tests {
     #[test]
     fn test_build_lost_event() {
         let event = build_lost_event("s1", "task-s1", "worker-1", "2026-03-30T12:00:00Z");
-        let PulpoEvent::Session(se) = event;
+        let PulpoEvent::Session(se) = event else {
+            panic!("expected session event");
+        };
         assert_eq!(se.session_id, "s1");
         assert_eq!(se.session_name, "task-s1");
         assert_eq!(se.status, "lost");
@@ -154,7 +156,9 @@ mod tests {
     #[test]
     fn test_build_lost_event_fields() {
         let event = build_lost_event("abc", "my-task", "node-2", "2026-01-15T08:00:00Z");
-        let PulpoEvent::Session(se) = event;
+        let PulpoEvent::Session(se) = event else {
+            panic!("expected session event");
+        };
         assert_eq!(se.session_id, "abc");
         assert_eq!(se.session_name, "my-task");
         assert_eq!(se.node_name, "node-2");
@@ -196,8 +200,12 @@ mod tests {
         // Both events should be received
         let ev1 = event_rx.try_recv().unwrap();
         let ev2 = event_rx.try_recv().unwrap();
-        let PulpoEvent::Session(se1) = ev1;
-        let PulpoEvent::Session(se2) = ev2;
+        let PulpoEvent::Session(se1) = ev1 else {
+            panic!("expected session event");
+        };
+        let PulpoEvent::Session(se2) = ev2 else {
+            panic!("expected session event");
+        };
         assert_eq!(se1.status, "lost");
         assert_eq!(se2.status, "lost");
         assert_eq!(se1.node_name, "worker-1");

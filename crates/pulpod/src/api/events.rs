@@ -13,6 +13,7 @@ use tokio_stream::wrappers::BroadcastStream;
 fn event_to_sse(event: &PulpoEvent) -> Option<Result<Event, Infallible>> {
     let (event_type, json) = match event {
         PulpoEvent::Session(se) => ("session", serde_json::to_string(se).ok()?),
+        PulpoEvent::SessionDeleted(se) => ("session_deleted", serde_json::to_string(se).ok()?),
     };
     Some(Ok(Event::default().event(event_type).data(json)))
 }
@@ -37,7 +38,7 @@ mod tests {
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
-    use pulpo_common::event::SessionEvent;
+    use pulpo_common::event::{SessionDeletedEvent, SessionEvent};
     use std::collections::HashMap;
 
     #[tokio::test]
@@ -100,6 +101,19 @@ mod tests {
             output_snippet: None,
             timestamp: "2026-01-01T00:00:00Z".into(),
             ..Default::default()
+        });
+
+        let result = event_to_sse(&event);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_event_to_sse_session_deleted() {
+        let event = PulpoEvent::SessionDeleted(SessionDeletedEvent {
+            session_id: "id-1".into(),
+            session_name: "test-session".into(),
+            node_name: "test".into(),
+            timestamp: "2026-01-01T00:00:00Z".into(),
         });
 
         let result = event_to_sse(&event);

@@ -6,7 +6,7 @@ use anyhow::Context;
 use anyhow::{Result, anyhow, bail};
 use chrono::Utc;
 use pulpo_common::api::CreateSessionRequest;
-use pulpo_common::event::{PulpoEvent, SessionEvent};
+use pulpo_common::event::{PulpoEvent, SessionDeletedEvent, SessionEvent};
 use pulpo_common::session::{Runtime, Session, SessionStatus, meta};
 use std::sync::RwLock;
 use tokio::sync::broadcast;
@@ -484,6 +484,14 @@ impl SessionManager {
                 cleanup_worktree(wt_path, &stopped_session.workdir);
             }
             self.store.delete_session(&session_id).await?;
+            if let Some(tx) = &self.event_tx {
+                let _ = tx.send(PulpoEvent::SessionDeleted(SessionDeletedEvent {
+                    session_id,
+                    session_name: stopped_session.name.clone(),
+                    node_name: self.node_name.clone(),
+                    timestamp: Utc::now().to_rfc3339(),
+                }));
+            }
         }
 
         Ok(())
@@ -953,6 +961,7 @@ mod tests {
     fn unwrap_session_event(event: PulpoEvent) -> SessionEvent {
         match event {
             PulpoEvent::Session(se) => se,
+            PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
         }
     }
 
@@ -2161,6 +2170,32 @@ mod tests {
         let event = event_rx.recv().await.unwrap();
         let se = unwrap_session_event(event);
         assert_eq!(se.status, "stopped");
+    }
+
+    #[tokio::test]
+    async fn test_stop_session_purge_emits_deleted_event() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let (event_tx, mut event_rx) = broadcast::channel(16);
+        let mgr = mgr.with_event_tx(event_tx, "test-node".into());
+        let session = mgr.create_session(make_req("purge-event")).await.unwrap();
+        let _ = event_rx.recv().await;
+
+        mgr.stop_session(&session.id.to_string(), true)
+            .await
+            .unwrap();
+
+        let stopped = event_rx.recv().await.unwrap();
+        let deleted = event_rx.recv().await.unwrap();
+        let stopped = unwrap_session_event(stopped);
+        assert_eq!(stopped.status, "stopped");
+        match deleted {
+            PulpoEvent::SessionDeleted(se) => {
+                assert_eq!(se.session_id, session.id.to_string());
+                assert_eq!(se.session_name, "purge-event");
+                assert_eq!(se.node_name, "test-node");
+            }
+            PulpoEvent::Session(_) => panic!("expected session_deleted event"),
+        }
     }
 
     #[tokio::test]

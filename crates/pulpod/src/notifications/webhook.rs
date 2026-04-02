@@ -89,7 +89,7 @@ pub async fn run_notification_loop(
                                 );
                             }
                         }
-
+                        PulpoEvent::SessionDeleted(_) => {}
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(

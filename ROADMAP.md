@@ -153,7 +153,7 @@ Remove broken features that frustrate users. Keep what works:
 - **Remove:** `target_node` field from schedule UI (scheduler ignores it)
 - **Remove:** CLI attach after remote spawn (tmux is local-only)
 
-**Phase 2 — Master mode (future, when multi-node demand materializes)**
+**Phase 2 — Master mode (experimental)**
 
 Inspired by Elasticsearch's cluster architecture: every node runs the same binary, one node is promoted to master. The master holds the session index (metadata), not the sessions themselves (which are tmux processes on worker nodes).
 
@@ -165,6 +165,13 @@ How it works:
 - Worker UIs stay local-first: local sessions remain visible, but fleet-wide control belongs to the master
 - CLI connects to master for cross-node actions — master routes commands to the right worker
 - Single auth: workers authenticate to master, users authenticate to master
+
+Current implementation status:
+- Master-routed fleet reads, create, stop, resume, and scheduled dispatch are implemented
+- Worker nodes push session lifecycle events and poll the master for commands
+- The master session index is persisted and restored across restarts
+- Worker UIs expose local sessions plus a handoff to the master, rather than a best-effort fleet view
+- Distributed terminal attach remains intentionally out of scope; remote detail stays HTTP/log-oriented
 
 Why this is simpler than Elasticsearch:
 - No consensus protocol needed — losing the master loses visibility, not data. Sessions keep running.

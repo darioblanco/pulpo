@@ -189,7 +189,7 @@ pub async fn run_notification_loop(
                                 error!(error = %e, "Discord notification failed");
                             }
                         }
-
+                        PulpoEvent::SessionDeleted(_) => {}
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(missed = n, "Discord notifier lagged, skipping events");

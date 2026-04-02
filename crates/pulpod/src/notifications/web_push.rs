@@ -178,6 +178,7 @@ pub async fn run_notification_loop(
                         PulpoEvent::Session(ref se) => {
                             notifier.send(se).await;
                         }
+                        PulpoEvent::SessionDeleted(_) => {}
                     },
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(missed = n, "Web Push notifier lagged, skipping events");

@@ -2633,6 +2633,7 @@ mod tests {
                 assert_eq!(se.session_name, "idle-sse");
                 assert!(se.output_snippet.is_some());
             }
+            PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
         }
     }
 
@@ -2684,6 +2685,7 @@ mod tests {
                 assert_eq!(se.previous_status, Some("idle".into()));
                 assert_eq!(se.session_name, "active-sse");
             }
+            PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
         }
     }
 
@@ -3437,6 +3439,7 @@ mod tests {
                 assert_eq!(se.previous_status, Some("active".into()));
                 assert_eq!(se.node_name, "test-node");
             }
+            PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
         }
     }
 
@@ -3514,6 +3517,7 @@ mod tests {
             PulpoEvent::Session(se) => {
                 assert_eq!(se.previous_status, Some("idle".into()));
             }
+            PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
         }
     }
 
@@ -3802,6 +3806,7 @@ mod tests {
                 assert!(se.previous_status.is_none());
                 assert_eq!(se.node_name, "test-node");
             }
+            PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
         }
     }
 
