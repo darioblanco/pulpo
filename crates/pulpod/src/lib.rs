@@ -783,7 +783,8 @@ mod tests {
     use super::*;
     use crate::store::Store;
     use axum_test::TestServer;
-    use pulpo_common::api::{FleetSessionsResponse, SessionIndexEntry};
+    use pulpo_common::api::{EventPushRequest, FleetSessionsResponse, SessionIndexEntry};
+    use pulpo_common::event::{PulpoEvent, SessionEvent};
 
     #[test]
     fn test_shutdown_handle_signals_loops() {
@@ -1045,6 +1046,106 @@ enabled = true
         assert_eq!(persisted.session.id.to_string(), persisted_id);
         assert_eq!(persisted.node_name, "worker-1");
         handle.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_build_app_restores_master_index_after_restart_and_accepts_fresh_events() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let config_path = tmpdir.path().join("config.toml");
+        let data_dir = tmpdir.path().join("data");
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[node]
+name = "master-node"
+port = 0
+data_dir = "{}"
+
+[auth]
+token = "master-token"
+
+[master]
+enabled = true
+"#,
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let cli = Cli {
+            config: config_path.to_str().unwrap().into(),
+            port: Some(0),
+            command: None,
+        };
+
+        let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
+        let server1 = TestServer::new(app1).unwrap();
+        let req = EventPushRequest {
+            node_name: "worker-1".into(),
+            events: vec![PulpoEvent::Session(SessionEvent {
+                session_id: "11111111-1111-1111-1111-111111111111".into(),
+                session_name: "persisted-session".into(),
+                status: "active".into(),
+                previous_status: None,
+                node_name: "worker-1".into(),
+                output_snippet: None,
+                timestamp: "2026-04-02T08:00:00Z".into(),
+                ..Default::default()
+            })],
+        };
+        let resp = server1.post("/api/v1/events/push").json(&req).await;
+        resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+        handle1.shutdown();
+
+        let (app2, _addr2, handle2) = build_app(&cli).await.unwrap();
+        let server2 = TestServer::new(app2).unwrap();
+        let fleet_resp = server2.get("/api/v1/fleet/sessions").await;
+        fleet_resp.assert_status_ok();
+        let body: FleetSessionsResponse = fleet_resp.json();
+        let restored = body
+            .sessions
+            .iter()
+            .find(|entry| entry.session.name == "persisted-session")
+            .unwrap();
+        assert_eq!(
+            restored.session.id.to_string(),
+            "11111111-1111-1111-1111-111111111111"
+        );
+        assert_eq!(restored.session.status.to_string(), "active");
+
+        let update_req = EventPushRequest {
+            node_name: "worker-1".into(),
+            events: vec![PulpoEvent::Session(SessionEvent {
+                session_id: "11111111-1111-1111-1111-111111111111".into(),
+                session_name: "persisted-session".into(),
+                status: "idle".into(),
+                previous_status: Some("active".into()),
+                node_name: "worker-1".into(),
+                output_snippet: None,
+                timestamp: "2026-04-02T08:05:00Z".into(),
+                ..Default::default()
+            })],
+        };
+        let update_resp = server2.post("/api/v1/events/push").json(&update_req).await;
+        update_resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+        let fleet_resp = server2.get("/api/v1/fleet/sessions").await;
+        fleet_resp.assert_status_ok();
+        let body: FleetSessionsResponse = fleet_resp.json();
+        let updated = body
+            .sessions
+            .iter()
+            .find(|entry| entry.session.name == "persisted-session")
+            .unwrap();
+        assert_eq!(updated.session.status.to_string(), "idle");
+
+        let store = Store::new(data_dir.to_str().unwrap()).await.unwrap();
+        let entries = store.list_master_session_index_entries().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].status, "idle");
+
+        handle2.shutdown();
     }
 
     #[tokio::test]

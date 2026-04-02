@@ -96,7 +96,7 @@ mod tests {
     use std::sync::Arc;
 
     use axum_test::TestServer;
-    use pulpo_common::api::{EventPushRequest, FleetSessionsResponse};
+    use pulpo_common::api::{EventPushRequest, FleetSessionsResponse, SessionIndexEntry};
     use pulpo_common::event::{PulpoEvent, SessionDeletedEvent, SessionEvent};
 
     use crate::api::AppState;
@@ -342,5 +342,157 @@ mod tests {
         fleet_resp.assert_status_ok();
         let body: FleetSessionsResponse = fleet_resp.json();
         assert!(body.sessions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_push_event_recovers_lost_session_and_persists_update() {
+        let recovered_id = "22222222-2222-2222-2222-222222222222";
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        store
+            .upsert_master_session_index_entry(&SessionIndexEntry {
+                session_id: recovered_id.into(),
+                node_name: "worker-1".into(),
+                node_address: Some("worker-1.tail:7433".into()),
+                session_name: "task-a".into(),
+                status: "lost".into(),
+                command: None,
+                updated_at: "2026-03-30T11:59:00Z".into(),
+            })
+            .await
+            .unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "master-node".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig {
+                enabled: true,
+                ..crate::config::MasterConfig::default()
+            },
+        };
+        let backend = Arc::new(StubBackend);
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (event_tx, _) = tokio::sync::broadcast::channel(16);
+        let session_index = Arc::new(SessionIndex::new());
+        session_index
+            .upsert(SessionIndexEntry {
+                session_id: recovered_id.into(),
+                node_name: "worker-1".into(),
+                node_address: Some("worker-1.tail:7433".into()),
+                session_name: "task-a".into(),
+                status: "lost".into(),
+                command: None,
+                updated_at: "2026-03-30T11:59:00Z".into(),
+            })
+            .await;
+        let command_queue = Arc::new(CommandQueue::new());
+        let state = AppState::with_event_tx_master(
+            config,
+            tmpdir.path().join("config.toml"),
+            manager,
+            peer_registry,
+            event_tx,
+            store.clone(),
+            Some(session_index),
+            Some(command_queue),
+        );
+        let app = routes::build(state);
+        let server = TestServer::new(app).unwrap();
+
+        let req = EventPushRequest {
+            node_name: "worker-1".into(),
+            events: vec![make_session_event(recovered_id, "task-a", "active")],
+        };
+        let resp = server.post("/api/v1/events/push").json(&req).await;
+        resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+        let fleet_resp = server.get("/api/v1/fleet/sessions").await;
+        fleet_resp.assert_status_ok();
+        let body: FleetSessionsResponse = fleet_resp.json();
+        let recovered = body
+            .sessions
+            .iter()
+            .find(|entry| entry.session.id.to_string() == recovered_id)
+            .unwrap();
+        assert_eq!(recovered.session.status.to_string(), "active");
+
+        let entries = store.list_master_session_index_entries().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].status, "active");
+    }
+
+    #[tokio::test]
+    async fn test_push_deleted_event_is_idempotent() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "master-node".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            docker: crate::config::DockerConfig::default(),
+            master: crate::config::MasterConfig {
+                enabled: true,
+                ..crate::config::MasterConfig::default()
+            },
+        };
+        let backend = Arc::new(StubBackend);
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (event_tx, _) = tokio::sync::broadcast::channel(16);
+        let session_index = Arc::new(SessionIndex::new());
+        let command_queue = Arc::new(CommandQueue::new());
+        let state = AppState::with_event_tx_master(
+            config,
+            tmpdir.path().join("config.toml"),
+            manager,
+            peer_registry,
+            event_tx,
+            store.clone(),
+            Some(session_index),
+            Some(command_queue),
+        );
+        let app = routes::build(state);
+        let server = TestServer::new(app).unwrap();
+
+        let create_req = EventPushRequest {
+            node_name: "worker-1".into(),
+            events: vec![make_session_event("s1", "task-a", "active")],
+        };
+        server.post("/api/v1/events/push").json(&create_req).await;
+
+        let delete_req = EventPushRequest {
+            node_name: "worker-1".into(),
+            events: vec![make_deleted_event("s1", "task-a")],
+        };
+        server.post("/api/v1/events/push").json(&delete_req).await;
+        let resp = server.post("/api/v1/events/push").json(&delete_req).await;
+        resp.assert_status(axum::http::StatusCode::NO_CONTENT);
+
+        let entries = store.list_master_session_index_entries().await.unwrap();
+        assert!(entries.is_empty());
     }
 }
