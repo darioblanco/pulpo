@@ -1208,6 +1208,95 @@ enabled = true
     }
 
     #[tokio::test]
+    async fn test_build_app_restart_preserves_only_commands_already_polled_by_workers() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let config_path = tmpdir.path().join("config.toml");
+        let data_dir = tmpdir.path().join("data");
+        std::fs::write(
+            &config_path,
+            format!(
+                r#"
+[node]
+name = "master-node"
+port = 0
+data_dir = "{}"
+
+[auth]
+token = "master-token"
+
+[master]
+enabled = true
+"#,
+                data_dir.display()
+            ),
+        )
+        .unwrap();
+
+        let cli = Cli {
+            config: config_path.to_str().unwrap().into(),
+            port: Some(0),
+            command: None,
+        };
+
+        let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
+        let server1 = TestServer::new(app1).unwrap();
+
+        let worker_1_command = WorkerCommand::StopSession {
+            command_id: "delivered-before-restart".into(),
+            session_id: "session-1".into(),
+        };
+        server1
+            .post("/api/v1/workers/worker-1/commands")
+            .json(&worker_1_command)
+            .await
+            .assert_status(axum::http::StatusCode::CREATED);
+
+        let worker_2_command = WorkerCommand::StopSession {
+            command_id: "pending-at-restart".into(),
+            session_id: "session-2".into(),
+        };
+        server1
+            .post("/api/v1/workers/worker-2/commands")
+            .json(&worker_2_command)
+            .await
+            .assert_status(axum::http::StatusCode::CREATED);
+
+        let worker_1_poll = server1.get("/api/v1/workers/worker-1/commands").await;
+        worker_1_poll.assert_status_ok();
+        let body: WorkerCommandsResponse = worker_1_poll.json();
+        assert_eq!(body.commands.len(), 1);
+        match &body.commands[0] {
+            WorkerCommand::StopSession { command_id, .. } => {
+                assert_eq!(command_id, "delivered-before-restart");
+            }
+            WorkerCommand::CreateSession { .. } => panic!("expected StopSession"),
+        }
+
+        handle1.shutdown();
+
+        let (app2, _addr2, handle2) = build_app(&cli).await.unwrap();
+        let server2 = TestServer::new(app2).unwrap();
+
+        let worker_1_poll_after_restart = server2.get("/api/v1/workers/worker-1/commands").await;
+        worker_1_poll_after_restart.assert_status_ok();
+        let body: WorkerCommandsResponse = worker_1_poll_after_restart.json();
+        assert!(
+            body.commands.is_empty(),
+            "commands already drained before restart should not reappear"
+        );
+
+        let worker_2_poll_after_restart = server2.get("/api/v1/workers/worker-2/commands").await;
+        worker_2_poll_after_restart.assert_status_ok();
+        let body: WorkerCommandsResponse = worker_2_poll_after_restart.json();
+        assert!(
+            body.commands.is_empty(),
+            "commands still pending on the master should be lost on restart"
+        );
+
+        handle2.shutdown();
+    }
+
+    #[tokio::test]
     async fn test_build_mcp_server() {
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
