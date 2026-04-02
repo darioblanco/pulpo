@@ -33,9 +33,9 @@ export function DashboardPage() {
   const [localNode, setLocalNode] = useState<NodeInfo | null>(null);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [fleetSessions, setFleetSessions] = useState<FleetSession[]>([]);
-  const [nodeRole, setNodeRole] = useState<'standalone' | 'master' | 'worker'>('standalone');
-  const [masterName, setMasterName] = useState<string | null>(null);
-  const [masterAddress, setMasterAddress] = useState<string | null>(null);
+  const [nodeRole, setNodeRole] = useState<'standalone' | 'controller' | 'node'>('standalone');
+  const [controllerName, setControllerName] = useState<string | null>(null);
+  const [controllerAddress, setControllerAddress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const previousSessionsRef = useRef<Session[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(DEFAULT_STATUSES);
@@ -49,11 +49,11 @@ export function DashboardPage() {
       const resp = await getPeers();
       setLocalNode(resp.local);
       setPeers(resp.peers);
-      setNodeRole((resp.role as 'standalone' | 'master' | 'worker') ?? 'standalone');
-      setMasterName(resp.master_name ?? null);
-      setMasterAddress(resp.master_address ?? null);
+      setNodeRole((resp.role as 'standalone' | 'controller' | 'node') ?? 'standalone');
+      setControllerName(resp.controller_name ?? null);
+      setControllerAddress(resp.controller_address ?? null);
 
-      if (resp.role === 'master') {
+      if (resp.role === 'controller') {
         await getFleetSessions()
           .then((r) => setFleetSessions(r.sessions))
           .catch(() => setFleetSessions([]));
@@ -207,9 +207,9 @@ export function DashboardPage() {
   );
 
   const hasMultipleNodes = peers.length > 0;
-  const isMasterNode = nodeRole === 'master';
-  const isWorkerNode = nodeRole === 'worker';
-  const allowRemoteActions = isMasterNode;
+  const isControllerNode = nodeRole === 'controller';
+  const isManagedNode = nodeRole === 'node';
+  const allowRemoteActions = isControllerNode;
 
   return (
     <div data-testid="dashboard-page">
@@ -256,28 +256,32 @@ export function DashboardPage() {
               </div>
             </div>
 
-            {isWorkerNode && (
+            {isManagedNode && (
               <div
-                data-testid="worker-master-banner"
+                data-testid="node-controller-banner"
                 className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="space-y-1">
-                  <p className="text-sm font-medium">This node is a worker.</p>
+                  <p className="text-sm font-medium">This node is managed by a controller.</p>
                   <p className="text-sm text-muted-foreground">
-                    Fleet-wide view and cross-node control live on the master.
+                    Fleet-wide view and cross-node control live on the controller.
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {masterName ? `Master: ${masterName}` : 'Master node configured'}
-                    {masterAddress ? ` · ${masterAddress}` : ''}
+                    {controllerName
+                      ? `Controller: ${controllerName}`
+                      : 'Controller node configured'}
+                    {controllerAddress ? ` · ${controllerAddress}` : ''}
                   </p>
                 </div>
-                {masterAddress && (
+                {controllerAddress && (
                   <Button
-                    data-testid="connect-master-button"
+                    data-testid="connect-controller-button"
                     variant="outline"
-                    onClick={() => navigate(`/connect?url=${encodeURIComponent(masterAddress)}`)}
+                    onClick={() =>
+                      navigate(`/connect?url=${encodeURIComponent(controllerAddress)}`)
+                    }
                   >
-                    Connect to master
+                    Connect to controller
                   </Button>
                 )}
               </div>
@@ -306,7 +310,7 @@ export function DashboardPage() {
               )}
             </div>
 
-            {isMasterNode && hasMultipleNodes ? (
+            {isControllerNode && hasMultipleNodes ? (
               <Tabs defaultValue="all" data-testid="node-tabs">
                 <TabsList className="h-auto min-h-12 w-auto max-w-full justify-start overflow-x-auto py-1.5">
                   <TabsTrigger value="all" data-testid="tab-all">

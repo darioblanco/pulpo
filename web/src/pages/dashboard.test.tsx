@@ -171,7 +171,7 @@ describe('DashboardPage', () => {
                   session_count: null,
                 },
               ],
-              role: 'master',
+              role: 'controller',
             }),
         };
       }
@@ -235,7 +235,7 @@ describe('DashboardPage', () => {
                   session_count: null,
                 },
               ],
-              role: 'master',
+              role: 'controller',
             }),
         };
       }
@@ -498,7 +498,7 @@ describe('DashboardPage', () => {
                   created_at: '2025-01-01T00:00:00Z',
                 },
               ],
-              role: 'master',
+              role: 'controller',
             }),
         };
       }
@@ -525,7 +525,7 @@ describe('DashboardPage', () => {
                   session_count: null,
                 },
               ],
-              role: 'master',
+              role: 'controller',
             }),
         };
       }
@@ -595,7 +595,7 @@ describe('DashboardPage', () => {
                   session_count: null,
                 },
               ],
-              role: 'master',
+              role: 'controller',
             }),
         };
       }
@@ -649,7 +649,7 @@ describe('DashboardPage', () => {
                   session_count: null,
                 },
               ],
-              role: 'master',
+              role: 'controller',
             }),
         };
       }

@@ -28,7 +28,7 @@ pub struct InterventionEvent {
 }
 
 #[derive(Debug, Clone)]
-pub struct EnrolledWorker {
+pub struct EnrolledNode {
     pub node_name: String,
     pub token_hash: String,
     pub last_seen_at: Option<DateTime<Utc>>,
@@ -1102,7 +1102,7 @@ impl Store {
     pub async fn get_enrolled_master_worker_by_name(
         &self,
         node_name: &str,
-    ) -> Result<Option<EnrolledWorker>> {
+    ) -> Result<Option<EnrolledNode>> {
         let row = sqlx::query(
             "SELECT node_name, token_hash, last_seen_at, last_seen_address
              FROM master_enrolled_workers WHERE node_name = ?",
@@ -1116,7 +1116,7 @@ impl Store {
     pub async fn get_enrolled_master_worker_by_token_hash(
         &self,
         token_hash: &str,
-    ) -> Result<Option<EnrolledWorker>> {
+    ) -> Result<Option<EnrolledNode>> {
         let row = sqlx::query(
             "SELECT node_name, token_hash, last_seen_at, last_seen_address
              FROM master_enrolled_workers WHERE token_hash = ?",
@@ -1127,7 +1127,7 @@ impl Store {
         row.map(|row| row_to_enrolled_worker(&row)).transpose()
     }
 
-    pub async fn list_enrolled_master_workers(&self) -> Result<Vec<EnrolledWorker>> {
+    pub async fn list_enrolled_master_workers(&self) -> Result<Vec<EnrolledNode>> {
         let rows = sqlx::query(
             "SELECT node_name, token_hash, last_seen_at, last_seen_address
              FROM master_enrolled_workers ORDER BY node_name",
@@ -1394,12 +1394,12 @@ fn row_to_intervention_event(row: &SqliteRow) -> Result<InterventionEvent> {
     })
 }
 
-fn row_to_enrolled_worker(row: &SqliteRow) -> Result<EnrolledWorker> {
+fn row_to_enrolled_worker(row: &SqliteRow) -> Result<EnrolledNode> {
     let last_seen_at = row
         .try_get::<Option<String>, _>("last_seen_at")?
         .map(|value| DateTime::parse_from_rfc3339(&value).map(|dt| dt.with_timezone(&Utc)))
         .transpose()?;
-    Ok(EnrolledWorker {
+    Ok(EnrolledNode {
         node_name: row.try_get("node_name")?,
         token_hash: row.try_get("token_hash")?,
         last_seen_at,

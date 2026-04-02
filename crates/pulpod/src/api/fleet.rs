@@ -13,7 +13,7 @@ type ApiError = (axum::http::StatusCode, Json<ErrorResponse>);
 
 /// Aggregate sessions for the current control-plane role.
 ///
-/// Only the master node exposes canonical fleet-wide state. Worker and
+/// Only the controller node exposes canonical fleet-wide state. Node and
 /// standalone nodes return local sessions only.
 pub async fn fleet_sessions(
     State(state): State<Arc<AppState>>,
@@ -36,7 +36,7 @@ pub async fn fleet_sessions(
     }
 
     let role = state.config.read().await.role();
-    if role == NodeRole::Master {
+    if role == NodeRole::Controller {
         let Some(session_index) = &state.session_index else {
             return Ok(Json(FleetSessionsResponse {
                 sessions: all_sessions,
@@ -89,7 +89,7 @@ mod tests {
     use crate::api::routes;
     use crate::backend::StubBackend;
     use crate::config::{Config, NodeConfig};
-    use crate::master::{CommandQueue, SessionIndex};
+    use crate::controller::{CommandQueue, SessionIndex};
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
@@ -113,9 +113,9 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig {
+            controller: crate::config::ControllerConfig {
                 enabled: true,
-                ..crate::config::MasterConfig::default()
+                ..crate::config::ControllerConfig::default()
             },
         };
         let backend = Arc::new(StubBackend);
@@ -155,9 +155,9 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig {
+            controller: crate::config::ControllerConfig {
                 enabled: true,
-                ..crate::config::MasterConfig::default()
+                ..crate::config::ControllerConfig::default()
             },
         };
         let backend = Arc::new(StubBackend);
@@ -212,9 +212,9 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig {
+            controller: crate::config::ControllerConfig {
                 enabled: true,
-                ..crate::config::MasterConfig::default()
+                ..crate::config::ControllerConfig::default()
             },
         };
         let backend = Arc::new(StubBackend);
@@ -252,9 +252,9 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig {
+            controller: crate::config::ControllerConfig {
                 enabled: true,
-                ..crate::config::MasterConfig::default()
+                ..crate::config::ControllerConfig::default()
             },
         };
         let backend = Arc::new(StubBackend);
@@ -278,7 +278,7 @@ mod tests {
             })
             .await;
 
-        let state = AppState::with_event_tx_master(
+        let state = AppState::with_event_tx_controller(
             config,
             tmpdir.path().join("config.toml"),
             manager,

@@ -23,27 +23,27 @@ pub struct Config {
     #[serde(default, alias = "sandbox")]
     pub docker: DockerConfig,
     #[serde(default)]
-    pub master: MasterConfig,
+    pub controller: ControllerConfig,
 }
 
-/// Master/worker mode configuration.
+/// Controller/node mode configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MasterConfig {
-    /// If true, this node aggregates events from workers.
+pub struct ControllerConfig {
+    /// If true, this node aggregates events from managed nodes.
     #[serde(default)]
     pub enabled: bool,
-    /// URL of the master node (for workers). When set, this node pushes events to master.
+    /// URL of the controller node. When set, this node pushes events to the controller.
     #[serde(default)]
     pub address: Option<String>,
-    /// Bearer token for authenticating to master (workers use this).
+    /// Bearer token for authenticating to the controller.
     #[serde(default)]
     pub token: Option<String>,
-    /// Seconds before master marks a silent worker's sessions as lost.
+    /// Seconds before the controller marks a silent node's sessions as lost.
     #[serde(default = "default_stale_timeout")]
     pub stale_timeout_secs: u64,
 }
 
-impl Default for MasterConfig {
+impl Default for ControllerConfig {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -61,12 +61,12 @@ const fn default_stale_timeout() -> u64 {
 /// The role of a node in the cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeRole {
-    /// Standalone node (default, no master/worker relationship).
+    /// Standalone node (default, no controller/node relationship).
     Standalone,
-    /// Master node: aggregates events from workers.
-    Master,
-    /// Worker node: pushes events to a master.
-    Worker,
+    /// Controller node: aggregates events from managed nodes.
+    Controller,
+    /// Managed node: pushes events to a controller.
+    Node,
 }
 
 /// Docker runtime configuration.
@@ -387,44 +387,44 @@ impl Config {
         shellexpand::tilde(&self.node.data_dir).into_owned()
     }
 
-    /// Determine the node's role based on master configuration.
+    /// Determine the node's role based on controller configuration.
     pub const fn role(&self) -> NodeRole {
-        if self.master.enabled {
-            NodeRole::Master
-        } else if self.master.address.is_some() {
-            NodeRole::Worker
+        if self.controller.enabled {
+            NodeRole::Controller
+        } else if self.controller.address.is_some() {
+            NodeRole::Node
         } else {
             NodeRole::Standalone
         }
     }
 
-    /// Validate the master configuration.
+    /// Validate the controller configuration.
     ///
-    /// - A node cannot be both master and worker (enabled + address).
-    /// - In `public` bind mode, master mode requires `auth.token`.
-    /// - In worker mode, `master.token` is always required.
-    pub fn validate_master(&self) -> Result<()> {
-        if self.master.enabled && self.master.address.is_some() {
+    /// - A node cannot be both controller and managed node (enabled + address).
+    /// - In `public` bind mode, controller mode requires `auth.token`.
+    /// - In node mode, `controller.token` is always required.
+    pub fn validate_controller(&self) -> Result<()> {
+        if self.controller.enabled && self.controller.address.is_some() {
             anyhow::bail!(
-                "master.enabled and master.address are mutually exclusive: \
-                 a node cannot be both master and worker"
+                "controller.enabled and controller.address are mutually exclusive: \
+                 a node cannot be both controller and node"
             );
         }
-        if self.master.enabled && self.node.bind == BindMode::Public {
-            // Public master: must have auth.token so workers/users can authenticate.
+        if self.controller.enabled && self.node.bind == BindMode::Public {
+            // Public controller: must have auth.token so nodes/users can authenticate.
             if self.auth.token.is_empty() {
                 anyhow::bail!(
-                    "master.enabled requires auth.token to be set: \
-                     public master nodes require bearer auth for users and workers"
+                    "controller.enabled requires auth.token to be set: \
+                     public controller nodes require bearer auth for users and managed nodes"
                 );
             }
         }
-        if self.master.address.is_some()
-            && (self.master.token.is_none() || self.master.token.as_deref() == Some(""))
+        if self.controller.address.is_some()
+            && (self.controller.token.is_none() || self.controller.token.as_deref() == Some(""))
         {
             anyhow::bail!(
-                "master.address requires master.token to be set: \
-                 worker nodes require a bound bearer token to authenticate with the master"
+                "controller.address requires controller.token to be set: \
+                 managed nodes require a bound bearer token to authenticate with the controller"
             );
         }
         Ok(())
@@ -526,7 +526,7 @@ pub fn load(path: &str) -> Result<Config> {
             .with_context(|| format!("Failed to read config from {}", path.display()))?;
         let mut config: Config = toml::from_str(&content).context("Failed to parse config")?;
         config.watchdog.validate()?;
-        config.validate_master()?;
+        config.validate_controller()?;
         config.inks = merge_built_in_inks(config.inks);
         Ok(config)
     } else {
@@ -548,7 +548,7 @@ pub fn load(path: &str) -> Result<Config> {
             inks: built_in_inks(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         })
     }
 }
@@ -636,7 +636,7 @@ data_dir = "/tmp/pulpo-test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         let expanded = config.data_dir();
         assert!(
@@ -662,7 +662,7 @@ data_dir = "/tmp/pulpo-test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         assert_eq!(config.data_dir(), "/absolute/path");
     }
@@ -796,7 +796,7 @@ name = "test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         let debug = format!("{config:?}");
         assert!(debug.contains("node-a"));
@@ -820,7 +820,7 @@ name = "test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -849,7 +849,7 @@ name = "test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -879,7 +879,7 @@ name = "test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -903,7 +903,7 @@ name = "test"
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
                 docker: DockerConfig::default(),
-                master: MasterConfig::default(),
+                controller: ControllerConfig::default(),
             },
             Path::new("/dev/null/impossible/config.toml"),
         );
@@ -929,7 +929,7 @@ name = "test"
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
                 docker: DockerConfig::default(),
-                master: MasterConfig::default(),
+                controller: ControllerConfig::default(),
             },
             Path::new(""),
         );
@@ -959,7 +959,7 @@ name = "test"
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
                 docker: DockerConfig::default(),
-                master: MasterConfig::default(),
+                controller: ControllerConfig::default(),
             },
             &dir_target,
         );
@@ -984,7 +984,7 @@ name = "test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         #[allow(clippy::redundant_clone)]
         let cloned = config.clone();
@@ -1020,7 +1020,7 @@ name = "test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("ser"));
@@ -1092,7 +1092,7 @@ name = "test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         assert!(config.auth.token.is_empty());
         let generated = ensure_auth_token(&mut config);
@@ -1119,7 +1119,7 @@ name = "test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         let generated = ensure_auth_token(&mut config);
         assert!(!generated);
@@ -1188,7 +1188,7 @@ token = "my-secret-token"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1258,7 +1258,7 @@ token = "peer-secret"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1371,7 +1371,7 @@ breach_count = 5
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1581,7 +1581,7 @@ idle_action = "pause"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1700,7 +1700,7 @@ command = "codex -p 'Do it'"
             inks,
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1818,7 +1818,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
                 ..Default::default()
             },
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1927,7 +1927,7 @@ url = "https://example.com"
                 ..Default::default()
             },
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2009,7 +2009,7 @@ name = "test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2221,7 +2221,7 @@ command = "codex -p 'review'"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         assert!(config.notifications.vapid.private_key.is_empty());
         assert!(config.notifications.vapid.public_key.is_empty());
@@ -2247,7 +2247,7 @@ command = "codex -p 'review'"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         ensure_vapid_keys(&mut config);
 
@@ -2272,7 +2272,7 @@ command = "codex -p 'review'"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         ensure_vapid_keys(&mut config);
 
@@ -2309,7 +2309,7 @@ command = "codex -p 'review'"
                 ..Default::default()
             },
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         let generated = ensure_vapid_keys(&mut config);
         assert!(!generated);
@@ -2327,7 +2327,7 @@ command = "codex -p 'review'"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         let mut config2 = config1.clone();
         ensure_vapid_keys(&mut config1);
@@ -2355,7 +2355,7 @@ command = "codex -p 'review'"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         ensure_vapid_keys(&mut config);
         let private_key = config.notifications.vapid.private_key.clone();
@@ -2425,7 +2425,7 @@ name = "test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2449,7 +2449,7 @@ name = "test"
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -2648,7 +2648,7 @@ image = "my-image:v1"
             inks,
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2697,7 +2697,7 @@ port = 7433
                 image: "my-image:v1".into(),
                 volumes: vec!["~/.ssh:/root/.ssh:ro".into()],
             },
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2709,7 +2709,7 @@ port = 7433
 
     #[test]
     fn test_master_config_default() {
-        let mc = MasterConfig::default();
+        let mc = ControllerConfig::default();
         assert!(!mc.enabled);
         assert!(mc.address.is_none());
         assert!(mc.token.is_none());
@@ -2718,7 +2718,7 @@ port = 7433
 
     #[test]
     fn test_master_config_debug_clone() {
-        let mc = MasterConfig {
+        let mc = ControllerConfig {
             enabled: true,
             address: Some("http://master:7433".into()),
             token: Some("tok".into()),
@@ -2758,19 +2758,19 @@ port = 7433
 [auth]
 token = "master-token"
 
-[master]
+[controller]
 enabled = true
 "#
         )
         .unwrap();
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.role(), NodeRole::Master);
-        assert!(config.master.enabled);
+        assert_eq!(config.role(), NodeRole::Controller);
+        assert!(config.controller.enabled);
     }
 
     #[test]
-    fn test_config_master_address_role_worker() {
+    fn test_config_controller_address_role_worker() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
@@ -2779,7 +2779,7 @@ enabled = true
 name = "worker-node"
 port = 7433
 
-[master]
+[controller]
 address = "http://master:7433"
 token = "worker-token"
 "#
@@ -2787,9 +2787,12 @@ token = "worker-token"
         .unwrap();
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.role(), NodeRole::Worker);
-        assert_eq!(config.master.address.as_deref(), Some("http://master:7433"));
-        assert_eq!(config.master.token.as_deref(), Some("worker-token"));
+        assert_eq!(config.role(), NodeRole::Node);
+        assert_eq!(
+            config.controller.address.as_deref(),
+            Some("http://master:7433")
+        );
+        assert_eq!(config.controller.token.as_deref(), Some("worker-token"));
     }
 
     #[test]
@@ -2802,7 +2805,7 @@ token = "worker-token"
 name = "invalid"
 port = 7433
 
-[master]
+[controller]
 enabled = true
 address = "http://master:7433"
 "#
@@ -2836,7 +2839,7 @@ port = 7433
 [auth]
 token = "master-token"
 
-[master]
+[controller]
 enabled = true
 stale_timeout_secs = 600
 "#
@@ -2844,7 +2847,7 @@ stale_timeout_secs = 600
         .unwrap();
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.master.stale_timeout_secs, 600);
+        assert_eq!(config.controller.stale_timeout_secs, 600);
     }
 
     #[test]
@@ -2860,23 +2863,23 @@ port = 7433
 [auth]
 token = "master-token"
 
-[master]
+[controller]
 enabled = true
 "#
         )
         .unwrap();
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.master.stale_timeout_secs, 300);
+        assert_eq!(config.controller.stale_timeout_secs, 300);
     }
 
     #[test]
     fn test_missing_config_has_default_master() {
         let config = load("/nonexistent/master/config.toml").unwrap();
-        assert!(!config.master.enabled);
-        assert!(config.master.address.is_none());
-        assert!(config.master.token.is_none());
-        assert_eq!(config.master.stale_timeout_secs, 300);
+        assert!(!config.controller.enabled);
+        assert!(config.controller.address.is_none());
+        assert!(config.controller.token.is_none());
+        assert_eq!(config.controller.stale_timeout_secs, 300);
         assert_eq!(config.role(), NodeRole::Standalone);
     }
 
@@ -2899,7 +2902,7 @@ enabled = true
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig {
+            controller: ControllerConfig {
                 enabled: true,
                 address: None,
                 token: Some("master-token".into()),
@@ -2908,33 +2911,33 @@ enabled = true
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
-        assert!(loaded.master.enabled);
-        assert!(loaded.master.address.is_none());
-        assert_eq!(loaded.master.token.as_deref(), Some("master-token"));
-        assert_eq!(loaded.master.stale_timeout_secs, 120);
-        assert_eq!(loaded.role(), NodeRole::Master);
+        assert!(loaded.controller.enabled);
+        assert!(loaded.controller.address.is_none());
+        assert_eq!(loaded.controller.token.as_deref(), Some("master-token"));
+        assert_eq!(loaded.controller.stale_timeout_secs, 120);
+        assert_eq!(loaded.role(), NodeRole::Controller);
     }
 
     #[test]
     fn test_node_role_debug() {
         assert_eq!(format!("{:?}", NodeRole::Standalone), "Standalone");
-        assert_eq!(format!("{:?}", NodeRole::Master), "Master");
-        assert_eq!(format!("{:?}", NodeRole::Worker), "Worker");
+        assert_eq!(format!("{:?}", NodeRole::Controller), "Controller");
+        assert_eq!(format!("{:?}", NodeRole::Node), "Node");
     }
 
     #[test]
     fn test_node_role_clone_copy_eq() {
-        let role = NodeRole::Master;
+        let role = NodeRole::Controller;
         #[allow(clippy::clone_on_copy)]
         let cloned = role.clone();
         assert_eq!(role, cloned);
 
-        let role2 = NodeRole::Worker;
+        let role2 = NodeRole::Node;
         assert_ne!(role, role2);
     }
 
     #[test]
-    fn test_validate_master_standalone_ok() {
+    fn test_validate_controller_standalone_ok() {
         let config = Config {
             node: NodeConfig::default(),
             auth: AuthConfig::default(),
@@ -2943,13 +2946,13 @@ enabled = true
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig::default(),
+            controller: ControllerConfig::default(),
         };
-        assert!(config.validate_master().is_ok());
+        assert!(config.validate_controller().is_ok());
     }
 
     #[test]
-    fn test_validate_master_enabled_ok() {
+    fn test_validate_controller_enabled_ok() {
         let config = Config {
             node: NodeConfig::default(),
             auth: AuthConfig {
@@ -2960,17 +2963,17 @@ enabled = true
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig {
+            controller: ControllerConfig {
                 enabled: true,
                 address: None,
-                ..MasterConfig::default()
+                ..ControllerConfig::default()
             },
         };
-        assert!(config.validate_master().is_ok());
+        assert!(config.validate_controller().is_ok());
     }
 
     #[test]
-    fn test_validate_master_worker_ok() {
+    fn test_validate_controller_worker_ok() {
         let config = Config {
             node: NodeConfig::default(),
             auth: AuthConfig::default(),
@@ -2979,18 +2982,18 @@ enabled = true
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig {
+            controller: ControllerConfig {
                 enabled: false,
                 address: Some("http://master:7433".into()),
                 token: Some("worker-token".into()),
-                ..MasterConfig::default()
+                ..ControllerConfig::default()
             },
         };
-        assert!(config.validate_master().is_ok());
+        assert!(config.validate_controller().is_ok());
     }
 
     #[test]
-    fn test_validate_master_both_enabled_and_address_errors() {
+    fn test_validate_controller_both_enabled_and_address_errors() {
         let config = Config {
             node: NodeConfig::default(),
             auth: AuthConfig {
@@ -3001,18 +3004,18 @@ enabled = true
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig {
+            controller: ControllerConfig {
                 enabled: true,
                 address: Some("http://master:7433".into()),
-                ..MasterConfig::default()
+                ..ControllerConfig::default()
             },
         };
-        let err = config.validate_master().unwrap_err();
+        let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("mutually exclusive"));
     }
 
     #[test]
-    fn test_validate_master_enabled_without_auth_token_errors() {
+    fn test_validate_controller_enabled_without_auth_token_errors() {
         let config = Config {
             node: NodeConfig {
                 bind: BindMode::Public,
@@ -3024,18 +3027,18 @@ enabled = true
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig {
+            controller: ControllerConfig {
                 enabled: true,
                 address: None,
-                ..MasterConfig::default()
+                ..ControllerConfig::default()
             },
         };
-        let err = config.validate_master().unwrap_err();
+        let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("auth.token"));
     }
 
     #[test]
-    fn test_validate_master_enabled_without_auth_token_ok_on_tailscale() {
+    fn test_validate_controller_enabled_without_auth_token_ok_on_tailscale() {
         let config = Config {
             node: NodeConfig {
                 bind: BindMode::Tailscale,
@@ -3047,17 +3050,17 @@ enabled = true
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig {
+            controller: ControllerConfig {
                 enabled: true,
                 address: None,
-                ..MasterConfig::default()
+                ..ControllerConfig::default()
             },
         };
-        assert!(config.validate_master().is_ok());
+        assert!(config.validate_controller().is_ok());
     }
 
     #[test]
-    fn test_validate_master_worker_without_master_token_errors() {
+    fn test_validate_controller_node_without_controller_token_errors() {
         let config = Config {
             node: NodeConfig {
                 bind: BindMode::Public,
@@ -3069,19 +3072,19 @@ enabled = true
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig {
+            controller: ControllerConfig {
                 enabled: false,
                 address: Some("http://master:7433".into()),
                 token: None, // missing
-                ..MasterConfig::default()
+                ..ControllerConfig::default()
             },
         };
-        let err = config.validate_master().unwrap_err();
-        assert!(err.to_string().contains("master.token"));
+        let err = config.validate_controller().unwrap_err();
+        assert!(err.to_string().contains("controller.token"));
     }
 
     #[test]
-    fn test_validate_master_worker_without_master_token_errors_on_tailscale() {
+    fn test_validate_controller_node_without_controller_token_errors_on_tailscale() {
         let config = Config {
             node: NodeConfig {
                 bind: BindMode::Tailscale,
@@ -3093,19 +3096,19 @@ enabled = true
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig {
+            controller: ControllerConfig {
                 enabled: false,
                 address: Some("https://master.tailnet.ts.net".into()),
                 token: None,
-                ..MasterConfig::default()
+                ..ControllerConfig::default()
             },
         };
-        let err = config.validate_master().unwrap_err();
-        assert!(err.to_string().contains("master.token"));
+        let err = config.validate_controller().unwrap_err();
+        assert!(err.to_string().contains("controller.token"));
     }
 
     #[test]
-    fn test_validate_master_worker_with_empty_master_token_errors() {
+    fn test_validate_controller_node_with_empty_controller_token_errors() {
         let config = Config {
             node: NodeConfig {
                 bind: BindMode::Public,
@@ -3117,15 +3120,15 @@ enabled = true
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: DockerConfig::default(),
-            master: MasterConfig {
+            controller: ControllerConfig {
                 enabled: false,
                 address: Some("http://master:7433".into()),
                 token: Some(String::new()), // empty string
-                ..MasterConfig::default()
+                ..ControllerConfig::default()
             },
         };
-        let err = config.validate_master().unwrap_err();
-        assert!(err.to_string().contains("master.token"));
+        let err = config.validate_controller().unwrap_err();
+        assert!(err.to_string().contains("controller.token"));
     }
 
     #[test]
@@ -3143,8 +3146,8 @@ port = 7433
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
         // Master config should have defaults
-        assert!(!config.master.enabled);
-        assert!(config.master.address.is_none());
+        assert!(!config.controller.enabled);
+        assert!(config.controller.address.is_none());
         assert_eq!(config.role(), NodeRole::Standalone);
     }
 }

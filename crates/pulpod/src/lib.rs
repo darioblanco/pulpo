@@ -2,10 +2,11 @@ pub mod api;
 pub mod auth_info;
 pub mod backend;
 pub mod config;
+pub mod controller;
 pub mod discovery;
-pub mod master;
 
 pub mod mcp;
+pub mod node;
 pub mod notifications;
 pub mod peers;
 pub mod platform;
@@ -13,7 +14,6 @@ pub mod scheduler;
 pub mod session;
 pub mod store;
 pub mod watchdog;
-pub mod worker;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -506,9 +506,9 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     // Build AppState based on node role
     let role = config.role();
     let (session_index, command_queue) = match role {
-        config::NodeRole::Master => {
-            let si = Arc::new(master::SessionIndex::new());
-            let cq = Arc::new(master::CommandQueue::new());
+        config::NodeRole::Controller => {
+            let si = Arc::new(controller::SessionIndex::new());
+            let cq = Arc::new(controller::CommandQueue::new());
             match store.list_master_session_index_entries().await {
                 Ok(entries) => {
                     for entry in entries {
@@ -516,7 +516,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to hydrate master session index from store: {e}");
+                    tracing::warn!("Failed to hydrate controller session index from store: {e}");
                 }
             }
             match store.list_master_workers().await {
@@ -526,23 +526,23 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to hydrate master worker heartbeats from store: {e}");
+                    tracing::warn!("Failed to hydrate controller node heartbeats from store: {e}");
                 }
             }
-            info!("Master mode enabled");
+            info!("Controller mode enabled");
             info!(
-                "Master command queue is in-memory only; pending worker commands do not survive master restart"
+                "Controller command queue is in-memory only; pending node commands do not survive controller restart"
             );
             #[cfg(not(coverage))]
             {
                 let stale_si = si.clone();
                 let stale_store = store.clone();
                 let stale_timeout =
-                    std::time::Duration::from_secs(config.master.stale_timeout_secs);
+                    std::time::Duration::from_secs(config.controller.stale_timeout_secs);
                 let stale_interval = std::time::Duration::from_secs(60);
                 let stale_event_tx = event_tx.clone();
                 let (stale_shutdown_tx, stale_shutdown_rx) = watch::channel(false);
-                tokio::spawn(master::run_stale_cleanup_loop(
+                tokio::spawn(controller::run_stale_cleanup_loop(
                     stale_si,
                     stale_store,
                     stale_timeout,
@@ -552,13 +552,13 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                 ));
                 shutdown_handle.add_sender(stale_shutdown_tx);
                 info!(
-                    stale_timeout_secs = config.master.stale_timeout_secs,
-                    "Master stale cleanup enabled"
+                    stale_timeout_secs = config.controller.stale_timeout_secs,
+                    "Controller stale cleanup enabled"
                 );
             }
             (Some(si), Some(cq))
         }
-        config::NodeRole::Worker | config::NodeRole::Standalone => (None, None),
+        config::NodeRole::Node | config::NodeRole::Standalone => (None, None),
     };
 
     let state = api::AppState::with_all(
@@ -573,23 +573,23 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         command_queue,
     );
 
-    // Spawn worker loops when running in Worker mode
+    // Spawn node loops when running in Node mode
     #[cfg(not(coverage))]
-    if role == config::NodeRole::Worker {
-        let master_url = config.master.address.clone().unwrap_or_default();
-        let master_token = config
-            .master
+    if role == config::NodeRole::Node {
+        let controller_url = config.controller.address.clone().unwrap_or_default();
+        let controller_token = config
+            .controller
             .token
             .clone()
-            .expect("worker mode requires master.token");
+            .expect("node mode requires controller.token");
         let node_name = config.node.name.clone();
 
         // Event push loop
         let push_rx = event_tx.subscribe();
         let (push_shutdown_tx, push_shutdown_rx) = watch::channel(false);
-        tokio::spawn(worker::event_push::run_event_push_loop(
-            master_url.clone(),
-            master_token.clone(),
+        tokio::spawn(node::event_push::run_event_push_loop(
+            controller_url.clone(),
+            controller_token.clone(),
             node_name.clone(),
             push_rx,
             push_shutdown_rx,
@@ -598,15 +598,15 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
 
         // Command poll loop
         let (poll_shutdown_tx, poll_shutdown_rx) = watch::channel(false);
-        tokio::spawn(worker::command_poll::run_command_poll_loop(
-            master_url,
-            master_token,
+        tokio::spawn(node::command_poll::run_command_poll_loop(
+            controller_url,
+            controller_token,
             node_name,
             manager,
             poll_shutdown_rx,
         ));
         shutdown_handle.add_sender(poll_shutdown_tx);
-        info!("Worker mode enabled — pushing events and polling commands");
+        info!("Node mode enabled: pushing events and polling controller commands");
     }
 
     let app = api::router(state);
@@ -791,21 +791,21 @@ mod tests {
     use crate::store::Store;
     use axum_test::TestServer;
     use pulpo_common::api::{
-        EnrollWorkerRequest, EnrollWorkerResponse, EventPushRequest, FleetSessionsResponse,
-        SessionIndexEntry, WorkerCommand, WorkerCommandsResponse,
+        EnrollNodeRequest, EnrollNodeResponse, EventPushRequest, FleetSessionsResponse,
+        NodeCommand, NodeCommandsResponse, SessionIndexEntry,
     };
     use pulpo_common::event::{PulpoEvent, SessionEvent};
 
     #[allow(clippy::future_not_send)]
-    async fn enroll_worker(server: &TestServer, node_name: &str) -> String {
+    async fn enroll_node(server: &TestServer, node_name: &str) -> String {
         let resp = server
-            .post("/api/v1/master/workers")
-            .json(&EnrollWorkerRequest {
+            .post("/api/v1/controller/nodes")
+            .json(&EnrollNodeRequest {
                 node_name: node_name.into(),
             })
             .await;
         resp.assert_status(axum::http::StatusCode::CREATED);
-        let body: EnrollWorkerResponse = resp.json();
+        let body: EnrollNodeResponse = resp.json();
         body.token
     }
 
@@ -1052,7 +1052,7 @@ data_dir = "{}"
 [auth]
 token = "master-token"
 
-[master]
+[controller]
 enabled = true
 "#,
                 data_dir.display()
@@ -1118,7 +1118,7 @@ data_dir = "{}"
 [auth]
 token = "master-token"
 
-[master]
+[controller]
 enabled = true
 "#,
                 data_dir.display()
@@ -1134,7 +1134,7 @@ enabled = true
 
         let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
         let server1 = TestServer::new(app1).unwrap();
-        let worker_token = enroll_worker(&server1, "worker-1").await;
+        let worker_token = enroll_node(&server1, "worker-1").await;
         push_session_event(
             &server1,
             &worker_token,
@@ -1209,7 +1209,7 @@ data_dir = "{}"
 [auth]
 token = "master-token"
 
-[master]
+[controller]
 enabled = true
 "#,
                 data_dir.display()
@@ -1225,7 +1225,7 @@ enabled = true
 
         let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
         let server1 = TestServer::new(app1).unwrap();
-        let worker_token = enroll_worker(&server1, "worker-1").await;
+        let worker_token = enroll_node(&server1, "worker-1").await;
         push_session_event(
             &server1,
             &worker_token,
@@ -1245,14 +1245,14 @@ enabled = true
         let (app2, _addr2, handle2) = build_app(&cli).await.unwrap();
         let server2 = TestServer::new(app2).unwrap();
         let poll_resp = server2
-            .get("/api/v1/worker/commands")
+            .get("/api/v1/node/commands")
             .add_header("authorization", format!("Bearer {worker_token}"))
             .await;
         poll_resp.assert_status_ok();
-        let body: WorkerCommandsResponse = poll_resp.json();
+        let body: NodeCommandsResponse = poll_resp.json();
         assert!(
             body.commands.is_empty(),
-            "worker command queue should be empty after master restart"
+            "worker command queue should be empty after controller restart"
         );
         handle2.shutdown();
     }
@@ -1274,7 +1274,7 @@ data_dir = "{}"
 [auth]
 token = "master-token"
 
-[master]
+[controller]
 enabled = true
 "#,
                 data_dir.display()
@@ -1290,8 +1290,8 @@ enabled = true
 
         let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
         let server1 = TestServer::new(app1).unwrap();
-        let worker_1_token = enroll_worker(&server1, "worker-1").await;
-        let worker_2_token = enroll_worker(&server1, "worker-2").await;
+        let worker_1_token = enroll_node(&server1, "worker-1").await;
+        let worker_2_token = enroll_node(&server1, "worker-2").await;
         push_session_event(
             &server1,
             &worker_1_token,
@@ -1322,17 +1322,17 @@ enabled = true
             .assert_status(axum::http::StatusCode::ACCEPTED);
 
         let worker_1_poll = server1
-            .get("/api/v1/worker/commands")
+            .get("/api/v1/node/commands")
             .add_header("authorization", format!("Bearer {worker_1_token}"))
             .await;
         worker_1_poll.assert_status_ok();
-        let body: WorkerCommandsResponse = worker_1_poll.json();
+        let body: NodeCommandsResponse = worker_1_poll.json();
         assert_eq!(body.commands.len(), 1);
         match &body.commands[0] {
-            WorkerCommand::StopSession { session_id, .. } => {
+            NodeCommand::StopSession { session_id, .. } => {
                 assert_eq!(session_id, "session-1");
             }
-            WorkerCommand::CreateSession { .. } => panic!("expected StopSession"),
+            NodeCommand::CreateSession { .. } => panic!("expected StopSession"),
         }
 
         handle1.shutdown();
@@ -1341,22 +1341,22 @@ enabled = true
         let server2 = TestServer::new(app2).unwrap();
 
         let worker_1_poll_after_restart = server2
-            .get("/api/v1/worker/commands")
+            .get("/api/v1/node/commands")
             .add_header("authorization", format!("Bearer {worker_1_token}"))
             .await;
         worker_1_poll_after_restart.assert_status_ok();
-        let body: WorkerCommandsResponse = worker_1_poll_after_restart.json();
+        let body: NodeCommandsResponse = worker_1_poll_after_restart.json();
         assert!(
             body.commands.is_empty(),
             "commands already drained before restart should not reappear"
         );
 
         let worker_2_poll_after_restart = server2
-            .get("/api/v1/worker/commands")
+            .get("/api/v1/node/commands")
             .add_header("authorization", format!("Bearer {worker_2_token}"))
             .await;
         worker_2_poll_after_restart.assert_status_ok();
-        let body: WorkerCommandsResponse = worker_2_poll_after_restart.json();
+        let body: NodeCommandsResponse = worker_2_poll_after_restart.json();
         assert!(
             body.commands.is_empty(),
             "commands still pending on the master should be lost on restart"

@@ -136,7 +136,7 @@ This is more reliable than pattern matching and works with any agent, including 
 - Requires ≥75 GitHub stars
 - Source build, `brew audit` compliance
 
-### Multi-Node: Trim to Working Subset, Then Master Mode
+### Multi-Node: Trim to Working Subset, Then Controller Mode
 
 The current multi-node design is masterless — each node is independent, fleet visibility comes from on-demand HTTP polling. An honest audit revealed that the **infrastructure layer works** (Tailscale discovery, peer registry, health probing, fleet summary endpoint) but the **features built on top are broken** (web UI click-through to remote sessions 404s, CLI attach after remote spawn fails, `target_node` on schedules is ignored, cross-node auth is fragile).
 
@@ -153,34 +153,34 @@ Remove broken features that frustrate users. Keep what works:
 - **Remove:** `target_node` field from schedule UI (scheduler ignores it)
 - **Remove:** CLI attach after remote spawn (tmux is local-only)
 
-**Phase 2 — Master mode**
+**Phase 2 — Controller mode**
 
-Inspired by Elasticsearch's cluster architecture: every node runs the same binary, one node is promoted to master. The master holds the session index (metadata), not the sessions themselves (which are tmux processes on worker nodes).
+Inspired by Elasticsearch's cluster architecture: every node runs the same binary, one node is promoted to controller. The controller holds the session index (metadata), not the sessions themselves (which are tmux processes on managed nodes).
 
 How it works:
-- `master.enabled = true` promotes a node to master mode
-- `master.address = "https://..."` makes a node a worker
-- Worker nodes push session events to master over outbound HTTP and poll for commands (no inbound control ports needed on workers)
-- Master maintains a unified session index in its SQLite
-- Web UI connects to master only for fleet-wide visibility and cross-node actions
-- Worker UIs stay local-first: local sessions remain visible, but fleet-wide control belongs to the master
-- Workers authenticate with per-worker bearer tokens issued by the master; `[peers]` remains routing metadata, not an authority source
+- `controller.enabled = true` promotes a node to controller mode
+- `controller.address = "https://..."` makes a node a managed node
+- Managed nodes push session events to the controller over outbound HTTP and poll for commands (no inbound control ports needed on managed nodes)
+- Controller maintains a unified session index in its SQLite
+- Web UI connects to the controller only for fleet-wide visibility and cross-node actions
+- Node UIs stay local-first: local sessions remain visible, but fleet-wide control belongs to the controller
+- Managed nodes authenticate with per-node bearer tokens issued by the controller; `[peers]` remains routing metadata, not an authority source
 
 Current implementation status:
-- Master-routed fleet reads, create, stop, resume, and scheduled dispatch are implemented
-- Worker nodes push session lifecycle events and poll the master for commands
-- Worker identity is bound to enrolled per-worker tokens in both `public` and `tailscale` deployments
-- Worker enrollment is operable through `pulpo workers enroll <name>` and `pulpo workers list`
-- The master session index is persisted and restored across restarts
-- Worker UIs expose local sessions plus a handoff to the master, rather than a best-effort fleet view
+- Controller-routed fleet reads, create, stop, resume, and scheduled dispatch are implemented
+- Managed nodes push session lifecycle events and poll the controller for commands
+- Node identity is bound to enrolled per-node tokens in both `public` and `tailscale` deployments
+- Node enrollment is operable through `pulpo nodes enroll <name>` and `pulpo nodes enrolled`
+- The controller session index is persisted and restored across restarts
+- Node UIs expose local sessions plus a handoff to the controller, rather than a best-effort fleet view
 - Distributed terminal attach remains intentionally out of scope; remote detail stays HTTP/log-oriented
 
 Why this is simpler than Elasticsearch:
-- No consensus protocol needed — losing the master loses visibility, not data. Sessions keep running.
+- No consensus protocol needed — losing the controller loses visibility, not data. Sessions keep running.
 - No replication — sessions are ephemeral processes, not persistent data.
 - Eventually consistent — 5-second delay in status propagation is fine.
 
-Key property: **code never leaves the worker nodes.** The master sees session metadata (names, statuses, tokens consumed) and can proxy log-style HTTP detail views, but it is not intended to become a distributed terminal multiplexer by default. This preserves Pulpo's sovereignty guarantee and keeps the control plane simpler.
+Key property: **code never leaves the managed nodes.** The controller sees session metadata (names, statuses, tokens consumed) and can proxy log-style HTTP detail views, but it is not intended to become a distributed terminal multiplexer by default. This preserves Pulpo's sovereignty guarantee and keeps the control plane simpler.
 
 ### Parked Features (build when demanded)
 
@@ -228,10 +228,10 @@ Revisit when demanded by real usage, not by speculation.
 - ~~Provider-specific features~~ — agents handle their own capabilities.
 - ~~Guard/safety rails~~ — agents have their own permission models.
 - ~~Culture system~~ — agents read CLAUDE.md/AGENTS.md natively.
-- ~~Per-peer session tabs in web UI~~ — browser-to-peer HTTP requires auth/CORS that the masterless architecture can't provide. Replaced by fleet summary table (read-only).
-- ~~Fleet click-through to remote session detail~~ — local API returns 404 for sessions on other nodes. Requires master-mode proxying.
-- ~~`target_node` on schedules~~ — field was stored but never read by the scheduler. Requires master-mode job dispatch.
-- ~~Smart node selection (`--auto`)~~ — scoring was naive and excluded the local node. Revisit in master mode where the master has real-time fleet state.
+- ~~Per-peer session tabs in web UI~~ — browser-to-peer HTTP requires auth/CORS that the controllerless architecture can't provide. Replaced by fleet summary table (read-only).
+- ~~Fleet click-through to remote session detail~~ — local API returns 404 for sessions on other nodes. Requires controller-mode proxying.
+- ~~`target_node` on schedules~~ — field was stored but never read by the scheduler. Requires controller-mode job dispatch.
+- ~~Smart node selection (`--auto`)~~ — scoring was naive and excluded the local node. Revisit in controller mode where the controller has real-time fleet state.
 
 ## Success Criteria
 
@@ -251,7 +251,7 @@ Pulpo is succeeding if:
 - Infrastructure layer, not intelligence layer
 - Command-agnostic: runs any agent, any command
 - Sovereign by architecture: self-hosted, no cloud dependency
-- Single-node excellence first, multi-node via master promotion
+- Single-node excellence first, multi-node via controller promotion
 - Mobile-first web UI: the phone is the primary management surface
 - Explicit failure semantics: every state transition is observable and auditable
 - Zero-config local start, progressive operational depth

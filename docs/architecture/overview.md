@@ -147,34 +147,34 @@ Each session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the 
 
 ### Built-in Scheduler
 
-Cron-based schedules run inside `pulpod` (no crontab manipulation). Remote schedule targeting goes through the master control plane:
+Cron-based schedules run inside `pulpod` (no crontab manipulation). Remote schedule targeting goes through the controller control plane:
 
 ```bash
 pulpo schedule add nightly "0 3 * * *" --node gpu-box -- claude -p "review"
 ```
 
-To target another node reliably, send the schedule request to the master. Worker nodes keep their own local schedules, but they are not the canonical place for cross-node dispatch. Schedules are visible in the web UI dashboard at `/schedules`.
+To target another node reliably, send the schedule request to the controller. Managed nodes keep their own local schedules, but they are not the canonical place for cross-node dispatch. Schedules are visible in the web UI dashboard at `/schedules`.
 
 ### Multi-Node Architecture
 
-Pulpo supports a master/worker control-plane model for multi-node operation:
+Pulpo supports a controller/node control-plane model for multi-node operation:
 
 - **Standalone**: local sessions only
-- **Master**: canonical fleet-wide view and cross-node control surface
-- **Worker**: local sessions plus handoff to the configured master
+- **Controller**: canonical fleet-wide view and cross-node control surface
+- **Node**: local sessions plus handoff to the configured controller
 
 Discovery still matters:
 
 - **Tailscale**: discovers peers via local Tailscale API and serves HTTPS via `tailscale serve`
 - **Manual**: explicit peer entries in config
 
-But discovery does not make every node equally authoritative. The master holds a persisted session index built from worker heartbeats and event pushes. Sessions themselves still run on worker-local backends and remain local to each node's SQLite store.
+But discovery does not make every node equally authoritative. The controller holds a persisted session index built from node heartbeats and event pushes. Sessions themselves still run on node-local backends and remain local to each node's SQLite store.
 
 Important limits:
 
 - fleet state is eventually consistent rather than strongly consistent
-- worker UIs are local-first, not canonical fleet dashboards
-- the master command queue is currently in-memory, so pending worker commands do not survive master restart
+- node UIs are local-first, not canonical fleet dashboards
+- the controller command queue is currently in-memory, so pending node commands do not survive controller restart
 - distributed terminal attach is intentionally out of scope; remote detail remains HTTP/log-oriented
 
 ## Data Flow

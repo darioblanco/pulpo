@@ -125,55 +125,55 @@ token = "auto-generated-uuid"
 
 For `local`, `tailscale`, and `container` modes, auth is skipped.
 
-## Master / Worker Mode
+## Controller / Node Mode
 
-Multi-node control uses the `[master]` section:
+Multi-node control uses the `[controller]` section:
 
 ```toml
-[master]
+[controller]
 enabled = true
 stale_timeout_secs = 300
 ```
 
-or on a worker:
+or on a managed node:
 
 ```toml
-[master]
-address = "https://master-node.tailnet.ts.net"
-token = "worker-token-issued-by-master"
+[controller]
+address = "https://controller-node.tailnet.ts.net"
+token = "node-token-issued-by-controller"
 ```
 
 Rules:
 
-- `enabled = true` promotes the node to master
-- `address = ...` makes the node a worker
+- `enabled = true` promotes the node to controller
+- `address = ...` makes the node a managed node
 - leaving both unset keeps the node standalone
-- worker and master mode are mutually exclusive
-- worker mode always requires `master.token`
+- node and controller mode are mutually exclusive
+- node mode always requires `controller.token`
 
 Practical behavior:
 
-- the master is the canonical fleet view and cross-node write path
-- workers remain useful for local sessions only
-- worker tokens identify enrolled workers on the master, even in `tailscale` mode
-- the master session index survives restart, but queued worker commands do not
+- the controller is the canonical fleet view and cross-node write path
+- managed nodes remain useful for local sessions only
+- node tokens identify enrolled nodes on the controller, even in `tailscale` mode
+- the controller session index survives restart, but queued node commands do not
 
 Enrollment flow:
 
 ```bash
-pulpo --node master-node workers enroll gpu-box
-pulpo --node master-node workers list
+pulpo --node controller-node nodes enroll gpu-box
+pulpo --node controller-node nodes enrolled
 ```
 
-Then place the issued token on the worker:
+Then place the issued token on the managed node:
 
 ```toml
-[master]
-address = "https://master-node.tailnet.ts.net"
-token = "worker-token-issued-by-master"
+[controller]
+address = "https://controller-node.tailnet.ts.net"
+token = "node-token-issued-by-controller"
 ```
 
-Restart `pulpod` on the worker after updating the token. The master will then show that worker in `pulpo workers list` with its last seen timestamp and address.
+Restart `pulpod` on the managed node after updating the token. The controller will then show that node in `pulpo nodes enrolled` with its last seen timestamp and address.
 
 ## Docker Runtime
 

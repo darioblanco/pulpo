@@ -187,7 +187,7 @@ describe('OceanPage', () => {
           session_count: null,
         },
       ],
-      role: 'master',
+      role: 'controller',
     });
     mockGetFleetSessions.mockResolvedValue({ sessions: [] });
 

@@ -32,21 +32,21 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | GET | `/api/v1/auth/token` | Get current auth token |
 | GET | `/api/v1/auth/pairing-url` | Get pairing URL for web UI connection |
 
-## Worker Enrollment
+## Node Enrollment
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/master/workers` | List workers enrolled on the master |
-| POST | `/api/v1/master/workers` | Enroll a worker and mint its bearer token |
-| POST | `/api/v1/events/push` | Worker-only endpoint for lifecycle and heartbeat pushes |
-| GET | `/api/v1/worker/commands` | Worker-only endpoint for polling queued master commands |
+| GET | `/api/v1/controller/nodes` | List nodes enrolled on the controller |
+| POST | `/api/v1/controller/nodes` | Enroll a node and mint its bearer token |
+| POST | `/api/v1/events/push` | Node-only endpoint for lifecycle and heartbeat pushes |
+| GET | `/api/v1/node/commands` | Node-only endpoint for polling queued controller commands |
 
-Worker enrollment notes:
+Node enrollment notes:
 
-- `POST /api/v1/master/workers` is a master-only administrative endpoint
-- worker identity is derived from the presented bearer token, not from path or payload claims
-- enrolled worker tokens are required for worker mode in both `public` and `tailscale`
-- `[peers]` remains routing metadata and is not the authority source for worker identity
+- `POST /api/v1/controller/nodes` is a controller-only administrative endpoint
+- node identity is derived from the presented bearer token, not from path or payload claims
+- enrolled node tokens are required for node mode in both `public` and `tailscale`
+- `[peers]` remains routing metadata and is not the authority source for node identity
 
 ## Sessions
 
@@ -63,7 +63,7 @@ Worker enrollment notes:
 | GET | `/api/v1/sessions/:id/interventions` | List watchdog interventions |
 | GET | `/api/v1/sessions/:id/stream` | WebSocket terminal stream |
 | POST | `/api/v1/sessions/cleanup` | Remove all stopped and lost sessions |
-| GET | `/api/v1/fleet/sessions` | Canonical fleet view on master; local sessions only elsewhere |
+| GET | `/api/v1/fleet/sessions` | Canonical fleet view on controller; local sessions only elsewhere |
 
 ### Create Session (POST /api/v1/sessions)
 
@@ -72,7 +72,7 @@ Worker enrollment notes:
   "name": "my-api",
   "command": "claude -p 'Fix the auth bug'",
   "workdir": "/path/to/repo",
-  "target_node": "worker-1",
+  "target_node": "node-1",
   "ink": "reviewer",
   "description": "Fix auth bug in login endpoint",
   "metadata": {},
@@ -86,14 +86,14 @@ Worker enrollment notes:
 
 `name` is required. All other fields are optional. If `ink` is specified, its `command` is used as the default (explicit `command` overrides it). `idle_threshold_secs` overrides the global idle threshold for this session (`null` = use global, `0` = never idle). `worktree_base` specifies the branch to fork from (implies `worktree: true`). Session responses include `worktree_branch` with the branch name when a worktree is active.
 
-`target_node` is only honored when the API request reaches a master node. In standalone or worker mode, create requests run locally and cross-node targeting is rejected.
+`target_node` is only honored when the API request reaches a controller node. In standalone or node mode, create requests run locally and cross-node targeting is rejected.
 
 Multi-node notes:
 
-- `GET /api/v1/fleet/sessions` is authoritative only on a master node
-- worker and standalone nodes return local sessions there
+- `GET /api/v1/fleet/sessions` is authoritative only on a controller node
+- node and standalone nodes return local sessions there
 - `GET /api/v1/sessions/:id/stream` remains local-only; remote terminal proxying is intentionally out of scope
-- remote `output`, `input`, `resume`, and `download` are HTTP-proxied through the master for indexed remote sessions
+- remote `output`, `input`, `resume`, and `download` are HTTP-proxied through the controller for indexed remote sessions
 
 ## Inks
 

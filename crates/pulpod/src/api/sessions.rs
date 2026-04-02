@@ -6,8 +6,8 @@ use axum::{
     http::StatusCode,
 };
 use pulpo_common::api::{
-    CreateSessionRequest, CreateSessionResponse, ErrorResponse, ListSessionsQuery, OutputQuery,
-    SendInputRequest, SessionIndexEntry, WorkerCommand,
+    CreateSessionRequest, CreateSessionResponse, ErrorResponse, ListSessionsQuery, NodeCommand,
+    OutputQuery, SendInputRequest, SessionIndexEntry,
 };
 use pulpo_common::peer::PeerInfo;
 use pulpo_common::session::{Session, SessionStatus};
@@ -218,11 +218,11 @@ pub async fn create(
 ) -> Result<(StatusCode, Json<CreateSessionResponse>), ApiError> {
     if let Some(target_node) = req.target_node.clone() {
         let role = state.config.read().await.role();
-        if role != crate::config::NodeRole::Master {
+        if role != crate::config::NodeRole::Controller {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {
-                    error: "target_node requires master mode".into(),
+                    error: "target_node requires controller mode".into(),
                 }),
             ));
         }
@@ -240,7 +240,7 @@ pub async fn create(
             .await
             .map_err(|e| {
                 bad_gateway(&format!(
-                    "failed to create session on worker {}: {e}",
+                    "failed to create session on node {}: {e}",
                     target.node_name
                 ))
             })?;
@@ -295,7 +295,7 @@ pub async fn stop(
                     command_queue
                         .enqueue(
                             &entry.node_name,
-                            WorkerCommand::StopSession {
+                            NodeCommand::StopSession {
                                 command_id: Uuid::new_v4().to_string(),
                                 session_id: id,
                             },
@@ -354,7 +354,7 @@ pub async fn output(
             .await
             .map_err(|e| {
                 bad_gateway(&format!(
-                    "failed to fetch output from worker {}: {e}",
+                    "failed to fetch output from node {}: {e}",
                     target.node_name
                 ))
             })?;
@@ -397,7 +397,7 @@ pub async fn resume(
                         .await
                         .map_err(|e| {
                             bad_gateway(&format!(
-                                "failed to resume session on worker {}: {e}",
+                                "failed to resume session on node {}: {e}",
                                 target.node_name
                             ))
                         })?;
@@ -461,7 +461,7 @@ pub async fn download_output(
             .await
             .map_err(|e| {
                 bad_gateway(&format!(
-                    "failed to download output from worker {}: {e}",
+                    "failed to download output from node {}: {e}",
                     target.node_name
                 ))
             })?;
@@ -581,7 +581,7 @@ pub async fn input(
         .await
         .map_err(|e| {
             bad_gateway(&format!(
-                "failed to send input to worker {}: {e}",
+                "failed to send input to node {}: {e}",
                 target.node_name
             ))
         })?;
@@ -607,7 +607,7 @@ mod tests {
     use super::*;
     use crate::api::AppState;
     use crate::backend::Backend;
-    use crate::master::{CommandQueue, SessionIndex};
+    use crate::controller::{CommandQueue, SessionIndex};
     use std::collections::HashMap;
     use tokio::sync::broadcast;
 
@@ -664,7 +664,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
-                master: crate::config::MasterConfig::default(),
+                controller: crate::config::ControllerConfig::default(),
             },
             manager,
             peer_registry,
@@ -699,7 +699,7 @@ mod tests {
         session_index.upsert(entry).await;
         let command_queue = Arc::new(CommandQueue::new());
 
-        AppState::with_event_tx_master(
+        AppState::with_event_tx_controller(
             Config {
                 node: NodeConfig {
                     name: "master-node".into(),
@@ -713,9 +713,9 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
-                master: crate::config::MasterConfig {
+                controller: crate::config::ControllerConfig {
                     enabled: true,
-                    ..crate::config::MasterConfig::default()
+                    ..crate::config::ControllerConfig::default()
                 },
             },
             tmpdir.path().join("config.toml"),
@@ -846,11 +846,11 @@ mod tests {
         assert!(result.is_err());
         let (status, Json(err)) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(err.error.contains("target_node requires master mode"));
+        assert!(err.error.contains("target_node requires controller mode"));
     }
 
     #[tokio::test]
-    async fn test_create_target_node_matching_master_name_creates_locally() {
+    async fn test_create_target_node_matching_controller_name_creates_locally() {
         let state = master_state_with_index(SessionIndexEntry {
             session_id: Uuid::new_v4().to_string(),
             node_name: "master-node".into(),
@@ -924,7 +924,7 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert!(
             err.error
-                .contains("failed to create session on worker worker-1")
+                .contains("failed to create session on node worker-1")
         );
     }
 
@@ -991,11 +991,11 @@ mod tests {
             .await;
         assert_eq!(commands.len(), 1);
         match &commands[0] {
-            WorkerCommand::StopSession {
+            NodeCommand::StopSession {
                 session_id: queued_id,
                 ..
             } => assert_eq!(queued_id, &session_id),
-            WorkerCommand::CreateSession { .. } => panic!("expected stop command"),
+            NodeCommand::CreateSession { .. } => panic!("expected stop command"),
         }
     }
 
@@ -1288,7 +1288,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
-                master: crate::config::MasterConfig::default(),
+                controller: crate::config::ControllerConfig::default(),
             },
             manager,
             peer_registry,
@@ -1377,7 +1377,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
-                master: crate::config::MasterConfig::default(),
+                controller: crate::config::ControllerConfig::default(),
             },
             manager,
             peer_registry,
@@ -1485,7 +1485,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
-                master: crate::config::MasterConfig::default(),
+                controller: crate::config::ControllerConfig::default(),
             },
             manager,
             peer_registry,
@@ -1762,7 +1762,7 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert!(
             err.error
-                .contains("failed to fetch output from worker worker-1")
+                .contains("failed to fetch output from node worker-1")
         );
     }
 
@@ -1791,10 +1791,7 @@ mod tests {
         assert!(result.is_err());
         let (status, Json(err)) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_GATEWAY);
-        assert!(
-            err.error
-                .contains("failed to send input to worker worker-1")
-        );
+        assert!(err.error.contains("failed to send input to node worker-1"));
     }
 
     #[tokio::test]
@@ -1817,7 +1814,7 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert!(
             err.error
-                .contains("failed to download output from worker worker-1")
+                .contains("failed to download output from node worker-1")
         );
     }
 
@@ -1841,7 +1838,7 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert!(
             err.error
-                .contains("failed to resume session on worker worker-1")
+                .contains("failed to resume session on node worker-1")
         );
     }
 
@@ -2052,7 +2049,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
-                master: crate::config::MasterConfig::default(),
+                controller: crate::config::ControllerConfig::default(),
             },
             manager,
             peer_registry,
@@ -2112,7 +2109,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
-                master: crate::config::MasterConfig::default(),
+                controller: crate::config::ControllerConfig::default(),
             },
             manager,
             peer_registry,
@@ -2240,7 +2237,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
-                master: crate::config::MasterConfig::default(),
+                controller: crate::config::ControllerConfig::default(),
             },
             manager,
             peer_registry,

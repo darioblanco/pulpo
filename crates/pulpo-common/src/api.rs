@@ -25,7 +25,7 @@ pub struct CreateSessionRequest {
     /// Secret names to inject as environment variables.
     #[serde(default)]
     pub secrets: Option<Vec<String>>,
-    /// Target worker node name when routing creation through a master.
+    /// Target node name when routing creation through a controller.
     #[serde(default)]
     pub target_node: Option<String>,
 }
@@ -57,9 +57,9 @@ pub struct PeersResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub master_name: Option<String>,
+    pub controller_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub master_address: Option<String>,
+    pub controller_address: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -394,45 +394,45 @@ pub struct SecretEntry {
     pub created_at: String,
 }
 
-// -- Master mode types --
+// -- Controller mode types --
 
-/// Request from a worker pushing events to the master.
+/// Request from a managed node pushing events to the controller.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventPushRequest {
     pub events: Vec<crate::event::PulpoEvent>,
 }
 
-/// Request to enroll a worker on the master.
+/// Request to enroll a managed node on the controller.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnrollWorkerRequest {
+pub struct EnrollNodeRequest {
     pub node_name: String,
 }
 
-/// Response returned when the master enrolls a worker.
+/// Response returned when the controller enrolls a node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnrollWorkerResponse {
+pub struct EnrollNodeResponse {
     pub node_name: String,
     pub token: String,
 }
 
-/// Enrolled worker metadata exposed by the master.
+/// Enrolled node metadata exposed by the controller.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnrolledWorkerInfo {
+pub struct EnrolledNodeInfo {
     pub node_name: String,
     pub last_seen_at: Option<String>,
     pub last_seen_address: Option<String>,
 }
 
-/// Response listing enrolled workers known to the master.
+/// Response listing enrolled nodes known to the controller.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnrolledWorkersResponse {
-    pub workers: Vec<EnrolledWorkerInfo>,
+pub struct EnrolledNodesResponse {
+    pub nodes: Vec<EnrolledNodeInfo>,
 }
 
-/// A command queued by the master for a specific worker.
+/// A command queued by the controller for a specific managed node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum WorkerCommand {
+pub enum NodeCommand {
     CreateSession {
         command_id: String,
         name: String,
@@ -447,13 +447,13 @@ pub enum WorkerCommand {
     },
 }
 
-/// Response containing pending commands for a worker.
+/// Response containing pending commands for a managed node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WorkerCommandsResponse {
-    pub commands: Vec<WorkerCommand>,
+pub struct NodeCommandsResponse {
+    pub commands: Vec<NodeCommand>,
 }
 
-/// A lightweight session entry for the master's aggregated index.
+/// A lightweight session entry for the controller's aggregated index.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionIndexEntry {
     pub session_id: String,
@@ -878,8 +878,8 @@ mod tests {
                 source: PeerSource::Configured,
             }],
             role: None,
-            master_name: None,
-            master_address: None,
+            controller_name: None,
+            controller_address: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"local\""));
@@ -911,8 +911,8 @@ mod tests {
             },
             peers: vec![],
             role: None,
-            master_name: None,
-            master_address: None,
+            controller_name: None,
+            controller_address: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         let deserialized: PeersResponse = serde_json::from_str(&json).unwrap();
@@ -935,9 +935,9 @@ mod tests {
                 gpu: None,
             },
             peers: vec![],
-            role: Some("worker".into()),
-            master_name: Some("master-node".into()),
-            master_address: Some("https://master.tailnet".into()),
+            role: Some("node".into()),
+            controller_name: Some("controller-node".into()),
+            controller_address: Some("https://controller.tailnet".into()),
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("debug"));
@@ -1766,7 +1766,7 @@ mod tests {
         assert!(req.description.is_none());
     }
 
-    // -- Master mode type tests --
+    // -- Controller mode type tests --
 
     #[test]
     fn test_event_push_request_serialize_roundtrip() {
@@ -1805,50 +1805,50 @@ mod tests {
     }
 
     #[test]
-    fn test_enroll_worker_request_roundtrip() {
-        let req = EnrollWorkerRequest {
+    fn test_enroll_node_request_roundtrip() {
+        let req = EnrollNodeRequest {
             node_name: "worker-1".into(),
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"node_name\":\"worker-1\""));
-        let deserialized: EnrollWorkerRequest = serde_json::from_str(&json).unwrap();
+        let deserialized: EnrollNodeRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.node_name, "worker-1");
     }
 
     #[test]
-    fn test_enroll_worker_response_roundtrip() {
-        let resp = EnrollWorkerResponse {
+    fn test_enroll_node_response_roundtrip() {
+        let resp = EnrollNodeResponse {
             node_name: "worker-1".into(),
             token: "secret-token".into(),
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"node_name\":\"worker-1\""));
         assert!(json.contains("\"token\":\"secret-token\""));
-        let deserialized: EnrollWorkerResponse = serde_json::from_str(&json).unwrap();
+        let deserialized: EnrollNodeResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.node_name, "worker-1");
         assert_eq!(deserialized.token, "secret-token");
     }
 
     #[test]
-    fn test_enrolled_workers_response_roundtrip() {
-        let resp = EnrolledWorkersResponse {
-            workers: vec![EnrolledWorkerInfo {
+    fn test_enrolled_nodes_response_roundtrip() {
+        let resp = EnrolledNodesResponse {
+            nodes: vec![EnrolledNodeInfo {
                 node_name: "worker-1".into(),
                 last_seen_at: Some("2026-04-02T17:00:00Z".into()),
                 last_seen_address: Some("10.0.0.10".into()),
             }],
         };
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"workers\""));
+        assert!(json.contains("\"nodes\""));
         assert!(json.contains("\"node_name\":\"worker-1\""));
-        let deserialized: EnrolledWorkersResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.workers.len(), 1);
-        assert_eq!(deserialized.workers[0].node_name, "worker-1");
+        let deserialized: EnrolledNodesResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.nodes.len(), 1);
+        assert_eq!(deserialized.nodes[0].node_name, "worker-1");
     }
 
     #[test]
     fn test_worker_command_create_session_serialize() {
-        let cmd = WorkerCommand::CreateSession {
+        let cmd = NodeCommand::CreateSession {
             command_id: "cmd-1".into(),
             name: "my-task".into(),
             workdir: Some("/tmp/repo".into()),
@@ -1864,7 +1864,7 @@ mod tests {
 
     #[test]
     fn test_worker_command_stop_session_serialize() {
-        let cmd = WorkerCommand::StopSession {
+        let cmd = NodeCommand::StopSession {
             command_id: "cmd-2".into(),
             session_id: "sess-42".into(),
         };
@@ -1876,7 +1876,7 @@ mod tests {
 
     #[test]
     fn test_worker_command_create_session_roundtrip() {
-        let cmd = WorkerCommand::CreateSession {
+        let cmd = NodeCommand::CreateSession {
             command_id: "c1".into(),
             name: "task".into(),
             workdir: None,
@@ -1885,41 +1885,41 @@ mod tests {
             description: None,
         };
         let json = serde_json::to_string(&cmd).unwrap();
-        let deserialized: WorkerCommand = serde_json::from_str(&json).unwrap();
+        let deserialized: NodeCommand = serde_json::from_str(&json).unwrap();
         match deserialized {
-            WorkerCommand::CreateSession {
+            NodeCommand::CreateSession {
                 command_id, name, ..
             } => {
                 assert_eq!(command_id, "c1");
                 assert_eq!(name, "task");
             }
-            WorkerCommand::StopSession { .. } => panic!("Expected CreateSession"),
+            NodeCommand::StopSession { .. } => panic!("Expected CreateSession"),
         }
     }
 
     #[test]
     fn test_worker_command_stop_session_roundtrip() {
-        let cmd = WorkerCommand::StopSession {
+        let cmd = NodeCommand::StopSession {
             command_id: "c2".into(),
             session_id: "s1".into(),
         };
         let json = serde_json::to_string(&cmd).unwrap();
-        let deserialized: WorkerCommand = serde_json::from_str(&json).unwrap();
+        let deserialized: NodeCommand = serde_json::from_str(&json).unwrap();
         match deserialized {
-            WorkerCommand::StopSession {
+            NodeCommand::StopSession {
                 command_id,
                 session_id,
             } => {
                 assert_eq!(command_id, "c2");
                 assert_eq!(session_id, "s1");
             }
-            WorkerCommand::CreateSession { .. } => panic!("Expected StopSession"),
+            NodeCommand::CreateSession { .. } => panic!("Expected StopSession"),
         }
     }
 
     #[test]
     fn test_worker_command_debug_clone() {
-        let cmd = WorkerCommand::StopSession {
+        let cmd = NodeCommand::StopSession {
             command_id: "c".into(),
             session_id: "s".into(),
         };
@@ -1930,15 +1930,15 @@ mod tests {
     #[test]
     fn test_worker_command_invalid_type() {
         let json = r#"{"type":"unknown","command_id":"c1"}"#;
-        let result = serde_json::from_str::<WorkerCommand>(json);
+        let result = serde_json::from_str::<NodeCommand>(json);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_worker_commands_response_serialize() {
-        let resp = WorkerCommandsResponse {
+        let resp = NodeCommandsResponse {
             commands: vec![
-                WorkerCommand::CreateSession {
+                NodeCommand::CreateSession {
                     command_id: "c1".into(),
                     name: "task-1".into(),
                     workdir: None,
@@ -1946,7 +1946,7 @@ mod tests {
                     ink: None,
                     description: None,
                 },
-                WorkerCommand::StopSession {
+                NodeCommand::StopSession {
                     command_id: "c2".into(),
                     session_id: "s1".into(),
                 },
@@ -1960,27 +1960,27 @@ mod tests {
 
     #[test]
     fn test_worker_commands_response_empty() {
-        let resp = WorkerCommandsResponse { commands: vec![] };
+        let resp = NodeCommandsResponse { commands: vec![] };
         let json = serde_json::to_string(&resp).unwrap();
         assert_eq!(json, r#"{"commands":[]}"#);
     }
 
     #[test]
     fn test_worker_commands_response_roundtrip() {
-        let resp = WorkerCommandsResponse {
-            commands: vec![WorkerCommand::StopSession {
+        let resp = NodeCommandsResponse {
+            commands: vec![NodeCommand::StopSession {
                 command_id: "c1".into(),
                 session_id: "s1".into(),
             }],
         };
         let json = serde_json::to_string(&resp).unwrap();
-        let deserialized: WorkerCommandsResponse = serde_json::from_str(&json).unwrap();
+        let deserialized: NodeCommandsResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.commands.len(), 1);
     }
 
     #[test]
     fn test_worker_commands_response_debug_clone() {
-        let resp = WorkerCommandsResponse { commands: vec![] };
+        let resp = NodeCommandsResponse { commands: vec![] };
         let cloned = resp.clone();
         assert_eq!(format!("{resp:?}"), format!("{cloned:?}"));
     }

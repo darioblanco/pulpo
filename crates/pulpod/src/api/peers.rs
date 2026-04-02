@@ -19,21 +19,21 @@ fn normalize_address(address: &str) -> &str {
         .unwrap_or(address)
 }
 
-async fn master_identity(state: &Arc<super::AppState>) -> (Option<String>, Option<String>) {
+async fn controller_identity(state: &Arc<super::AppState>) -> (Option<String>, Option<String>) {
     let config = state.config.read().await;
-    let Some(master_address) = config.master.address.clone() else {
+    let Some(controller_address) = config.controller.address.clone() else {
         return (None, None);
     };
     drop(config);
 
-    let normalized_master = normalize_address(&master_address);
+    let normalized_controller = normalize_address(&controller_address);
     let peers = state.peer_registry.get_all().await;
-    let master_name = peers
+    let controller_name = peers
         .into_iter()
-        .find(|peer| normalize_address(&peer.address) == normalized_master)
+        .find(|peer| normalize_address(&peer.address) == normalized_controller)
         .map(|peer| peer.name);
 
-    (master_name, Some(master_address))
+    (controller_name, Some(controller_address))
 }
 
 /// Best-effort GPU detection. Returns a label like "Apple Metal" or "NVIDIA" if
@@ -73,8 +73,8 @@ pub async fn list_peers(State(state): State<Arc<super::AppState>>) -> Json<Peers
     let role = Some(
         match config.role() {
             crate::config::NodeRole::Standalone => "standalone",
-            crate::config::NodeRole::Master => "master",
-            crate::config::NodeRole::Worker => "worker",
+            crate::config::NodeRole::Controller => "controller",
+            crate::config::NodeRole::Node => "node",
         }
         .to_owned(),
     );
@@ -92,7 +92,7 @@ pub async fn list_peers(State(state): State<Arc<super::AppState>>) -> Json<Peers
         gpu: detect_gpu(),
     };
     drop(config);
-    let (master_name, master_address) = master_identity(&state).await;
+    let (controller_name, controller_address) = controller_identity(&state).await;
 
     // Probe all peers on-demand (results are cached with a 60s TTL).
     // Gated behind cfg(not(coverage)) because CachedProber<HttpPeerProber> would
@@ -109,8 +109,8 @@ pub async fn list_peers(State(state): State<Arc<super::AppState>>) -> Json<Peers
         local,
         peers,
         role,
-        master_name,
-        master_address,
+        controller_name,
+        controller_address,
     })
 }
 
@@ -214,7 +214,7 @@ mod tests {
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: crate::config::DockerConfig::default(),
-                master: crate::config::MasterConfig::default(),
+                controller: crate::config::ControllerConfig::default(),
             },
             manager,
             peer_registry,

@@ -24,9 +24,9 @@ export function OceanPage() {
   const [localNode, setLocalNode] = useState<NodeInfo | null>(null);
   const [peers, setPeers] = useState<PeerInfo[]>([]);
   const [fleetSessions, setFleetSessions] = useState<FleetSession[]>([]);
-  const [nodeRole, setNodeRole] = useState<'standalone' | 'master' | 'worker'>('standalone');
-  const [masterName, setMasterName] = useState<string | null>(null);
-  const [masterAddress, setMasterAddress] = useState<string | null>(null);
+  const [nodeRole, setNodeRole] = useState<'standalone' | 'controller' | 'node'>('standalone');
+  const [controllerName, setControllerName] = useState<string | null>(null);
+  const [controllerAddress, setControllerAddress] = useState<string | null>(null);
   const [sprites, setSprites] = useState<Sprites | null>(null);
   const [focusedNode, setFocusedNode] = useState<string | null>(null);
 
@@ -44,11 +44,11 @@ export function OceanPage() {
       const resp = await getPeers();
       setLocalNode(resp.local);
       setPeers(resp.peers);
-      setNodeRole((resp.role as 'standalone' | 'master' | 'worker') ?? 'standalone');
-      setMasterName(resp.master_name ?? null);
-      setMasterAddress(resp.master_address ?? null);
+      setNodeRole((resp.role as 'standalone' | 'controller' | 'node') ?? 'standalone');
+      setControllerName(resp.controller_name ?? null);
+      setControllerAddress(resp.controller_address ?? null);
 
-      if (resp.role === 'master') {
+      if (resp.role === 'controller') {
         await getFleetSessions()
           .then((r) => setFleetSessions(r.sessions))
           .catch(() => setFleetSessions([]));
@@ -76,7 +76,7 @@ export function OceanPage() {
       sessions,
       nodeColor: NODE_COLORS[0 % NODE_COLORS.length],
     });
-    if (nodeRole === 'master') {
+    if (nodeRole === 'controller') {
       for (let i = 0; i < peers.length; i++) {
         pools.push({
           nodeName: peers[i].name,
@@ -132,28 +132,32 @@ export function OceanPage() {
           </div>
         ) : (
           <>
-            {nodeRole === 'worker' && (
+            {nodeRole === 'node' && (
               <div
-                data-testid="ocean-worker-banner"
+                data-testid="ocean-node-banner"
                 className="mb-4 flex flex-col gap-3 rounded-lg border bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="space-y-1">
-                  <p className="text-sm font-medium">This node is a worker.</p>
+                  <p className="text-sm font-medium">This node is managed by a controller.</p>
                   <p className="text-sm text-muted-foreground">
-                    The full fleet ocean is available on the master.
+                    The full fleet ocean is available on the controller.
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {masterName ? `Master: ${masterName}` : 'Master node configured'}
-                    {masterAddress ? ` · ${masterAddress}` : ''}
+                    {controllerName
+                      ? `Controller: ${controllerName}`
+                      : 'Controller node configured'}
+                    {controllerAddress ? ` · ${controllerAddress}` : ''}
                   </p>
                 </div>
-                {masterAddress && (
+                {controllerAddress && (
                   <Button
-                    data-testid="ocean-connect-master-button"
+                    data-testid="ocean-connect-controller-button"
                     variant="outline"
-                    onClick={() => navigate(`/connect?url=${encodeURIComponent(masterAddress)}`)}
+                    onClick={() =>
+                      navigate(`/connect?url=${encodeURIComponent(controllerAddress)}`)
+                    }
                   >
-                    Connect to master
+                    Connect to controller
                   </Button>
                 )}
               </div>

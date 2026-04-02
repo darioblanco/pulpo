@@ -19,14 +19,14 @@ use super::node;
 use super::notifications;
 use super::peers;
 
+use super::node_auth;
+use super::node_commands;
 use super::push;
 use super::schedules;
 use super::secrets;
 use super::sessions;
 use super::static_files;
 use super::watchdog;
-use super::worker_auth;
-use super::worker_commands;
 use super::ws;
 
 #[allow(clippy::too_many_lines)]
@@ -112,13 +112,10 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/events", get(events::stream))
         .route("/api/v1/events/push", post(event_push::push_events))
         .route(
-            "/api/v1/master/workers",
-            get(worker_auth::list_enrolled_workers).post(worker_auth::enroll_worker),
+            "/api/v1/controller/nodes",
+            get(node_auth::list_enrolled_nodes).post(node_auth::enroll_node),
         )
-        .route(
-            "/api/v1/worker/commands",
-            get(worker_commands::get_commands),
-        )
+        .route("/api/v1/node/commands", get(node_commands::get_commands))
         .route(
             "/api/v1/schedules",
             get(schedules::list).post(schedules::create),
@@ -199,7 +196,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -257,7 +254,7 @@ mod tests {
             inks: inks.clone(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), inks, None).with_no_stale_grace();
@@ -656,7 +653,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -845,7 +842,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -972,7 +969,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(FailIsAliveBackend);
         let manager =
@@ -1196,7 +1193,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1375,7 +1372,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1476,7 +1473,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1628,7 +1625,7 @@ mod tests {
                 ..Default::default()
             },
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =

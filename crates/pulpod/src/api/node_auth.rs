@@ -5,8 +5,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use pulpo_common::api::{
-    EnrollWorkerRequest, EnrollWorkerResponse, EnrolledWorkerInfo, EnrolledWorkersResponse,
-    ErrorResponse,
+    EnrollNodeRequest, EnrollNodeResponse, EnrolledNodeInfo, EnrolledNodesResponse, ErrorResponse,
 };
 use sha2::{Digest, Sha256};
 
@@ -16,7 +15,7 @@ use crate::config;
 type ApiError = (StatusCode, Json<ErrorResponse>);
 
 #[derive(Debug, Clone)]
-pub struct AuthenticatedWorker {
+pub struct AuthenticatedNode {
     pub node_name: String,
 }
 
@@ -27,7 +26,7 @@ fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {
         .and_then(|v| v.strip_prefix("Bearer "))
 }
 
-pub fn hash_worker_token(token: &str) -> String {
+pub fn hash_node_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     hex::encode(hasher.finalize())
@@ -42,14 +41,14 @@ fn unauthorized(msg: &str) -> ApiError {
     )
 }
 
-pub async fn authenticate_worker(
+pub async fn authenticate_node(
     state: &Arc<AppState>,
     headers: &HeaderMap,
-) -> Result<AuthenticatedWorker, ApiError> {
-    let token = extract_bearer_token(headers)
-        .ok_or_else(|| unauthorized("worker bearer token required"))?;
-    let token_hash = hash_worker_token(token);
-    let worker = state
+) -> Result<AuthenticatedNode, ApiError> {
+    let token =
+        extract_bearer_token(headers).ok_or_else(|| unauthorized("node bearer token required"))?;
+    let token_hash = hash_node_token(token);
+    let enrolled_node = state
         .store
         .get_enrolled_master_worker_by_token_hash(&token_hash)
         .await
@@ -57,33 +56,33 @@ pub async fn authenticate_worker(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("failed to look up enrolled worker: {e}"),
+                    error: format!("failed to look up enrolled node: {e}"),
                 }),
             )
         })?
-        .ok_or_else(|| unauthorized("worker is not enrolled on this master"))?;
-    Ok(AuthenticatedWorker {
-        node_name: worker.node_name,
+        .ok_or_else(|| unauthorized("node is not enrolled on this controller"))?;
+    Ok(AuthenticatedNode {
+        node_name: enrolled_node.node_name,
     })
 }
 
-/// Explicitly enroll a worker on the master and mint its bearer token.
-pub async fn enroll_worker(
+/// Explicitly enroll a node on the controller and mint its bearer token.
+pub async fn enroll_node(
     State(state): State<Arc<AppState>>,
-    Json(req): Json<EnrollWorkerRequest>,
+    Json(req): Json<EnrollNodeRequest>,
 ) -> impl IntoResponse {
     if state.command_queue.is_none() || state.session_index.is_none() {
         return (
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
-                error: "This node is not in master mode".into(),
+                error: "This node is not in controller mode".into(),
             }),
         )
             .into_response();
     }
 
     let token = config::generate_token();
-    let token_hash = hash_worker_token(&token);
+    let token_hash = hash_node_token(&token);
 
     match state
         .store
@@ -94,7 +93,7 @@ pub async fn enroll_worker(
             return (
                 StatusCode::CONFLICT,
                 Json(ErrorResponse {
-                    error: "worker is already enrolled on this master".into(),
+                    error: "node is already enrolled on this controller".into(),
                 }),
             )
                 .into_response();
@@ -104,7 +103,7 @@ pub async fn enroll_worker(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("failed to load enrolled worker: {e}"),
+                    error: format!("failed to load enrolled node: {e}"),
                 }),
             )
                 .into_response();
@@ -119,7 +118,7 @@ pub async fn enroll_worker(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("failed to enroll worker: {e}"),
+                error: format!("failed to enroll node: {e}"),
             }),
         )
             .into_response();
@@ -127,7 +126,7 @@ pub async fn enroll_worker(
 
     (
         StatusCode::CREATED,
-        Json(EnrollWorkerResponse {
+        Json(EnrollNodeResponse {
             node_name: req.node_name,
             token,
         }),
@@ -135,37 +134,37 @@ pub async fn enroll_worker(
         .into_response()
 }
 
-pub async fn list_enrolled_workers(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+pub async fn list_enrolled_nodes(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     if state.command_queue.is_none() || state.session_index.is_none() {
         return (
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
-                error: "This node is not in master mode".into(),
+                error: "This node is not in controller mode".into(),
             }),
         )
             .into_response();
     }
 
-    let workers = match state.store.list_enrolled_master_workers().await {
-        Ok(workers) => workers,
+    let nodes = match state.store.list_enrolled_master_workers().await {
+        Ok(nodes) => nodes,
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("failed to list enrolled workers: {e}"),
+                    error: format!("failed to list enrolled nodes: {e}"),
                 }),
             )
                 .into_response();
         }
     };
 
-    Json(EnrolledWorkersResponse {
-        workers: workers
+    Json(EnrolledNodesResponse {
+        nodes: nodes
             .into_iter()
-            .map(|worker| EnrolledWorkerInfo {
-                node_name: worker.node_name,
-                last_seen_at: worker.last_seen_at.map(|dt| dt.to_rfc3339()),
-                last_seen_address: worker.last_seen_address,
+            .map(|node| EnrolledNodeInfo {
+                node_name: node.node_name,
+                last_seen_at: node.last_seen_at.map(|dt| dt.to_rfc3339()),
+                last_seen_address: node.last_seen_address,
             })
             .collect(),
     })
@@ -179,30 +178,30 @@ mod tests {
     use std::sync::Arc;
 
     use axum_test::TestServer;
-    use pulpo_common::api::{EnrollWorkerRequest, EnrollWorkerResponse, EnrolledWorkersResponse};
+    use pulpo_common::api::{EnrollNodeRequest, EnrollNodeResponse, EnrolledNodesResponse};
 
     use crate::api::routes;
     use crate::backend::StubBackend;
     use crate::config::{Config, NodeConfig};
-    use crate::master::{CommandQueue, SessionIndex};
+    use crate::controller::{CommandQueue, SessionIndex};
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
 
     #[test]
-    fn test_hash_worker_token_deterministic() {
-        assert_eq!(hash_worker_token("abc"), hash_worker_token("abc"));
-        assert_ne!(hash_worker_token("abc"), hash_worker_token("abcd"));
+    fn test_hash_node_token_deterministic() {
+        assert_eq!(hash_node_token("abc"), hash_node_token("abc"));
+        assert_ne!(hash_node_token("abc"), hash_node_token("abcd"));
     }
 
-    async fn master_test_server() -> (TestServer, Arc<AppState>) {
+    async fn controller_test_server() -> (TestServer, Arc<AppState>) {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let config = Config {
             node: NodeConfig {
-                name: "master-node".into(),
+                name: "controller-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
@@ -213,9 +212,9 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig {
+            controller: crate::config::ControllerConfig {
                 enabled: true,
-                ..crate::config::MasterConfig::default()
+                ..crate::config::ControllerConfig::default()
             },
         };
         let backend = Arc::new(StubBackend);
@@ -225,7 +224,7 @@ mod tests {
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let session_index = Arc::new(SessionIndex::new());
         let command_queue = Arc::new(CommandQueue::new());
-        let state = AppState::with_event_tx_master(
+        let state = AppState::with_event_tx_controller(
             config,
             tmpdir.path().join("config.toml"),
             manager,
@@ -257,7 +256,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -269,16 +268,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_enroll_worker_creates_token_and_store_record() {
-        let (server, state) = master_test_server().await;
+    async fn test_enroll_node_creates_token_and_store_record() {
+        let (server, state) = controller_test_server().await;
         let resp = server
-            .post("/api/v1/master/workers")
-            .json(&EnrollWorkerRequest {
+            .post("/api/v1/controller/nodes")
+            .json(&EnrollNodeRequest {
                 node_name: "worker-1".into(),
             })
             .await;
         resp.assert_status(StatusCode::CREATED);
-        let body: EnrollWorkerResponse = resp.json();
+        let body: EnrollNodeResponse = resp.json();
         assert_eq!(body.node_name, "worker-1");
         assert!(!body.token.is_empty());
 
@@ -288,23 +287,23 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(enrolled.token_hash, hash_worker_token(&body.token));
+        assert_eq!(enrolled.token_hash, hash_node_token(&body.token));
     }
 
     #[tokio::test]
-    async fn test_enroll_worker_conflict_returns_conflict() {
-        let (server, _) = master_test_server().await;
+    async fn test_enroll_node_conflict_returns_conflict() {
+        let (server, _) = controller_test_server().await;
         server
-            .post("/api/v1/master/workers")
-            .json(&EnrollWorkerRequest {
+            .post("/api/v1/controller/nodes")
+            .json(&EnrollNodeRequest {
                 node_name: "worker-1".into(),
             })
             .await
             .assert_status(StatusCode::CREATED);
 
         let resp = server
-            .post("/api/v1/master/workers")
-            .json(&EnrollWorkerRequest {
+            .post("/api/v1/controller/nodes")
+            .json(&EnrollNodeRequest {
                 node_name: "worker-1".into(),
             })
             .await;
@@ -312,16 +311,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_enrolled_workers_returns_workers() {
-        let (server, _) = master_test_server().await;
+    async fn test_list_enrolled_nodes_returns_nodes() {
+        let (server, _) = controller_test_server().await;
         let enroll_resp = server
-            .post("/api/v1/master/workers")
-            .json(&EnrollWorkerRequest {
+            .post("/api/v1/controller/nodes")
+            .json(&EnrollNodeRequest {
                 node_name: "worker-1".into(),
             })
             .await;
         enroll_resp.assert_status(StatusCode::CREATED);
-        let body: EnrollWorkerResponse = enroll_resp.json();
+        let body: EnrollNodeResponse = enroll_resp.json();
 
         server
             .post("/api/v1/events/push")
@@ -330,20 +329,20 @@ mod tests {
             .await
             .assert_status(StatusCode::NO_CONTENT);
 
-        let resp = server.get("/api/v1/master/workers").await;
+        let resp = server.get("/api/v1/controller/nodes").await;
         resp.assert_status(StatusCode::OK);
-        let list: EnrolledWorkersResponse = resp.json();
-        assert_eq!(list.workers.len(), 1);
-        assert_eq!(list.workers[0].node_name, "worker-1");
-        assert!(list.workers[0].last_seen_at.is_some());
+        let list: EnrolledNodesResponse = resp.json();
+        assert_eq!(list.nodes.len(), 1);
+        assert_eq!(list.nodes[0].node_name, "worker-1");
+        assert!(list.nodes[0].last_seen_at.is_some());
     }
 
     #[tokio::test]
-    async fn test_enroll_worker_forbidden_on_standalone() {
+    async fn test_enroll_node_forbidden_on_standalone() {
         let server = standalone_test_server().await;
         let resp = server
-            .post("/api/v1/master/workers")
-            .json(&EnrollWorkerRequest {
+            .post("/api/v1/controller/nodes")
+            .json(&EnrollNodeRequest {
                 node_name: "worker-1".into(),
             })
             .await;
@@ -351,9 +350,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_list_enrolled_workers_forbidden_on_standalone() {
+    async fn test_list_enrolled_nodes_forbidden_on_standalone() {
         let server = standalone_test_server().await;
-        let resp = server.get("/api/v1/master/workers").await;
+        let resp = server.get("/api/v1/controller/nodes").await;
         resp.assert_status(StatusCode::FORBIDDEN);
     }
 }

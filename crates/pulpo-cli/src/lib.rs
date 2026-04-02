@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 #[cfg_attr(coverage, allow(unused_imports))]
 use pulpo_common::api::{
-    AuthTokenResponse, ConfigResponse, CreateSessionResponse, EnrollWorkerRequest,
-    EnrollWorkerResponse, EnrolledWorkersResponse, InterventionEventResponse, PeersResponse,
+    AuthTokenResponse, ConfigResponse, CreateSessionResponse, EnrollNodeRequest,
+    EnrollNodeResponse, EnrolledNodesResponse, InterventionEventResponse, PeersResponse,
 };
 #[cfg(test)]
 use pulpo_common::session::Runtime;
@@ -144,14 +144,11 @@ pub enum Commands {
         name: String,
     },
 
-    /// List all known nodes
+    /// List known nodes, or manage controller-enrolled nodes
     #[command(visible_alias = "n")]
-    Nodes,
-
-    /// Manage enrolled worker identities on the master
-    Workers {
+    Nodes {
         #[command(subcommand)]
-        action: WorkerAction,
+        action: Option<NodeAction>,
     },
 
     /// Show intervention history for a session
@@ -275,13 +272,12 @@ pub enum InkAction {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum WorkerAction {
-    /// List workers enrolled on the master
-    #[command(visible_alias = "ls")]
-    List,
-    /// Enroll a new worker and mint its token
+pub enum NodeAction {
+    /// List nodes enrolled on the controller
+    Enrolled,
+    /// Enroll a new node and mint its token
     Enroll {
-        /// Worker node name
+        /// Managed node name
         name: String,
     },
 }
@@ -583,20 +579,20 @@ fn format_nodes(resp: &PeersResponse) -> String {
     lines.join("\n")
 }
 
-fn format_enrolled_workers(resp: &EnrolledWorkersResponse) -> String {
-    if resp.workers.is_empty() {
-        return "No enrolled workers.".into();
+fn format_enrolled_nodes(resp: &EnrolledNodesResponse) -> String {
+    if resp.nodes.is_empty() {
+        return "No enrolled nodes.".into();
     }
 
     let seen_width = resp
-        .workers
+        .nodes
         .iter()
         .map(|worker| worker.last_seen_at.as_deref().unwrap_or("-").len())
         .max()
         .unwrap_or(9)
         .max(9);
     let addr_width = resp
-        .workers
+        .nodes
         .iter()
         .map(|worker| worker.last_seen_address.as_deref().unwrap_or("-").len())
         .max()
@@ -607,7 +603,7 @@ fn format_enrolled_workers(resp: &EnrolledWorkersResponse) -> String {
         "{:<20} {:<seen_width$} {:<addr_width$}",
         "NAME", "LAST SEEN", "ADDRESS"
     )];
-    for worker in &resp.workers {
+    for worker in &resp.nodes {
         lines.push(format!(
             "{:<20} {:<seen_width$} {:<addr_width$}",
             worker.node_name,
@@ -1767,45 +1763,45 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let sessions: Vec<Session> = serde_json::from_str(&text)?;
             Ok(format_sessions(&sessions))
         }
-        Commands::Nodes => {
-            let resp = authed_get(&client, format!("{url}/api/v1/peers"), token.as_deref())
-                .send()
-                .await
-                .map_err(|e| friendly_error(&e, node))?;
-            let text = ok_or_api_error(resp).await?;
-            let resp: PeersResponse = serde_json::from_str(&text)?;
-            Ok(format_nodes(&resp))
-        }
-        Commands::Workers { action } => match action {
-            WorkerAction::List => {
+        Commands::Nodes { action } => match action {
+            None => {
+                let resp = authed_get(&client, format!("{url}/api/v1/peers"), token.as_deref())
+                    .send()
+                    .await
+                    .map_err(|e| friendly_error(&e, node))?;
+                let text = ok_or_api_error(resp).await?;
+                let resp: PeersResponse = serde_json::from_str(&text)?;
+                Ok(format_nodes(&resp))
+            }
+            Some(NodeAction::Enrolled) => {
                 let resp = authed_get(
                     &client,
-                    format!("{url}/api/v1/master/workers"),
+                    format!("{url}/api/v1/controller/nodes"),
                     token.as_deref(),
                 )
                 .send()
                 .await
                 .map_err(|e| friendly_error(&e, node))?;
                 let text = ok_or_api_error(resp).await?;
-                let resp: EnrolledWorkersResponse = serde_json::from_str(&text)?;
-                Ok(format_enrolled_workers(&resp))
+                let resp: EnrolledNodesResponse = serde_json::from_str(&text)?;
+                Ok(format_enrolled_nodes(&resp))
             }
-            WorkerAction::Enroll { name } => {
+            Some(NodeAction::Enroll { name }) => {
                 let resp = authed_post(
                     &client,
-                    format!("{url}/api/v1/master/workers"),
+                    format!("{url}/api/v1/controller/nodes"),
                     token.as_deref(),
                 )
-                .json(&EnrollWorkerRequest {
+                .json(&EnrollNodeRequest {
                     node_name: name.clone(),
                 })
                 .send()
                 .await
                 .map_err(|e| friendly_error(&e, node))?;
                 let text = ok_or_api_error(resp).await?;
-                let resp: EnrollWorkerResponse = serde_json::from_str(&text)?;
+                let resp: EnrollNodeResponse = serde_json::from_str(&text)?;
                 Ok(format!(
-                    "Enrolled worker {}\nToken: {}\nSet [master].token on the worker and restart it.",
+                    "Enrolled node {}\nToken: {}\nSet [controller].token on that node and restart it.",
                     resp.node_name, resp.token
                 ))
             }
@@ -2082,28 +2078,31 @@ mod tests {
     #[test]
     fn test_cli_parse_nodes() {
         let cli = Cli::try_parse_from(["pulpo", "nodes"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::Nodes)));
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Nodes { action: None })
+        ));
     }
 
     #[test]
-    fn test_cli_parse_workers_list() {
-        let cli = Cli::try_parse_from(["pulpo", "workers", "list"]).unwrap();
+    fn test_cli_parse_nodes_enrolled() {
+        let cli = Cli::try_parse_from(["pulpo", "nodes", "enrolled"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Commands::Workers {
-                action: WorkerAction::List
+            Some(Commands::Nodes {
+                action: Some(NodeAction::Enrolled)
             })
         ));
     }
 
     #[test]
-    fn test_cli_parse_workers_enroll() {
-        let cli = Cli::try_parse_from(["pulpo", "workers", "enroll", "worker-1"]).unwrap();
+    fn test_cli_parse_nodes_enroll() {
+        let cli = Cli::try_parse_from(["pulpo", "nodes", "enroll", "node-1"]).unwrap();
         assert!(matches!(
             cli.command,
-            Some(Commands::Workers {
-                action: WorkerAction::Enroll { name }
-            }) if name == "worker-1"
+            Some(Commands::Nodes {
+                action: Some(NodeAction::Enroll { name })
+            }) if name == "node-1"
         ));
     }
 
@@ -2603,9 +2602,9 @@ mod tests {
                 }),
             )
             .route(
-                "/api/v1/master/workers",
+                "/api/v1/controller/nodes",
                 get(|| async {
-                    r#"{"workers":[{"node_name":"worker-1","last_seen_at":"2026-04-02T17:00:00Z","last_seen_address":"10.0.0.10"}]}"#
+                    r#"{"nodes":[{"node_name":"worker-1","last_seen_at":"2026-04-02T17:00:00Z","last_seen_address":"10.0.0.10"}]}"#
                         .to_owned()
                 })
                 .post(|| async {
@@ -2663,7 +2662,7 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Some(Commands::Nodes),
+            command: Some(Commands::Nodes { action: None }),
             path: None,
         };
         let result = execute(&cli).await.unwrap();
@@ -2673,13 +2672,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_workers_list_success() {
+    async fn test_execute_nodes_enrolled_success() {
         let node = start_test_server().await;
         let cli = Cli {
             node,
             token: None,
-            command: Some(Commands::Workers {
-                action: WorkerAction::List,
+            command: Some(Commands::Nodes {
+                action: Some(NodeAction::Enrolled),
             }),
             path: None,
         };
@@ -2690,22 +2689,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_workers_enroll_success() {
+    async fn test_execute_nodes_enroll_success() {
         let node = start_test_server().await;
         let cli = Cli {
             node,
             token: None,
-            command: Some(Commands::Workers {
-                action: WorkerAction::Enroll {
-                    name: "worker-1".into(),
-                },
+            command: Some(Commands::Nodes {
+                action: Some(NodeAction::Enroll {
+                    name: "node-1".into(),
+                }),
             }),
             path: None,
         };
         let result = execute(&cli).await.unwrap();
-        assert!(result.contains("Enrolled worker worker-1"));
         assert!(result.contains("issued-worker-token"));
-        assert!(result.contains("Set [master].token"));
+        assert!(result.contains("Set [controller].token"));
     }
 
     #[tokio::test]
@@ -2964,7 +2962,7 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Some(Commands::Nodes),
+            command: Some(Commands::Nodes { action: None }),
             path: None,
         };
         let result = execute(&cli).await;
@@ -3515,8 +3513,8 @@ mod tests {
                 source: PeerSource::Configured,
             }],
             role: None,
-            master_name: None,
-            master_address: None,
+            controller_name: None,
+            controller_address: None,
         };
         let output = format_nodes(&resp);
         assert!(output.contains("mac-mini"));
@@ -3549,8 +3547,8 @@ mod tests {
                 source: PeerSource::Configured,
             }],
             role: None,
-            master_name: None,
-            master_address: None,
+            controller_name: None,
+            controller_address: None,
         };
         let output = format_nodes(&resp);
         assert!(output.contains("offline"));
@@ -3560,24 +3558,24 @@ mod tests {
     }
 
     #[test]
-    fn test_format_enrolled_workers() {
-        let resp = EnrolledWorkersResponse {
-            workers: vec![pulpo_common::api::EnrolledWorkerInfo {
+    fn test_format_enrolled_nodes() {
+        let resp = EnrolledNodesResponse {
+            nodes: vec![pulpo_common::api::EnrolledNodeInfo {
                 node_name: "worker-1".into(),
                 last_seen_at: Some("2026-04-02T17:00:00Z".into()),
                 last_seen_address: Some("10.0.0.10".into()),
             }],
         };
-        let output = format_enrolled_workers(&resp);
+        let output = format_enrolled_nodes(&resp);
         assert!(output.contains("NAME"));
         assert!(output.contains("worker-1"));
         assert!(output.contains("10.0.0.10"));
     }
 
     #[test]
-    fn test_format_enrolled_workers_empty() {
-        let resp = EnrolledWorkersResponse { workers: vec![] };
-        assert_eq!(format_enrolled_workers(&resp), "No enrolled workers.");
+    fn test_format_enrolled_nodes_empty() {
+        let resp = EnrolledNodesResponse { nodes: vec![] };
+        assert_eq!(format_enrolled_nodes(&resp), "No enrolled nodes.");
     }
 
     #[tokio::test]
@@ -4224,17 +4222,9 @@ mod tests {
     #[test]
     fn test_cli_parse_alias_nodes() {
         let cli = Cli::try_parse_from(["pulpo", "n"]).unwrap();
-        assert!(matches!(&cli.command, Some(Commands::Nodes)));
-    }
-
-    #[test]
-    fn test_cli_parse_alias_workers_list() {
-        let cli = Cli::try_parse_from(["pulpo", "workers", "ls"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Some(Commands::Workers {
-                action: WorkerAction::List
-            })
+            Some(Commands::Nodes { action: None })
         ));
     }
 

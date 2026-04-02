@@ -11,14 +11,14 @@ pub mod notifications;
 pub mod peers;
 pub mod push;
 
+pub mod node_auth;
+pub mod node_commands;
 pub mod routes;
 pub mod schedules;
 pub mod secrets;
 pub mod sessions;
 pub mod static_files;
 pub mod watchdog;
-pub mod worker_auth;
-pub mod worker_commands;
 pub mod ws;
 
 use std::path::PathBuf;
@@ -29,7 +29,7 @@ use pulpo_common::event::PulpoEvent;
 use tokio::sync::{RwLock, broadcast};
 
 use crate::config::Config;
-use crate::master::{CommandQueue, SessionIndex};
+use crate::controller::{CommandQueue, SessionIndex};
 use crate::peers::PeerRegistry;
 use crate::session::manager::SessionManager;
 use crate::store::Store;
@@ -53,9 +53,9 @@ pub struct AppState {
     pub event_tx: broadcast::Sender<PulpoEvent>,
     /// Watch channel sender for pushing watchdog config changes to the running loop.
     pub watchdog_config_tx: Option<tokio::sync::watch::Sender<WatchdogRuntimeConfig>>,
-    /// Master session index, hydrated from `SQLite` on startup and kept hot in memory.
+    /// Controller session index, hydrated from `SQLite` on startup and kept hot in memory.
     pub session_index: Option<Arc<SessionIndex>>,
-    /// Command queue for master mode (pending commands for workers).
+    /// Command queue for controller mode (pending commands for nodes).
     pub command_queue: Option<Arc<CommandQueue>>,
 }
 
@@ -108,7 +108,7 @@ impl AppState {
         })
     }
 
-    pub fn with_event_tx_master(
+    pub fn with_event_tx_controller(
         config: Config,
         config_path: PathBuf,
         session_manager: SessionManager,
@@ -136,7 +136,7 @@ impl AppState {
         })
     }
 
-    /// Full constructor with all optional fields (watchdog + master mode).
+    /// Full constructor with all optional fields (watchdog + controller mode).
     #[allow(clippy::too_many_arguments)]
     pub fn with_all(
         config: Config,
@@ -228,7 +228,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -258,7 +258,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let config_path = tmpdir.path().join("config.toml");
         let backend = Arc::new(StubBackend);
@@ -297,7 +297,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -345,7 +345,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -365,7 +365,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_app_state_with_event_tx_master() {
+    async fn test_app_state_with_event_tx_controller() {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -383,7 +383,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let config_path = tmpdir.path().join("config.toml");
         let backend = Arc::new(StubBackend);
@@ -391,9 +391,9 @@ mod tests {
             SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        let session_index = Arc::new(crate::master::SessionIndex::new());
-        let command_queue = Arc::new(crate::master::CommandQueue::new());
-        let state = AppState::with_event_tx_master(
+        let session_index = Arc::new(crate::controller::SessionIndex::new());
+        let command_queue = Arc::new(crate::controller::CommandQueue::new());
+        let state = AppState::with_event_tx_controller(
             config,
             config_path.clone(),
             manager,
@@ -410,7 +410,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_app_state_with_event_tx_master_none() {
+    async fn test_app_state_with_event_tx_controller_none() {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -428,14 +428,14 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
             SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        let state = AppState::with_event_tx_master(
+        let state = AppState::with_event_tx_controller(
             config,
             tmpdir.path().join("config.toml"),
             manager,
@@ -468,7 +468,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig::default(),
+            controller: crate::config::ControllerConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =

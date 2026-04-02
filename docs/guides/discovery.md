@@ -11,19 +11,19 @@ Pulpo supports two methods for multi-node operation: **Tailscale auto-discovery*
 Discovery tells nodes about each other. It does **not** make every node an equally capable control plane.
 
 - **Standalone node**: local-only view and actions.
-- **Worker node**: local sessions remain visible and manageable on that worker, but fleet-wide view and cross-node actions belong to the master.
-- **Master node**: canonical fleet-wide visibility and cross-node control surface, including remote create and targeted schedule execution.
+- **Managed node**: local sessions remain visible and manageable on that node, but fleet-wide view and cross-node actions belong to the controller.
+- **Controller node**: canonical fleet-wide visibility and cross-node control surface, including remote create and targeted schedule execution.
 
-In the web UI, workers should point you at the configured master instead of pretending their fleet view is authoritative. The worker dashboard remains useful for local sessions, but any fleet-wide create, stop, resume, or scheduled execution flow should go through the master.
+In the web UI, managed nodes should point you at the configured controller instead of pretending their fleet view is authoritative. The node dashboard remains useful for local sessions, but any fleet-wide create, stop, resume, or scheduled execution flow should go through the controller.
 
-Before a worker can participate in the fleet, enroll it on the master and issue its worker token:
+Before a node can participate in the fleet, enroll it on the controller and issue its node token:
 
 ```bash
-pulpo --node master-node workers enroll gpu-box
-pulpo --node master-node workers list
+pulpo --node controller-node nodes enroll gpu-box
+pulpo --node controller-node nodes enrolled
 ```
 
-Discovery tells the master where a worker is. Enrollment tells the master which workers are trusted members of the fleet.
+Discovery tells the controller where a node is. Enrollment tells the controller which nodes are trusted members of the fleet.
 
 > **Note:** Distributed discovery methods (mDNS, seed-based gossip) were removed to simplify the codebase. They may return in a future version. Use Tailscale discovery or manual `[peers]` config instead.
 
@@ -40,7 +40,7 @@ tag = "pulpo"              # optional: filter by ACL tag
 discovery_interval_secs = 30  # default: 30
 ```
 
-Binds locally, exposes itself over the tailnet via `tailscale serve`, discovers peers via the local Tailscale API, and still uses enrolled worker tokens for worker-to-master identity.
+Binds locally, exposes itself over the tailnet via `tailscale serve`, discovers peers via the local Tailscale API, and still uses enrolled node tokens for node-to-controller identity.
 
 ## Manual peers
 

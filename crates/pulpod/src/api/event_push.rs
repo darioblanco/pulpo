@@ -9,9 +9,9 @@ use pulpo_common::api::{ErrorResponse, EventPushRequest, SessionIndexEntry};
 use pulpo_common::event::PulpoEvent;
 
 use super::AppState;
-use super::worker_auth::authenticate_worker;
+use super::node_auth::authenticate_node;
 
-/// Workers push batched events to the master via this endpoint.
+/// Nodes push batched events to the controller via this endpoint.
 pub async fn push_events(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -21,13 +21,13 @@ pub async fn push_events(
         return (
             StatusCode::FORBIDDEN,
             Json(ErrorResponse {
-                error: "This node is not in master mode".into(),
+                error: "This node is not in controller mode".into(),
             }),
         )
             .into_response();
     };
 
-    let worker = match authenticate_worker(&state, &headers).await {
+    let worker = match authenticate_node(&state, &headers).await {
         Ok(worker) => worker,
         Err(err) => return err.into_response(),
     };
@@ -89,7 +89,7 @@ pub async fn push_events(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("failed to persist master worker heartbeat: {e}"),
+                error: format!("failed to persist controller node heartbeat: {e}"),
             }),
         )
             .into_response();
@@ -102,7 +102,7 @@ pub async fn push_events(
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("failed to persist enrolled worker heartbeat: {e}"),
+                error: format!("failed to persist enrolled node heartbeat: {e}"),
             }),
         )
             .into_response();
@@ -119,7 +119,7 @@ mod tests {
 
     use axum_test::TestServer;
     use pulpo_common::api::{
-        EnrollWorkerRequest, EnrollWorkerResponse, EventPushRequest, FleetSessionsResponse,
+        EnrollNodeRequest, EnrollNodeResponse, EventPushRequest, FleetSessionsResponse,
         SessionIndexEntry,
     };
     use pulpo_common::event::{PulpoEvent, SessionDeletedEvent, SessionEvent};
@@ -128,12 +128,12 @@ mod tests {
     use crate::api::routes;
     use crate::backend::StubBackend;
     use crate::config::{Config, NodeConfig};
-    use crate::master::{CommandQueue, SessionIndex};
+    use crate::controller::{CommandQueue, SessionIndex};
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
 
-    async fn master_test_server() -> (TestServer, Arc<AppState>) {
+    async fn controller_test_server() -> (TestServer, Arc<AppState>) {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -151,9 +151,9 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig {
+            controller: crate::config::ControllerConfig {
                 enabled: true,
-                ..crate::config::MasterConfig::default()
+                ..crate::config::ControllerConfig::default()
             },
         };
         let backend = Arc::new(StubBackend);
@@ -163,7 +163,7 @@ mod tests {
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let session_index = Arc::new(SessionIndex::new());
         let command_queue = Arc::new(CommandQueue::new());
-        let state = AppState::with_event_tx_master(
+        let state = AppState::with_event_tx_controller(
             config,
             tmpdir.path().join("config.toml"),
             manager,
@@ -195,9 +195,9 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig {
+            controller: crate::config::ControllerConfig {
                 enabled: true,
-                ..crate::config::MasterConfig::default()
+                ..crate::config::ControllerConfig::default()
             },
         };
         let backend = Arc::new(StubBackend);
@@ -232,22 +232,22 @@ mod tests {
     }
 
     #[allow(clippy::future_not_send)]
-    async fn enroll_worker(server: &TestServer, node_name: &str) -> String {
+    async fn enroll_node(server: &TestServer, node_name: &str) -> String {
         let resp = server
-            .post("/api/v1/master/workers")
-            .json(&EnrollWorkerRequest {
+            .post("/api/v1/controller/nodes")
+            .json(&EnrollNodeRequest {
                 node_name: node_name.into(),
             })
             .await;
         resp.assert_status(axum::http::StatusCode::CREATED);
-        let body: EnrollWorkerResponse = resp.json();
+        let body: EnrollNodeResponse = resp.json();
         body.token
     }
 
     #[tokio::test]
     async fn test_push_events_updates_index() {
-        let (server, _) = master_test_server().await;
-        let token = enroll_worker(&server, "worker-1").await;
+        let (server, _) = controller_test_server().await;
+        let token = enroll_node(&server, "worker-1").await;
 
         let req = EventPushRequest {
             events: vec![
@@ -296,9 +296,9 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig {
+            controller: crate::config::ControllerConfig {
                 enabled: true,
-                ..crate::config::MasterConfig::default()
+                ..crate::config::ControllerConfig::default()
             },
         };
         let backend = Arc::new(StubBackend);
@@ -308,7 +308,7 @@ mod tests {
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let session_index = Arc::new(SessionIndex::new());
         let command_queue = Arc::new(CommandQueue::new());
-        let state = AppState::with_event_tx_master(
+        let state = AppState::with_event_tx_controller(
             config,
             tmpdir.path().join("config.toml"),
             manager,
@@ -325,7 +325,7 @@ mod tests {
         let app = routes::build(state);
         let server = TestServer::new(app).unwrap();
 
-        let token = enroll_worker(&server, "worker-1").await;
+        let token = enroll_node(&server, "worker-1").await;
         let req = EventPushRequest {
             events: vec![make_session_event("s1", "task-a", "active")],
         };
@@ -357,8 +357,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_push_events_empty_batch() {
-        let (server, _) = master_test_server().await;
-        let token = enroll_worker(&server, "worker-1").await;
+        let (server, _) = controller_test_server().await;
+        let token = enroll_node(&server, "worker-1").await;
         let req = EventPushRequest { events: vec![] };
         let resp = server
             .post("/api/v1/events/push")
@@ -370,8 +370,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_push_deleted_event_removes_index_entry() {
-        let (server, _) = master_test_server().await;
-        let token = enroll_worker(&server, "worker-1").await;
+        let (server, _) = controller_test_server().await;
+        let token = enroll_node(&server, "worker-1").await;
 
         let create_req = EventPushRequest {
             events: vec![make_session_event("s1", "task-a", "active")],
@@ -430,9 +430,9 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig {
+            controller: crate::config::ControllerConfig {
                 enabled: true,
-                ..crate::config::MasterConfig::default()
+                ..crate::config::ControllerConfig::default()
             },
         };
         let backend = Arc::new(StubBackend);
@@ -453,7 +453,7 @@ mod tests {
             })
             .await;
         let command_queue = Arc::new(CommandQueue::new());
-        let state = AppState::with_event_tx_master(
+        let state = AppState::with_event_tx_controller(
             config,
             tmpdir.path().join("config.toml"),
             manager,
@@ -466,7 +466,7 @@ mod tests {
         let app = routes::build(state);
         let server = TestServer::new(app).unwrap();
 
-        let token = enroll_worker(&server, "worker-1").await;
+        let token = enroll_node(&server, "worker-1").await;
         let req = EventPushRequest {
             events: vec![make_session_event(recovered_id, "task-a", "active")],
         };
@@ -511,9 +511,9 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master: crate::config::MasterConfig {
+            controller: crate::config::ControllerConfig {
                 enabled: true,
-                ..crate::config::MasterConfig::default()
+                ..crate::config::ControllerConfig::default()
             },
         };
         let backend = Arc::new(StubBackend);
@@ -523,7 +523,7 @@ mod tests {
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let session_index = Arc::new(SessionIndex::new());
         let command_queue = Arc::new(CommandQueue::new());
-        let state = AppState::with_event_tx_master(
+        let state = AppState::with_event_tx_controller(
             config,
             tmpdir.path().join("config.toml"),
             manager,
@@ -536,7 +536,7 @@ mod tests {
         let app = routes::build(state);
         let server = TestServer::new(app).unwrap();
 
-        let token = enroll_worker(&server, "worker-1").await;
+        let token = enroll_node(&server, "worker-1").await;
         let create_req = EventPushRequest {
             events: vec![make_session_event("s1", "task-a", "active")],
         };

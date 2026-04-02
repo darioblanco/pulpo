@@ -216,10 +216,10 @@ async fn dispatch_schedule_create(
     req: CreateSessionRequest,
 ) -> anyhow::Result<pulpo_common::session::Session> {
     match schedule.target_node.as_deref() {
-        Some(target_node) if role != NodeRole::Master && target_node != local_node_name => Err(
-            anyhow::anyhow!("target_node requires master mode (got {role:?})"),
+        Some(target_node) if role != NodeRole::Controller && target_node != local_node_name => Err(
+            anyhow::anyhow!("target_node requires controller mode (got {role:?})"),
         ),
-        Some(target_node) if role == NodeRole::Master && target_node != local_node_name => {
+        Some(target_node) if role == NodeRole::Controller && target_node != local_node_name => {
             create_remote_scheduled_session(peer_registry, schedule.name.as_str(), target_node, req)
                 .await
         }
@@ -275,7 +275,7 @@ async fn create_remote_scheduled_session(
             };
             Err(anyhow::anyhow!(message))
         }
-        Err(e) => Err(anyhow::anyhow!("failed to reach worker {target_node}: {e}")),
+        Err(e) => Err(anyhow::anyhow!("failed to reach node {target_node}: {e}")),
     }
 }
 
@@ -475,6 +475,6 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert!(err.to_string().contains("failed to reach worker worker-1"));
+        assert!(err.to_string().contains("failed to reach node worker-1"));
     }
 }

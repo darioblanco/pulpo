@@ -50,9 +50,9 @@ async fn validate_target_node(
         return Ok(());
     };
     let role = state.config.read().await.role();
-    if role != crate::config::NodeRole::Master {
+    if role != crate::config::NodeRole::Controller {
         return Err(bad_request(&format!(
-            "target_node requires master mode (got {role:?})"
+            "target_node requires controller mode (got {role:?})"
         )));
     }
     if target_node.is_empty() {
@@ -276,7 +276,7 @@ mod tests {
     use super::*;
     use crate::api::AppState;
     use crate::backend::StubBackend;
-    use crate::config::{Config, MasterConfig, NodeConfig};
+    use crate::config::{Config, ControllerConfig, NodeConfig};
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
@@ -284,18 +284,18 @@ mod tests {
     use std::collections::HashMap;
 
     async fn test_server() -> TestServer {
-        test_server_with_master(MasterConfig::default()).await
+        test_server_with_master(ControllerConfig::default()).await
     }
 
-    async fn master_test_server() -> TestServer {
-        test_server_with_master(MasterConfig {
+    async fn controller_test_server() -> TestServer {
+        test_server_with_master(ControllerConfig {
             enabled: true,
-            ..MasterConfig::default()
+            ..ControllerConfig::default()
         })
         .await
     }
 
-    async fn test_server_with_master(master: MasterConfig) -> TestServer {
+    async fn test_server_with_master(master: ControllerConfig) -> TestServer {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -313,7 +313,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            master,
+            controller: master,
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -558,7 +558,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_schedule_with_all_fields() {
-        let server = master_test_server().await;
+        let server = controller_test_server().await;
         let resp = server
             .post("/api/v1/schedules")
             .json(&serde_json::json!({
@@ -580,7 +580,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_schedule_all_fields() {
-        let server = master_test_server().await;
+        let server = controller_test_server().await;
         let create_resp = server
             .post("/api/v1/schedules")
             .json(&serde_json::json!({
@@ -624,11 +624,11 @@ mod tests {
                 "cron": "0 3 * * *",
                 "command": "echo hello",
                 "workdir": "/tmp",
-                "target_node": "worker-1"
+                "target_node": "node-1"
             }))
             .await;
         resp.assert_status(StatusCode::BAD_REQUEST);
-        assert!(resp.text().contains("target_node requires master mode"));
+        assert!(resp.text().contains("target_node requires controller mode"));
     }
 
     #[tokio::test]
@@ -649,11 +649,11 @@ mod tests {
         let resp = server
             .put(&format!("/api/v1/schedules/{id}"))
             .json(&serde_json::json!({
-                "target_node": "worker-1"
+                "target_node": "node-1"
             }))
             .await;
         resp.assert_status(StatusCode::BAD_REQUEST);
-        assert!(resp.text().contains("target_node requires master mode"));
+        assert!(resp.text().contains("target_node requires controller mode"));
     }
 
     #[tokio::test]

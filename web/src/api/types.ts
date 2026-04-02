@@ -20,9 +20,9 @@ export interface PeerInfo {
 export interface PeersResponse {
   local: NodeInfo;
   peers: PeerInfo[];
-  role?: 'standalone' | 'master' | 'worker' | string;
-  master_name?: string | null;
-  master_address?: string | null;
+  role?: 'standalone' | 'controller' | 'node' | string;
+  controller_name?: string | null;
+  controller_address?: string | null;
 }
 
 export interface Session {

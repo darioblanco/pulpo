@@ -138,7 +138,7 @@ pulpo schedule add nightly-review "0 3 * * *" \
 
 Or let Pulpo choose automatically:
 
-Only use a remote-targeted schedule when the request goes to the master and the target node has the repo at the same path, or your operational setup guarantees the right path exists there.
+Only use a remote-targeted schedule when the request goes to the controller and the target node has the repo at the same path, or your operational setup guarantees the right path exists there.
 
 ## Recommended Companion Features
 
