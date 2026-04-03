@@ -8,6 +8,7 @@ use pulpo_common::peer::PeerEntry;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub node: NodeConfig,
     #[serde(default)]
@@ -28,6 +29,7 @@ pub struct Config {
 
 /// Controller/node mode configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ControllerConfig {
     /// If true, this node aggregates events from managed nodes.
     #[serde(default)]
@@ -71,6 +73,7 @@ pub enum NodeRole {
 
 /// Docker runtime configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DockerConfig {
     /// Docker image for container sessions.
     #[serde(default = "default_docker_image")]
@@ -103,6 +106,7 @@ fn default_docker_volumes() -> Vec<String> {
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct InkConfig {
     #[serde(default)]
     pub description: Option<String>,
@@ -118,6 +122,7 @@ pub struct InkConfig {
 
 /// Notification configuration (webhooks for status updates).
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NotificationsConfig {
     /// Discord webhook notifications.
     #[serde(default)]
@@ -132,6 +137,7 @@ pub struct NotificationsConfig {
 
 /// VAPID key configuration for Web Push notifications.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct VapidConfig {
     /// Base64url-encoded P-256 private key (32 bytes).
     #[serde(default)]
@@ -143,6 +149,7 @@ pub struct VapidConfig {
 
 /// Discord webhook configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct DiscordWebhookConfig {
     /// Discord webhook URL.
     pub webhook_url: String,
@@ -154,6 +161,7 @@ pub struct DiscordWebhookConfig {
 
 /// Generic webhook endpoint configuration.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct WebhookEndpointConfig {
     /// Human-readable name for this endpoint.
     pub name: String,
@@ -171,6 +179,7 @@ pub struct WebhookEndpointConfig {
 
 /// Authentication configuration.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthConfig {
     /// Bearer token for API authentication (auto-generated on first run).
     /// Only used in `public` bind mode.
@@ -214,6 +223,7 @@ pub fn ensure_vapid_keys(config: &mut Config) -> bool {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct WatchdogConfig {
     #[serde(default = "default_watchdog_enabled")]
     pub enabled: bool,
@@ -228,7 +238,7 @@ pub struct WatchdogConfig {
     #[serde(default = "default_idle_action")]
     pub idle_action: String,
     /// Seconds after Ready before tmux shell is killed (0 = disabled).
-    #[serde(default, alias = "finished_ttl_secs", alias = "exited_ttl_secs")]
+    #[serde(default)]
     pub ready_ttl_secs: u64,
     /// Auto-adopt external tmux sessions into pulpo management.
     #[serde(default = "default_adopt_tmux")]
@@ -319,6 +329,7 @@ const fn default_idle_threshold_secs() -> u64 {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NodeConfig {
     #[serde(default = "default_name")]
     pub name: String,
@@ -618,6 +629,46 @@ data_dir = "/tmp/pulpo-test"
 
         let result = load(tmpfile.path().to_str().unwrap());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_rejects_unknown_top_level_section() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "test-node"
+
+[sandbox]
+enabled = true
+"#
+        )
+        .unwrap();
+
+        let err = format!("{:#}", load(tmpfile.path().to_str().unwrap()).unwrap_err());
+        assert!(err.contains("Failed to parse config"));
+        assert!(err.contains("sandbox"));
+    }
+
+    #[test]
+    fn test_load_rejects_deprecated_watchdog_ready_ttl_alias() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "test-node"
+
+[watchdog]
+finished_ttl_secs = 60
+"#
+        )
+        .unwrap();
+
+        let err = format!("{:#}", load(tmpfile.path().to_str().unwrap()).unwrap_err());
+        assert!(err.contains("Failed to parse config"));
+        assert!(err.contains("finished_ttl_secs"));
     }
 
     #[test]

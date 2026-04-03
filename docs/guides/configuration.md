@@ -4,6 +4,11 @@ Default config path: `~/.pulpo/config.toml`
 
 Pulpo runs with zero config — all sections are optional with sensible defaults.
 
+Breaking cleanup note:
+
+- unknown or deprecated config keys now fail at startup instead of being ignored
+- pre-`sqlx` legacy databases are no longer upgraded in place; if Pulpo reports an unsupported legacy schema, delete `~/.pulpo/state.db` and restart
+
 ## Minimal Example
 
 ```toml

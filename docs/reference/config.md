@@ -4,6 +4,10 @@ Default file: `~/.pulpo/config.toml`
 
 All sections are optional. Pulpo runs with zero config.
 
+Unknown config fields are rejected. Deprecated keys are not silently accepted.
+Pre-`sqlx` legacy databases are unsupported; if startup reports an unsupported legacy schema,
+delete `~/.pulpo/state.db` and restart.
+
 ## `[node]`
 
 | Field | Type | Default | Description |

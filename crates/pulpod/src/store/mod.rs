@@ -57,8 +57,36 @@ impl Store {
     }
 
     pub async fn migrate(&self) -> Result<()> {
+        self.reject_unsupported_legacy_schema().await?;
         MIGRATOR.run(&self.pool).await?;
         self.enforce_db_permissions();
+
+        Ok(())
+    }
+
+    async fn reject_unsupported_legacy_schema(&self) -> Result<()> {
+        let has_sqlx_migrations: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        if has_sqlx_migrations > 0 {
+            return Ok(());
+        }
+
+        let has_sessions_table: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
+        if has_sessions_table > 0 {
+            anyhow::bail!(
+                "unsupported legacy database schema detected; delete {}/state.db to reinitialize",
+                self.data_dir
+            );
+        }
 
         Ok(())
     }
@@ -1110,6 +1138,21 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(has_sandbox, 0);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_rejects_unsupported_legacy_schema() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+
+        sqlx::query("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
+            .execute(store.pool())
+            .await
+            .unwrap();
+
+        let err = store.migrate().await.unwrap_err().to_string();
+        assert!(err.contains("unsupported legacy database schema detected"));
+        assert!(err.contains("state.db"));
     }
 
     #[tokio::test]

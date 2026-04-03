@@ -286,7 +286,7 @@ pulpo/
 │   │   │   ├── manager.rs        # Orchestration (spawn, stop, resume)
 │   │   │   └── pty_bridge.rs     # PTY bridge for WebSocket streaming
 │   │   ├── store/                # Persistence
-│   │   │   └── mod.rs            # SQLite store API + migration bridge
+│   │   │   └── mod.rs            # SQLite store API
 │   │   ├── notifications/        # Push notifications
 │   │   │   ├── mod.rs            # Module declaration
 │   │   │   └── discord.rs        # Discord webhook notifier + loop
