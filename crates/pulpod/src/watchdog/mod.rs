@@ -1,3 +1,4 @@
+mod adopt;
 mod git;
 mod intervention;
 pub mod memory;
@@ -6,6 +7,9 @@ pub mod output_patterns;
 use std::sync::Arc;
 use std::time::Duration;
 
+use adopt::adopt_tmux_sessions;
+#[cfg(test)]
+use adopt::classify_adopted_process;
 use memory::MemoryReader;
 #[cfg(test)]
 use memory::MemorySnapshot;
@@ -787,150 +791,6 @@ async fn cleanup_ready_sessions(backend: &Arc<dyn Backend>, store: &Store, ready
                 age_secs = age.num_seconds(),
                 "Ready cleanup: stopped tmux shell after TTL"
             );
-        }
-    }
-}
-
-/// Known agent process names — adopted as Active.
-const AGENT_PROCESSES: &[&str] = &["claude", "codex", "gemini", "opencode"];
-
-/// Known shell process names — adopted as Ready.
-const SHELL_PROCESSES: &[&str] = &["bash", "zsh", "sh", "fish", "nu"];
-
-/// Determine the status for an adopted tmux session based on its running process.
-pub fn classify_adopted_process(process: &str) -> SessionStatus {
-    let lower = process.to_lowercase();
-    if AGENT_PROCESSES.iter().any(|a| lower.contains(a)) {
-        SessionStatus::Active
-    } else if SHELL_PROCESSES.iter().any(|s| lower == *s) {
-        SessionStatus::Ready
-    } else {
-        // Unknown process — conservatively treat as Active
-        SessionStatus::Active
-    }
-}
-
-/// Auto-discover tmux sessions not tracked by pulpo and adopt them.
-#[allow(clippy::too_many_lines)]
-async fn adopt_tmux_sessions(backend: &Arc<dyn Backend>, store: &Store, ctx: &ReadyContext) {
-    // Get all tmux sessions as (backend_id, name) pairs
-    let tmux_sessions = match backend.list_sessions() {
-        Ok(s) => s,
-        Err(e) => {
-            debug!("Adopt: failed to list tmux sessions: {e}");
-            return;
-        }
-    };
-
-    if tmux_sessions.is_empty() {
-        return;
-    }
-
-    // Get all pulpo sessions to build known sets
-    let pulpo_sessions = match store.list_sessions().await {
-        Ok(s) => s,
-        Err(e) => {
-            warn!("Adopt: failed to list pulpo sessions: {e}");
-            return;
-        }
-    };
-
-    // Build sets of known backend IDs and live session names
-    let live_statuses = [
-        SessionStatus::Creating,
-        SessionStatus::Active,
-        SessionStatus::Idle,
-        SessionStatus::Ready,
-    ];
-    // Ghost fix: only consider backend IDs from live sessions, so stopped sessions
-    // with old backend_session_ids don't block re-adoption of new tmux sessions.
-    let known_ids: std::collections::HashSet<String> = pulpo_sessions
-        .iter()
-        .filter(|s| live_statuses.contains(&s.status))
-        .filter_map(|s| s.backend_session_id.clone())
-        .collect();
-    let known_names: std::collections::HashSet<&str> = pulpo_sessions
-        .iter()
-        .filter(|s| live_statuses.contains(&s.status))
-        .map(|s| s.name.as_str())
-        .collect();
-
-    for (tmux_id, tmux_name) in &tmux_sessions {
-        // Skip if already tracked by backend ID or live name
-        if known_ids.contains(tmux_id)
-            || known_ids.contains(tmux_name)
-            || known_names.contains(tmux_name.as_str())
-        {
-            continue;
-        }
-
-        // Skip sessions that look like Claude Code's internal teammate-mode sessions
-        // (named "claude-<hex>") to avoid adopting sub-agents managed by Claude itself.
-        if tmux_name.starts_with("claude-") && tmux_name.len() > 10 {
-            debug!("Adopt: skipping Claude teammate session {tmux_name}");
-            continue;
-        }
-
-        // Get pane info for classification
-        let (process, workdir) = match backend.pane_info(tmux_name) {
-            Ok(info) => info,
-            Err(e) => {
-                debug!("Adopt: failed to get pane info for {tmux_name}: {e}");
-                continue;
-            }
-        };
-
-        let status = classify_adopted_process(&process);
-
-        // Try to capture full command line for richer resume (item 4)
-        let command = backend
-            .pane_command_line(tmux_id)
-            .unwrap_or_else(|_| process.clone());
-
-        let session = pulpo_common::session::Session {
-            id: uuid::Uuid::new_v4(),
-            name: tmux_name.clone(),
-            workdir,
-            command,
-            description: Some("Adopted from tmux".into()),
-            status,
-            backend_session_id: Some(tmux_id.clone()),
-            ..Default::default()
-        };
-
-        if let Err(e) = store.insert_session(&session).await {
-            warn!("Adopt: failed to insert session {tmux_name}: {e}");
-            continue;
-        }
-
-        // Tag the tmux session with pulpo env vars so tools inside can identify context
-        if let Err(e) = backend.set_env(tmux_name, "PULPO_SESSION_ID", &session.id.to_string()) {
-            debug!("Adopt: failed to set PULPO_SESSION_ID for {tmux_name}: {e}");
-        }
-        if let Err(e) = backend.set_env(tmux_name, "PULPO_SESSION_NAME", tmux_name) {
-            debug!("Adopt: failed to set PULPO_SESSION_NAME for {tmux_name}: {e}");
-        }
-
-        info!(
-            session_name = %tmux_name,
-            process = %process,
-            status = %status,
-            "Adopted external tmux session"
-        );
-
-        // Emit SSE event
-        if let Some(tx) = &ctx.event_tx {
-            let event = SessionEvent {
-                session_id: session.id.to_string(),
-                session_name: tmux_name.clone(),
-                status: status.to_string(),
-                previous_status: None,
-                node_name: ctx.node_name.clone(),
-                output_snippet: None,
-                timestamp: chrono::Utc::now().to_rfc3339(),
-                ..Default::default()
-            };
-            let _ = tx.send(PulpoEvent::Session(event));
         }
     }
 }
