@@ -9,35 +9,16 @@ use pulpo_common::api::{
     CreateSessionRequest, CreateSessionResponse, ErrorResponse, ListSessionsQuery, NodeCommand,
     OutputQuery, SendInputRequest, SessionIndexEntry,
 };
-use pulpo_common::peer::PeerInfo;
 use pulpo_common::session::{Session, SessionStatus};
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
-use crate::remote::{
-    RemoteNodeTarget, apply_remote_auth, normalize_http_base, remote_client, resolve_peer_target,
+use crate::api::session_remote::{
+    ApiError, expect_remote_no_content, internal_error, parse_remote_json, remote_json_request,
+    reqwest_error_response, resolve_remote_node_target, resolve_remote_worker_target,
+    send_remote_request,
 };
-
-type ApiError = (StatusCode, Json<ErrorResponse>);
-
-fn internal_error(msg: &str) -> ApiError {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
-
-fn bad_gateway(msg: &str) -> ApiError {
-    (
-        StatusCode::BAD_GATEWAY,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
+use crate::remote::{apply_remote_auth, remote_client};
 
 fn session_from_index_entry(entry: SessionIndexEntry) -> Session {
     let status = entry
@@ -54,121 +35,6 @@ fn session_from_index_entry(entry: SessionIndexEntry) -> Session {
             .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc)),
         ..Session::default()
     }
-}
-
-#[derive(Debug, Clone)]
-struct RemoteWorkerTarget {
-    session_id: String,
-    node_name: String,
-    base_url: String,
-    token: Option<String>,
-}
-
-fn reqwest_status_to_axum(status: reqwest::StatusCode) -> StatusCode {
-    StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY)
-}
-
-async fn reqwest_error_response(resp: reqwest::Response, fallback: &str) -> ApiError {
-    let status = reqwest_status_to_axum(resp.status());
-    let error = match resp.json::<ErrorResponse>().await {
-        Ok(body) => body.error,
-        Err(_) => fallback.to_owned(),
-    };
-    (status, Json(ErrorResponse { error }))
-}
-
-async fn send_remote_request(
-    request: reqwest::RequestBuilder,
-    failure: String,
-) -> Result<reqwest::Response, ApiError> {
-    request
-        .send()
-        .await
-        .map_err(|e| bad_gateway(&format!("{failure}: {e}")))
-}
-
-fn remote_json_request(
-    target: &RemoteWorkerTarget,
-    request: reqwest::RequestBuilder,
-) -> reqwest::RequestBuilder {
-    apply_remote_auth(request, target.token.as_deref())
-}
-
-async fn parse_remote_json<T: DeserializeOwned>(
-    resp: reqwest::Response,
-    fallback: &str,
-    parse_error: &str,
-) -> Result<T, ApiError> {
-    if !resp.status().is_success() {
-        return Err(reqwest_error_response(resp, fallback).await);
-    }
-
-    resp.json::<T>()
-        .await
-        .map_err(|e| internal_error(&format!("{parse_error}: {e}")))
-}
-
-async fn expect_remote_no_content(
-    resp: reqwest::Response,
-    fallback: &str,
-) -> Result<StatusCode, ApiError> {
-    if !resp.status().is_success() {
-        return Err(reqwest_error_response(resp, fallback).await);
-    }
-    Ok(StatusCode::NO_CONTENT)
-}
-
-async fn resolve_remote_worker_target(
-    state: &Arc<super::AppState>,
-    id: &str,
-) -> Result<Option<RemoteWorkerTarget>, ApiError> {
-    let Some(session_index) = &state.session_index else {
-        return Ok(None);
-    };
-    let Some(entry) = session_index.get(id).await else {
-        return Ok(None);
-    };
-
-    let peer: Option<PeerInfo> = state.peer_registry.get(&entry.node_name).await;
-    let address = peer
-        .as_ref()
-        .map(|p| p.address.clone())
-        .or_else(|| entry.node_address.clone());
-
-    let Some(address) = address else {
-        return Err(bad_gateway(&format!(
-            "node address unknown for remote session {id} on node {}",
-            entry.node_name
-        )));
-    };
-
-    let token = state.peer_registry.get_token(&entry.node_name).await;
-    Ok(Some(RemoteWorkerTarget {
-        session_id: entry.session_id,
-        node_name: entry.node_name,
-        base_url: normalize_http_base(&address),
-        token,
-    }))
-}
-
-async fn resolve_remote_node_target(
-    state: &Arc<super::AppState>,
-    target_node: &str,
-) -> Result<Option<RemoteNodeTarget>, ApiError> {
-    let local_name = state.config.read().await.node.name.clone();
-    if target_node == local_name {
-        return Ok(None);
-    }
-
-    let Some(target) = resolve_peer_target(&state.peer_registry, target_node).await else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("target node not found: {target_node}"),
-            }),
-        ));
-    };
-    Ok(Some(target))
 }
 
 pub async fn list(

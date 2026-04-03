@@ -16,6 +16,7 @@ pub mod node_commands;
 pub mod routes;
 pub mod schedules;
 pub mod secrets;
+mod session_remote;
 pub mod sessions;
 pub mod static_files;
 pub mod watchdog;
