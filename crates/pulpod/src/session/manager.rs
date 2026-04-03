@@ -442,6 +442,77 @@ impl SessionManager {
         Ok(())
     }
 
+    fn stop_session_backend(
+        &self,
+        session: &Session,
+        backend_id: &str,
+        backend: &Arc<dyn crate::backend::Backend>,
+    ) -> Result<()> {
+        if let Err(error) = backend.kill_session(backend_id) {
+            let name_id = self.backend.session_id(&session.name);
+            if name_id != backend_id && backend.kill_session(&name_id).is_ok() {
+                tracing::info!(
+                    session = %session.name,
+                    "Killed session by name after stale backend ID failed"
+                );
+                return Ok(());
+            }
+
+            if matches!(
+                session.status,
+                SessionStatus::Lost | SessionStatus::Stopped | SessionStatus::Ready
+            ) {
+                tracing::debug!(
+                    session = %session.name,
+                    error = %error,
+                    "Ignoring kill error for {status} session",
+                    status = session.status
+                );
+                return Ok(());
+            }
+
+            bail!("failed to stop session: {error}");
+        }
+
+        Ok(())
+    }
+
+    async fn mark_session_stopped(&self, session: &mut Session) -> Result<()> {
+        let previous = session.status;
+        self.store
+            .update_session_status(&session.id.to_string(), SessionStatus::Stopped)
+            .await?;
+        session.status = SessionStatus::Stopped;
+        self.emit_event(session, Some(previous));
+        Ok(())
+    }
+
+    async fn purge_session(&self, session: &Session) -> Result<()> {
+        let session_id = session.id.to_string();
+        if let Some(ref wt_path) = session.worktree_path {
+            tracing::info!(
+                session = %session.name,
+                path = %wt_path,
+                "Cleaning up worktree after purge"
+            );
+            cleanup_worktree(wt_path, &session.workdir);
+        }
+        self.store.delete_session(&session_id).await?;
+        self.emit_session_deleted(session);
+        Ok(())
+    }
+
+    fn emit_session_deleted(&self, session: &Session) {
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(PulpoEvent::SessionDeleted(SessionDeletedEvent {
+                session_id: session.id.to_string(),
+                session_name: session.name.clone(),
+                node_name: self.node_name.clone(),
+                timestamp: Utc::now().to_rfc3339(),
+            }));
+        }
+    }
+
     /// Resolve ink: if ink has command, use it. Request command takes precedence.
     /// Also resolves secrets and runtime defaults from the ink.
     fn resolve_ink(&self, req: &CreateSessionRequest) -> Result<ResolvedInk> {
@@ -562,7 +633,7 @@ impl SessionManager {
     }
 
     pub async fn stop_session(&self, id: &str, purge: bool) -> Result<()> {
-        let session = self
+        let mut session = self
             .store
             .get_session(id)
             .await?
@@ -570,46 +641,11 @@ impl SessionManager {
 
         let backend_id = self.resolve_backend_id(&session);
         let backend = self.backend_for_id(&backend_id);
-        if let Err(e) = backend.kill_session(&backend_id) {
-            // The stored $N backend ID may be stale — retry with the session name.
-            let name_id = self.backend.session_id(&session.name);
-            if name_id != backend_id && backend.kill_session(&name_id).is_ok() {
-                tracing::info!(session = %session.name, "Killed session by name after stale backend ID failed");
-            } else if session.status == SessionStatus::Lost
-                || session.status == SessionStatus::Stopped
-                || session.status == SessionStatus::Ready
-            {
-                // For terminal states the backend process is already gone — that's fine.
-                tracing::debug!(session = %session.name, error = %e, "Ignoring kill error for {status} session", status = session.status);
-            } else {
-                bail!("failed to stop session: {e}");
-            }
-        }
-
-        let previous = session.status;
-        let session_id = session.id.to_string();
-        self.store
-            .update_session_status(&session_id, SessionStatus::Stopped)
-            .await?;
-        let mut stopped_session = session;
-        stopped_session.status = SessionStatus::Stopped;
-        self.emit_event(&stopped_session, Some(previous));
+        self.stop_session_backend(&session, &backend_id, backend)?;
+        self.mark_session_stopped(&mut session).await?;
 
         if purge {
-            // Clean up worktree only on purge — stop preserves it for resume.
-            if let Some(ref wt_path) = stopped_session.worktree_path {
-                tracing::info!(session = %stopped_session.name, path = %wt_path, "Cleaning up worktree after purge");
-                cleanup_worktree(wt_path, &stopped_session.workdir);
-            }
-            self.store.delete_session(&session_id).await?;
-            if let Some(tx) = &self.event_tx {
-                let _ = tx.send(PulpoEvent::SessionDeleted(SessionDeletedEvent {
-                    session_id,
-                    session_name: stopped_session.name.clone(),
-                    node_name: self.node_name.clone(),
-                    timestamp: Utc::now().to_rfc3339(),
-                }));
-            }
+            self.purge_session(&session).await?;
         }
 
         Ok(())
