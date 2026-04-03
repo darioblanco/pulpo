@@ -1,3 +1,63 @@
+/// Patterns that indicate the agent is waiting for user input.
+/// Pre-lowercased for efficient matching against lowercased output lines.
+const WAITING_PATTERNS: &[&str] = &[
+    // Generic confirmation prompts
+    "(y/n)",
+    "[y/n]",
+    "[yes/no]",
+    "(yes/no)",
+    "yes / no",
+    "do you trust",
+    "press enter",
+    "approve this",
+    "are you sure",
+    "continue?",
+    "confirm?",
+    "proceed?",
+    // Claude Code
+    "(y)es",
+    "(n)o",
+    "(a)lways",
+    "do you want to proceed",
+    // Codex CLI
+    "allow command?",
+    // Gemini CLI
+    "allow?",
+    "approve?",
+    // Aider
+    "to the chat?",
+    "apply edit?",
+    "shell command?",
+    "create new file",
+    // Amazon Q
+    "allow this action?",
+    "accept suggestion?",
+    // SSH/sudo
+    "continue connecting (yes/no)",
+    "'s password:",
+    "[sudo] password",
+];
+
+/// Check if the terminal output suggests the agent is waiting for user input.
+/// Inspects the last 5 lines of output for known prompt patterns and extra user-configured patterns.
+pub fn detect_waiting_for_input(output: &str, extra_patterns: &[String]) -> bool {
+    let last_lines: Vec<&str> = output.lines().rev().take(5).collect();
+    for line in &last_lines {
+        let lower = line.to_lowercase();
+        for pattern in WAITING_PATTERNS {
+            if lower.contains(pattern) {
+                return true;
+            }
+        }
+        for pattern in extra_patterns {
+            if lower.contains(&pattern.to_lowercase()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Extract a PR/MR URL from terminal output.
 ///
 /// Checks for:
