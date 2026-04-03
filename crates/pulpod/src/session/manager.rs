@@ -362,6 +362,46 @@ impl SessionManager {
         Ok(())
     }
 
+    fn recreate_backend_session(
+        session: &Session,
+        active_backend: &Arc<dyn crate::backend::Backend>,
+        effective_workdir: &str,
+        create_id: &str,
+    ) -> Result<()> {
+        let final_command = if session.runtime == Runtime::Docker {
+            session.command.clone()
+        } else {
+            wrap_command(&session.command, &session.id, &session.name, None)
+        };
+        active_backend.create_session(create_id, effective_workdir, &final_command)
+    }
+
+    async fn refresh_backend_session_id(&self, session: &Session) {
+        if session.runtime == Runtime::Tmux
+            && let Ok(tmux_id) = self.backend.query_backend_id(&session.name)
+        {
+            let _ = self
+                .store
+                .update_backend_session_id(&session.id.to_string(), &tmux_id)
+                .await;
+        }
+    }
+
+    async fn mark_session_status(
+        &self,
+        session: &mut Session,
+        previous_status: SessionStatus,
+        next_status: SessionStatus,
+    ) -> Result<()> {
+        self.store
+            .update_session_status(&session.id.to_string(), next_status)
+            .await?;
+        session.status = next_status;
+        session.updated_at = Utc::now();
+        self.emit_event(session, Some(previous_status));
+        Ok(())
+    }
+
     /// Resolve ink: if ink has command, use it. Request command takes precedence.
     /// Also resolves secrets and runtime defaults from the ink.
     fn resolve_ink(&self, req: &CreateSessionRequest) -> Result<ResolvedInk> {
@@ -607,33 +647,18 @@ impl SessionManager {
             } else {
                 self.backend.session_id(&session.name)
             };
-            let final_command = if session.runtime == Runtime::Docker {
-                session.command.clone()
-            } else {
-                wrap_command(&session.command, &session.id, &session.name, None)
-            };
-            active_backend.create_session(&create_id, &effective_workdir, &final_command)?;
-
-            // Query the new tmux $N session ID and update the stored backend_session_id
-            if session.runtime == Runtime::Tmux
-                && let Ok(tmux_id) = self.backend.query_backend_id(&session.name)
-            {
-                let _ = self
-                    .store
-                    .update_backend_session_id(&session.id.to_string(), &tmux_id)
-                    .await;
-            }
+            Self::recreate_backend_session(
+                &session,
+                active_backend,
+                &effective_workdir,
+                &create_id,
+            )?;
+            self.refresh_backend_session_id(&session).await;
         }
 
-        let session_id = session.id.to_string();
-        self.store
-            .update_session_status(&session_id, SessionStatus::Active)
-            .await?;
-
         let mut session = session;
-        session.status = SessionStatus::Active;
-        session.updated_at = Utc::now();
-        self.emit_event(&session, Some(previous_status));
+        self.mark_session_status(&mut session, previous_status, SessionStatus::Active)
+            .await?;
         Ok(session)
     }
 
@@ -654,14 +679,12 @@ impl SessionManager {
                 continue;
             }
             // Backend is dead — resume the session
-            let final_command = if session.runtime == Runtime::Docker {
-                session.command.clone()
-            } else {
-                wrap_command(&session.command, &session.id, &session.name, None)
-            };
-            if let Err(e) =
-                active_backend.create_session(&backend_id, &session.workdir, &final_command)
-            {
+            if let Err(e) = Self::recreate_backend_session(
+                &session,
+                active_backend,
+                &session.workdir,
+                &backend_id,
+            ) {
                 tracing::warn!(
                     session = %session.name,
                     error = %e,
@@ -673,15 +696,7 @@ impl SessionManager {
                 continue;
             }
 
-            // Query the new tmux $N session ID (tmux only)
-            if session.runtime == Runtime::Tmux
-                && let Ok(tmux_id) = self.backend.query_backend_id(&session.name)
-            {
-                let _ = self
-                    .store
-                    .update_backend_session_id(&session.id.to_string(), &tmux_id)
-                    .await;
-            }
+            self.refresh_backend_session_id(&session).await;
 
             // Re-mark as Active
             self.store
