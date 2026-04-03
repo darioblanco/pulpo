@@ -4,10 +4,14 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use pulpo_common::api::{ListSessionsQuery, SessionIndexEntry};
 use pulpo_common::session::{Session, SessionStatus};
+use sqlx::migrate::Migrator;
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 use uuid::Uuid;
 
 use pulpo_common::session::InterventionCode;
+
+static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+const BASELINE_MIGRATION_VERSION: i64 = 1;
 
 /// A Web Push subscription stored for sending push notifications.
 #[derive(Debug, Clone)]
@@ -53,8 +57,34 @@ impl Store {
         })
     }
 
-    #[allow(clippy::too_many_lines)]
     pub async fn migrate(&self) -> Result<()> {
+        if needs_legacy_migration_bridge(&self.pool).await? {
+            self.migrate_legacy_schema().await?;
+            seed_sqlx_baseline(&self.pool).await?;
+        }
+
+        MIGRATOR.run(&self.pool).await?;
+        self.enforce_db_permissions();
+
+        Ok(())
+    }
+
+    fn enforce_db_permissions(&self) {
+        // Set restrictive file permissions on the database file (Unix only)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let db_path = format!("{}/state.db", self.data_dir);
+            if let Ok(metadata) = std::fs::metadata(&db_path) {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o600);
+                let _ = std::fs::set_permissions(&db_path, perms);
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    async fn migrate_legacy_schema(&self) -> Result<()> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
@@ -292,18 +322,6 @@ impl Store {
             sqlx::query("ALTER TABLE secrets ADD COLUMN env TEXT")
                 .execute(&self.pool)
                 .await?;
-        }
-
-        // Set restrictive file permissions on the database file (Unix only)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let db_path = format!("{}/state.db", self.data_dir);
-            if let Ok(metadata) = std::fs::metadata(&db_path) {
-                let mut perms = metadata.permissions();
-                perms.set_mode(0o600);
-                let _ = std::fs::set_permissions(&db_path, perms);
-            }
         }
 
         // Idempotent migration: schedules table
@@ -1302,6 +1320,72 @@ impl Store {
     }
 }
 
+async fn needs_legacy_migration_bridge(pool: &SqlitePool) -> Result<bool> {
+    let has_migrations_table: i32 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if has_migrations_table > 0 {
+        return Ok(false);
+    }
+
+    let has_existing_schema: i32 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (
+            'sessions',
+            'intervention_events',
+            'push_subscriptions',
+            'secrets',
+            'schedules',
+            'controller_session_index',
+            'controller_nodes',
+            'controller_enrolled_nodes',
+            'master_session_index',
+            'master_workers',
+            'master_enrolled_workers'
+        )",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(has_existing_schema > 0)
+}
+
+async fn seed_sqlx_baseline(pool: &SqlitePool) -> Result<()> {
+    sqlx::query(
+        r"
+CREATE TABLE IF NOT EXISTS _sqlx_migrations (
+    version BIGINT PRIMARY KEY,
+    description TEXT NOT NULL,
+    installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    success BOOLEAN NOT NULL,
+    checksum BLOB NOT NULL,
+    execution_time BIGINT NOT NULL
+)
+        ",
+    )
+    .execute(pool)
+    .await?;
+
+    let baseline = MIGRATOR
+        .iter()
+        .find(|migration| migration.version == BASELINE_MIGRATION_VERSION)
+        .ok_or_else(|| anyhow::anyhow!("missing baseline sqlx migration"))?;
+
+    sqlx::query(
+        "INSERT OR IGNORE INTO _sqlx_migrations
+         (version, description, success, checksum, execution_time)
+         VALUES (?, ?, 1, ?, 0)",
+    )
+    .bind(baseline.version)
+    .bind(baseline.description.as_ref())
+    .bind(baseline.checksum.as_ref())
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 fn row_to_session(row: &SqliteRow) -> Result<Session> {
     let id_str: String = row.get("id");
     let status_str: String = row.get("status");
@@ -1507,6 +1591,20 @@ mod tests {
             .fetch_one(store.pool())
             .await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_migrate_uses_sqlx_migrations_table() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+
+        let versions: Vec<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(versions, vec![BASELINE_MIGRATION_VERSION]);
     }
 
     #[tokio::test]
@@ -4039,5 +4137,12 @@ mod tests {
             .unwrap();
         assert_eq!(enrolled.token_hash, "hash-1");
         assert_eq!(enrolled.last_seen_address.as_deref(), Some("10.0.0.10"));
+
+        let versions: Vec<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(versions, vec![BASELINE_MIGRATION_VERSION]);
     }
 }
