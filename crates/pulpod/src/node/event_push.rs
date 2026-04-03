@@ -4,14 +4,15 @@ use pulpo_common::event::PulpoEvent;
 use tracing::{debug, info, warn};
 
 /// Maximum number of events to batch in a single POST request.
+#[cfg(not(coverage))]
 const MAX_BATCH_SIZE: usize = 10;
 
 /// Run the event push loop — subscribes to the local broadcast channel, batches
 /// events, and POSTs them to the controller node.
 #[cfg(not(coverage))]
 pub async fn run_event_push_loop(
-    master_url: String,
-    master_token: String,
+    controller_url: String,
+    controller_token: String,
     _node_name: String,
     mut event_rx: tokio::sync::broadcast::Receiver<PulpoEvent>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
@@ -21,8 +22,8 @@ pub async fn run_event_push_loop(
         .build()
         .expect("failed to build reqwest client");
 
-    let push_url = format!("{master_url}/api/v1/events/push");
-    info!("Node event push loop started (controller={master_url})");
+    let push_url = format!("{controller_url}/api/v1/events/push");
+    info!("Node event push loop started (controller={controller_url})");
 
     loop {
         tokio::select! {
@@ -42,7 +43,7 @@ pub async fn run_event_push_loop(
 
                         let request = client
                             .post(&push_url)
-                            .bearer_auth(&master_token)
+                            .bearer_auth(&controller_token)
                             .json(&req_body);
 
                         match request.send().await {
@@ -83,8 +84,8 @@ pub async fn run_event_push_loop(
 /// Stub for coverage builds — the real loop performs network I/O.
 #[cfg(coverage)]
 pub async fn run_event_push_loop(
-    _master_url: String,
-    _master_token: String,
+    _controller_url: String,
+    _controller_token: String,
     _node_name: String,
     _event_rx: tokio::sync::broadcast::Receiver<PulpoEvent>,
     _shutdown_rx: tokio::sync::watch::Receiver<bool>,
@@ -146,6 +147,7 @@ mod tests {
         assert!(req.events.is_empty());
     }
 
+    #[cfg(not(coverage))]
     #[test]
     fn test_max_batch_size_constant() {
         assert_eq!(MAX_BATCH_SIZE, 10);

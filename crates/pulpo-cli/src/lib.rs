@@ -906,6 +906,7 @@ fn authed_post(
 }
 
 /// Build an authenticated DELETE request.
+#[cfg_attr(coverage, allow(dead_code))]
 fn authed_delete(
     client: &reqwest::Client,
     url: String,
@@ -1330,6 +1331,7 @@ async fn execute_worktree(
 }
 
 /// Format worktree sessions as a table.
+#[cfg_attr(coverage, allow(dead_code))]
 fn format_worktree_sessions(sessions: &[&Session]) -> String {
     if sessions.is_empty() {
         return "No worktree sessions.".into();
@@ -1473,6 +1475,7 @@ async fn execute_ink(
 }
 
 /// Format a map of inks as a table.
+#[cfg_attr(coverage, allow(dead_code))]
 fn format_inks(inks: &serde_json::Map<String, serde_json::Value>) -> String {
     if inks.is_empty() {
         return "No inks configured.".into();
@@ -1507,6 +1510,7 @@ fn format_inks(inks: &serde_json::Map<String, serde_json::Value>) -> String {
 }
 
 /// Format a single ink detail view.
+#[cfg_attr(coverage, allow(dead_code))]
 fn format_ink_detail(name: &str, ink: &serde_json::Value) -> String {
     let mut lines = vec![format!("Ink: {name}")];
     if let Some(desc) = ink.get("description").and_then(|v| v.as_str()) {

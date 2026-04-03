@@ -14,6 +14,10 @@ use pulpo_common::session::{Session, SessionStatus};
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::remote::{
+    RemoteNodeTarget, apply_remote_auth, normalize_http_base, remote_client, resolve_peer_target,
+};
+
 type ApiError = (StatusCode, Json<ErrorResponse>);
 
 fn internal_error(msg: &str) -> ApiError {
@@ -57,21 +61,6 @@ struct RemoteWorkerTarget {
     node_name: String,
     base_url: String,
     token: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct RemoteNodeTarget {
-    node_name: String,
-    base_url: String,
-    token: Option<String>,
-}
-
-fn normalize_http_base(address: &str) -> String {
-    if address.contains("://") {
-        address.to_owned()
-    } else {
-        format!("http://{address}")
-    }
 }
 
 fn reqwest_status_to_axum(status: reqwest::StatusCode) -> StatusCode {
@@ -120,24 +109,6 @@ async fn resolve_remote_worker_target(
     }))
 }
 
-fn apply_remote_auth(
-    request: reqwest::RequestBuilder,
-    token: Option<&String>,
-) -> reqwest::RequestBuilder {
-    if let Some(token) = token {
-        request.bearer_auth(token)
-    } else {
-        request
-    }
-}
-
-fn remote_client() -> Result<reqwest::Client, ApiError> {
-    reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-        .map_err(|e| internal_error(&format!("failed to build HTTP client: {e}")))
-}
-
 async fn resolve_remote_node_target(
     state: &Arc<super::AppState>,
     target_node: &str,
@@ -147,7 +118,7 @@ async fn resolve_remote_node_target(
         return Ok(None);
     }
 
-    let Some(peer) = state.peer_registry.get(target_node).await else {
+    let Some(target) = resolve_peer_target(&state.peer_registry, target_node).await else {
         return Err((
             StatusCode::NOT_FOUND,
             Json(ErrorResponse {
@@ -155,13 +126,7 @@ async fn resolve_remote_node_target(
             }),
         ));
     };
-
-    let token = state.peer_registry.get_token(target_node).await;
-    Ok(Some(RemoteNodeTarget {
-        node_name: target_node.to_owned(),
-        base_url: normalize_http_base(&peer.address),
-        token,
-    }))
+    Ok(Some(target))
 }
 
 pub async fn list(
@@ -229,12 +194,13 @@ pub async fn create(
 
         if let Some(target) = resolve_remote_node_target(&state, &target_node).await? {
             req.target_node = None;
-            let client = remote_client()?;
+            let client = remote_client()
+                .map_err(|e| internal_error(&format!("failed to build HTTP client: {e}")))?;
             let resp = apply_remote_auth(
                 client
                     .post(format!("{}/api/v1/sessions", target.base_url))
                     .json(&req),
-                target.token.as_ref(),
+                target.token.as_deref(),
             )
             .send()
             .await
@@ -344,12 +310,13 @@ pub async fn output(
         };
 
         let lines = query.lines.unwrap_or(100);
-        let client = remote_client()?;
+        let client = remote_client()
+            .map_err(|e| internal_error(&format!("failed to build HTTP client: {e}")))?;
         let url = format!(
             "{}/api/v1/sessions/{}/output?lines={lines}",
             target.base_url, target.session_id
         );
-        let resp = apply_remote_auth(client.get(url), target.token.as_ref())
+        let resp = apply_remote_auth(client.get(url), target.token.as_deref())
             .send()
             .await
             .map_err(|e| {
@@ -387,12 +354,14 @@ pub async fn resume(
             let msg = e.to_string();
             if msg.contains("not found") {
                 if let Some(target) = resolve_remote_worker_target(&state, &id).await? {
-                    let client = remote_client()?;
+                    let client = remote_client().map_err(|e| {
+                        internal_error(&format!("failed to build HTTP client: {e}"))
+                    })?;
                     let url = format!(
                         "{}/api/v1/sessions/{}/resume",
                         target.base_url, target.session_id
                     );
-                    let resp = apply_remote_auth(client.post(url), target.token.as_ref())
+                    let resp = apply_remote_auth(client.post(url), target.token.as_deref())
                         .send()
                         .await
                         .map_err(|e| {
@@ -451,12 +420,13 @@ pub async fn download_output(
             ));
         };
 
-        let client = remote_client()?;
+        let client = remote_client()
+            .map_err(|e| internal_error(&format!("failed to build HTTP client: {e}")))?;
         let url = format!(
             "{}/api/v1/sessions/{}/output/download",
             target.base_url, target.session_id
         );
-        let resp = apply_remote_auth(client.get(url), target.token.as_ref())
+        let resp = apply_remote_auth(client.get(url), target.token.as_deref())
             .send()
             .await
             .map_err(|e| {
@@ -566,7 +536,8 @@ pub async fn input(
                 }),
             ));
         };
-        let client = remote_client()?;
+        let client = remote_client()
+            .map_err(|e| internal_error(&format!("failed to build HTTP client: {e}")))?;
         let url = format!(
             "{}/api/v1/sessions/{}/input",
             target.base_url, target.session_id
@@ -575,7 +546,7 @@ pub async fn input(
             client
                 .post(url)
                 .json(&serde_json::json!({ "text": req.text })),
-            target.token.as_ref(),
+            target.token.as_deref(),
         )
         .send()
         .await

@@ -10,6 +10,7 @@ pub mod node;
 pub mod notifications;
 pub mod peers;
 pub mod platform;
+pub mod remote;
 pub mod scheduler;
 pub mod session;
 pub mod store;

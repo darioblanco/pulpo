@@ -133,7 +133,7 @@ impl SessionManager {
 
     /// Resolve the backend session ID for a session.
     /// Uses the stored `backend_session_id` if available, otherwise computes it
-    /// from the session name (for legacy sessions created before this field existed).
+    /// from the session name when metadata has not recorded a provider value.
     pub fn resolve_backend_id(&self, session: &Session) -> String {
         session
             .backend_session_id
@@ -899,6 +899,7 @@ fn write_secrets_file(
 /// Test-only public wrapper for `wrap_command`, used by tmux integration tests
 /// to verify the full command survives shell parsing and tmux execution.
 #[cfg(test)]
+#[allow(dead_code)]
 pub(crate) fn wrap_command_for_test(
     command: &str,
     session_id: &uuid::Uuid,
@@ -920,7 +921,7 @@ fn wrap_command(
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_owned());
 
     // Build the secrets-sourcing prefix: source the file and delete it immediately.
-    // Uses `. <file>` (POSIX source) for compatibility.
+    // Uses `. <file>` (POSIX source) for broad shell support.
     let secrets_source =
         secrets_file.map_or_else(String::new, |path| format!(". {path} && rm -f {path}; "));
 

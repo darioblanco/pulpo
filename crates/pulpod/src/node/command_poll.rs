@@ -70,8 +70,8 @@ async fn execute_command(
 /// controller and executes them locally.
 #[cfg(not(coverage))]
 pub async fn run_command_poll_loop(
-    master_url: String,
-    master_token: String,
+    controller_url: String,
+    controller_token: String,
     _node_name: String,
     session_manager: crate::session::manager::SessionManager,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
@@ -81,14 +81,14 @@ pub async fn run_command_poll_loop(
         .build()
         .expect("failed to build reqwest client");
 
-    let poll_url = format!("{master_url}/api/v1/node/commands");
+    let poll_url = format!("{controller_url}/api/v1/node/commands");
     let mut interval = tokio::time::interval(Duration::from_secs(5));
-    info!("Node command poll loop started (controller={master_url})");
+    info!("Node command poll loop started (controller={controller_url})");
 
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                let request = client.get(&poll_url).bearer_auth(&master_token);
+                let request = client.get(&poll_url).bearer_auth(&controller_token);
 
                 let response = match request.send().await {
                     Ok(resp) if resp.status().is_success() => resp,
@@ -125,8 +125,8 @@ pub async fn run_command_poll_loop(
 /// Stub for coverage builds — the real loop performs network I/O.
 #[cfg(coverage)]
 pub async fn run_command_poll_loop(
-    _master_url: String,
-    _master_token: String,
+    _controller_url: String,
+    _controller_token: String,
     _node_name: String,
     _session_manager: crate::session::manager::SessionManager,
     _shutdown_rx: tokio::sync::watch::Receiver<bool>,

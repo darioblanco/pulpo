@@ -1,4 +1,4 @@
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", not(coverage)))]
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
@@ -37,6 +37,7 @@ pub fn docker_container_name(backend_id: &str) -> &str {
 
 /// Resolve `~` in a path to the actual home directory.
 /// Returns `None` if the home directory cannot be determined.
+#[cfg_attr(coverage, allow(dead_code))]
 fn resolve_tilde(path: &str) -> Option<PathBuf> {
     path.strip_prefix("~/").map_or_else(
         || {
@@ -52,6 +53,7 @@ fn resolve_tilde(path: &str) -> Option<PathBuf> {
 
 /// Resolve volume mounts: expand `~`, skip mounts where host path does not exist.
 /// Returns resolved volume strings ready for `-v` flags.
+#[cfg_attr(coverage, allow(dead_code))]
 fn resolve_volumes(volumes: &[String]) -> Vec<String> {
     let mut resolved = Vec::new();
     for vol in volumes {
@@ -136,6 +138,8 @@ fn write_credentials_temp_file(data_dir: &Path, credentials_json: &str) -> Optio
 #[cfg(target_os = "macos")]
 #[cfg(not(coverage))]
 fn maybe_extract_claude_credentials(volumes: &[String], data_dir: &str) -> Option<String> {
+    use std::path::Path;
+
     // Check if any volume mounts ~/.claude
     let has_claude_mount = volumes.iter().any(|v| {
         let host = v.split(':').next().unwrap_or("");

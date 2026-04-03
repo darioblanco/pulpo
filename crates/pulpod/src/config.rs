@@ -788,7 +788,7 @@ macbook = "10.0.0.5:7433"
     }
 
     #[test]
-    fn test_load_config_without_peers_backward_compat() {
+    fn test_load_config_without_peers_defaults_empty() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
@@ -1178,7 +1178,7 @@ name = "test"
     }
 
     #[test]
-    fn test_load_config_without_auth_backward_compat() {
+    fn test_load_config_without_auth_defaults_empty() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
@@ -1348,7 +1348,7 @@ token = "peer-secret"
     }
 
     #[test]
-    fn test_load_config_without_watchdog_backward_compat() {
+    fn test_load_config_without_watchdog_defaults() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
@@ -2690,7 +2690,7 @@ image = "my-image:v1"
     }
 
     #[test]
-    fn test_load_old_config_without_docker_section_backward_compat() {
+    fn test_load_config_without_docker_section_defaults() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
@@ -2736,10 +2736,10 @@ port = 7433
         assert_eq!(loaded.docker.volumes[0], "~/.ssh:/root/.ssh:ro");
     }
 
-    // -- Master mode config tests --
+    // -- Controller mode config tests --
 
     #[test]
-    fn test_master_config_default() {
+    fn test_controller_config_default() {
         let mc = ControllerConfig::default();
         assert!(!mc.enabled);
         assert!(mc.address.is_none());
@@ -2748,7 +2748,7 @@ port = 7433
     }
 
     #[test]
-    fn test_master_config_debug_clone() {
+    fn test_controller_config_debug_clone() {
         let mc = ControllerConfig {
             enabled: true,
             address: Some("http://master:7433".into()),
@@ -2760,7 +2760,7 @@ port = 7433
     }
 
     #[test]
-    fn test_config_no_master_section_role_standalone() {
+    fn test_config_no_controller_section_role_standalone() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
@@ -2777,17 +2777,17 @@ port = 7433
     }
 
     #[test]
-    fn test_config_master_enabled_role_master() {
+    fn test_config_controller_enabled_role_controller() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
             r#"
 [node]
-name = "master-node"
+name = "controller-node"
 port = 7433
 
 [auth]
-token = "master-token"
+token = "controller-token"
 
 [controller]
 enabled = true
@@ -2827,7 +2827,7 @@ token = "worker-token"
     }
 
     #[test]
-    fn test_config_master_enabled_and_address_validation_error() {
+    fn test_config_controller_enabled_and_address_validation_error() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
@@ -2838,7 +2838,7 @@ port = 7433
 
 [controller]
 enabled = true
-address = "http://master:7433"
+address = "http://controller:7433"
 "#
         )
         .unwrap();
@@ -2858,17 +2858,17 @@ address = "http://master:7433"
     }
 
     #[test]
-    fn test_master_config_custom_stale_timeout() {
+    fn test_controller_config_custom_stale_timeout() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
             r#"
 [node]
-name = "master"
+name = "controller"
 port = 7433
 
 [auth]
-token = "master-token"
+token = "controller-token"
 
 [controller]
 enabled = true
@@ -2882,17 +2882,17 @@ stale_timeout_secs = 600
     }
 
     #[test]
-    fn test_master_config_default_stale_timeout_from_serde() {
+    fn test_controller_config_default_stale_timeout_from_serde() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
             r#"
 [node]
-name = "master"
+name = "controller"
 port = 7433
 
 [auth]
-token = "master-token"
+token = "controller-token"
 
 [controller]
 enabled = true
@@ -3163,7 +3163,7 @@ enabled = true
     }
 
     #[test]
-    fn test_load_old_config_without_master_section_backward_compat() {
+    fn test_load_config_without_controller_section_defaults() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,

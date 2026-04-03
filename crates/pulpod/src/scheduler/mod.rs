@@ -14,6 +14,8 @@ use tokio::sync::{broadcast, watch};
 use tracing::{debug, info, warn};
 
 #[cfg(not(coverage))]
+use crate::remote::{apply_remote_auth, remote_client, resolve_peer_target};
+#[cfg(not(coverage))]
 use crate::session::manager::SessionManager;
 #[cfg(not(coverage))]
 use crate::store::Store;
@@ -234,7 +236,7 @@ async fn create_remote_scheduled_session(
     target_node: &str,
     req: CreateSessionRequest,
 ) -> anyhow::Result<pulpo_common::session::Session> {
-    let Some(peer) = peer_registry.get(target_node).await else {
+    let Some(target) = resolve_peer_target(peer_registry, target_node).await else {
         warn!(
             schedule_name = %schedule_name,
             target_node = %target_node,
@@ -242,24 +244,14 @@ async fn create_remote_scheduled_session(
         );
         return Err(anyhow::anyhow!("target node not found: {target_node}"));
     };
-
-    let base_url = if peer.address.contains("://") {
-        peer.address
-    } else {
-        format!("http://{}", peer.address)
-    };
-    let token = peer_registry.get_token(target_node).await;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
+    let client = remote_client()
         .map_err(|e| anyhow::anyhow!("failed to build scheduler HTTP client: {e}"))?;
-
-    let mut request = client
-        .post(format!("{base_url}/api/v1/sessions"))
-        .json(&req);
-    if let Some(token) = token.as_ref() {
-        request = request.bearer_auth(token);
-    }
+    let request = apply_remote_auth(
+        client
+            .post(format!("{}/api/v1/sessions", target.base_url))
+            .json(&req),
+        target.token.as_deref(),
+    );
 
     match request.send().await {
         Ok(resp) if resp.status().is_success() => resp
@@ -275,12 +267,16 @@ async fn create_remote_scheduled_session(
             };
             Err(anyhow::anyhow!(message))
         }
-        Err(e) => Err(anyhow::anyhow!("failed to reach node {target_node}: {e}")),
+        Err(e) => Err(anyhow::anyhow!(
+            "failed to reach node {}: {e}",
+            target.node_name
+        )),
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(coverage))]
     use std::collections::HashMap;
 
     use super::*;

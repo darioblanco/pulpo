@@ -38,11 +38,11 @@ impl FromStr for PeerStatus {
 }
 
 /// Configuration entry for a peer — supports both simple `"host:port"` strings
-/// and structured `{ address, token }` tables for backward compatibility.
+/// and structured `{ address, token }` tables.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PeerEntry {
-    /// Simple `"host:port"` string (backward-compatible).
+    /// Simple `"host:port"` string.
     Simple(String),
     /// Structured entry with optional auth token.
     Full {
