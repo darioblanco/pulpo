@@ -2,6 +2,7 @@ mod adopt;
 mod git;
 mod intervention;
 pub mod memory;
+mod metadata;
 pub mod output_patterns;
 
 use std::sync::Arc;
@@ -13,12 +14,13 @@ use adopt::classify_adopted_process;
 use memory::MemoryReader;
 #[cfg(test)]
 use memory::MemorySnapshot;
-use pulpo_common::event::{PulpoEvent, SessionEvent};
+use metadata::{build_session_event, detect_and_store_output_metadata};
+use pulpo_common::event::PulpoEvent;
 use pulpo_common::session::SessionStatus;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
-use pulpo_common::session::{InterventionCode, Session, meta};
+use pulpo_common::session::{InterventionCode, Session};
 
 use crate::backend::Backend;
 use crate::store::Store;
@@ -462,221 +464,6 @@ async fn handle_active_session(
             session.name
         );
     }
-}
-
-/// Detect PR URL, branch name, rate limits, errors, and token usage from session output.
-/// PR and branch are only written if not already present. Transient signals (rate limits,
-/// errors) are always updated and cleared when no longer detected.
-#[allow(clippy::too_many_lines)]
-async fn detect_and_store_output_metadata(store: &Store, session: &Session, output: &str) {
-    // Check and store PR URL
-    let has_pr = session.meta_str(meta::PR_URL).is_some();
-    if !has_pr && let Some(pr_url) = output_patterns::extract_pr_url(output) {
-        if let Err(e) = store
-            .update_session_metadata_field(&session.id.to_string(), meta::PR_URL, &pr_url)
-            .await
-        {
-            warn!(
-                session_name = %session.name,
-                "Failed to store pr_url metadata: {e}"
-            );
-        } else {
-            info!(
-                session_name = %session.name,
-                pr_url = %pr_url,
-                "Detected PR URL from session output"
-            );
-        }
-    }
-
-    // Check and store branch
-    let has_branch = session.meta_str(meta::BRANCH).is_some();
-    if !has_branch && let Some(branch) = output_patterns::extract_branch(output) {
-        if let Err(e) = store
-            .update_session_metadata_field(&session.id.to_string(), meta::BRANCH, &branch)
-            .await
-        {
-            warn!(
-                session_name = %session.name,
-                "Failed to store branch metadata: {e}"
-            );
-        } else {
-            info!(
-                session_name = %session.name,
-                branch = %branch,
-                "Detected branch from session output"
-            );
-        }
-    }
-
-    // Always check for rate limits (transient — session may recover)
-    if let Some(rate_msg) = output_patterns::detect_rate_limit(output) {
-        let timestamp = chrono::Utc::now().to_rfc3339();
-        if let Err(e) = store
-            .update_session_metadata_field(&session.id.to_string(), meta::RATE_LIMIT, &rate_msg)
-            .await
-        {
-            warn!(
-                session_name = %session.name,
-                "Failed to store rate_limit metadata: {e}"
-            );
-        }
-        if let Err(e) = store
-            .update_session_metadata_field(&session.id.to_string(), meta::RATE_LIMIT_AT, &timestamp)
-            .await
-        {
-            warn!(
-                session_name = %session.name,
-                "Failed to store rate_limit_at metadata: {e}"
-            );
-        } else {
-            info!(
-                session_name = %session.name,
-                rate_limit = %rate_msg,
-                "Detected rate limit from session output"
-            );
-        }
-    }
-
-    // Check for errors/failures (transient — clear when no longer in last 30 lines)
-    let current_error = output_patterns::detect_error(output);
-    let stored_error = session.meta_str(meta::ERROR_STATUS);
-    match (&current_error, stored_error) {
-        (Some(err), _) => {
-            let timestamp = chrono::Utc::now().to_rfc3339();
-            if let Err(e) = store
-                .update_session_metadata_field(&session.id.to_string(), meta::ERROR_STATUS, err)
-                .await
-            {
-                warn!(
-                    session_name = %session.name,
-                    "Failed to store error_status metadata: {e}"
-                );
-            }
-            let _ = store
-                .update_session_metadata_field(
-                    &session.id.to_string(),
-                    meta::ERROR_STATUS_AT,
-                    &timestamp,
-                )
-                .await;
-        }
-        (None, Some(_)) => {
-            // Error cleared — remove from metadata
-            if let Err(e) = store
-                .remove_session_metadata_field(&session.id.to_string(), meta::ERROR_STATUS)
-                .await
-            {
-                warn!(
-                    session_name = %session.name,
-                    "Failed to clear error_status metadata: {e}"
-                );
-            }
-            let _ = store
-                .remove_session_metadata_field(&session.id.to_string(), meta::ERROR_STATUS_AT)
-                .await;
-        }
-        (None, None) => {}
-    }
-
-    // Check for token usage and cost
-    if let Some(usage) = output_patterns::extract_agent_usage(output) {
-        store_agent_usage(store, session, &usage).await;
-    }
-}
-
-/// Resolve a token field value with accumulation for agent restarts.
-/// If new value < stored, the agent was restarted — accumulate.
-/// Returns `None` if the value is unchanged.
-/// Build a `SessionEvent` from a session, populating token/cost enrichment from metadata.
-fn build_session_event(
-    session: &Session,
-    status: SessionStatus,
-    previous: Option<SessionStatus>,
-    node_name: &str,
-    output: Option<String>,
-) -> SessionEvent {
-    SessionEvent {
-        session_id: session.id.to_string(),
-        session_name: session.name.clone(),
-        status: status.to_string(),
-        previous_status: previous.map(|s| s.to_string()),
-        node_name: node_name.to_owned(),
-        output_snippet: output,
-        timestamp: chrono::Utc::now().to_rfc3339(),
-        total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
-        total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
-        session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
-        ..Default::default()
-    }
-}
-
-fn accumulate_token_value(new_val: u64, stored: Option<&str>) -> Option<u64> {
-    let prev = stored.and_then(|v| v.parse::<u64>().ok());
-    match prev {
-        Some(p) if new_val == p => None,             // unchanged
-        Some(p) if new_val < p => Some(p + new_val), // restart: accumulate
-        _ => Some(new_val),
-    }
-}
-
-/// Store agent usage data as metadata fields in a single DB round-trip.
-///
-/// When new token counts are lower than stored values, the agent was restarted —
-/// previous totals are added to new values instead of overwriting.
-async fn store_agent_usage(store: &Store, session: &Session, usage: &output_patterns::AgentUsage) {
-    let id = session.id.to_string();
-
-    let mut updates: Vec<(&str, String)> = Vec::new();
-
-    // Input tokens (fall back to total_tokens when no input/output split)
-    let input = usage
-        .input_tokens
-        .or_else(|| usage.total_tokens.filter(|_| usage.output_tokens.is_none()));
-    if let Some(val) = input
-        && let Some(final_val) =
-            accumulate_token_value(val, session.meta_str(meta::TOTAL_INPUT_TOKENS))
-    {
-        updates.push((meta::TOTAL_INPUT_TOKENS, final_val.to_string()));
-    }
-    if let Some(val) = usage.output_tokens
-        && let Some(final_val) =
-            accumulate_token_value(val, session.meta_str(meta::TOTAL_OUTPUT_TOKENS))
-    {
-        updates.push((meta::TOTAL_OUTPUT_TOKENS, final_val.to_string()));
-    }
-    if let Some(val) = usage.cache_write_tokens
-        && let Some(final_val) =
-            accumulate_token_value(val, session.meta_str(meta::CACHE_WRITE_TOKENS))
-    {
-        updates.push((meta::CACHE_WRITE_TOKENS, final_val.to_string()));
-    }
-    if let Some(val) = usage.cache_read_tokens
-        && let Some(final_val) =
-            accumulate_token_value(val, session.meta_str(meta::CACHE_READ_TOKENS))
-    {
-        updates.push((meta::CACHE_READ_TOKENS, final_val.to_string()));
-    }
-    if let Some(cost) = usage.session_cost_usd {
-        let stored_cost = session
-            .meta_str(meta::SESSION_COST_USD)
-            .and_then(|v| v.parse::<f64>().ok());
-        let final_cost = match stored_cost {
-            Some(prev) if (cost - prev).abs() < 1e-7 => None, // unchanged
-            Some(prev) if cost < prev => Some(prev + cost),   // restart: accumulate
-            _ => Some(cost),
-        };
-        if let Some(c) = final_cost {
-            updates.push((meta::SESSION_COST_USD, format!("{c:.6}")));
-        }
-    }
-
-    if updates.is_empty() {
-        return;
-    }
-
-    let refs: Vec<(&str, &str)> = updates.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let _ = store.batch_update_session_metadata(&id, &refs, &[]).await;
 }
 
 async fn handle_idle_session(
