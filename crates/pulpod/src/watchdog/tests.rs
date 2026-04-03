@@ -1441,6 +1441,42 @@ async fn test_handle_active_session_not_idle() {
 }
 
 #[tokio::test]
+async fn test_handle_active_session_status_update_failure_emits_no_event() {
+    let store = test_store().await;
+
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "idle-update-fail".into(),
+        workdir: "/tmp/repo".into(),
+        command: "echo hello".into(),
+        description: Some("test".into()),
+        status: SessionStatus::Idle,
+        backend_session_id: Some("idle-update-fail".into()),
+        output_snapshot: Some("test output".into()),
+        last_output_at: Some(chrono::Utc::now()),
+        idle_since: Some(chrono::Utc::now()),
+        ..Default::default()
+    };
+
+    let (tx, mut rx) = broadcast::channel::<PulpoEvent>(16);
+    let ctx = ReadyContext {
+        event_tx: Some(tx),
+        node_name: "test-node".into(),
+    };
+
+    sqlx::query("DROP TABLE sessions")
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+    handle_active_session(&store, &session, &ctx).await;
+    assert!(matches!(
+        rx.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+}
+
+#[tokio::test]
 async fn test_idle_transition_emits_sse_event() {
     let backend = Arc::new(MockBackend::new().with_output("Building...\nDo you trust this file?"));
     let store = test_store().await;
@@ -2296,6 +2332,29 @@ async fn test_ready_transition_emits_event() {
 }
 
 #[tokio::test]
+async fn test_handle_session_ready_store_failure_emits_no_event() {
+    let store = test_store().await;
+    let session = create_running_session(&store, "ready-store-fail").await;
+
+    let (tx, mut rx) = broadcast::channel::<PulpoEvent>(16);
+    let ctx = ReadyContext {
+        event_tx: Some(tx),
+        node_name: "test-node".into(),
+    };
+
+    sqlx::query("DROP TABLE sessions")
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+    handle_session_ready(&store, &session, &ctx).await;
+    assert!(matches!(
+        rx.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+    ));
+}
+
+#[tokio::test]
 async fn test_ready_skips_idle_logic() {
     // If agent exited, session should NOT go through idle detection
     let backend = Arc::new(MockBackend::new().with_output("[pulpo] Agent exited"));
@@ -2449,6 +2508,31 @@ async fn test_cleanup_ready_sessions_ignores_active() {
 
     // Should still be Active (cleanup only targets Ready)
     assert!(backend.kill_calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_cleanup_ready_sessions_uses_name_when_backend_id_missing() {
+    let backend = Arc::new(MockBackend::new());
+    let store = test_store().await;
+
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "ready-fallback".into(),
+        workdir: "/tmp/repo".into(),
+        command: "echo hello".into(),
+        description: Some("test".into()),
+        status: SessionStatus::Ready,
+        backend_session_id: None,
+        updated_at: chrono::Utc::now() - chrono::Duration::seconds(7200),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+
+    let dyn_backend: Arc<dyn Backend> = backend.clone();
+    cleanup_ready_sessions(&dyn_backend, &store, 3600).await;
+
+    let kills = backend.kill_calls.lock().unwrap().clone();
+    assert_eq!(kills, vec!["ready-fallback".to_owned()]);
 }
 
 #[tokio::test]
