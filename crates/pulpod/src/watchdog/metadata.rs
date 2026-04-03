@@ -224,3 +224,192 @@ async fn store_agent_usage(store: &Store, session: &Session, usage: &output_patt
         .batch_update_session_metadata(&session_id, &refs, &[])
         .await;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pulpo_common::session::Runtime;
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    async fn test_store() -> Store {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        store
+    }
+
+    async fn insert_session(store: &Store, name: &str) -> Session {
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            workdir: "/tmp/repo".into(),
+            command: "echo test".into(),
+            status: SessionStatus::Active,
+            runtime: Runtime::Tmux,
+            metadata: Some(HashMap::new()),
+            ..Default::default()
+        };
+        store.insert_session(&session).await.unwrap();
+        session
+    }
+
+    #[test]
+    fn test_accumulate_token_value_initial_set() {
+        assert_eq!(accumulate_token_value(42, None), Some(42));
+    }
+
+    #[test]
+    fn test_accumulate_token_value_unchanged_returns_none() {
+        assert_eq!(accumulate_token_value(42, Some("42")), None);
+    }
+
+    #[test]
+    fn test_accumulate_token_value_restart_accumulates() {
+        assert_eq!(accumulate_token_value(10, Some("100")), Some(110));
+    }
+
+    #[test]
+    fn test_accumulate_token_value_invalid_previous_replaces() {
+        assert_eq!(accumulate_token_value(7, Some("invalid")), Some(7));
+    }
+
+    #[test]
+    fn test_build_session_event_enriches_usage_from_metadata() {
+        let mut metadata = HashMap::new();
+        metadata.insert(meta::TOTAL_INPUT_TOKENS.into(), "123".into());
+        metadata.insert(meta::TOTAL_OUTPUT_TOKENS.into(), "456".into());
+        metadata.insert(meta::SESSION_COST_USD.into(), "1.250000".into());
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "event-test".into(),
+            status: SessionStatus::Active,
+            metadata: Some(metadata),
+            ..Default::default()
+        };
+
+        let event = build_session_event(
+            &session,
+            SessionStatus::Idle,
+            Some(SessionStatus::Active),
+            "node-a",
+            Some("snippet".into()),
+        );
+
+        assert_eq!(event.session_name, "event-test");
+        assert_eq!(event.status, "idle");
+        assert_eq!(event.previous_status.as_deref(), Some("active"));
+        assert_eq!(event.node_name, "node-a");
+        assert_eq!(event.output_snippet.as_deref(), Some("snippet"));
+        assert_eq!(event.total_input_tokens, Some(123));
+        assert_eq!(event.total_output_tokens, Some(456));
+        assert_eq!(event.session_cost_usd, Some(1.25));
+    }
+
+    #[tokio::test]
+    async fn test_store_agent_usage_writes_usage_fields() {
+        let store = test_store().await;
+        let session = insert_session(&store, "usage-write").await;
+        let usage = output_patterns::AgentUsage {
+            input_tokens: Some(100),
+            output_tokens: Some(50),
+            cache_write_tokens: Some(10),
+            cache_read_tokens: Some(20),
+            total_tokens: None,
+            session_cost_usd: Some(0.75),
+        };
+
+        store_agent_usage(&store, &session, &usage).await;
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.meta_str(meta::TOTAL_INPUT_TOKENS), Some("100"));
+        assert_eq!(fetched.meta_str(meta::TOTAL_OUTPUT_TOKENS), Some("50"));
+        assert_eq!(fetched.meta_str(meta::CACHE_WRITE_TOKENS), Some("10"));
+        assert_eq!(fetched.meta_str(meta::CACHE_READ_TOKENS), Some("20"));
+        assert_eq!(fetched.meta_str(meta::SESSION_COST_USD), Some("0.750000"));
+    }
+
+    #[tokio::test]
+    async fn test_store_agent_usage_accumulates_restart_values() {
+        let store = test_store().await;
+        let session = insert_session(&store, "usage-restart").await;
+        store
+            .batch_update_session_metadata(
+                &session.id.to_string(),
+                &[
+                    (meta::TOTAL_INPUT_TOKENS, "100"),
+                    (meta::TOTAL_OUTPUT_TOKENS, "80"),
+                    (meta::CACHE_WRITE_TOKENS, "30"),
+                    (meta::CACHE_READ_TOKENS, "20"),
+                    (meta::SESSION_COST_USD, "2.500000"),
+                ],
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        let usage = output_patterns::AgentUsage {
+            input_tokens: Some(10),
+            output_tokens: Some(5),
+            cache_write_tokens: Some(3),
+            cache_read_tokens: Some(2),
+            total_tokens: None,
+            session_cost_usd: Some(0.5),
+        };
+
+        store_agent_usage(&store, &fetched, &usage).await;
+
+        let updated = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.meta_str(meta::TOTAL_INPUT_TOKENS), Some("110"));
+        assert_eq!(updated.meta_str(meta::TOTAL_OUTPUT_TOKENS), Some("85"));
+        assert_eq!(updated.meta_str(meta::CACHE_WRITE_TOKENS), Some("33"));
+        assert_eq!(updated.meta_str(meta::CACHE_READ_TOKENS), Some("22"));
+        assert_eq!(updated.meta_str(meta::SESSION_COST_USD), Some("3.000000"));
+    }
+
+    #[tokio::test]
+    async fn test_detect_and_store_output_metadata_clears_error_status_on_recovery() {
+        let store = test_store().await;
+        let session = insert_session(&store, "error-recovery").await;
+        store
+            .batch_update_session_metadata(
+                &session.id.to_string(),
+                &[
+                    (meta::ERROR_STATUS, "Compile error"),
+                    (meta::ERROR_STATUS_AT, "2026-04-01T00:00:00Z"),
+                ],
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        detect_and_store_output_metadata(&store, &fetched, "all green now").await;
+
+        let updated = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.meta_str(meta::ERROR_STATUS), None);
+        assert_eq!(updated.meta_str(meta::ERROR_STATUS_AT), None);
+    }
+}
