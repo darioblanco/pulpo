@@ -402,6 +402,46 @@ impl SessionManager {
         Ok(())
     }
 
+    async fn mark_stale_in_sessions(&self, sessions: &mut [Session]) {
+        for session in sessions {
+            let _ = self.check_and_mark_stale(session).await;
+        }
+    }
+
+    fn effective_resume_workdir(session: &Session) -> String {
+        session
+            .worktree_path
+            .as_ref()
+            .filter(|p| std::path::Path::new(p).exists())
+            .cloned()
+            .unwrap_or_else(|| session.workdir.clone())
+    }
+
+    fn resume_create_id(
+        &self,
+        session: &Session,
+        backend_id: &str,
+        prefer_name_for_tmux: bool,
+    ) -> String {
+        if session.runtime == Runtime::Docker || !prefer_name_for_tmux {
+            backend_id.to_owned()
+        } else {
+            self.backend.session_id(&session.name)
+        }
+    }
+
+    async fn restore_session_backend(
+        &self,
+        session: &Session,
+        active_backend: &Arc<dyn crate::backend::Backend>,
+        effective_workdir: &str,
+        create_id: &str,
+    ) -> Result<()> {
+        Self::recreate_backend_session(session, active_backend, effective_workdir, create_id)?;
+        self.refresh_backend_session_id(session).await;
+        Ok(())
+    }
+
     /// Resolve ink: if ink has command, use it. Request command takes precedence.
     /// Also resolves secrets and runtime defaults from the ink.
     fn resolve_ink(&self, req: &CreateSessionRequest) -> Result<ResolvedInk> {
@@ -481,9 +521,7 @@ impl SessionManager {
 
     pub async fn list_sessions(&self) -> Result<Vec<Session>> {
         let mut sessions = self.store.list_sessions().await?;
-        for session in &mut sessions {
-            let _ = self.check_and_mark_stale(session).await;
-        }
+        self.mark_stale_in_sessions(&mut sessions).await;
         Ok(sessions)
     }
 
@@ -492,9 +530,7 @@ impl SessionManager {
         query: &pulpo_common::api::ListSessionsQuery,
     ) -> Result<Vec<Session>> {
         let mut sessions = self.store.list_sessions_filtered(query).await?;
-        for session in &mut sessions {
-            let _ = self.check_and_mark_stale(session).await;
-        }
+        self.mark_stale_in_sessions(&mut sessions).await;
         Ok(sessions)
     }
 
@@ -622,12 +658,7 @@ impl SessionManager {
         }
 
         // Use worktree path as workdir if it still exists, otherwise fall back to original workdir.
-        let effective_workdir = session
-            .worktree_path
-            .as_ref()
-            .filter(|p| std::path::Path::new(p).exists())
-            .cloned()
-            .unwrap_or_else(|| session.workdir.clone());
+        let effective_workdir = Self::effective_resume_workdir(&session);
 
         // Validate workdir still exists (skip for Docker — workdir is inside the container)
         if session.runtime != Runtime::Docker {
@@ -642,18 +673,9 @@ impl SessionManager {
         if !alive {
             // Use session name for the new tmux session, not the stale $N backend ID.
             // The old backend_session_id may point to a dead tmux session that no longer exists.
-            let create_id = if session.runtime == Runtime::Docker {
-                backend_id.clone()
-            } else {
-                self.backend.session_id(&session.name)
-            };
-            Self::recreate_backend_session(
-                &session,
-                active_backend,
-                &effective_workdir,
-                &create_id,
-            )?;
-            self.refresh_backend_session_id(&session).await;
+            let create_id = self.resume_create_id(&session, &backend_id, true);
+            self.restore_session_backend(&session, active_backend, &effective_workdir, &create_id)
+                .await?;
         }
 
         let mut session = session;
@@ -679,12 +701,11 @@ impl SessionManager {
                 continue;
             }
             // Backend is dead — resume the session
-            if let Err(e) = Self::recreate_backend_session(
-                &session,
-                active_backend,
-                &session.workdir,
-                &backend_id,
-            ) {
+            let create_id = self.resume_create_id(&session, &backend_id, false);
+            if let Err(e) = self
+                .restore_session_backend(&session, active_backend, &session.workdir, &create_id)
+                .await
+            {
                 tracing::warn!(
                     session = %session.name,
                     error = %e,
@@ -695,8 +716,6 @@ impl SessionManager {
                     .await?;
                 continue;
             }
-
-            self.refresh_backend_session_id(&session).await;
 
             // Re-mark as Active
             self.store
