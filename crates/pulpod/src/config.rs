@@ -2905,8 +2905,8 @@ enabled = true
     }
 
     #[test]
-    fn test_missing_config_has_default_master() {
-        let config = load("/nonexistent/master/config.toml").unwrap();
+    fn test_missing_config_has_default_controller() {
+        let config = load("/nonexistent/controller/config.toml").unwrap();
         assert!(!config.controller.enabled);
         assert!(config.controller.address.is_none());
         assert!(config.controller.token.is_none());
@@ -2915,18 +2915,18 @@ enabled = true
     }
 
     #[test]
-    fn test_save_and_load_roundtrip_with_master() {
+    fn test_save_and_load_roundtrip_with_controller() {
         let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("master-rt.toml");
+        let path = tmpdir.path().join("controller-rt.toml");
         let config = Config {
             node: NodeConfig {
-                name: "master-rt".into(),
+                name: "controller-rt".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
             auth: AuthConfig {
-                token: "master-auth-token".into(),
+                token: "controller-auth-token".into(),
             },
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
@@ -2936,7 +2936,7 @@ enabled = true
             controller: ControllerConfig {
                 enabled: true,
                 address: None,
-                token: Some("master-token".into()),
+                token: Some("controller-token".into()),
                 stale_timeout_secs: 120,
             },
         };
@@ -2944,7 +2944,7 @@ enabled = true
         let loaded = load(path.to_str().unwrap()).unwrap();
         assert!(loaded.controller.enabled);
         assert!(loaded.controller.address.is_none());
-        assert_eq!(loaded.controller.token.as_deref(), Some("master-token"));
+        assert_eq!(loaded.controller.token.as_deref(), Some("controller-token"));
         assert_eq!(loaded.controller.stale_timeout_secs, 120);
         assert_eq!(loaded.role(), NodeRole::Controller);
     }

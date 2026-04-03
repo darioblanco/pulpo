@@ -284,18 +284,18 @@ mod tests {
     use std::collections::HashMap;
 
     async fn test_server() -> TestServer {
-        test_server_with_master(ControllerConfig::default()).await
+        test_server_with_controller(ControllerConfig::default()).await
     }
 
     async fn controller_test_server() -> TestServer {
-        test_server_with_master(ControllerConfig {
+        test_server_with_controller(ControllerConfig {
             enabled: true,
             ..ControllerConfig::default()
         })
         .await
     }
 
-    async fn test_server_with_master(master: ControllerConfig) -> TestServer {
+    async fn test_server_with_controller(controller: ControllerConfig) -> TestServer {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -313,7 +313,7 @@ mod tests {
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: crate::config::DockerConfig::default(),
-            controller: master,
+            controller,
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -615,7 +615,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_schedule_target_node_requires_master() {
+    async fn test_create_schedule_target_node_requires_controller() {
         let server = test_server().await;
         let resp = server
             .post("/api/v1/schedules")
@@ -632,7 +632,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_schedule_target_node_requires_master() {
+    async fn test_update_schedule_target_node_requires_controller() {
         let server = test_server().await;
         let create_resp = server
             .post("/api/v1/schedules")
@@ -819,7 +819,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_schedule_backward_compat_no_exec_fields() {
+    async fn test_create_schedule_without_execution_fields() {
         let server = test_server().await;
         let resp = server
             .post("/api/v1/schedules")

@@ -58,7 +58,7 @@ pub async fn push_events(
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
-                            error: format!("failed to persist master session index entry: {e}"),
+                            error: format!("failed to persist controller session index entry: {e}"),
                         }),
                     )
                         .into_response();
@@ -74,7 +74,7 @@ pub async fn push_events(
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
-                            error: format!("failed to delete master session index entry: {e}"),
+                            error: format!("failed to delete controller session index entry: {e}"),
                         }),
                     )
                         .into_response();

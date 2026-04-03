@@ -1037,7 +1037,7 @@ data_dir = "{}"
     }
 
     #[tokio::test]
-    async fn test_build_app_hydrates_master_session_index_from_store() {
+    async fn test_build_app_hydrates_controller_session_index_from_store() {
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
         let data_dir = tmpdir.path().join("data");
@@ -1103,7 +1103,7 @@ enabled = true
     }
 
     #[tokio::test]
-    async fn test_build_app_restores_master_index_after_restart_and_accepts_fresh_events() {
+    async fn test_build_app_restores_controller_index_after_restart_and_accepts_fresh_events() {
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
         let data_dir = tmpdir.path().join("data");
@@ -1194,7 +1194,7 @@ enabled = true
     }
 
     #[tokio::test]
-    async fn test_build_app_drops_pending_worker_commands_after_master_restart() {
+    async fn test_build_app_drops_pending_node_commands_after_controller_restart() {
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
         let data_dir = tmpdir.path().join("data");
@@ -1253,7 +1253,7 @@ enabled = true
         let body: NodeCommandsResponse = poll_resp.json();
         assert!(
             body.commands.is_empty(),
-            "worker command queue should be empty after controller restart"
+            "node command queue should be empty after controller restart"
         );
         handle2.shutdown();
     }

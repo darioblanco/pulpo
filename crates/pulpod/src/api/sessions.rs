@@ -12,6 +12,7 @@ use pulpo_common::api::{
 use pulpo_common::peer::PeerInfo;
 use pulpo_common::session::{Session, SessionStatus};
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
 use crate::remote::{
@@ -76,6 +77,47 @@ async fn reqwest_error_response(resp: reqwest::Response, fallback: &str) -> ApiE
     (status, Json(ErrorResponse { error }))
 }
 
+async fn send_remote_request(
+    request: reqwest::RequestBuilder,
+    failure: String,
+) -> Result<reqwest::Response, ApiError> {
+    request
+        .send()
+        .await
+        .map_err(|e| bad_gateway(&format!("{failure}: {e}")))
+}
+
+fn remote_json_request(
+    target: &RemoteWorkerTarget,
+    request: reqwest::RequestBuilder,
+) -> reqwest::RequestBuilder {
+    apply_remote_auth(request, target.token.as_deref())
+}
+
+async fn parse_remote_json<T: DeserializeOwned>(
+    resp: reqwest::Response,
+    fallback: &str,
+    parse_error: &str,
+) -> Result<T, ApiError> {
+    if !resp.status().is_success() {
+        return Err(reqwest_error_response(resp, fallback).await);
+    }
+
+    resp.json::<T>()
+        .await
+        .map_err(|e| internal_error(&format!("{parse_error}: {e}")))
+}
+
+async fn expect_remote_no_content(
+    resp: reqwest::Response,
+    fallback: &str,
+) -> Result<StatusCode, ApiError> {
+    if !resp.status().is_success() {
+        return Err(reqwest_error_response(resp, fallback).await);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn resolve_remote_worker_target(
     state: &Arc<super::AppState>,
     id: &str,
@@ -95,7 +137,7 @@ async fn resolve_remote_worker_target(
 
     let Some(address) = address else {
         return Err(bad_gateway(&format!(
-            "worker address unknown for remote session {id} on node {}",
+            "node address unknown for remote session {id} on node {}",
             entry.node_name
         )));
     };
@@ -196,26 +238,22 @@ pub async fn create(
             req.target_node = None;
             let client = remote_client()
                 .map_err(|e| internal_error(&format!("failed to build HTTP client: {e}")))?;
-            let resp = apply_remote_auth(
-                client
-                    .post(format!("{}/api/v1/sessions", target.base_url))
-                    .json(&req),
-                target.token.as_deref(),
+            let resp = send_remote_request(
+                apply_remote_auth(
+                    client
+                        .post(format!("{}/api/v1/sessions", target.base_url))
+                        .json(&req),
+                    target.token.as_deref(),
+                ),
+                format!("failed to create session on node {}", target.node_name),
             )
-            .send()
-            .await
-            .map_err(|e| {
-                bad_gateway(&format!(
-                    "failed to create session on node {}: {e}",
-                    target.node_name
-                ))
-            })?;
-            if !resp.status().is_success() {
-                return Err(reqwest_error_response(resp, "failed to create remote session").await);
-            }
-            let body = resp.json::<CreateSessionResponse>().await.map_err(|e| {
-                internal_error(&format!("failed to parse remote create response: {e}"))
-            })?;
+            .await?;
+            let body = parse_remote_json::<CreateSessionResponse>(
+                resp,
+                "failed to create remote session",
+                "failed to parse remote create response",
+            )
+            .await?;
             return Ok((StatusCode::CREATED, Json(body)));
         }
     }
@@ -316,22 +354,17 @@ pub async fn output(
             "{}/api/v1/sessions/{}/output?lines={lines}",
             target.base_url, target.session_id
         );
-        let resp = apply_remote_auth(client.get(url), target.token.as_deref())
-            .send()
-            .await
-            .map_err(|e| {
-                bad_gateway(&format!(
-                    "failed to fetch output from node {}: {e}",
-                    target.node_name
-                ))
-            })?;
-        if !resp.status().is_success() {
-            return Err(reqwest_error_response(resp, "failed to fetch remote output").await);
-        }
-        let body = resp
-            .json::<serde_json::Value>()
-            .await
-            .map_err(|e| internal_error(&format!("failed to parse remote output: {e}")))?;
+        let resp = send_remote_request(
+            remote_json_request(&target, client.get(url)),
+            format!("failed to fetch output from node {}", target.node_name),
+        )
+        .await?;
+        let body = parse_remote_json::<serde_json::Value>(
+            resp,
+            "failed to fetch remote output",
+            "failed to parse remote output",
+        )
+        .await?;
         return Ok(Json(body));
     };
 
@@ -361,25 +394,17 @@ pub async fn resume(
                         "{}/api/v1/sessions/{}/resume",
                         target.base_url, target.session_id
                     );
-                    let resp = apply_remote_auth(client.post(url), target.token.as_deref())
-                        .send()
-                        .await
-                        .map_err(|e| {
-                            bad_gateway(&format!(
-                                "failed to resume session on node {}: {e}",
-                                target.node_name
-                            ))
-                        })?;
-                    if !resp.status().is_success() {
-                        return Err(reqwest_error_response(
-                            resp,
-                            "failed to resume remote session",
-                        )
-                        .await);
-                    }
-                    let session = resp.json::<Session>().await.map_err(|e| {
-                        internal_error(&format!("failed to parse remote resume response: {e}"))
-                    })?;
+                    let resp = send_remote_request(
+                        remote_json_request(&target, client.post(url)),
+                        format!("failed to resume session on node {}", target.node_name),
+                    )
+                    .await?;
+                    let session = parse_remote_json::<Session>(
+                        resp,
+                        "failed to resume remote session",
+                        "failed to parse remote resume response",
+                    )
+                    .await?;
                     return Ok(Json(session));
                 }
                 Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg })))
@@ -426,15 +451,11 @@ pub async fn download_output(
             "{}/api/v1/sessions/{}/output/download",
             target.base_url, target.session_id
         );
-        let resp = apply_remote_auth(client.get(url), target.token.as_deref())
-            .send()
-            .await
-            .map_err(|e| {
-                bad_gateway(&format!(
-                    "failed to download output from node {}: {e}",
-                    target.node_name
-                ))
-            })?;
+        let resp = send_remote_request(
+            remote_json_request(&target, client.get(url)),
+            format!("failed to download output from node {}", target.node_name),
+        )
+        .await?;
         if !resp.status().is_success() {
             return Err(
                 reqwest_error_response(resp, "failed to download remote session output").await,
@@ -542,26 +563,17 @@ pub async fn input(
             "{}/api/v1/sessions/{}/input",
             target.base_url, target.session_id
         );
-        let resp = apply_remote_auth(
-            client
-                .post(url)
-                .json(&serde_json::json!({ "text": req.text })),
-            target.token.as_deref(),
+        let resp = send_remote_request(
+            remote_json_request(
+                &target,
+                client
+                    .post(url)
+                    .json(&serde_json::json!({ "text": req.text })),
+            ),
+            format!("failed to send input to node {}", target.node_name),
         )
-        .send()
-        .await
-        .map_err(|e| {
-            bad_gateway(&format!(
-                "failed to send input to node {}: {e}",
-                target.node_name
-            ))
-        })?;
-        if !resp.status().is_success() {
-            return Err(
-                reqwest_error_response(resp, "failed to send input to remote session").await,
-            );
-        }
-        return Ok(StatusCode::NO_CONTENT);
+        .await?;
+        return expect_remote_no_content(resp, "failed to send input to remote session").await;
     };
 
     let backend_id = state.session_manager.resolve_backend_id(&session);
@@ -649,11 +661,11 @@ mod tests {
         state
     }
 
-    async fn master_state_with_index(entry: SessionIndexEntry) -> Arc<AppState> {
-        master_state_with_index_and_peers(entry, HashMap::new()).await
+    async fn controller_state_with_index(entry: SessionIndexEntry) -> Arc<AppState> {
+        controller_state_with_index_and_peers(entry, HashMap::new()).await
     }
 
-    async fn master_state_with_index_and_peers(
+    async fn controller_state_with_index_and_peers(
         entry: SessionIndexEntry,
         peers: HashMap<String, pulpo_common::peer::PeerEntry>,
     ) -> Arc<AppState> {
@@ -752,9 +764,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_returns_remote_session_from_master_index() {
+    async fn test_get_returns_remote_session_from_controller_index() {
         let session_id = Uuid::new_v4().to_string();
-        let state = master_state_with_index(SessionIndexEntry {
+        let state = controller_state_with_index(SessionIndexEntry {
             session_id: session_id.clone(),
             node_name: "worker-1".into(),
             node_address: Some("worker-1.tailnet:7433".into()),
@@ -796,7 +808,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_target_node_requires_master() {
+    async fn test_create_target_node_requires_controller() {
         let state = test_state().await;
         let req = CreateSessionRequest {
             name: "remote-create".into(),
@@ -822,7 +834,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_target_node_matching_controller_name_creates_locally() {
-        let state = master_state_with_index(SessionIndexEntry {
+        let state = controller_state_with_index(SessionIndexEntry {
             session_id: Uuid::new_v4().to_string(),
             node_name: "master-node".into(),
             node_address: None,
@@ -861,7 +873,7 @@ mod tests {
                 token: Some("secret-token".into()),
             },
         )]);
-        let state = master_state_with_index_and_peers(
+        let state = controller_state_with_index_and_peers(
             SessionIndexEntry {
                 session_id: Uuid::new_v4().to_string(),
                 node_name: "master-node".into(),
@@ -935,9 +947,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_stop_enqueues_remote_command_when_session_is_indexed_on_master() {
+    async fn test_stop_enqueues_remote_command_when_session_is_indexed_on_controller() {
         let session_id = Uuid::new_v4().to_string();
-        let state = master_state_with_index(SessionIndexEntry {
+        let state = controller_state_with_index(SessionIndexEntry {
             session_id: session_id.clone(),
             node_name: "worker-1".into(),
             node_address: Some("worker-1.tailnet:7433".into()),
@@ -1079,7 +1091,7 @@ mod tests {
                 token: Some("secret-token".into()),
             },
         );
-        let master_state = master_state_with_index_and_peers(
+        let controller_state = controller_state_with_index_and_peers(
             SessionIndexEntry {
                 session_id: session_id.clone(),
                 node_name: "worker-1".into(),
@@ -1093,7 +1105,7 @@ mod tests {
         )
         .await;
 
-        let target = resolve_remote_worker_target(&master_state, &session_id)
+        let target = resolve_remote_worker_target(&controller_state, &session_id)
             .await
             .unwrap()
             .unwrap();
@@ -1145,7 +1157,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_remote_worker_target_falls_back_to_index_address() {
         let session_id = Uuid::new_v4().to_string();
-        let master_state = master_state_with_index(SessionIndexEntry {
+        let controller_state = controller_state_with_index(SessionIndexEntry {
             session_id: session_id.clone(),
             node_name: "worker-1".into(),
             node_address: Some("https://worker-1.example.com".into()),
@@ -1156,7 +1168,7 @@ mod tests {
         })
         .await;
 
-        let target = resolve_remote_worker_target(&master_state, &session_id)
+        let target = resolve_remote_worker_target(&controller_state, &session_id)
             .await
             .unwrap()
             .unwrap();
@@ -1690,7 +1702,7 @@ mod tests {
     #[tokio::test]
     async fn test_resolve_remote_worker_target_errors_without_any_address() {
         let session_id = Uuid::new_v4().to_string();
-        let master_state = master_state_with_index(SessionIndexEntry {
+        let controller_state = controller_state_with_index(SessionIndexEntry {
             session_id: session_id.clone(),
             node_name: "worker-1".into(),
             node_address: None,
@@ -1701,17 +1713,17 @@ mod tests {
         })
         .await;
 
-        let result = resolve_remote_worker_target(&master_state, &session_id).await;
+        let result = resolve_remote_worker_target(&controller_state, &session_id).await;
         assert!(result.is_err());
         let (status, Json(err)) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_GATEWAY);
-        assert!(err.error.contains("worker address unknown"));
+        assert!(err.error.contains("node address unknown"));
     }
 
     #[tokio::test]
     async fn test_output_remote_worker_connection_failure_returns_bad_gateway() {
         let session_id = Uuid::new_v4().to_string();
-        let state = master_state_with_index(SessionIndexEntry {
+        let state = controller_state_with_index(SessionIndexEntry {
             session_id: session_id.clone(),
             node_name: "worker-1".into(),
             node_address: Some("127.0.0.1:9".into()),
@@ -1740,7 +1752,7 @@ mod tests {
     #[tokio::test]
     async fn test_input_remote_worker_connection_failure_returns_bad_gateway() {
         let session_id = Uuid::new_v4().to_string();
-        let state = master_state_with_index(SessionIndexEntry {
+        let state = controller_state_with_index(SessionIndexEntry {
             session_id: session_id.clone(),
             node_name: "worker-1".into(),
             node_address: Some("127.0.0.1:9".into()),
@@ -1768,7 +1780,7 @@ mod tests {
     #[tokio::test]
     async fn test_download_output_remote_worker_connection_failure_returns_bad_gateway() {
         let session_id = Uuid::new_v4().to_string();
-        let state = master_state_with_index(SessionIndexEntry {
+        let state = controller_state_with_index(SessionIndexEntry {
             session_id: session_id.clone(),
             node_name: "worker-1".into(),
             node_address: Some("127.0.0.1:9".into()),
@@ -1792,7 +1804,7 @@ mod tests {
     #[tokio::test]
     async fn test_resume_remote_worker_connection_failure_returns_bad_gateway() {
         let session_id = Uuid::new_v4().to_string();
-        let state = master_state_with_index(SessionIndexEntry {
+        let state = controller_state_with_index(SessionIndexEntry {
             session_id: session_id.clone(),
             node_name: "worker-1".into(),
             node_address: Some("127.0.0.1:9".into()),
