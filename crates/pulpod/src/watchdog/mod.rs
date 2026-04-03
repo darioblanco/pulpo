@@ -97,6 +97,111 @@ pub struct ReadyContext {
     pub node_name: String,
 }
 
+async fn refresh_watchdog_ticker(
+    tick: &mut tokio::time::Interval,
+    current_interval: &mut Duration,
+    next_interval: Duration,
+) {
+    if next_interval != *current_interval {
+        info!(
+            old_interval_secs = current_interval.as_secs(),
+            new_interval_secs = next_interval.as_secs(),
+            "Watchdog interval changed, resetting ticker"
+        );
+        *current_interval = next_interval;
+        *tick = tokio::time::interval(next_interval);
+        tick.tick().await;
+    }
+}
+
+fn update_breach_counter(usage: u8, threshold: u8, consecutive_breaches: &mut u32) -> bool {
+    if usage >= threshold {
+        *consecutive_breaches += 1;
+        true
+    } else {
+        if *consecutive_breaches > 0 {
+            info!(
+                usage,
+                threshold, "Memory pressure subsided, resetting breach counter"
+            );
+        }
+        *consecutive_breaches = 0;
+        false
+    }
+}
+
+async fn run_memory_check(
+    backend: &Arc<dyn Backend>,
+    store: &Store,
+    reader: &dyn MemoryReader,
+    cfg: &WatchdogRuntimeConfig,
+    consecutive_breaches: &mut u32,
+) {
+    match reader.read_memory() {
+        Ok(snapshot) => {
+            let usage = snapshot.usage_percent();
+            debug!(
+                usage,
+                threshold = cfg.threshold,
+                consecutive_breaches,
+                "Memory check"
+            );
+
+            if update_breach_counter(usage, cfg.threshold, consecutive_breaches) {
+                warn!(
+                    usage,
+                    threshold = cfg.threshold,
+                    consecutive_breaches,
+                    breach_count = cfg.breach_count,
+                    available_mb = snapshot.available_mb,
+                    total_mb = snapshot.total_mb,
+                    "Memory pressure detected"
+                );
+
+                if *consecutive_breaches >= cfg.breach_count {
+                    intervene(backend, store, &snapshot).await;
+                    *consecutive_breaches = 0;
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to read memory: {e}");
+        }
+    }
+}
+
+async fn run_watchdog_tick(
+    backend: &Arc<dyn Backend>,
+    store: &Store,
+    reader: &dyn MemoryReader,
+    cfg: &WatchdogRuntimeConfig,
+    ready_ctx: &ReadyContext,
+    consecutive_breaches: &mut u32,
+) {
+    run_memory_check(backend, store, reader, cfg, consecutive_breaches).await;
+
+    if cfg.idle.enabled {
+        check_idle_sessions(
+            backend,
+            store,
+            &cfg.idle,
+            ready_ctx,
+            &cfg.extra_waiting_patterns,
+        )
+        .await;
+    }
+
+    if cfg.ready_ttl_secs > 0 {
+        cleanup_ready_sessions(backend, store, cfg.ready_ttl_secs).await;
+    }
+
+    if cfg.adopt_tmux {
+        adopt_tmux_sessions(backend, store, ready_ctx).await;
+    }
+
+    update_git_info(store).await;
+}
+
 /// Runs the watchdog loop that monitors system memory and intervenes when sustained pressure
 /// is detected. Kills running sessions after `breach_count` consecutive checks above `threshold`.
 ///
@@ -119,73 +224,16 @@ pub async fn run_watchdog_loop(
         tokio::select! {
             _ = tick.tick() => {
                 let cfg = config_rx.borrow().clone();
-
-                // If interval changed, recreate the ticker
-                if cfg.interval != current_interval {
-                    info!(
-                        old_interval_secs = current_interval.as_secs(),
-                        new_interval_secs = cfg.interval.as_secs(),
-                        "Watchdog interval changed, resetting ticker"
-                    );
-                    current_interval = cfg.interval;
-                    tick = tokio::time::interval(current_interval);
-                    tick.tick().await; // consume immediate first tick
-                }
-
-                match reader.read_memory() {
-                    Ok(snapshot) => {
-                        let usage = snapshot.usage_percent();
-                        debug!(usage, threshold = cfg.threshold, consecutive_breaches, "Memory check");
-
-                        if usage >= cfg.threshold {
-                            consecutive_breaches += 1;
-                            warn!(
-                                usage,
-                                threshold = cfg.threshold,
-                                consecutive_breaches,
-                                breach_count = cfg.breach_count,
-                                available_mb = snapshot.available_mb,
-                                total_mb = snapshot.total_mb,
-                                "Memory pressure detected"
-                            );
-
-                            if consecutive_breaches >= cfg.breach_count {
-                                intervene(&backend, &store, &snapshot).await;
-                                consecutive_breaches = 0;
-                            }
-                        } else {
-                            if consecutive_breaches > 0 {
-                                info!(
-                                    usage,
-                                    threshold = cfg.threshold,
-                                    "Memory pressure subsided, resetting breach counter"
-                                );
-                            }
-                            consecutive_breaches = 0;
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to read memory: {e}");
-                    }
-                }
-
-                // Idle + ready detection runs on every tick, independent of memory checks
-                if cfg.idle.enabled {
-                    check_idle_sessions(&backend, &store, &cfg.idle, &ready_ctx, &cfg.extra_waiting_patterns).await;
-                }
-
-                // Clean up ready sessions whose tmux shell has exceeded the TTL
-                if cfg.ready_ttl_secs > 0 {
-                    cleanup_ready_sessions(&backend, &store, cfg.ready_ttl_secs).await;
-                }
-
-                // Auto-adopt external tmux sessions
-                if cfg.adopt_tmux {
-                    adopt_tmux_sessions(&backend, &store, &ready_ctx).await;
-                }
-
-                // Update git branch/commit info for active sessions
-                update_git_info(&store).await;
+                refresh_watchdog_ticker(&mut tick, &mut current_interval, cfg.interval).await;
+                run_watchdog_tick(
+                    &backend,
+                    &store,
+                    reader.as_ref(),
+                    &cfg,
+                    &ready_ctx,
+                    &mut consecutive_breaches,
+                )
+                .await;
             }
             _ = shutdown_rx.changed() => {
                 info!("Watchdog shutting down");
