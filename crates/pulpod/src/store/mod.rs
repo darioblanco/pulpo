@@ -4,7 +4,7 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use pulpo_common::api::{ListSessionsQuery, SessionIndexEntry};
 use pulpo_common::session::{Session, SessionStatus};
-use sqlx::migrate::Migrator;
+use sqlx::migrate::{Migrate, Migrator};
 use sqlx::{Row, SqlitePool, sqlite::SqliteRow};
 use uuid::Uuid;
 
@@ -60,6 +60,7 @@ impl Store {
     pub async fn migrate(&self) -> Result<()> {
         if needs_legacy_migration_bridge(&self.pool).await? {
             self.migrate_legacy_schema().await?;
+            ensure_sqlx_migrations_table(&self.pool).await?;
             seed_sqlx_baseline(&self.pool).await?;
         }
 
@@ -1321,15 +1322,6 @@ impl Store {
 }
 
 async fn needs_legacy_migration_bridge(pool: &SqlitePool) -> Result<bool> {
-    let has_migrations_table: i32 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
-    )
-    .fetch_one(pool)
-    .await?;
-    if has_migrations_table > 0 {
-        return Ok(false);
-    }
-
     let has_existing_schema: i32 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN (
             'sessions',
@@ -1348,25 +1340,37 @@ async fn needs_legacy_migration_bridge(pool: &SqlitePool) -> Result<bool> {
     .fetch_one(pool)
     .await?;
 
-    Ok(has_existing_schema > 0)
+    if has_existing_schema == 0 {
+        return Ok(false);
+    }
+
+    let has_baseline_migration: i32 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if has_baseline_migration == 0 {
+        return Ok(true);
+    }
+
+    let baseline_applied: i32 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = ? AND success = 1",
+    )
+    .bind(BASELINE_MIGRATION_VERSION)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(baseline_applied == 0)
+}
+
+async fn ensure_sqlx_migrations_table(pool: &SqlitePool) -> Result<()> {
+    let mut conn = pool.acquire().await?;
+    (*conn).ensure_migrations_table().await?;
+    Ok(())
 }
 
 async fn seed_sqlx_baseline(pool: &SqlitePool) -> Result<()> {
-    sqlx::query(
-        r"
-CREATE TABLE IF NOT EXISTS _sqlx_migrations (
-    version BIGINT PRIMARY KEY,
-    description TEXT NOT NULL,
-    installed_on TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    success BOOLEAN NOT NULL,
-    checksum BLOB NOT NULL,
-    execution_time BIGINT NOT NULL
-)
-        ",
-    )
-    .execute(pool)
-    .await?;
-
     let baseline = MIGRATOR
         .iter()
         .find(|migration| migration.version == BASELINE_MIGRATION_VERSION)
@@ -4144,5 +4148,51 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(versions, vec![BASELINE_MIGRATION_VERSION]);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_recovers_when_sqlx_migrations_table_exists_without_baseline_row() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+
+        sqlx::query(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                workdir TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'creating',
+                mode TEXT NOT NULL DEFAULT 'interactive',
+                conversation_id TEXT,
+                exit_code INTEGER,
+                backend_session_id TEXT,
+                output_snapshot TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+        )
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+        ensure_sqlx_migrations_table(store.pool()).await.unwrap();
+
+        store.migrate().await.unwrap();
+
+        let versions: Vec<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(versions, vec![BASELINE_MIGRATION_VERSION]);
+
+        let has_runtime: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'runtime'",
+        )
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(has_runtime, 1);
     }
 }
