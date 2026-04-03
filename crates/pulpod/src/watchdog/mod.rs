@@ -1,10 +1,14 @@
+mod git;
+mod intervention;
 pub mod memory;
 pub mod output_patterns;
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use memory::{MemoryReader, MemorySnapshot};
+use memory::MemoryReader;
+#[cfg(test)]
+use memory::MemorySnapshot;
 use pulpo_common::event::{PulpoEvent, SessionEvent};
 use pulpo_common::session::SessionStatus;
 use tokio::sync::broadcast;
@@ -14,6 +18,8 @@ use pulpo_common::session::{InterventionCode, Session, meta};
 
 use crate::backend::Backend;
 use crate::store::Store;
+use git::update_git_info;
+use intervention::intervene;
 
 /// The marker emitted by the agent wrapper when the agent process exits.
 const AGENT_EXIT_MARKER: &str = "[pulpo] Agent exited";
@@ -176,218 +182,6 @@ pub async fn run_watchdog_loop(
                 break;
             }
         }
-    }
-}
-
-/// Detect and update git branch/commit info for active and idle sessions.
-/// Gated with `cfg(not(coverage))` because it requires real git commands.
-#[cfg(not(coverage))]
-#[allow(clippy::too_many_lines)]
-async fn update_git_info(store: &Store) {
-    let sessions = match store.list_sessions().await {
-        Ok(s) => s,
-        Err(e) => {
-            warn!("Watchdog: failed to list sessions for git info: {e}");
-            return;
-        }
-    };
-
-    let live: Vec<_> = sessions
-        .into_iter()
-        .filter(|s| s.status == SessionStatus::Active || s.status == SessionStatus::Idle)
-        .collect();
-
-    for session in live {
-        let effective_dir = session
-            .worktree_path
-            .as_deref()
-            .unwrap_or(&session.workdir)
-            .to_owned();
-        let session_id = session.id.to_string();
-        let old_branch = session.git_branch.clone();
-        let old_commit = session.git_commit.clone();
-
-        let old_files_changed = session.git_files_changed;
-        let old_insertions = session.git_insertions;
-        let old_deletions = session.git_deletions;
-        let old_ahead = session.git_ahead;
-
-        let result = tokio::task::spawn_blocking(move || {
-            let branch = std::process::Command::new("git")
-                .args(["rev-parse", "--abbrev-ref", "HEAD"])
-                .current_dir(&effective_dir)
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
-            let commit = std::process::Command::new("git")
-                .args(["rev-parse", "--short", "HEAD"])
-                .current_dir(&effective_dir)
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned());
-
-            // Git diff stats (uncommitted changes)
-            let diff_stat = std::process::Command::new("git")
-                .args(["diff", "--shortstat", "HEAD"])
-                .current_dir(&effective_dir)
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| {
-                    let out = String::from_utf8_lossy(&o.stdout).to_string();
-                    output_patterns::parse_git_shortstat(&out)
-                });
-
-            // Commits ahead of remote
-            let ahead = std::process::Command::new("git")
-                .args(["rev-list", "--count", "@{upstream}..HEAD"])
-                .current_dir(&effective_dir)
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .and_then(|o| {
-                    String::from_utf8_lossy(&o.stdout)
-                        .trim()
-                        .parse::<u32>()
-                        .ok()
-                });
-
-            (branch, commit, diff_stat, ahead)
-        })
-        .await;
-
-        match result {
-            Ok((branch, commit, diff_stat, ahead)) => {
-                if (branch != old_branch || commit != old_commit)
-                    && let Err(e) = store
-                        .update_session_git_info(&session_id, branch.as_deref(), commit.as_deref())
-                        .await
-                {
-                    warn!("Watchdog: failed to update git info for {session_id}: {e}");
-                }
-
-                // Update diff stats only when changed
-                if let Some((files, ins, del)) = diff_stat
-                    && (files != old_files_changed || ins != old_insertions || del != old_deletions)
-                    && let Err(e) = store
-                        .update_session_git_diff(&session_id, files, ins, del)
-                        .await
-                {
-                    warn!("Watchdog: failed to update git diff for {session_id}: {e}");
-                }
-
-                // Update ahead only when changed
-                if ahead != old_ahead
-                    && let Err(e) = store.update_session_git_ahead(&session_id, ahead).await
-                {
-                    warn!("Watchdog: failed to update git ahead for {session_id}: {e}");
-                }
-            }
-            Err(e) => {
-                debug!("Watchdog: git info task failed for {session_id}: {e}");
-            }
-        }
-    }
-}
-
-/// No-op stub under coverage builds (real git commands not available in test).
-#[cfg(coverage)]
-async fn update_git_info(_store: &Store) {}
-
-async fn intervene(backend: &Arc<dyn Backend>, store: &Store, snapshot: &MemorySnapshot) {
-    let sessions = match store.list_sessions().await {
-        Ok(s) => s,
-        Err(e) => {
-            warn!("Watchdog: failed to list sessions: {e}");
-            return;
-        }
-    };
-
-    let running: Vec<_> = sessions
-        .into_iter()
-        .filter(|s| s.status == SessionStatus::Active)
-        .collect();
-
-    if running.is_empty() {
-        let usage = snapshot.usage_percent();
-        warn!(
-            usage,
-            "Memory pressure but no running sessions to intervene on"
-        );
-        return;
-    }
-
-    for session in &running {
-        let bid = resolve_backend_id(session, backend.as_ref());
-        // Capture output before killing
-        match backend.capture_output(&bid, 500) {
-            Ok(output) => {
-                if let Err(e) = store
-                    .update_session_output_snapshot(&session.id.to_string(), &output)
-                    .await
-                {
-                    warn!(
-                        session_id = %session.id,
-                        session_name = %session.name,
-                        "Failed to save output snapshot: {e}"
-                    );
-                }
-            }
-            Err(e) => {
-                warn!(
-                    session_id = %session.id,
-                    session_name = %session.name,
-                    "Failed to capture output before intervention: {e}"
-                );
-            }
-        }
-
-        // Kill the session — only mark dead if kill succeeds
-        if let Err(e) = backend.kill_session(&bid) {
-            warn!(
-                session_id = %session.id,
-                session_name = %session.name,
-                "Failed to kill session during intervention (session still alive): {e}"
-            );
-            continue;
-        }
-
-        // Record intervention (only reached on successful kill)
-        let reason = format!(
-            "Memory usage {}% ({}/{}MB available)",
-            snapshot.usage_percent(),
-            snapshot.available_mb,
-            snapshot.total_mb
-        );
-        if let Err(e) = store
-            .update_session_intervention(
-                &session.id.to_string(),
-                InterventionCode::MemoryPressure,
-                &reason,
-            )
-            .await
-        {
-            warn!(
-                session_id = %session.id,
-                session_name = %session.name,
-                "Failed to record intervention: {e}"
-            );
-        }
-        // Clean up worktree if this was a worktree session
-        if let Some(ref wt_path) = session.worktree_path {
-            crate::session::manager::cleanup_worktree(wt_path, &session.workdir);
-        }
-        let usage = snapshot.usage_percent();
-        warn!(
-            session_id = %session.id,
-            session_name = %session.name,
-            usage,
-            available_mb = snapshot.available_mb,
-            total_mb = snapshot.total_mb,
-            "Watchdog intervention: stopped session due to memory pressure"
-        );
     }
 }
 
