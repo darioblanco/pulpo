@@ -234,14 +234,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fleet_sessions_master_mode_returns_index_data() {
+    async fn test_fleet_sessions_controller_mode_returns_index_data() {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let config = Config {
             node: NodeConfig {
-                name: "master-node".into(),
+                name: "controller-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
@@ -265,11 +265,11 @@ mod tests {
         let session_index = Arc::new(SessionIndex::new());
         let command_queue = Arc::new(CommandQueue::new());
 
-        // Pre-populate the session index with worker data
+        // Pre-populate the session index with node data
         session_index
             .upsert(SessionIndexEntry {
                 session_id: "s1".into(),
-                node_name: "worker-1".into(),
+                node_name: "node-1".into(),
                 node_address: Some("10.0.0.1:7433".into()),
                 session_name: "remote-task".into(),
                 status: "active".into(),
@@ -294,9 +294,9 @@ mod tests {
         let resp = server.get("/api/v1/fleet/sessions").await;
         resp.assert_status_ok();
         let body: FleetSessionsResponse = resp.json();
-        // Should have the worker session from the index
+        // Should have the node session from the index
         assert_eq!(body.sessions.len(), 1);
-        assert_eq!(body.sessions[0].node_name, "worker-1");
+        assert_eq!(body.sessions[0].node_name, "node-1");
         assert_eq!(body.sessions[0].node_address, "10.0.0.1:7433");
         assert_eq!(body.sessions[0].session.name, "remote-task");
         assert_eq!(

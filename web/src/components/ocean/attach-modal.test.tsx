@@ -20,20 +20,20 @@ describe('AttachModal', () => {
   it('renders session name in header when open', () => {
     render(
       <AttachModal
-        sessionName="worker-alpha"
+        sessionName="node-alpha"
         sessionId="sess-1"
         sessionStatus="active"
         open={true}
         onOpenChange={vi.fn()}
       />,
     );
-    expect(screen.getByText('worker-alpha')).toBeInTheDocument();
+    expect(screen.getByText('node-alpha')).toBeInTheDocument();
   });
 
   it('renders the modal container', () => {
     render(
       <AttachModal
-        sessionName="worker-alpha"
+        sessionName="node-alpha"
         sessionId="sess-1"
         sessionStatus="active"
         open={true}
@@ -46,7 +46,7 @@ describe('AttachModal', () => {
   it('renders TerminalView for active sessions', () => {
     render(
       <AttachModal
-        sessionName="worker-alpha"
+        sessionName="node-alpha"
         sessionId="sess-1"
         sessionStatus="active"
         open={true}
@@ -59,7 +59,7 @@ describe('AttachModal', () => {
   it('renders TerminalView for idle sessions', () => {
     render(
       <AttachModal
-        sessionName="worker-alpha"
+        sessionName="node-alpha"
         sessionId="sess-1"
         sessionStatus="idle"
         open={true}
@@ -72,7 +72,7 @@ describe('AttachModal', () => {
   it('resumes lost session then shows terminal', async () => {
     render(
       <AttachModal
-        sessionName="worker-alpha"
+        sessionName="node-alpha"
         sessionId="sess-1"
         sessionStatus="lost"
         open={true}
@@ -90,7 +90,7 @@ describe('AttachModal', () => {
   it('resumes ready session then shows terminal', async () => {
     render(
       <AttachModal
-        sessionName="worker-alpha"
+        sessionName="node-alpha"
         sessionId="sess-1"
         sessionStatus="ready"
         open={true}
@@ -108,7 +108,7 @@ describe('AttachModal', () => {
 
     render(
       <AttachModal
-        sessionName="worker-alpha"
+        sessionName="node-alpha"
         sessionId="sess-1"
         sessionStatus="lost"
         open={true}
@@ -123,7 +123,7 @@ describe('AttachModal', () => {
   it('does not render when closed', () => {
     render(
       <AttachModal
-        sessionName="worker-alpha"
+        sessionName="node-alpha"
         sessionId="sess-1"
         sessionStatus="active"
         open={false}
@@ -136,13 +136,13 @@ describe('AttachModal', () => {
   it('includes accessible description', () => {
     render(
       <AttachModal
-        sessionName="worker-alpha"
+        sessionName="node-alpha"
         sessionId="sess-1"
         sessionStatus="active"
         open={true}
         onOpenChange={vi.fn()}
       />,
     );
-    expect(screen.getByText('Session terminal for worker-alpha')).toBeInTheDocument();
+    expect(screen.getByText('Session terminal for node-alpha')).toBeInTheDocument();
   });
 });

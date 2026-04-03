@@ -523,7 +523,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
             match store.list_controller_nodes().await {
                 Ok(workers) => {
                     for (node_name, seen_at) in workers {
-                        si.restore_worker(&node_name, seen_at).await;
+                        si.restore_node(&node_name, seen_at).await;
                     }
                 }
                 Err(e) => {
@@ -826,7 +826,7 @@ mod tests {
                 session_name: session_name.into(),
                 status: status.into(),
                 previous_status: previous_status.map(str::to_owned),
-                node_name: "worker-1".into(),
+                node_name: "node-1".into(),
                 output_snippet: None,
                 timestamp: timestamp.into(),
                 ..Default::default()
@@ -1046,12 +1046,12 @@ data_dir = "{}"
             format!(
                 r#"
 [node]
-name = "master-node"
+name = "controller-node"
 port = 0
 data_dir = "{}"
 
 [auth]
-token = "master-token"
+token = "controller-token"
 
 [controller]
 enabled = true
@@ -1067,8 +1067,8 @@ enabled = true
         store
             .upsert_controller_session_index_entry(&SessionIndexEntry {
                 session_id: persisted_id.into(),
-                node_name: "worker-1".into(),
-                node_address: Some("worker-1.tail:7433".into()),
+                node_name: "node-1".into(),
+                node_address: Some("node-1.tail:7433".into()),
                 session_name: "persisted-session".into(),
                 status: "active".into(),
                 command: Some("claude -p 'review'".into()),
@@ -1077,7 +1077,7 @@ enabled = true
             .await
             .unwrap();
         store
-            .touch_controller_node("worker-1", "2026-04-01T20:00:00Z")
+            .touch_controller_node("node-1", "2026-04-01T20:00:00Z")
             .await
             .unwrap();
 
@@ -1098,7 +1098,7 @@ enabled = true
             .find(|session| session.session.name == "persisted-session")
             .unwrap();
         assert_eq!(persisted.session.id.to_string(), persisted_id);
-        assert_eq!(persisted.node_name, "worker-1");
+        assert_eq!(persisted.node_name, "node-1");
         handle.shutdown();
     }
 
@@ -1112,12 +1112,12 @@ enabled = true
             format!(
                 r#"
 [node]
-name = "master-node"
+name = "controller-node"
 port = 0
 data_dir = "{}"
 
 [auth]
-token = "master-token"
+token = "controller-token"
 
 [controller]
 enabled = true
@@ -1135,10 +1135,10 @@ enabled = true
 
         let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
         let server1 = TestServer::new(app1).unwrap();
-        let worker_token = enroll_node(&server1, "worker-1").await;
+        let node_token = enroll_node(&server1, "node-1").await;
         push_session_event(
             &server1,
-            &worker_token,
+            &node_token,
             "11111111-1111-1111-1111-111111111111",
             "persisted-session",
             "active",
@@ -1166,7 +1166,7 @@ enabled = true
 
         push_session_event(
             &server2,
-            &worker_token,
+            &node_token,
             "11111111-1111-1111-1111-111111111111",
             "persisted-session",
             "idle",
@@ -1203,12 +1203,12 @@ enabled = true
             format!(
                 r#"
 [node]
-name = "master-node"
+name = "controller-node"
 port = 0
 data_dir = "{}"
 
 [auth]
-token = "master-token"
+token = "controller-token"
 
 [controller]
 enabled = true
@@ -1226,10 +1226,10 @@ enabled = true
 
         let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
         let server1 = TestServer::new(app1).unwrap();
-        let worker_token = enroll_node(&server1, "worker-1").await;
+        let node_token = enroll_node(&server1, "node-1").await;
         push_session_event(
             &server1,
-            &worker_token,
+            &node_token,
             "session-1",
             "restart-gap",
             "active",
@@ -1247,7 +1247,7 @@ enabled = true
         let server2 = TestServer::new(app2).unwrap();
         let poll_resp = server2
             .get("/api/v1/node/commands")
-            .add_header("authorization", format!("Bearer {worker_token}"))
+            .add_header("authorization", format!("Bearer {node_token}"))
             .await;
         poll_resp.assert_status_ok();
         let body: NodeCommandsResponse = poll_resp.json();
@@ -1268,12 +1268,12 @@ enabled = true
             format!(
                 r#"
 [node]
-name = "master-node"
+name = "controller-node"
 port = 0
 data_dir = "{}"
 
 [auth]
-token = "master-token"
+token = "controller-token"
 
 [controller]
 enabled = true
@@ -1291,11 +1291,11 @@ enabled = true
 
         let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
         let server1 = TestServer::new(app1).unwrap();
-        let worker_1_token = enroll_node(&server1, "worker-1").await;
-        let worker_2_token = enroll_node(&server1, "worker-2").await;
+        let node_1_token = enroll_node(&server1, "node-1").await;
+        let node_2_token = enroll_node(&server1, "node-2").await;
         push_session_event(
             &server1,
-            &worker_1_token,
+            &node_1_token,
             "session-1",
             "delivered-before-restart",
             "active",
@@ -1305,7 +1305,7 @@ enabled = true
         .await;
         push_session_event(
             &server1,
-            &worker_2_token,
+            &node_2_token,
             "session-2",
             "pending-at-restart",
             "active",
@@ -1322,12 +1322,12 @@ enabled = true
             .await
             .assert_status(axum::http::StatusCode::ACCEPTED);
 
-        let worker_1_poll = server1
+        let node_1_poll = server1
             .get("/api/v1/node/commands")
-            .add_header("authorization", format!("Bearer {worker_1_token}"))
+            .add_header("authorization", format!("Bearer {node_1_token}"))
             .await;
-        worker_1_poll.assert_status_ok();
-        let body: NodeCommandsResponse = worker_1_poll.json();
+        node_1_poll.assert_status_ok();
+        let body: NodeCommandsResponse = node_1_poll.json();
         assert_eq!(body.commands.len(), 1);
         match &body.commands[0] {
             NodeCommand::StopSession { session_id, .. } => {
@@ -1341,26 +1341,26 @@ enabled = true
         let (app2, _addr2, handle2) = build_app(&cli).await.unwrap();
         let server2 = TestServer::new(app2).unwrap();
 
-        let worker_1_poll_after_restart = server2
+        let node_1_poll_after_restart = server2
             .get("/api/v1/node/commands")
-            .add_header("authorization", format!("Bearer {worker_1_token}"))
+            .add_header("authorization", format!("Bearer {node_1_token}"))
             .await;
-        worker_1_poll_after_restart.assert_status_ok();
-        let body: NodeCommandsResponse = worker_1_poll_after_restart.json();
+        node_1_poll_after_restart.assert_status_ok();
+        let body: NodeCommandsResponse = node_1_poll_after_restart.json();
         assert!(
             body.commands.is_empty(),
             "commands already drained before restart should not reappear"
         );
 
-        let worker_2_poll_after_restart = server2
+        let node_2_poll_after_restart = server2
             .get("/api/v1/node/commands")
-            .add_header("authorization", format!("Bearer {worker_2_token}"))
+            .add_header("authorization", format!("Bearer {node_2_token}"))
             .await;
-        worker_2_poll_after_restart.assert_status_ok();
-        let body: NodeCommandsResponse = worker_2_poll_after_restart.json();
+        node_2_poll_after_restart.assert_status_ok();
+        let body: NodeCommandsResponse = node_2_poll_after_restart.json();
         assert!(
             body.commands.is_empty(),
-            "commands still pending on the master should be lost on restart"
+            "commands still pending on the controller should be lost on restart"
         );
 
         handle2.shutdown();

@@ -27,11 +27,11 @@ pub async fn push_events(
             .into_response();
     };
 
-    let worker = match authenticate_node(&state, &headers).await {
-        Ok(worker) => worker,
+    let node = match authenticate_node(&state, &headers).await {
+        Ok(node) => node,
         Err(err) => return err.into_response(),
     };
-    let node_name = worker.node_name;
+    let node_name = node.node_name;
 
     for event in &req.events {
         match event {
@@ -111,7 +111,7 @@ pub async fn push_events(
         )
             .into_response();
     }
-    session_index.touch_worker(&node_name).await;
+    session_index.touch_node(&node_name).await;
 
     StatusCode::NO_CONTENT.into_response()
 }
@@ -144,7 +144,7 @@ mod tests {
         store.migrate().await.unwrap();
         let config = Config {
             node: NodeConfig {
-                name: "master-node".into(),
+                name: "controller-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
@@ -219,7 +219,7 @@ mod tests {
             session_name: name.into(),
             status: status.into(),
             previous_status: None,
-            node_name: "worker-1".into(),
+            node_name: "node-1".into(),
             output_snippet: None,
             timestamp: "2026-03-30T12:00:00Z".into(),
             ..Default::default()
@@ -230,7 +230,7 @@ mod tests {
         PulpoEvent::SessionDeleted(SessionDeletedEvent {
             session_id: session_id.into(),
             session_name: name.into(),
-            node_name: "worker-1".into(),
+            node_name: "node-1".into(),
             timestamp: "2026-03-30T12:00:00Z".into(),
         })
     }
@@ -251,7 +251,7 @@ mod tests {
     #[tokio::test]
     async fn test_push_events_updates_index() {
         let (server, _) = controller_test_server().await;
-        let token = enroll_node(&server, "worker-1").await;
+        let token = enroll_node(&server, "node-1").await;
 
         let req = EventPushRequest {
             events: vec![
@@ -289,7 +289,7 @@ mod tests {
         store.migrate().await.unwrap();
         let config = Config {
             node: NodeConfig {
-                name: "master-node".into(),
+                name: "controller-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
@@ -329,7 +329,7 @@ mod tests {
         let app = routes::build(state);
         let server = TestServer::new(app).unwrap();
 
-        let token = enroll_node(&server, "worker-1").await;
+        let token = enroll_node(&server, "node-1").await;
         let req = EventPushRequest {
             events: vec![make_session_event("s1", "task-a", "active")],
         };
@@ -362,7 +362,7 @@ mod tests {
     #[tokio::test]
     async fn test_push_events_empty_batch() {
         let (server, _) = controller_test_server().await;
-        let token = enroll_node(&server, "worker-1").await;
+        let token = enroll_node(&server, "node-1").await;
         let req = EventPushRequest { events: vec![] };
         let resp = server
             .post("/api/v1/events/push")
@@ -375,7 +375,7 @@ mod tests {
     #[tokio::test]
     async fn test_push_deleted_event_removes_index_entry() {
         let (server, _) = controller_test_server().await;
-        let token = enroll_node(&server, "worker-1").await;
+        let token = enroll_node(&server, "node-1").await;
 
         let create_req = EventPushRequest {
             events: vec![make_session_event("s1", "task-a", "active")],
@@ -412,8 +412,8 @@ mod tests {
         store
             .upsert_controller_session_index_entry(&SessionIndexEntry {
                 session_id: recovered_id.into(),
-                node_name: "worker-1".into(),
-                node_address: Some("worker-1.tail:7433".into()),
+                node_name: "node-1".into(),
+                node_address: Some("node-1.tail:7433".into()),
                 session_name: "task-a".into(),
                 status: "lost".into(),
                 command: None,
@@ -423,7 +423,7 @@ mod tests {
             .unwrap();
         let config = Config {
             node: NodeConfig {
-                name: "master-node".into(),
+                name: "controller-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
@@ -448,8 +448,8 @@ mod tests {
         session_index
             .upsert(SessionIndexEntry {
                 session_id: recovered_id.into(),
-                node_name: "worker-1".into(),
-                node_address: Some("worker-1.tail:7433".into()),
+                node_name: "node-1".into(),
+                node_address: Some("node-1.tail:7433".into()),
                 session_name: "task-a".into(),
                 status: "lost".into(),
                 command: None,
@@ -470,7 +470,7 @@ mod tests {
         let app = routes::build(state);
         let server = TestServer::new(app).unwrap();
 
-        let token = enroll_node(&server, "worker-1").await;
+        let token = enroll_node(&server, "node-1").await;
         let req = EventPushRequest {
             events: vec![make_session_event(recovered_id, "task-a", "active")],
         };
@@ -504,7 +504,7 @@ mod tests {
         store.migrate().await.unwrap();
         let config = Config {
             node: NodeConfig {
-                name: "master-node".into(),
+                name: "controller-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
@@ -540,7 +540,7 @@ mod tests {
         let app = routes::build(state);
         let server = TestServer::new(app).unwrap();
 
-        let token = enroll_node(&server, "worker-1").await;
+        let token = enroll_node(&server, "node-1").await;
         let create_req = EventPushRequest {
             events: vec![make_session_event("s1", "task-a", "active")],
         };

@@ -132,7 +132,7 @@ describe('OceanCanvas', () => {
   });
 
   it('shows profile card when clicking on an octopus', async () => {
-    const sessions = [makeSession({ id: 's1', name: 'worker-1' })];
+    const sessions = [makeSession({ id: 's1', name: 'node-1' })];
     render(
       <OceanCanvas localNode={makeNode()} localSessions={sessions} peers={[]} peerSessions={{}} />,
     );

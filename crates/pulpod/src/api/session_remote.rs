@@ -14,7 +14,7 @@ use super::AppState;
 pub(super) type ApiError = (StatusCode, Json<ErrorResponse>);
 
 #[derive(Debug, Clone)]
-pub(super) struct RemoteWorkerTarget {
+pub(super) struct RemoteSessionNodeTarget {
     pub session_id: String,
     pub node_name: String,
     pub base_url: String,
@@ -63,7 +63,7 @@ pub(super) async fn send_remote_request(
 }
 
 pub(super) fn remote_json_request(
-    target: &RemoteWorkerTarget,
+    target: &RemoteSessionNodeTarget,
     request: reqwest::RequestBuilder,
 ) -> reqwest::RequestBuilder {
     apply_remote_auth(request, target.token.as_deref())
@@ -93,10 +93,10 @@ pub(super) async fn expect_remote_no_content(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub(super) async fn resolve_remote_worker_target(
+pub(super) async fn resolve_remote_session_node_target(
     state: &Arc<AppState>,
     id: &str,
-) -> Result<Option<RemoteWorkerTarget>, ApiError> {
+) -> Result<Option<RemoteSessionNodeTarget>, ApiError> {
     let Some(session_index) = &state.session_index else {
         return Ok(None);
     };
@@ -118,7 +118,7 @@ pub(super) async fn resolve_remote_worker_target(
     };
 
     let token = state.peer_registry.get_token(&entry.node_name).await;
-    Ok(Some(RemoteWorkerTarget {
+    Ok(Some(RemoteSessionNodeTarget {
         session_id: entry.session_id,
         node_name: entry.node_name,
         base_url: normalize_http_base(&address),

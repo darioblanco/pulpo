@@ -85,13 +85,13 @@ describe('world', () => {
     it('creates octopuses for local sessions', () => {
       const world = createWorld(800, 600);
       const sessions = [
-        makeSession({ id: 's1', name: 'worker-1' }),
-        makeSession({ id: 's2', name: 'worker-2' }),
+        makeSession({ id: 's1', name: 'node-1' }),
+        makeSession({ id: 's2', name: 'node-2' }),
       ];
       syncData(world, makeNode(), sessions, [], {});
       expect(world.octopuses).toHaveLength(2);
-      expect(world.octopuses[0].name).toBe('worker-1');
-      expect(world.octopuses[1].name).toBe('worker-2');
+      expect(world.octopuses[0].name).toBe('node-1');
+      expect(world.octopuses[1].name).toBe('node-2');
     });
 
     it('populates new session fields on octopus', () => {
@@ -99,7 +99,7 @@ describe('world', () => {
       const sessions = [
         makeSession({
           id: 's1',
-          name: 'worker-1',
+          name: 'node-1',
           command: 'claude code --chat',
           workdir: '/home/user/repo',
           description: 'Fix bug',
@@ -140,7 +140,7 @@ describe('world', () => {
 
     it('preserves existing octopus animation state on update', () => {
       const world = createWorld(800, 600);
-      const sessions = [makeSession({ id: 's1', name: 'worker-1' })];
+      const sessions = [makeSession({ id: 's1', name: 'node-1' })];
       syncData(world, makeNode(), sessions, [], {});
 
       // Modify animation state
@@ -148,7 +148,7 @@ describe('world', () => {
       world.octopuses[0].x = 42;
 
       // Sync again with updated status
-      const updated = [makeSession({ id: 's1', name: 'worker-1', status: 'ready' })];
+      const updated = [makeSession({ id: 's1', name: 'node-1', status: 'ready' })];
       syncData(world, makeNode(), updated, [], {});
 
       expect(world.octopuses[0].animFrame).toBe(3);
@@ -158,13 +158,13 @@ describe('world', () => {
 
     it('updates new session fields on existing octopus', () => {
       const world = createWorld(800, 600);
-      const sessions = [makeSession({ id: 's1', name: 'worker-1' })];
+      const sessions = [makeSession({ id: 's1', name: 'node-1' })];
       syncData(world, makeNode(), sessions, [], {});
 
       const updated = [
         makeSession({
           id: 's1',
-          name: 'worker-1',
+          name: 'node-1',
           command: 'codex --code',
           workdir: '/new/path',
           description: 'New description',
@@ -232,24 +232,24 @@ describe('world', () => {
     it('creates octopuses for sessions', () => {
       const world = createWorld(800, 600);
       const sessions = [
-        makeSession({ id: 's1', name: 'worker-1' }),
-        makeSession({ id: 's2', name: 'worker-2' }),
+        makeSession({ id: 's1', name: 'node-1' }),
+        makeSession({ id: 's2', name: 'node-2' }),
       ];
       syncSingleNode(world, 'mac-studio', true, 'online', sessions, '#f472b6');
       expect(world.octopuses).toHaveLength(2);
-      expect(world.octopuses[0].name).toBe('worker-1');
-      expect(world.octopuses[1].name).toBe('worker-2');
+      expect(world.octopuses[0].name).toBe('node-1');
+      expect(world.octopuses[1].name).toBe('node-2');
     });
 
     it('preserves existing octopus state on update', () => {
       const world = createWorld(800, 600);
-      const sessions = [makeSession({ id: 's1', name: 'worker-1' })];
+      const sessions = [makeSession({ id: 's1', name: 'node-1' })];
       syncSingleNode(world, 'mac-studio', true, 'online', sessions, '#f472b6');
 
       world.octopuses[0].animFrame = 3;
       world.octopuses[0].x = 42;
 
-      const updated = [makeSession({ id: 's1', name: 'worker-1', status: 'ready' })];
+      const updated = [makeSession({ id: 's1', name: 'node-1', status: 'ready' })];
       syncSingleNode(world, 'mac-studio', true, 'online', updated, '#f472b6');
 
       expect(world.octopuses[0].animFrame).toBe(3);
@@ -423,8 +423,8 @@ describe('world', () => {
     it('assigns active and idle sessions to different home zones', () => {
       const world = createWorld(800, 600);
       const sessions = [
-        makeSession({ id: 's1', name: 'worker-1', status: 'active' }),
-        makeSession({ id: 's2', name: 'worker-2', status: 'idle' }),
+        makeSession({ id: 's1', name: 'node-1', status: 'active' }),
+        makeSession({ id: 's2', name: 'node-2', status: 'idle' }),
       ];
       syncData(world, makeNode(), sessions, [], {});
 

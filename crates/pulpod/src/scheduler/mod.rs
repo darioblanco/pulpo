@@ -263,7 +263,7 @@ async fn create_remote_scheduled_session(
             let status = resp.status();
             let message = match resp.json::<pulpo_common::api::ErrorResponse>().await {
                 Ok(body) => body.error,
-                Err(_) => format!("worker responded with {status}"),
+                Err(_) => format!("node responded with {status}"),
             };
             Err(anyhow::anyhow!(message))
         }
@@ -416,7 +416,7 @@ mod tests {
         let err = create_remote_scheduled_session(
             &registry,
             "nightly-review",
-            "missing-worker",
+            "missing-node",
             CreateSessionRequest {
                 name: "nightly-review".into(),
                 workdir: Some("/repo".into()),
@@ -435,14 +435,14 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert_eq!(err.to_string(), "target node not found: missing-worker");
+        assert_eq!(err.to_string(), "target node not found: missing-node");
     }
 
     #[cfg(not(coverage))]
     #[tokio::test]
     async fn test_create_remote_scheduled_session_unreachable_worker() {
         let configured = HashMap::from([(
-            "worker-1".to_owned(),
+            "node-1".to_owned(),
             PeerEntry::Full {
                 address: "127.0.0.1:9".into(),
                 token: Some("secret-token".into()),
@@ -452,7 +452,7 @@ mod tests {
         let err = create_remote_scheduled_session(
             &registry,
             "nightly-review",
-            "worker-1",
+            "node-1",
             CreateSessionRequest {
                 name: "nightly-review".into(),
                 workdir: Some("/repo".into()),
@@ -471,6 +471,6 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert!(err.to_string().contains("failed to reach node worker-1"));
+        assert!(err.to_string().contains("failed to reach node node-1"));
     }
 }

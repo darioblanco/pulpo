@@ -2335,8 +2335,8 @@ async fn test_controller_session_index_roundtrip() {
     let store = test_store().await;
     let entry = SessionIndexEntry {
         session_id: "remote-1".into(),
-        node_name: "worker-1".into(),
-        node_address: Some("worker-1.tail:7433".into()),
+        node_name: "node-1".into(),
+        node_address: Some("node-1.tail:7433".into()),
         session_name: "nightly-review".into(),
         status: "active".into(),
         command: Some("claude -p 'review'".into()),
@@ -2350,11 +2350,8 @@ async fn test_controller_session_index_roundtrip() {
     let entries = store.list_controller_session_index_entries().await.unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].session_id, "remote-1");
-    assert_eq!(entries[0].node_name, "worker-1");
-    assert_eq!(
-        entries[0].node_address.as_deref(),
-        Some("worker-1.tail:7433")
-    );
+    assert_eq!(entries[0].node_name, "node-1");
+    assert_eq!(entries[0].node_address.as_deref(), Some("node-1.tail:7433"));
 }
 
 #[tokio::test]
@@ -2362,7 +2359,7 @@ async fn test_controller_session_index_delete() {
     let store = test_store().await;
     let entry = SessionIndexEntry {
         session_id: "remote-2".into(),
-        node_name: "worker-2".into(),
+        node_name: "node-2".into(),
         node_address: None,
         session_name: "batch-run".into(),
         status: "idle".into(),
@@ -2391,18 +2388,18 @@ async fn test_controller_session_index_delete() {
 async fn test_controller_nodes_roundtrip() {
     let store = test_store().await;
     store
-        .touch_controller_node("worker-1", "2026-04-01T22:00:00Z")
+        .touch_controller_node("node-1", "2026-04-01T22:00:00Z")
         .await
         .unwrap();
     store
-        .touch_controller_node("worker-2", "2026-04-01T22:05:00Z")
+        .touch_controller_node("node-2", "2026-04-01T22:05:00Z")
         .await
         .unwrap();
 
     let workers = store.list_controller_nodes().await.unwrap();
     assert_eq!(workers.len(), 2);
-    assert_eq!(workers[0].0, "worker-1");
-    assert_eq!(workers[1].0, "worker-2");
+    assert_eq!(workers[0].0, "node-1");
+    assert_eq!(workers[1].0, "node-2");
     assert_eq!(workers[0].1.to_rfc3339(), "2026-04-01T22:00:00+00:00");
 }
 
@@ -2411,7 +2408,7 @@ async fn test_controller_enrolled_nodes_roundtrip() {
     let store = test_store().await;
     store
         .enroll_controller_node(
-            "worker-1",
+            "node-1",
             "hash-1",
             Some("2026-04-01T22:00:00Z"),
             Some("10.0.0.10"),
@@ -2420,11 +2417,11 @@ async fn test_controller_enrolled_nodes_roundtrip() {
         .unwrap();
 
     let by_name = store
-        .get_enrolled_controller_node_by_name("worker-1")
+        .get_enrolled_controller_node_by_name("node-1")
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(by_name.node_name, "worker-1");
+    assert_eq!(by_name.node_name, "node-1");
     assert_eq!(by_name.token_hash, "hash-1");
     assert_eq!(by_name.last_seen_address.as_deref(), Some("10.0.0.10"));
 
@@ -2433,29 +2430,29 @@ async fn test_controller_enrolled_nodes_roundtrip() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(by_hash.node_name, "worker-1");
+    assert_eq!(by_hash.node_name, "node-1");
 }
 
 #[tokio::test]
 async fn test_touch_enrolled_controller_node_updates_seen_fields() {
     let store = test_store().await;
     store
-        .enroll_controller_node("worker-2", "hash-2", None, None)
+        .enroll_controller_node("node-2", "hash-2", None, None)
         .await
         .unwrap();
     store
-        .touch_enrolled_controller_node("worker-2", "2026-04-01T22:30:00Z", Some("10.0.0.20"))
+        .touch_enrolled_controller_node("node-2", "2026-04-01T22:30:00Z", Some("10.0.0.20"))
         .await
         .unwrap();
 
-    let worker = store
-        .get_enrolled_controller_node_by_name("worker-2")
+    let node = store
+        .get_enrolled_controller_node_by_name("node-2")
         .await
         .unwrap()
         .unwrap();
     assert_eq!(
-        worker.last_seen_at.unwrap().to_rfc3339(),
+        node.last_seen_at.unwrap().to_rfc3339(),
         "2026-04-01T22:30:00+00:00"
     );
-    assert_eq!(worker.last_seen_address.as_deref(), Some("10.0.0.20"));
+    assert_eq!(node.last_seen_address.as_deref(), Some("10.0.0.20"));
 }

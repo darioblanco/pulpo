@@ -273,17 +273,17 @@ mod tests {
         let resp = server
             .post("/api/v1/controller/nodes")
             .json(&EnrollNodeRequest {
-                node_name: "worker-1".into(),
+                node_name: "node-1".into(),
             })
             .await;
         resp.assert_status(StatusCode::CREATED);
         let body: EnrollNodeResponse = resp.json();
-        assert_eq!(body.node_name, "worker-1");
+        assert_eq!(body.node_name, "node-1");
         assert!(!body.token.is_empty());
 
         let enrolled = state
             .store
-            .get_enrolled_controller_node_by_name("worker-1")
+            .get_enrolled_controller_node_by_name("node-1")
             .await
             .unwrap()
             .unwrap();
@@ -296,7 +296,7 @@ mod tests {
         server
             .post("/api/v1/controller/nodes")
             .json(&EnrollNodeRequest {
-                node_name: "worker-1".into(),
+                node_name: "node-1".into(),
             })
             .await
             .assert_status(StatusCode::CREATED);
@@ -304,7 +304,7 @@ mod tests {
         let resp = server
             .post("/api/v1/controller/nodes")
             .json(&EnrollNodeRequest {
-                node_name: "worker-1".into(),
+                node_name: "node-1".into(),
             })
             .await;
         resp.assert_status(StatusCode::CONFLICT);
@@ -316,7 +316,7 @@ mod tests {
         let enroll_resp = server
             .post("/api/v1/controller/nodes")
             .json(&EnrollNodeRequest {
-                node_name: "worker-1".into(),
+                node_name: "node-1".into(),
             })
             .await;
         enroll_resp.assert_status(StatusCode::CREATED);
@@ -333,7 +333,7 @@ mod tests {
         resp.assert_status(StatusCode::OK);
         let list: EnrolledNodesResponse = resp.json();
         assert_eq!(list.nodes.len(), 1);
-        assert_eq!(list.nodes[0].node_name, "worker-1");
+        assert_eq!(list.nodes[0].node_name, "node-1");
         assert!(list.nodes[0].last_seen_at.is_some());
     }
 
@@ -343,7 +343,7 @@ mod tests {
         let resp = server
             .post("/api/v1/controller/nodes")
             .json(&EnrollNodeRequest {
-                node_name: "worker-1".into(),
+                node_name: "node-1".into(),
             })
             .await;
         resp.assert_status(StatusCode::FORBIDDEN);

@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::api::session_remote::{
     ApiError, expect_remote_no_content, internal_error, parse_remote_json, remote_json_request,
-    reqwest_error_response, resolve_remote_node_target, resolve_remote_worker_target,
+    reqwest_error_response, resolve_remote_node_target, resolve_remote_session_node_target,
     send_remote_request,
 };
 use crate::remote::{apply_remote_auth, remote_client};
@@ -204,7 +204,7 @@ pub async fn output(
         .await
         .map_err(|e| internal_error(&e.to_string()))?
     else {
-        let Some(target) = resolve_remote_worker_target(&state, &id).await? else {
+        let Some(target) = resolve_remote_session_node_target(&state, &id).await? else {
             return Err((
                 StatusCode::NOT_FOUND,
                 Json(ErrorResponse {
@@ -252,7 +252,7 @@ pub async fn resume(
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("not found") {
-                if let Some(target) = resolve_remote_worker_target(&state, &id).await? {
+                if let Some(target) = resolve_remote_session_node_target(&state, &id).await? {
                     let client = remote_client().map_err(|e| {
                         internal_error(&format!("failed to build HTTP client: {e}"))
                     })?;
@@ -302,7 +302,7 @@ pub async fn download_output(
         .await
         .map_err(|e| internal_error(&e.to_string()))?
     else {
-        let Some(target) = resolve_remote_worker_target(&state, &id).await? else {
+        let Some(target) = resolve_remote_session_node_target(&state, &id).await? else {
             return Err((
                 StatusCode::NOT_FOUND,
                 Json(ErrorResponse {
@@ -415,7 +415,7 @@ pub async fn input(
         .await
         .map_err(|e| internal_error(&e.to_string()))?
     else {
-        let Some(target) = resolve_remote_worker_target(&state, &id).await? else {
+        let Some(target) = resolve_remote_session_node_target(&state, &id).await? else {
             return Err((
                 StatusCode::NOT_FOUND,
                 Json(ErrorResponse {

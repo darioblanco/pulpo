@@ -587,14 +587,14 @@ fn format_enrolled_nodes(resp: &EnrolledNodesResponse) -> String {
     let seen_width = resp
         .nodes
         .iter()
-        .map(|worker| worker.last_seen_at.as_deref().unwrap_or("-").len())
+        .map(|node| node.last_seen_at.as_deref().unwrap_or("-").len())
         .max()
         .unwrap_or(9)
         .max(9);
     let addr_width = resp
         .nodes
         .iter()
-        .map(|worker| worker.last_seen_address.as_deref().unwrap_or("-").len())
+        .map(|node| node.last_seen_address.as_deref().unwrap_or("-").len())
         .max()
         .unwrap_or(7)
         .max(7);
@@ -603,12 +603,12 @@ fn format_enrolled_nodes(resp: &EnrolledNodesResponse) -> String {
         "{:<20} {:<seen_width$} {:<addr_width$}",
         "NAME", "LAST SEEN", "ADDRESS"
     )];
-    for worker in &resp.nodes {
+    for node in &resp.nodes {
         lines.push(format!(
             "{:<20} {:<seen_width$} {:<addr_width$}",
-            worker.node_name,
-            worker.last_seen_at.as_deref().unwrap_or("-"),
-            worker.last_seen_address.as_deref().unwrap_or("-"),
+            node.node_name,
+            node.last_seen_at.as_deref().unwrap_or("-"),
+            node.last_seen_address.as_deref().unwrap_or("-"),
         ));
     }
     lines.join("\n")
@@ -2608,13 +2608,13 @@ mod tests {
             .route(
                 "/api/v1/controller/nodes",
                 get(|| async {
-                    r#"{"nodes":[{"node_name":"worker-1","last_seen_at":"2026-04-02T17:00:00Z","last_seen_address":"10.0.0.10"}]}"#
+                    r#"{"nodes":[{"node_name":"node-1","last_seen_at":"2026-04-02T17:00:00Z","last_seen_address":"10.0.0.10"}]}"#
                         .to_owned()
                 })
                 .post(|| async {
                     (
                         StatusCode::CREATED,
-                        r#"{"node_name":"worker-1","token":"issued-worker-token"}"#.to_owned(),
+                        r#"{"node_name":"node-1","token":"issued-node-token"}"#.to_owned(),
                     )
                 }),
             )
@@ -2687,7 +2687,7 @@ mod tests {
             path: None,
         };
         let result = execute(&cli).await.unwrap();
-        assert!(result.contains("worker-1"));
+        assert!(result.contains("node-1"));
         assert!(result.contains("10.0.0.10"));
         assert!(result.contains("LAST SEEN"));
     }
@@ -2706,7 +2706,7 @@ mod tests {
             path: None,
         };
         let result = execute(&cli).await.unwrap();
-        assert!(result.contains("issued-worker-token"));
+        assert!(result.contains("issued-node-token"));
         assert!(result.contains("Set [controller].token"));
     }
 
@@ -3565,14 +3565,14 @@ mod tests {
     fn test_format_enrolled_nodes() {
         let resp = EnrolledNodesResponse {
             nodes: vec![pulpo_common::api::EnrolledNodeInfo {
-                node_name: "worker-1".into(),
+                node_name: "node-1".into(),
                 last_seen_at: Some("2026-04-02T17:00:00Z".into()),
                 last_seen_address: Some("10.0.0.10".into()),
             }],
         };
         let output = format_enrolled_nodes(&resp);
         assert!(output.contains("NAME"));
-        assert!(output.contains("worker-1"));
+        assert!(output.contains("node-1"));
         assert!(output.contains("10.0.0.10"));
     }
 

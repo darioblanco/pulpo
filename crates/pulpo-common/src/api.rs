@@ -1777,7 +1777,7 @@ mod tests {
                 session_id: "s1".into(),
                 session_name: "task-a".into(),
                 status: "active".into(),
-                node_name: "worker-1".into(),
+                node_name: "node-1".into(),
                 timestamp: "2026-01-01T00:00:00Z".into(),
                 ..Default::default()
             })],
@@ -1807,25 +1807,25 @@ mod tests {
     #[test]
     fn test_enroll_node_request_roundtrip() {
         let req = EnrollNodeRequest {
-            node_name: "worker-1".into(),
+            node_name: "node-1".into(),
         };
         let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"node_name\":\"worker-1\""));
+        assert!(json.contains("\"node_name\":\"node-1\""));
         let deserialized: EnrollNodeRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.node_name, "worker-1");
+        assert_eq!(deserialized.node_name, "node-1");
     }
 
     #[test]
     fn test_enroll_node_response_roundtrip() {
         let resp = EnrollNodeResponse {
-            node_name: "worker-1".into(),
+            node_name: "node-1".into(),
             token: "secret-token".into(),
         };
         let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"node_name\":\"worker-1\""));
+        assert!(json.contains("\"node_name\":\"node-1\""));
         assert!(json.contains("\"token\":\"secret-token\""));
         let deserialized: EnrollNodeResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.node_name, "worker-1");
+        assert_eq!(deserialized.node_name, "node-1");
         assert_eq!(deserialized.token, "secret-token");
     }
 
@@ -1833,21 +1833,21 @@ mod tests {
     fn test_enrolled_nodes_response_roundtrip() {
         let resp = EnrolledNodesResponse {
             nodes: vec![EnrolledNodeInfo {
-                node_name: "worker-1".into(),
+                node_name: "node-1".into(),
                 last_seen_at: Some("2026-04-02T17:00:00Z".into()),
                 last_seen_address: Some("10.0.0.10".into()),
             }],
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"nodes\""));
-        assert!(json.contains("\"node_name\":\"worker-1\""));
+        assert!(json.contains("\"node_name\":\"node-1\""));
         let deserialized: EnrolledNodesResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.nodes.len(), 1);
-        assert_eq!(deserialized.nodes[0].node_name, "worker-1");
+        assert_eq!(deserialized.nodes[0].node_name, "node-1");
     }
 
     #[test]
-    fn test_worker_command_create_session_serialize() {
+    fn test_node_command_create_session_serialize() {
         let cmd = NodeCommand::CreateSession {
             command_id: "cmd-1".into(),
             name: "my-task".into(),
@@ -1863,7 +1863,7 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_command_stop_session_serialize() {
+    fn test_node_command_stop_session_serialize() {
         let cmd = NodeCommand::StopSession {
             command_id: "cmd-2".into(),
             session_id: "sess-42".into(),
@@ -1875,7 +1875,7 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_command_create_session_roundtrip() {
+    fn test_node_command_create_session_roundtrip() {
         let cmd = NodeCommand::CreateSession {
             command_id: "c1".into(),
             name: "task".into(),
@@ -1898,7 +1898,7 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_command_stop_session_roundtrip() {
+    fn test_node_command_stop_session_roundtrip() {
         let cmd = NodeCommand::StopSession {
             command_id: "c2".into(),
             session_id: "s1".into(),
@@ -1918,7 +1918,7 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_command_debug_clone() {
+    fn test_node_command_debug_clone() {
         let cmd = NodeCommand::StopSession {
             command_id: "c".into(),
             session_id: "s".into(),
@@ -1928,14 +1928,14 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_command_invalid_type() {
+    fn test_node_command_invalid_type() {
         let json = r#"{"type":"unknown","command_id":"c1"}"#;
         let result = serde_json::from_str::<NodeCommand>(json);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_worker_commands_response_serialize() {
+    fn test_node_commands_response_serialize() {
         let resp = NodeCommandsResponse {
             commands: vec![
                 NodeCommand::CreateSession {
@@ -1959,14 +1959,14 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_commands_response_empty() {
+    fn test_node_commands_response_empty() {
         let resp = NodeCommandsResponse { commands: vec![] };
         let json = serde_json::to_string(&resp).unwrap();
         assert_eq!(json, r#"{"commands":[]}"#);
     }
 
     #[test]
-    fn test_worker_commands_response_roundtrip() {
+    fn test_node_commands_response_roundtrip() {
         let resp = NodeCommandsResponse {
             commands: vec![NodeCommand::StopSession {
                 command_id: "c1".into(),
@@ -1979,7 +1979,7 @@ mod tests {
     }
 
     #[test]
-    fn test_worker_commands_response_debug_clone() {
+    fn test_node_commands_response_debug_clone() {
         let resp = NodeCommandsResponse { commands: vec![] };
         let cloned = resp.clone();
         assert_eq!(format!("{resp:?}"), format!("{cloned:?}"));
@@ -1989,7 +1989,7 @@ mod tests {
     fn test_session_index_entry_serialize() {
         let entry = SessionIndexEntry {
             session_id: "s1".into(),
-            node_name: "worker-1".into(),
+            node_name: "node-1".into(),
             node_address: Some("10.0.0.1:7433".into()),
             session_name: "my-task".into(),
             status: "active".into(),
@@ -1998,7 +1998,7 @@ mod tests {
         };
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("\"session_id\":\"s1\""));
-        assert!(json.contains("\"node_name\":\"worker-1\""));
+        assert!(json.contains("\"node_name\":\"node-1\""));
         assert!(json.contains("\"node_address\":\"10.0.0.1:7433\""));
         assert!(json.contains("\"status\":\"active\""));
     }
@@ -2007,7 +2007,7 @@ mod tests {
     fn test_session_index_entry_roundtrip() {
         let entry = SessionIndexEntry {
             session_id: "s2".into(),
-            node_name: "worker-2".into(),
+            node_name: "node-2".into(),
             node_address: None,
             session_name: "task-b".into(),
             status: "stopped".into(),
@@ -2017,7 +2017,7 @@ mod tests {
         let json = serde_json::to_string(&entry).unwrap();
         let deserialized: SessionIndexEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.session_id, "s2");
-        assert_eq!(deserialized.node_name, "worker-2");
+        assert_eq!(deserialized.node_name, "node-2");
         assert!(deserialized.node_address.is_none());
         assert_eq!(deserialized.session_name, "task-b");
         assert_eq!(deserialized.status, "stopped");

@@ -89,7 +89,7 @@ pulpo --node mac-mini nodes
 pulpo --node mac-mini nodes enrolled
 ```
 
-## 3. Store Secrets On The Worker That Will Execute The Work
+## 3. Store Secrets On The Node That Will Execute The Work
 
 Secrets are stored per-node, which is usually what you want for private
 infrastructure.
@@ -102,10 +102,10 @@ pulpo --node gpu-box secret set GH_WORK ghp_work_xxxxxxxxxxxx --env GITHUB_TOKEN
 pulpo --node gpu-box secret list
 ```
 
-This keeps the secret associated with the machine that will actually execute the
+This keeps the secret associated with the node that will actually execute the
 session.
 
-## 4. Run A Session On The Worker
+## 4. Run A Session On The Node
 
 For cross-node work, target the controller and tell it which node should execute the session:
 

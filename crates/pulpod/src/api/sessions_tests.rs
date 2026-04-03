@@ -96,7 +96,7 @@ async fn controller_state_with_index_and_peers(
     AppState::with_event_tx_controller(
         Config {
             node: NodeConfig {
-                name: "master-node".into(),
+                name: "controller-node".into(),
                 port: 7433,
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
@@ -231,7 +231,7 @@ fn test_session_from_index_entry_invalid_fields_fall_back_safely() {
     let before = chrono::Utc::now();
     let session = session_from_index_entry(SessionIndexEntry {
         session_id: "not-a-uuid".into(),
-        node_name: "worker-1".into(),
+        node_name: "node-1".into(),
         node_address: None,
         session_name: "indexed".into(),
         status: "not-a-status".into(),
@@ -253,8 +253,8 @@ async fn test_get_returns_remote_session_from_controller_index() {
     let session_id = Uuid::new_v4().to_string();
     let state = controller_state_with_index(SessionIndexEntry {
         session_id: session_id.clone(),
-        node_name: "worker-1".into(),
-        node_address: Some("worker-1.tailnet:7433".into()),
+        node_name: "node-1".into(),
+        node_address: Some("node-1.tailnet:7433".into()),
         session_name: "remote-task".into(),
         status: "active".into(),
         command: Some("claude -p build".into()),
@@ -307,7 +307,7 @@ async fn test_create_target_node_requires_controller() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: Some("worker-1".into()),
+        target_node: Some("node-1".into()),
     };
 
     let result = create(State(state), Json(req)).await;
@@ -321,7 +321,7 @@ async fn test_create_target_node_requires_controller() {
 async fn test_create_target_node_matching_controller_name_creates_locally() {
     let state = controller_state_with_index(SessionIndexEntry {
         session_id: Uuid::new_v4().to_string(),
-        node_name: "master-node".into(),
+        node_name: "controller-node".into(),
         node_address: None,
         session_name: "existing-local".into(),
         status: "active".into(),
@@ -330,7 +330,7 @@ async fn test_create_target_node_matching_controller_name_creates_locally() {
     })
     .await;
     let req = CreateSessionRequest {
-        name: "master-local".into(),
+        name: "controller-local".into(),
         workdir: Some("/tmp".into()),
         metadata: None,
         command: Some("echo local".into()),
@@ -341,18 +341,18 @@ async fn test_create_target_node_matching_controller_name_creates_locally() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: Some("master-node".into()),
+        target_node: Some("controller-node".into()),
     };
 
     let (status, Json(resp)) = create(State(state), Json(req)).await.unwrap();
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(resp.session.name, "master-local");
+    assert_eq!(resp.session.name, "controller-local");
 }
 
 #[tokio::test]
-async fn test_create_target_node_offline_worker_returns_bad_gateway() {
+async fn test_create_target_node_offline_node_returns_bad_gateway() {
     let peers = HashMap::from([(
-        "worker-1".to_owned(),
+        "node-1".to_owned(),
         pulpo_common::peer::PeerEntry::Full {
             address: "127.0.0.1:9".into(),
             token: Some("secret-token".into()),
@@ -361,7 +361,7 @@ async fn test_create_target_node_offline_worker_returns_bad_gateway() {
     let state = controller_state_with_index_and_peers(
         SessionIndexEntry {
             session_id: Uuid::new_v4().to_string(),
-            node_name: "master-node".into(),
+            node_name: "controller-node".into(),
             node_address: None,
             session_name: "existing-local".into(),
             status: "active".into(),
@@ -383,7 +383,7 @@ async fn test_create_target_node_offline_worker_returns_bad_gateway() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: Some("worker-1".into()),
+        target_node: Some("node-1".into()),
     };
 
     let result = create(State(state), Json(req)).await;
@@ -392,7 +392,7 @@ async fn test_create_target_node_offline_worker_returns_bad_gateway() {
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(
         err.error
-            .contains("failed to create session on node worker-1")
+            .contains("failed to create session on node node-1")
     );
 }
 
@@ -436,8 +436,8 @@ async fn test_stop_enqueues_remote_command_when_session_is_indexed_on_controller
     let session_id = Uuid::new_v4().to_string();
     let state = controller_state_with_index(SessionIndexEntry {
         session_id: session_id.clone(),
-        node_name: "worker-1".into(),
-        node_address: Some("worker-1.tailnet:7433".into()),
+        node_name: "node-1".into(),
+        node_address: Some("node-1.tailnet:7433".into()),
         session_name: "remote-task".into(),
         status: "active".into(),
         command: Some("claude -p build".into()),
@@ -451,12 +451,7 @@ async fn test_stop_enqueues_remote_command_when_session_is_indexed_on_controller
         .unwrap();
     assert_eq!(status, StatusCode::ACCEPTED);
 
-    let commands = state
-        .command_queue
-        .as_ref()
-        .unwrap()
-        .drain("worker-1")
-        .await;
+    let commands = state.command_queue.as_ref().unwrap().drain("node-1").await;
     assert_eq!(commands.len(), 1);
     match &commands[0] {
         NodeCommand::StopSession {
@@ -617,20 +612,20 @@ async fn test_output_not_found() {
 }
 
 #[tokio::test]
-async fn test_resolve_remote_worker_target_uses_peer_registry() {
+async fn test_resolve_remote_session_node_target_uses_peer_registry() {
     let session_id = Uuid::new_v4().to_string();
     let mut peers = HashMap::new();
     peers.insert(
-        "worker-1".into(),
+        "node-1".into(),
         pulpo_common::peer::PeerEntry::Full {
-            address: "worker-1.tailnet:7433".into(),
+            address: "node-1.tailnet:7433".into(),
             token: Some("secret-token".into()),
         },
     );
     let controller_state = controller_state_with_index_and_peers(
         SessionIndexEntry {
             session_id: session_id.clone(),
-            node_name: "worker-1".into(),
+            node_name: "node-1".into(),
             node_address: None,
             session_name: "remote-output".into(),
             status: "active".into(),
@@ -641,12 +636,12 @@ async fn test_resolve_remote_worker_target_uses_peer_registry() {
     )
     .await;
 
-    let target = resolve_remote_worker_target(&controller_state, &session_id)
+    let target = resolve_remote_session_node_target(&controller_state, &session_id)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(target.node_name, "worker-1");
-    assert_eq!(target.base_url, "http://worker-1.tailnet:7433");
+    assert_eq!(target.node_name, "node-1");
+    assert_eq!(target.base_url, "http://node-1.tailnet:7433");
     assert_eq!(target.token.as_deref(), Some("secret-token"));
 }
 
@@ -691,12 +686,12 @@ async fn test_input_not_found() {
 }
 
 #[tokio::test]
-async fn test_resolve_remote_worker_target_falls_back_to_index_address() {
+async fn test_resolve_remote_session_node_target_falls_back_to_index_address() {
     let session_id = Uuid::new_v4().to_string();
     let controller_state = controller_state_with_index(SessionIndexEntry {
         session_id: session_id.clone(),
-        node_name: "worker-1".into(),
-        node_address: Some("https://worker-1.example.com".into()),
+        node_name: "node-1".into(),
+        node_address: Some("https://node-1.example.com".into()),
         session_name: "remote-input".into(),
         status: "active".into(),
         command: Some("echo test".into()),
@@ -704,11 +699,11 @@ async fn test_resolve_remote_worker_target_falls_back_to_index_address() {
     })
     .await;
 
-    let target = resolve_remote_worker_target(&controller_state, &session_id)
+    let target = resolve_remote_session_node_target(&controller_state, &session_id)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(target.base_url, "https://worker-1.example.com");
+    assert_eq!(target.base_url, "https://node-1.example.com");
     assert!(target.token.is_none());
 }
 
@@ -1236,11 +1231,11 @@ async fn test_download_output_not_found() {
 }
 
 #[tokio::test]
-async fn test_resolve_remote_worker_target_errors_without_any_address() {
+async fn test_resolve_remote_session_node_target_errors_without_any_address() {
     let session_id = Uuid::new_v4().to_string();
     let controller_state = controller_state_with_index(SessionIndexEntry {
         session_id: session_id.clone(),
-        node_name: "worker-1".into(),
+        node_name: "node-1".into(),
         node_address: None,
         session_name: "remote-download".into(),
         status: "active".into(),
@@ -1249,7 +1244,7 @@ async fn test_resolve_remote_worker_target_errors_without_any_address() {
     })
     .await;
 
-    let result = resolve_remote_worker_target(&controller_state, &session_id).await;
+    let result = resolve_remote_session_node_target(&controller_state, &session_id).await;
     assert!(result.is_err());
     let (status, Json(err)) = result.unwrap_err();
     assert_eq!(status, StatusCode::BAD_GATEWAY);
@@ -1257,11 +1252,11 @@ async fn test_resolve_remote_worker_target_errors_without_any_address() {
 }
 
 #[tokio::test]
-async fn test_output_remote_worker_connection_failure_returns_bad_gateway() {
+async fn test_output_remote_node_connection_failure_returns_bad_gateway() {
     let session_id = Uuid::new_v4().to_string();
     let state = controller_state_with_index(SessionIndexEntry {
         session_id: session_id.clone(),
-        node_name: "worker-1".into(),
+        node_name: "node-1".into(),
         node_address: Some("127.0.0.1:9".into()),
         session_name: "remote-output".into(),
         status: "active".into(),
@@ -1281,16 +1276,16 @@ async fn test_output_remote_worker_connection_failure_returns_bad_gateway() {
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(
         err.error
-            .contains("failed to fetch output from node worker-1")
+            .contains("failed to fetch output from node node-1")
     );
 }
 
 #[tokio::test]
-async fn test_input_remote_worker_connection_failure_returns_bad_gateway() {
+async fn test_input_remote_node_connection_failure_returns_bad_gateway() {
     let session_id = Uuid::new_v4().to_string();
     let state = controller_state_with_index(SessionIndexEntry {
         session_id: session_id.clone(),
-        node_name: "worker-1".into(),
+        node_name: "node-1".into(),
         node_address: Some("127.0.0.1:9".into()),
         session_name: "remote-input".into(),
         status: "active".into(),
@@ -1310,15 +1305,15 @@ async fn test_input_remote_worker_connection_failure_returns_bad_gateway() {
     assert!(result.is_err());
     let (status, Json(err)) = result.unwrap_err();
     assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(err.error.contains("failed to send input to node worker-1"));
+    assert!(err.error.contains("failed to send input to node node-1"));
 }
 
 #[tokio::test]
-async fn test_download_output_remote_worker_connection_failure_returns_bad_gateway() {
+async fn test_download_output_remote_node_connection_failure_returns_bad_gateway() {
     let session_id = Uuid::new_v4().to_string();
     let state = controller_state_with_index(SessionIndexEntry {
         session_id: session_id.clone(),
-        node_name: "worker-1".into(),
+        node_name: "node-1".into(),
         node_address: Some("127.0.0.1:9".into()),
         session_name: "remote-download".into(),
         status: "active".into(),
@@ -1333,16 +1328,16 @@ async fn test_download_output_remote_worker_connection_failure_returns_bad_gatew
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(
         err.error
-            .contains("failed to download output from node worker-1")
+            .contains("failed to download output from node node-1")
     );
 }
 
 #[tokio::test]
-async fn test_resume_remote_worker_connection_failure_returns_bad_gateway() {
+async fn test_resume_remote_node_connection_failure_returns_bad_gateway() {
     let session_id = Uuid::new_v4().to_string();
     let state = controller_state_with_index(SessionIndexEntry {
         session_id: session_id.clone(),
-        node_name: "worker-1".into(),
+        node_name: "node-1".into(),
         node_address: Some("127.0.0.1:9".into()),
         session_name: "remote-resume".into(),
         status: "lost".into(),
@@ -1357,7 +1352,7 @@ async fn test_resume_remote_worker_connection_failure_returns_bad_gateway() {
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert!(
         err.error
-            .contains("failed to resume session on node worker-1")
+            .contains("failed to resume session on node node-1")
     );
 }
 

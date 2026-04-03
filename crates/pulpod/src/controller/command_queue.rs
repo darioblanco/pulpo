@@ -72,11 +72,11 @@ mod tests {
     #[tokio::test]
     async fn test_enqueue_and_drain() {
         let queue = CommandQueue::new();
-        queue.enqueue("worker-1", create_cmd("c1", "task-1")).await;
-        queue.enqueue("worker-1", create_cmd("c2", "task-2")).await;
-        queue.enqueue("worker-1", stop_cmd("c3", "s1")).await;
+        queue.enqueue("node-1", create_cmd("c1", "task-1")).await;
+        queue.enqueue("node-1", create_cmd("c2", "task-2")).await;
+        queue.enqueue("node-1", stop_cmd("c3", "s1")).await;
 
-        let commands = queue.drain("worker-1").await;
+        let commands = queue.drain("node-1").await;
         assert_eq!(commands.len(), 3);
 
         // Verify order (FIFO)
@@ -97,38 +97,38 @@ mod tests {
     #[tokio::test]
     async fn test_drain_empty() {
         let queue = CommandQueue::new();
-        let commands = queue.drain("worker-1").await;
+        let commands = queue.drain("node-1").await;
         assert!(commands.is_empty());
     }
 
     #[tokio::test]
     async fn test_drain_clears_queue() {
         let queue = CommandQueue::new();
-        queue.enqueue("worker-1", create_cmd("c1", "task-1")).await;
-        queue.enqueue("worker-1", create_cmd("c2", "task-2")).await;
+        queue.enqueue("node-1", create_cmd("c1", "task-1")).await;
+        queue.enqueue("node-1", create_cmd("c2", "task-2")).await;
 
-        let first = queue.drain("worker-1").await;
+        let first = queue.drain("node-1").await;
         assert_eq!(first.len(), 2);
 
-        let second = queue.drain("worker-1").await;
+        let second = queue.drain("node-1").await;
         assert!(second.is_empty());
     }
 
     #[tokio::test]
     async fn test_separate_node_queues() {
         let queue = CommandQueue::new();
-        queue.enqueue("worker-1", create_cmd("c1", "task-1")).await;
-        queue.enqueue("worker-2", create_cmd("c2", "task-2")).await;
+        queue.enqueue("node-1", create_cmd("c1", "task-1")).await;
+        queue.enqueue("node-2", create_cmd("c2", "task-2")).await;
 
-        let w1 = queue.drain("worker-1").await;
+        let w1 = queue.drain("node-1").await;
         assert_eq!(w1.len(), 1);
         match &w1[0] {
             NodeCommand::CreateSession { command_id, .. } => assert_eq!(command_id, "c1"),
             NodeCommand::StopSession { .. } => panic!("expected CreateSession"),
         }
 
-        // worker-2 queue unaffected
-        let w2 = queue.drain("worker-2").await;
+        // node-2 queue unaffected
+        let w2 = queue.drain("node-2").await;
         assert_eq!(w2.len(), 1);
         match &w2[0] {
             NodeCommand::CreateSession { command_id, .. } => assert_eq!(command_id, "c2"),
@@ -139,15 +139,15 @@ mod tests {
     #[tokio::test]
     async fn test_pending_count() {
         let queue = CommandQueue::new();
-        assert_eq!(queue.pending_count("worker-1").await, 0);
+        assert_eq!(queue.pending_count("node-1").await, 0);
 
-        queue.enqueue("worker-1", create_cmd("c1", "t1")).await;
-        queue.enqueue("worker-1", create_cmd("c2", "t2")).await;
-        queue.enqueue("worker-1", stop_cmd("c3", "s1")).await;
-        assert_eq!(queue.pending_count("worker-1").await, 3);
+        queue.enqueue("node-1", create_cmd("c1", "t1")).await;
+        queue.enqueue("node-1", create_cmd("c2", "t2")).await;
+        queue.enqueue("node-1", stop_cmd("c3", "s1")).await;
+        assert_eq!(queue.pending_count("node-1").await, 3);
 
-        queue.drain("worker-1").await;
-        assert_eq!(queue.pending_count("worker-1").await, 0);
+        queue.drain("node-1").await;
+        assert_eq!(queue.pending_count("node-1").await, 0);
     }
 
     #[tokio::test]
@@ -160,8 +160,8 @@ mod tests {
     async fn test_clone_shares_state() {
         let queue = CommandQueue::new();
         let cloned = queue.clone();
-        queue.enqueue("worker-1", create_cmd("c1", "t1")).await;
-        assert_eq!(cloned.pending_count("worker-1").await, 1);
+        queue.enqueue("node-1", create_cmd("c1", "t1")).await;
+        assert_eq!(cloned.pending_count("node-1").await, 1);
     }
 
     #[tokio::test]

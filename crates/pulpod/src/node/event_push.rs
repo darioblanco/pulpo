@@ -114,7 +114,7 @@ mod tests {
             std::time::Duration::from_secs(2),
             run_event_push_loop(
                 "http://localhost:9999".into(),
-                "worker-token".into(),
+                "node-token".into(),
                 "test-node".into(),
                 rx,
                 shutdown_rx,

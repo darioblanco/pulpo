@@ -186,7 +186,7 @@ describe('TidePool', () => {
   });
 
   it('handles click without crashing', async () => {
-    const sessions = [makeSession({ id: 's1', name: 'worker-1' })];
+    const sessions = [makeSession({ id: 's1', name: 'node-1' })];
     renderTidePool({ sessions });
 
     await waitFor(() => {

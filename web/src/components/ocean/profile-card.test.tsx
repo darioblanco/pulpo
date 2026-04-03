@@ -7,7 +7,7 @@ import type { OctopusEntity } from './engine/world';
 function makeOctopus(overrides: Partial<OctopusEntity> = {}): OctopusEntity {
   return {
     sessionId: 'sess-1',
-    name: 'worker-alpha',
+    name: 'node-alpha',
     status: 'active',
     command: 'claude code',
     description: 'Fix the auth bug',
@@ -50,7 +50,7 @@ describe('ProfileCard', () => {
         <ProfileCard octopus={makeOctopus()} screenX={400} screenY={300} onClose={vi.fn()} />
       </MemoryRouter>,
     );
-    expect(screen.getByText('worker-alpha')).toBeInTheDocument();
+    expect(screen.getByText('node-alpha')).toBeInTheDocument();
   });
 
   it('renders status', () => {
@@ -333,7 +333,7 @@ describe('ProfileCard', () => {
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByTestId('attach-button'));
-    expect(onAttach).toHaveBeenCalledWith('worker-alpha');
+    expect(onAttach).toHaveBeenCalledWith('node-alpha');
   });
 
   it('renders last active as just now for recent output', () => {
@@ -441,7 +441,7 @@ describe('ProfileCard', () => {
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByTestId('stop-button'));
-    expect(onStop).toHaveBeenCalledWith('worker-alpha');
+    expect(onStop).toHaveBeenCalledWith('node-alpha');
   });
 
   it('shows Purge button for lost sessions when onPurge provided', () => {
@@ -595,6 +595,6 @@ describe('ProfileCard', () => {
       </MemoryRouter>,
     );
     fireEvent.click(screen.getByTestId('purge-button'));
-    expect(onPurge).toHaveBeenCalledWith('worker-alpha');
+    expect(onPurge).toHaveBeenCalledWith('node-alpha');
   });
 });

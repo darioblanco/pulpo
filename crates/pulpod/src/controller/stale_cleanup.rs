@@ -9,7 +9,7 @@ use crate::store::Store;
 
 /// Run the stale cleanup loop on the controller node.
 ///
-/// Every `check_interval` seconds, calls `mark_stale_workers` on the session index.
+/// Every `check_interval` seconds, calls `mark_stale_nodes` on the session index.
 /// For each affected session entry, emits a `PulpoEvent::Session` with `status = "lost"`
 /// so SSE subscribers and notification hooks see the change.
 #[cfg(not(coverage))]
@@ -30,7 +30,7 @@ pub async fn run_stale_cleanup_loop(
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                let affected = session_index.mark_stale_workers(stale_timeout).await;
+                let affected = session_index.mark_stale_nodes(stale_timeout).await;
                 if !affected.is_empty() {
                     info!(count = affected.len(), "Marked stale node sessions as lost");
                 }
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn test_build_lost_event() {
-        let event = build_lost_event("s1", "task-s1", "worker-1", "2026-03-30T12:00:00Z");
+        let event = build_lost_event("s1", "task-s1", "node-1", "2026-03-30T12:00:00Z");
         let PulpoEvent::Session(se) = event else {
             panic!("expected session event");
         };
@@ -150,7 +150,7 @@ mod tests {
         assert_eq!(se.session_name, "task-s1");
         assert_eq!(se.status, "lost");
         assert_eq!(se.previous_status, Some("unknown".into()));
-        assert_eq!(se.node_name, "worker-1");
+        assert_eq!(se.node_name, "node-1");
         assert_eq!(se.timestamp, "2026-03-30T12:00:00Z");
     }
 
@@ -176,14 +176,14 @@ mod tests {
     async fn test_stale_entries_produce_lost_events() {
         let index = SessionIndex::new();
         index
-            .touch_worker_at("worker-1", ts("2026-03-30T12:00:00Z"))
+            .touch_node_at("node-1", ts("2026-03-30T12:00:00Z"))
             .await;
-        index.upsert(make_entry("s1", "worker-1")).await;
-        index.upsert(make_entry("s2", "worker-1")).await;
+        index.upsert(make_entry("s1", "node-1")).await;
+        index.upsert(make_entry("s2", "node-1")).await;
 
         let (event_tx, mut event_rx) = broadcast::channel(16);
         let affected = index
-            .mark_stale_workers_at(ts("2026-03-30T12:06:40Z"), Duration::from_secs(300))
+            .mark_stale_nodes_at(ts("2026-03-30T12:06:40Z"), Duration::from_secs(300))
             .await;
         assert_eq!(affected.len(), 2);
 
@@ -209,19 +209,19 @@ mod tests {
         };
         assert_eq!(se1.status, "lost");
         assert_eq!(se2.status, "lost");
-        assert_eq!(se1.node_name, "worker-1");
+        assert_eq!(se1.node_name, "node-1");
     }
 
     #[tokio::test]
     async fn test_no_events_when_no_stale_workers() {
         let index = SessionIndex::new();
         index
-            .touch_worker_at("worker-1", ts("2026-03-30T12:00:00Z"))
+            .touch_node_at("node-1", ts("2026-03-30T12:00:00Z"))
             .await;
-        index.upsert(make_entry("s1", "worker-1")).await;
+        index.upsert(make_entry("s1", "node-1")).await;
 
         let affected = index
-            .mark_stale_workers_at(ts("2026-03-30T12:00:30Z"), Duration::from_secs(300))
+            .mark_stale_nodes_at(ts("2026-03-30T12:00:30Z"), Duration::from_secs(300))
             .await;
         assert!(affected.is_empty());
 
@@ -231,16 +231,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_recovered_worker_is_not_re_marked_lost_after_stale_cleanup() {
+    async fn test_recovered_node_is_not_re_marked_lost_after_stale_cleanup() {
         let tmpdir = tempfile::tempdir().unwrap();
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let index = SessionIndex::new();
 
         index
-            .touch_worker_at("worker-1", ts("2026-03-30T12:00:00Z"))
+            .touch_node_at("node-1", ts("2026-03-30T12:00:00Z"))
             .await;
-        let active_entry = make_entry("s1", "worker-1");
+        let active_entry = make_entry("s1", "node-1");
         index.upsert(active_entry.clone()).await;
         store
             .upsert_controller_session_index_entry(&active_entry)
@@ -248,7 +248,7 @@ mod tests {
             .unwrap();
 
         let affected = index
-            .mark_stale_workers_at(ts("2026-03-30T12:06:40Z"), Duration::from_secs(300))
+            .mark_stale_nodes_at(ts("2026-03-30T12:06:40Z"), Duration::from_secs(300))
             .await;
         assert_eq!(affected.len(), 1);
         assert_eq!(affected[0].status, "lost");
@@ -258,7 +258,7 @@ mod tests {
             .unwrap();
 
         index
-            .touch_worker_at("worker-1", ts("2026-03-30T12:07:00Z"))
+            .touch_node_at("node-1", ts("2026-03-30T12:07:00Z"))
             .await;
         let recovered_entry = SessionIndexEntry {
             status: "active".into(),
@@ -272,11 +272,11 @@ mod tests {
             .unwrap();
 
         let affected = index
-            .mark_stale_workers_at(ts("2026-03-30T12:08:00Z"), Duration::from_secs(300))
+            .mark_stale_nodes_at(ts("2026-03-30T12:08:00Z"), Duration::from_secs(300))
             .await;
         assert!(
             affected.is_empty(),
-            "freshly recovered worker should not be re-marked lost"
+            "freshly recovered node should not be re-marked lost"
         );
 
         let entry = index.get("s1").await.unwrap();
@@ -287,27 +287,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_stale_cleanup_only_marks_workers_with_expired_heartbeat() {
+    async fn test_stale_cleanup_only_marks_nodes_with_expired_heartbeat() {
         let index = SessionIndex::new();
         index
-            .touch_worker_at("worker-1", ts("2026-03-30T12:00:00Z"))
+            .touch_node_at("node-1", ts("2026-03-30T12:00:00Z"))
             .await;
         index
-            .touch_worker_at("worker-2", ts("2026-03-30T12:06:30Z"))
+            .touch_node_at("node-2", ts("2026-03-30T12:06:30Z"))
             .await;
-        index.upsert(make_entry("s1", "worker-1")).await;
-        index.upsert(make_entry("s2", "worker-2")).await;
+        index.upsert(make_entry("s1", "node-1")).await;
+        index.upsert(make_entry("s2", "node-2")).await;
 
         let affected = index
-            .mark_stale_workers_at(ts("2026-03-30T12:06:40Z"), Duration::from_secs(300))
+            .mark_stale_nodes_at(ts("2026-03-30T12:06:40Z"), Duration::from_secs(300))
             .await;
         assert_eq!(affected.len(), 1);
         assert_eq!(affected[0].session_id, "s1");
         assert_eq!(affected[0].status, "lost");
 
-        let worker_1 = index.get("s1").await.unwrap();
-        let worker_2 = index.get("s2").await.unwrap();
-        assert_eq!(worker_1.status, "lost");
-        assert_eq!(worker_2.status, "active");
+        let node_1 = index.get("s1").await.unwrap();
+        let node_2 = index.get("s2").await.unwrap();
+        assert_eq!(node_1.status, "lost");
+        assert_eq!(node_2.status, "active");
     }
 }

@@ -165,7 +165,7 @@ mod tests {
             std::time::Duration::from_secs(2),
             run_command_poll_loop(
                 "http://localhost:9999".into(),
-                "worker-token".into(),
+                "node-token".into(),
                 "test-node".into(),
                 manager,
                 shutdown_rx,

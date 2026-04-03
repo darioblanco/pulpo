@@ -2751,7 +2751,7 @@ port = 7433
     fn test_controller_config_debug_clone() {
         let mc = ControllerConfig {
             enabled: true,
-            address: Some("http://master:7433".into()),
+            address: Some("http://controller:7433".into()),
             token: Some("tok".into()),
             stale_timeout_secs: 600,
         };
@@ -2801,18 +2801,18 @@ enabled = true
     }
 
     #[test]
-    fn test_config_controller_address_role_worker() {
+    fn test_config_controller_address_role_node() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
             r#"
 [node]
-name = "worker-node"
+name = "node-runner"
 port = 7433
 
 [controller]
-address = "http://master:7433"
-token = "worker-token"
+address = "http://controller:7433"
+token = "node-token"
 "#
         )
         .unwrap();
@@ -2821,9 +2821,9 @@ token = "worker-token"
         assert_eq!(config.role(), NodeRole::Node);
         assert_eq!(
             config.controller.address.as_deref(),
-            Some("http://master:7433")
+            Some("http://controller:7433")
         );
-        assert_eq!(config.controller.token.as_deref(), Some("worker-token"));
+        assert_eq!(config.controller.token.as_deref(), Some("node-token"));
     }
 
     #[test]
@@ -3004,7 +3004,7 @@ enabled = true
     }
 
     #[test]
-    fn test_validate_controller_worker_ok() {
+    fn test_validate_controller_node_ok() {
         let config = Config {
             node: NodeConfig::default(),
             auth: AuthConfig::default(),
@@ -3015,8 +3015,8 @@ enabled = true
             docker: DockerConfig::default(),
             controller: ControllerConfig {
                 enabled: false,
-                address: Some("http://master:7433".into()),
-                token: Some("worker-token".into()),
+                address: Some("http://controller:7433".into()),
+                token: Some("node-token".into()),
                 ..ControllerConfig::default()
             },
         };
@@ -3037,7 +3037,7 @@ enabled = true
             docker: DockerConfig::default(),
             controller: ControllerConfig {
                 enabled: true,
-                address: Some("http://master:7433".into()),
+                address: Some("http://controller:7433".into()),
                 ..ControllerConfig::default()
             },
         };
@@ -3105,7 +3105,7 @@ enabled = true
             docker: DockerConfig::default(),
             controller: ControllerConfig {
                 enabled: false,
-                address: Some("http://master:7433".into()),
+                address: Some("http://controller:7433".into()),
                 token: None, // missing
                 ..ControllerConfig::default()
             },
@@ -3129,7 +3129,7 @@ enabled = true
             docker: DockerConfig::default(),
             controller: ControllerConfig {
                 enabled: false,
-                address: Some("https://master.tailnet.ts.net".into()),
+                address: Some("https://controller.tailnet.ts.net".into()),
                 token: None,
                 ..ControllerConfig::default()
             },
@@ -3153,7 +3153,7 @@ enabled = true
             docker: DockerConfig::default(),
             controller: ControllerConfig {
                 enabled: false,
-                address: Some("http://master:7433".into()),
+                address: Some("http://controller:7433".into()),
                 token: Some(String::new()), // empty string
                 ..ControllerConfig::default()
             },

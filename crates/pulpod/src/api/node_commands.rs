@@ -140,7 +140,7 @@ mod tests {
     #[tokio::test]
     async fn test_enqueue_and_poll_commands() {
         let (server, state) = controller_test_server().await;
-        let token = enroll_node(&server, "worker-1").await;
+        let token = enroll_node(&server, "node-1").await;
         // Enqueue two commands directly into the controller queue
         let queue = state.command_queue.as_ref().unwrap().clone();
         let cmd1 = NodeCommand::CreateSession {
@@ -151,13 +151,13 @@ mod tests {
             ink: None,
             description: None,
         };
-        queue.enqueue("worker-1", cmd1).await;
+        queue.enqueue("node-1", cmd1).await;
 
         let cmd2 = NodeCommand::StopSession {
             command_id: "c2".into(),
             session_id: "s1".into(),
         };
-        queue.enqueue("worker-1", cmd2).await;
+        queue.enqueue("node-1", cmd2).await;
 
         // Poll for commands
         let resp = server
@@ -191,7 +191,7 @@ mod tests {
     #[tokio::test]
     async fn test_poll_empty_commands() {
         let (server, _) = controller_test_server().await;
-        let token = enroll_node(&server, "worker-1").await;
+        let token = enroll_node(&server, "node-1").await;
         let resp = server
             .get("/api/v1/node/commands")
             .add_header("authorization", format!("Bearer {token}"))
@@ -213,7 +213,7 @@ mod tests {
         let (server, _) = controller_test_server().await;
         let resp = server
             .get("/api/v1/node/commands")
-            .add_header("authorization", "Bearer unknown-worker")
+            .add_header("authorization", "Bearer unknown-node")
             .await;
         resp.assert_status(axum::http::StatusCode::UNAUTHORIZED);
     }
@@ -221,10 +221,10 @@ mod tests {
     #[tokio::test]
     async fn test_enroll_node_binds_token_to_name() {
         let (server, state) = controller_test_server().await;
-        let token = enroll_node(&server, "worker-1").await;
+        let token = enroll_node(&server, "node-1").await;
         let enrolled = state
             .store
-            .get_enrolled_controller_node_by_name("worker-1")
+            .get_enrolled_controller_node_by_name("node-1")
             .await
             .unwrap()
             .unwrap();
