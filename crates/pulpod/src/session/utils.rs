@@ -48,6 +48,7 @@ pub fn is_shell_command(command: &str) -> bool {
 /// Worktrees are created under `~/.pulpo/worktrees/<session-name>` to avoid
 /// polluting the project repository with a `.pulpo/` directory.
 /// Returns the worktree path on success.
+#[cfg_attr(coverage, allow(dead_code))]
 pub fn create_worktree(
     repo_dir: &str,
     session_name: &str,

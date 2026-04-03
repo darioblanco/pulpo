@@ -12,13 +12,16 @@ use uuid::Uuid;
 
 use crate::backend::Backend;
 use crate::config::InkConfig;
+#[cfg(not(coverage))]
+use crate::session::utils::create_worktree;
 use crate::session::utils::{
-    create_worktree, validate_session_name, validate_workdir, wrap_command, write_secrets_file,
+    validate_session_name, validate_workdir, wrap_command, write_secrets_file,
 };
 use crate::store::Store;
 
 pub(crate) use crate::session::utils::cleanup_worktree;
 #[cfg(test)]
+#[allow(unused_imports)]
 pub(crate) use crate::session::utils::{is_shell_command, wrap_command_for_test};
 
 #[derive(Clone)]
