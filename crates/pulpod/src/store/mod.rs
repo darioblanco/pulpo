@@ -1,5 +1,6 @@
-mod controller;
+mod controller_index;
 mod core;
+mod enrolled_nodes;
 mod push;
 mod rows;
 mod schedules;
