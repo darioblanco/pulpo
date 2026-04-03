@@ -41,6 +41,14 @@ struct ResolvedInk {
     runtime: Option<Runtime>,
 }
 
+struct SessionCreatePlan {
+    session: Session,
+    backend_id: String,
+    effective_workdir: String,
+    final_command: String,
+    secrets_file: Option<String>,
+}
+
 impl SessionManager {
     pub fn new(
         backend: Arc<dyn Backend>,
@@ -141,8 +149,27 @@ impl SessionManager {
             .unwrap_or_else(|| self.backend.session_id(&session.name))
     }
 
-    #[allow(clippy::too_many_lines)]
     pub async fn create_session(&self, req: CreateSessionRequest) -> Result<Session> {
+        let mut plan = self.build_create_plan(req).await?;
+        self.store.insert_session(&plan.session).await?;
+
+        let active_backend = self.backend_for_id(&plan.backend_id);
+        if let Err(error) = active_backend.create_session(
+            &plan.backend_id,
+            &plan.effective_workdir,
+            &plan.final_command,
+        ) {
+            self.cleanup_failed_create(&plan.session.id, plan.secrets_file.as_deref())
+                .await?;
+            return Err(error);
+        }
+
+        self.finalize_created_session(&mut plan.session, &plan.backend_id)
+            .await?;
+        Ok(plan.session)
+    }
+
+    async fn build_create_plan(&self, req: CreateSessionRequest) -> Result<SessionCreatePlan> {
         // Validate session name: must be kebab-case (lowercase alphanumeric + hyphens).
         // This prevents shell injection via wrap_command where the name is interpolated
         // into a shell string, and matches the documented naming convention.
@@ -238,7 +265,7 @@ impl SessionManager {
         let now = Utc::now();
         let session = Session {
             id,
-            name: name.clone(),
+            name,
             workdir: workdir.clone(),
             command,
             description,
@@ -254,24 +281,39 @@ impl SessionManager {
             ..Default::default()
         };
 
-        self.store.insert_session(&session).await?;
+        Ok(SessionCreatePlan {
+            session,
+            backend_id,
+            effective_workdir,
+            final_command,
+            secrets_file,
+        })
+    }
 
-        let active_backend = self.backend_for_id(&backend_id);
-        if let Err(e) =
-            active_backend.create_session(&backend_id, &effective_workdir, &final_command)
-        {
-            // Clean up the secrets file if it was created
-            if let Some(ref sf) = secrets_file {
-                let _ = std::fs::remove_file(sf);
-            }
-            self.store
-                .update_session_status(&id.to_string(), SessionStatus::Stopped)
-                .await?;
-            return Err(e);
+    async fn cleanup_failed_create(
+        &self,
+        session_id: &Uuid,
+        secrets_file: Option<&str>,
+    ) -> Result<()> {
+        if let Some(secrets_file) = secrets_file {
+            let _ = std::fs::remove_file(secrets_file);
         }
+        self.store
+            .update_session_status(&session_id.to_string(), SessionStatus::Stopped)
+            .await?;
+        Ok(())
+    }
 
+    async fn finalize_created_session(
+        &self,
+        session: &mut Session,
+        backend_id: &str,
+    ) -> Result<()> {
+        let runtime = session.runtime;
+        let id = session.id;
+        let name = session.name.clone();
+        let active_backend = self.backend_for_id(backend_id);
         // Query the tmux $N session ID and update if available (tmux only)
-        let mut session = session;
         if runtime == Runtime::Tmux
             && let Ok(tmux_id) = self.backend.query_backend_id(&name)
         {
@@ -290,7 +332,7 @@ impl SessionManager {
         let log_dir = format!("{}/logs", self.store.data_dir());
         let _ = std::fs::create_dir_all(&log_dir);
         let log_path = format!("{log_dir}/{id}.log");
-        let _ = active_backend.setup_logging(&backend_id, &log_path);
+        let _ = active_backend.setup_logging(backend_id, &log_path);
 
         // Detect auth info from agent credentials and store in metadata
         #[cfg(not(coverage))]
@@ -316,8 +358,8 @@ impl SessionManager {
         // Return the session with updated status (avoids unnecessary re-fetch)
         session.status = SessionStatus::Active;
         session.updated_at = Utc::now();
-        self.emit_event(&session, Some(SessionStatus::Creating));
-        Ok(session)
+        self.emit_event(session, Some(SessionStatus::Creating));
+        Ok(())
     }
 
     /// Resolve ink: if ink has command, use it. Request command takes precedence.
