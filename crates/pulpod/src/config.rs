@@ -20,7 +20,7 @@ pub struct Config {
     pub inks: HashMap<String, InkConfig>,
     #[serde(default)]
     pub notifications: NotificationsConfig,
-    #[serde(default, alias = "sandbox")]
+    #[serde(default)]
     pub docker: DockerConfig,
     #[serde(default)]
     pub controller: ControllerConfig,
@@ -2493,26 +2493,6 @@ image = "my-custom-image:v1"
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
         assert_eq!(config.docker.image, "my-custom-image:v1");
-    }
-
-    #[test]
-    fn test_load_config_with_sandbox_alias() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[sandbox]
-image = "legacy-image:v1"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.docker.image, "legacy-image:v1");
     }
 
     #[test]
