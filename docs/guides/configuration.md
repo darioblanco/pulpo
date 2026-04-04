@@ -180,6 +180,8 @@ token = "node-token-issued-by-controller"
 
 Restart `pulpod` on the managed node after updating the token. The controller will then show that node in `pulpo nodes enrolled` with its last seen timestamp and address.
 
+See [Controller + Node Setup](/guides/controller-node-setup) for a step-by-step walkthrough and troubleshooting tips.
+
 ## Docker Runtime
 
 Run agents in Docker containers for isolation:

@@ -115,7 +115,7 @@ pub async fn run_notification_loop(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(coverage)))]
 mod tests {
     use super::*;
     use crate::notifications::test_event;

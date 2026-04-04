@@ -111,6 +111,8 @@ pub(super) fn row_to_schedule(row: &SqliteRow) -> Result<pulpo_common::api::Sche
         enabled: row.try_get("enabled").unwrap_or(true),
         last_run_at: row.try_get("last_run_at").unwrap_or(None),
         last_session_id: row.try_get("last_session_id").unwrap_or(None),
+        last_attempted_at: row.try_get("last_attempted_at").unwrap_or(None),
+        last_error: row.try_get("last_error").unwrap_or(None),
         created_at: row.try_get("created_at").unwrap_or_default(),
     })
 }

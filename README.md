@@ -33,6 +33,14 @@ sudo mv pulpod pulpo /usr/local/bin/
 pulpod  # or: make service-install-linux
 ```
 
+For a one-liner install or upgrade that works on macOS and Linux, run the script that auto-detects your OS/arch:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/darioblanco/pulpo/main/scripts/install-pulpo.sh | bash
+```
+
+Set `BIN_DIR` or `TARGET` when invoking the script if you need a different install directory or target triple. Re-running the script always pulls the latest release, so it doubles as the update command.
+
 Download binaries from [GitHub Releases](https://github.com/darioblanco/pulpo/releases). Windows uses Docker runtime (no tmux required).
 </details>
 

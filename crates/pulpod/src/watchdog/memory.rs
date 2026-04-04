@@ -140,7 +140,7 @@ fn read_system_memory() -> Result<MemorySnapshot> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(coverage)))]
 mod tests {
     use super::*;
 

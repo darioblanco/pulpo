@@ -214,6 +214,8 @@ export interface ScheduleInfo {
   enabled: boolean;
   last_run_at: string | null;
   last_session_id: string | null;
+  last_attempted_at: string | null;
+  last_error: string | null;
   created_at: string;
 }
 

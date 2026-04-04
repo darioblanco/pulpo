@@ -89,6 +89,14 @@ Or run directly:
 pulpod &   # background
 ```
 
+To skip manual downloads, run the cross-platform install script before enabling the service (it also works as an updater):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/darioblanco/pulpo/main/scripts/install-pulpo.sh | bash
+```
+
+Set `BIN_DIR` or `TARGET` in your environment before running the script if you need a different install directory or target triple. Re-running the script downloads the latest release and overwrites the binaries, so it doubles as the update path.
+
 ## Verify
 
 ```bash

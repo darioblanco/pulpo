@@ -35,6 +35,8 @@ function makeSchedule(overrides: Partial<ScheduleInfo> = {}): ScheduleInfo {
     enabled: true,
     last_run_at: null,
     last_session_id: null,
+    last_attempted_at: null,
+    last_error: null,
     created_at: '2026-01-01T00:00:00Z',
     ...overrides,
   };

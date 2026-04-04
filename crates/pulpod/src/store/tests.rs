@@ -60,7 +60,7 @@ async fn test_migrate_uses_sqlx_migrations_table() {
             .fetch_all(store.pool())
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2]);
+    assert_eq!(versions, vec![1, 2, 3]);
 
     let has_sandbox: i32 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'sandbox'",
@@ -1509,6 +1509,8 @@ async fn test_schedule_crud() {
         enabled: true,
         last_run_at: None,
         last_session_id: None,
+        last_attempted_at: None,
+        last_error: None,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
     store.insert_schedule(&schedule).await.unwrap();
@@ -1588,6 +1590,8 @@ async fn test_schedule_unique_name() {
         enabled: true,
         last_run_at: None,
         last_session_id: None,
+        last_attempted_at: None,
+        last_error: None,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
     store.insert_schedule(&schedule).await.unwrap();
@@ -1618,6 +1622,8 @@ async fn test_schedule_execution_fields_roundtrip() {
         enabled: true,
         last_run_at: None,
         last_session_id: None,
+        last_attempted_at: None,
+        last_error: None,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
     store.insert_schedule(&schedule).await.unwrap();
@@ -1648,6 +1654,8 @@ async fn test_schedule_execution_fields_default_empty() {
         enabled: true,
         last_run_at: None,
         last_session_id: None,
+        last_attempted_at: None,
+        last_error: None,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
     store.insert_schedule(&schedule).await.unwrap();
@@ -1657,6 +1665,41 @@ async fn test_schedule_execution_fields_default_empty() {
     assert!(fetched.secrets.is_empty());
     assert!(fetched.worktree.is_none());
     assert!(fetched.worktree_base.is_none());
+}
+
+#[tokio::test]
+async fn test_record_schedule_failure_updates_attempted() {
+    let store = test_store().await;
+    let schedule = pulpo_common::api::Schedule {
+        id: "sched-fail".into(),
+        name: "failing-schedule".into(),
+        cron: "0 0 * * *".into(),
+        command: "echo".into(),
+        workdir: "/tmp".into(),
+        target_node: None,
+        ink: None,
+        description: None,
+        runtime: None,
+        secrets: vec![],
+        worktree: None,
+        worktree_base: None,
+        enabled: true,
+        last_run_at: None,
+        last_session_id: None,
+        last_attempted_at: None,
+        last_error: None,
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    store.insert_schedule(&schedule).await.unwrap();
+
+    store
+        .record_schedule_failure(&schedule.id, "node unavailable")
+        .await
+        .unwrap();
+
+    let fetched = store.get_schedule(&schedule.id).await.unwrap().unwrap();
+    assert!(fetched.last_attempted_at.is_some());
+    assert_eq!(fetched.last_error.as_deref(), Some("node unavailable"));
 }
 
 // -- update_session_metadata_field tests --

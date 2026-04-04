@@ -141,7 +141,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .fallback(static_files::serve)
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(coverage)))]
 mod tests {
     use super::*;
     use crate::backend::Backend;

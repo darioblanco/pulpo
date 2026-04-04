@@ -50,6 +50,10 @@ dev-stop:
 dev-web:
 	cd web && npm run dev
 
+# Run the docs preview server on a different port (5174) for testing docs changes
+doc-preview:
+	cd web && PORT=5174 npm run dev -- --host 0.0.0.0 --port 5174
+
 # Run web tests in watch mode
 test-web-watch:
 	cd web && npx vitest

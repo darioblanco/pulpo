@@ -176,6 +176,7 @@ Important limits:
 - node UIs are local-first, not canonical fleet dashboards
 - the controller command queue is currently in-memory, so pending node commands do not survive controller restart
 - distributed terminal attach is intentionally out of scope; remote detail remains HTTP/log-oriented
+- see [Controller + Node Setup](/guides/controller-node-setup) for the recommended enrollment workflow, token troubleshooting hints, and validation commands for controllers and nodes.
 
 ## Data Flow
 

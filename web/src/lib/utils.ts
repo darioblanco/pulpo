@@ -45,3 +45,7 @@ export const statusColors: Record<string, string> = {
   creating: 'bg-status-creating',
   idle: 'bg-status-idle',
 };
+
+export function isTerminal(status: string): boolean {
+  return status === 'stopped' || status === 'ready' || status === 'lost';
+}

@@ -5,7 +5,7 @@ use pulpo_common::api::{
     AuthTokenResponse, ConfigResponse, CreateSessionResponse, EnrollNodeRequest,
     EnrollNodeResponse, EnrolledNodesResponse, InterventionEventResponse, PeersResponse,
 };
-#[cfg(test)]
+#[cfg(all(test, not(coverage)))]
 use pulpo_common::session::Runtime;
 use pulpo_common::session::{Session, SessionStatus};
 
@@ -1578,6 +1578,7 @@ fn format_local_time(rfc3339: &str) -> String {
 /// Try to start pulpod if it's not reachable on localhost.
 /// Returns true if the daemon was started (or was already running).
 #[cfg(not(coverage))]
+#[cfg(not(any(test, coverage)))]
 async fn ensure_daemon_running(client: &reqwest::Client, url: &str, node: &str) -> bool {
     if !is_localhost(node) {
         return true; // Remote node — not our job to start
@@ -1645,9 +1646,10 @@ async fn ensure_daemon_running(client: &reqwest::Client, url: &str, node: &str) 
     false
 }
 
-/// Coverage stub for daemon auto-start.
-#[cfg(coverage)]
+/// Stub for tests and coverage builds — avoids starting services during runners.
+#[cfg(any(test, coverage))]
 async fn ensure_daemon_running(_client: &reqwest::Client, _url: &str, _node: &str) -> bool {
+    tokio::task::yield_now().await;
     true
 }
 
@@ -2044,7 +2046,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(coverage)))]
 mod tests {
     use super::*;
 

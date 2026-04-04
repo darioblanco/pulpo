@@ -70,6 +70,8 @@ function makeSchedule(overrides: Partial<ScheduleInfo> = {}): ScheduleInfo {
     enabled: true,
     last_run_at: null,
     last_session_id: null,
+    last_attempted_at: null,
+    last_error: null,
     created_at: '2026-01-01T00:00:00Z',
     ...overrides,
   };
@@ -154,6 +156,21 @@ describe('SchedulesPage', () => {
       expect(screen.getByTestId('schedule-table')).toBeInTheDocument();
       expect(screen.getByTestId('schedule-row-nightly-review')).toBeInTheDocument();
       expect(screen.getByTestId('schedule-row-weekly-deploy')).toBeInTheDocument();
+    });
+  });
+
+  it('shows failure detail when schedule last_error exists', async () => {
+    const failureTime = new Date('2026-04-01T00:00:00Z').toISOString();
+    mockGetSchedules.mockResolvedValue([
+      makeSchedule({
+        last_run_at: null,
+        last_attempted_at: failureTime,
+        last_error: 'node refresh failed',
+      }),
+    ]);
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText(/node refresh failed/)).toBeInTheDocument();
     });
   });
 
@@ -370,7 +387,7 @@ describe('SchedulesPage', () => {
     fireEvent.click(screen.getByTestId('toggle-nightly-review'));
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to update');
+      expect(toast.error).toHaveBeenCalledWith('Failed to update schedule');
     });
   });
 
@@ -460,7 +477,7 @@ describe('SchedulesPage', () => {
     fireEvent.click(deleteActionBtn!);
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Failed to delete');
+      expect(toast.error).toHaveBeenCalledWith('Failed to delete schedule');
     });
   });
 

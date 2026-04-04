@@ -142,6 +142,8 @@ pub async fn create(
         enabled: true,
         last_run_at: None,
         last_session_id: None,
+        last_attempted_at: None,
+        last_error: None,
         created_at: chrono::Utc::now().to_rfc3339(),
     };
 

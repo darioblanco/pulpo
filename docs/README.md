@@ -175,6 +175,7 @@ The project is still experimental overall, but the session/runtime/lifecycle mod
 - [Nightly Code Review](/guides/nightly-code-review)
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
 - [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale)
+- [Controller + Node Setup](/guides/controller-node-setup)
 - [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks)
 - [Agent Examples](/guides/agent-examples)
 - [Recovery Guide](/guides/recovery)

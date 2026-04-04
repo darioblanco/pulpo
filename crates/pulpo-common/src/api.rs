@@ -321,6 +321,10 @@ pub struct Schedule {
     pub enabled: bool,
     pub last_run_at: Option<String>,
     pub last_session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_attempted_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
     pub created_at: String,
 }
 
@@ -1493,6 +1497,8 @@ mod tests {
             enabled: true,
             last_run_at: None,
             last_session_id: None,
+            last_attempted_at: None,
+            last_error: None,
             created_at: "2026-03-18T00:00:00Z".into(),
         }
     }

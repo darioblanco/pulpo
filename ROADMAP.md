@@ -115,12 +115,20 @@ Remaining work when demanded:
 - Per-session token/cost budget limits (watchdog auto-stops sessions exceeding thresholds)
 - Cumulative cost per day/node
 - Budget alerts via notifications
+- Controller-side cost rollups so the dashboard answers “total today per node” without scanning every session row
+- CLI warnings or notification digests triggered when a session is within 80% of its token/cost budget
+- Documentation for the new `[watchdog]` budget knobs and CLI flags so operators can adopt budgets deliberately
 
 ### Agent Completion Callbacks
 
 Replace the 29 waiting-for-input patterns with a reliable signal. Inject `PULPO_CALLBACK_URL` as an environment variable into every session. Any agent (or wrapper script) can call it to signal "I'm done."
 
 This is more reliable than pattern matching and works with any agent, including future ones we haven't seen yet.
+
+Next steps:
+- Define the callback payload (session ID, exit code, optional metadata) so the controller can immediately transition a session to `ready`/`stopped`.
+- Share example wrappers in docs that emit the callback after CI jobs or cron scripts finish.
+- Add an API/webhook endpoint that accepts callback signals from external systems.
 
 ### Distribution & Visibility
 
@@ -174,6 +182,7 @@ Current implementation status:
 - The controller session index is persisted and restored across restarts
 - Node UIs expose local sessions plus a handoff to the controller, rather than a best-effort fleet view
 - Distributed terminal attach remains intentionally out of scope; remote detail stays HTTP/log-oriented
+See [Controller + Node Setup](/guides/controller-node-setup) for a step-by-step enrollment/checklist document that matches this implementation.
 
 Why this is simpler than Elasticsearch:
 - No consensus protocol needed — losing the controller loses visibility, not data. Sessions keep running.

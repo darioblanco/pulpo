@@ -22,6 +22,9 @@ use crate::store::Store;
 #[cfg(not(coverage))]
 use crate::{config::NodeRole, peers::PeerRegistry};
 
+#[cfg(coverage)]
+use crate::config::NodeRole;
+
 /// Normalize a cron expression to the 7-field format expected by the `cron` crate.
 /// Accepts standard 5-field (`min hour dom month dow`) and prepends `0` for seconds
 /// and appends `*` for year. Also accepts 6-field (with seconds) and 7-field (full).
@@ -129,6 +132,9 @@ async fn fire_due_schedules(
         if !schedule.enabled {
             continue;
         }
+        if !should_fire_schedule(role, local_node_name, schedule.target_node.as_deref()) {
+            continue;
+        }
         if !is_due(&schedule) {
             continue;
         }
@@ -203,9 +209,28 @@ async fn fire_due_schedules(
                     schedule_name = %schedule.name,
                     "Schedule fire failed: {e}"
                 );
+                if let Err(err) = store
+                    .record_schedule_failure(&schedule.id, &e.to_string())
+                    .await
+                {
+                    warn!(
+                        schedule_name = %schedule.name,
+                        "Failed to record schedule failure: {err}"
+                    );
+                }
             }
         }
     }
+}
+
+fn should_fire_schedule(role: NodeRole, local_node_name: &str, target_node: Option<&str>) -> bool {
+    if let Some(target) = target_node
+        && role != NodeRole::Controller
+        && target != local_node_name
+    {
+        return false;
+    }
+    true
 }
 
 #[cfg(not(coverage))]
@@ -333,6 +358,8 @@ mod tests {
             enabled: true,
             last_run_at: None,
             last_session_id: None,
+            last_attempted_at: None,
+            last_error: None,
             created_at: (Utc::now() - chrono::Duration::hours(2)).to_rfc3339(),
         };
         assert!(is_due(&schedule));
@@ -357,6 +384,8 @@ mod tests {
             enabled: true,
             last_run_at: Some((Utc::now() - chrono::Duration::seconds(10)).to_rfc3339()),
             last_session_id: Some("prev".into()),
+            last_attempted_at: None,
+            last_error: None,
             created_at: (Utc::now() - chrono::Duration::hours(24)).to_rfc3339(),
         };
         assert!(!is_due(&schedule));
@@ -380,6 +409,8 @@ mod tests {
             enabled: true,
             last_run_at: None,
             last_session_id: None,
+            last_attempted_at: None,
+            last_error: None,
             created_at: Utc::now().to_rfc3339(),
         };
         assert!(!is_due(&schedule));
@@ -404,6 +435,8 @@ mod tests {
             enabled: false,
             last_run_at: None,
             last_session_id: None,
+            last_attempted_at: None,
+            last_error: None,
             created_at: (Utc::now() - chrono::Duration::hours(1)).to_rfc3339(),
         };
         assert!(is_due(&schedule));

@@ -9,8 +9,12 @@ impl Store {
     pub async fn insert_schedule(&self, schedule: &pulpo_common::api::Schedule) -> Result<()> {
         let secrets_json = serde_json::to_string(&schedule.secrets)?;
         sqlx::query(
-            "INSERT INTO schedules (id, name, cron, command, workdir, target_node, ink, description, runtime, secrets, worktree, worktree_base, enabled, last_run_at, last_session_id, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO schedules (
+                id, name, cron, command, workdir, target_node, ink, description,
+                runtime, secrets, worktree, worktree_base, enabled,
+                last_run_at, last_session_id, last_attempted_at, last_error, created_at
+             )
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&schedule.id)
         .bind(&schedule.name)
@@ -27,6 +31,8 @@ impl Store {
         .bind(schedule.enabled)
         .bind(&schedule.last_run_at)
         .bind(&schedule.last_session_id)
+        .bind(&schedule.last_attempted_at)
+        .bind(&schedule.last_error)
         .bind(&schedule.created_at)
         .execute(&self.pool)
         .await?;
@@ -63,9 +69,21 @@ impl Store {
 
     pub async fn update_schedule_last_run(&self, id: &str, session_id: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        sqlx::query("UPDATE schedules SET last_run_at = ?, last_session_id = ? WHERE id = ?")
+        sqlx::query("UPDATE schedules SET last_run_at = ?, last_session_id = ?, last_attempted_at = ?, last_error = NULL WHERE id = ?")
             .bind(&now)
             .bind(session_id)
+            .bind(&now)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn record_schedule_failure(&self, id: &str, error: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE schedules SET last_attempted_at = ?, last_error = ? WHERE id = ?")
+            .bind(&now)
+            .bind(error)
             .bind(id)
             .execute(&self.pool)
             .await?;

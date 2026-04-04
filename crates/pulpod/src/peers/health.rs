@@ -199,7 +199,7 @@ impl<P: PeerProber> CachedProber<P> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(coverage)))]
 mod tests {
     use super::*;
     use pulpo_common::peer::PeerEntry;
