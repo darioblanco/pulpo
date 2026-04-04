@@ -875,7 +875,7 @@ pub async fn run_stdio(server: PulpoMcp) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(test, not(coverage)))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::backend::Backend;

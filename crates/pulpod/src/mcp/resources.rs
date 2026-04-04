@@ -162,7 +162,7 @@ pub async fn read_resource(mcp: &PulpoMcp, uri: &str) -> Result<ReadResourceResu
     }
 }
 
-#[cfg(all(test, not(coverage)))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::backend::Backend;

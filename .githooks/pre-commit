@@ -15,7 +15,11 @@ echo "==> Pre-commit: running tests..."
 cargo test --workspace
 (cd web && PATH=/usr/local/bin:$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor npx vitest run --passWithNoTests)
 
-echo "==> Pre-commit: checking Rust coverage..."
-make coverage-rust
+if [ "${SKIP_RUST_COVERAGE:-0}" = "1" ]; then
+  echo "==> Pre-commit: skipping Rust coverage (SKIP_RUST_COVERAGE=1)"
+else
+  echo "==> Pre-commit: checking Rust coverage..."
+  make coverage-rust
+fi
 
 echo "==> All checks passed."

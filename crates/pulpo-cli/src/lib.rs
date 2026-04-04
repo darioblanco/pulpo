@@ -5,7 +5,7 @@ use pulpo_common::api::{
     AuthTokenResponse, ConfigResponse, CreateSessionResponse, EnrollNodeRequest,
     EnrollNodeResponse, EnrolledNodesResponse, InterventionEventResponse, PeersResponse,
 };
-#[cfg(all(test, not(coverage)))]
+#[cfg(test)]
 use pulpo_common::session::Runtime;
 use pulpo_common::session::{Session, SessionStatus};
 
@@ -2046,7 +2046,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
     }
 }
 
-#[cfg(all(test, not(coverage)))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -64,7 +64,7 @@ pub async fn get_info(State(state): State<Arc<super::AppState>>) -> Json<NodeInf
     })
 }
 
-#[cfg(all(test, not(coverage)))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::AppState;
