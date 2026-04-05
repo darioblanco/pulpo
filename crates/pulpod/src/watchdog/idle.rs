@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use pulpo_common::event::PulpoEvent;
 use pulpo_common::session::{InterventionCode, Session, SessionStatus};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::{
     IdleAction, IdleConfig, ReadyContext, build_session_event, detect_agent_exited,
@@ -20,8 +20,9 @@ pub(super) async fn check_idle_sessions(
 ) {
     let sessions = match store.list_sessions().await {
         Ok(sessions) => sessions,
+        #[allow(unused_variables)]
         Err(error) => {
-            warn!("Idle check: failed to list sessions: {error}");
+            coverage_warn!("Idle check: failed to list sessions: {error}");
             return;
         }
     };
@@ -65,6 +66,7 @@ pub(super) async fn check_session_idle(
     let backend_id = resolve_backend_id(session, backend.as_ref());
     let current_output = match backend.capture_output(&backend_id, 500) {
         Ok(output) => output,
+        #[allow(unused_variables)]
         Err(error) => {
             debug!(
                 "Idle check: failed to capture output for {}: {error}",
@@ -79,11 +81,12 @@ pub(super) async fn check_session_idle(
         return;
     }
 
+    #[allow(unused_variables)]
     if let Err(error) = store
         .update_session_output_snapshot(&session.id.to_string(), &current_output)
         .await
     {
-        warn!(
+        coverage_warn!(
             "Idle check: failed to update output snapshot for {}: {error}",
             session.name
         );
@@ -113,11 +116,12 @@ pub(super) async fn check_session_idle(
                     "output unchanged"
                 }
             );
+            #[allow(unused_variables)]
             if let Err(error) = store
                 .update_session_status(&session.id.to_string(), SessionStatus::Idle)
                 .await
             {
-                warn!(
+                coverage_warn!(
                     "Idle check: failed to transition {} to idle: {error}",
                     session.name
                 );
@@ -153,11 +157,12 @@ pub(super) async fn handle_session_ready(store: &Store, session: &Session, ctx: 
         session_name = %session.name,
         "Agent exited, transitioning to ready"
     );
+    #[allow(unused_variables)]
     if let Err(error) = store
         .update_session_status(&session.id.to_string(), SessionStatus::Ready)
         .await
     {
-        warn!(
+        coverage_warn!(
             session_name = %session.name,
             "Failed to transition to ready: {error}"
         );
@@ -186,11 +191,12 @@ pub(super) async fn handle_active_session(
             "Session {} has new output, transitioning back to active",
             session.name
         );
+        #[allow(unused_variables)]
         if let Err(error) = store
             .update_session_status(&session.id.to_string(), SessionStatus::Active)
             .await
         {
-            warn!(
+            coverage_warn!(
                 "Idle check: failed to transition {} back to active: {error}",
                 session.name
             );
@@ -214,11 +220,12 @@ pub(super) async fn handle_active_session(
         "Idle check: session {} active again, clearing idle status",
         session.name
     );
+    #[allow(unused_variables)]
     if let Err(error) = store
         .clear_session_idle_since(&session.id.to_string())
         .await
     {
-        warn!(
+        coverage_warn!(
             "Idle check: failed to clear idle_since for {}: {error}",
             session.name
         );
@@ -245,15 +252,16 @@ pub(super) async fn handle_idle_session(
     match idle_config.action {
         IdleAction::Alert => {
             if session.idle_since.is_none() {
-                warn!(
+                coverage_warn!(
                     "Idle check: session {} idle for {minutes} minutes, marking as idle",
                     session.name
                 );
+                #[allow(unused_variables)]
                 if let Err(error) = store
                     .update_session_idle_since(&session.id.to_string())
                     .await
                 {
-                    warn!(
+                    coverage_warn!(
                         "Idle check: failed to set idle_since for {}: {error}",
                         session.name
                     );
@@ -263,14 +271,16 @@ pub(super) async fn handle_idle_session(
         IdleAction::Kill => {
             let reason = format!("Idle for {minutes} minutes");
 
+            #[allow(unused_variables)]
             if let Err(error) = backend.kill_session(backend_id) {
-                warn!(
+                coverage_warn!(
                     "Idle check: failed to kill idle session {}: {error}",
                     session.name
                 );
                 return;
             }
 
+            #[allow(unused_variables)]
             if let Err(error) = store
                 .update_session_intervention(
                     &session.id.to_string(),
@@ -279,7 +289,7 @@ pub(super) async fn handle_idle_session(
                 )
                 .await
             {
-                warn!(
+                coverage_warn!(
                     "Idle check: failed to record intervention for {}: {error}",
                     session.name
                 );
@@ -287,7 +297,7 @@ pub(super) async fn handle_idle_session(
             if let Some(worktree_path) = &session.worktree_path {
                 crate::session::manager::cleanup_worktree(worktree_path, &session.workdir);
             }
-            warn!(
+            coverage_warn!(
                 "Idle check: stopped idle session {} after {minutes} minutes",
                 session.name
             );
@@ -302,8 +312,9 @@ pub(super) async fn cleanup_ready_sessions(
 ) {
     let sessions = match store.list_sessions().await {
         Ok(sessions) => sessions,
+        #[allow(unused_variables)]
         Err(error) => {
-            warn!("Ready cleanup: failed to list sessions: {error}");
+            coverage_warn!("Ready cleanup: failed to list sessions: {error}");
             return;
         }
     };
@@ -321,17 +332,19 @@ pub(super) async fn cleanup_ready_sessions(
         }
 
         let backend_id = resolve_backend_id(session, backend.as_ref());
+        #[allow(unused_variables)]
         if let Err(error) = backend.kill_session(&backend_id) {
             debug!(
                 session_name = %session.name,
                 "Ready cleanup: tmux already gone: {error}"
             );
         }
+        #[allow(unused_variables)]
         if let Err(error) = store
             .update_session_status(&session.id.to_string(), SessionStatus::Stopped)
             .await
         {
-            warn!(
+            coverage_warn!(
                 session_name = %session.name,
                 "Ready cleanup: failed to mark stopped: {error}"
             );

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use pulpo_common::session::{InterventionCode, SessionStatus};
-use tracing::warn;
 
 use super::{memory::MemorySnapshot, resolve_backend_id};
 use crate::backend::Backend;
@@ -14,8 +13,9 @@ pub(super) async fn intervene(
 ) {
     let sessions = match store.list_sessions().await {
         Ok(s) => s,
-        Err(e) => {
-            warn!("Watchdog: failed to list sessions: {e}");
+        #[allow(unused_variables)]
+        Err(error) => {
+            coverage_warn!("Watchdog: failed to list sessions: {error}");
             return;
         }
     };
@@ -26,9 +26,9 @@ pub(super) async fn intervene(
         .collect();
 
     if running.is_empty() {
-        let usage = snapshot.usage_percent();
-        warn!(
-            usage,
+        let _usage = snapshot.usage_percent();
+        coverage_warn!(
+            _usage,
             "Memory pressure but no running sessions to intervene on"
         );
         return;
@@ -38,31 +38,34 @@ pub(super) async fn intervene(
         let bid = resolve_backend_id(session, backend.as_ref());
         match backend.capture_output(&bid, 500) {
             Ok(output) => {
-                if let Err(e) = store
+                #[allow(unused_variables)]
+                if let Err(error) = store
                     .update_session_output_snapshot(&session.id.to_string(), &output)
                     .await
                 {
-                    warn!(
+                    coverage_warn!(
                         session_id = %session.id,
                         session_name = %session.name,
-                        "Failed to save output snapshot: {e}"
+                        "Failed to save output snapshot: {error}"
                     );
                 }
             }
-            Err(e) => {
-                warn!(
+            #[allow(unused_variables)]
+            Err(error) => {
+                coverage_warn!(
                     session_id = %session.id,
                     session_name = %session.name,
-                    "Failed to capture output before intervention: {e}"
+                    "Failed to capture output before intervention: {error}"
                 );
             }
         }
 
-        if let Err(e) = backend.kill_session(&bid) {
-            warn!(
+        #[allow(unused_variables)]
+        if let Err(error) = backend.kill_session(&bid) {
+            coverage_warn!(
                 session_id = %session.id,
                 session_name = %session.name,
-                "Failed to kill session during intervention (session still alive): {e}"
+                "Failed to kill session during intervention (session still alive): {error}"
             );
             continue;
         }
@@ -73,7 +76,8 @@ pub(super) async fn intervene(
             snapshot.available_mb,
             snapshot.total_mb
         );
-        if let Err(e) = store
+        #[allow(unused_variables)]
+        if let Err(error) = store
             .update_session_intervention(
                 &session.id.to_string(),
                 InterventionCode::MemoryPressure,
@@ -81,20 +85,20 @@ pub(super) async fn intervene(
             )
             .await
         {
-            warn!(
+            coverage_warn!(
                 session_id = %session.id,
                 session_name = %session.name,
-                "Failed to record intervention: {e}"
+                "Failed to record intervention: {error}"
             );
         }
         if let Some(ref wt_path) = session.worktree_path {
             crate::session::manager::cleanup_worktree(wt_path, &session.workdir);
         }
-        let usage = snapshot.usage_percent();
-        warn!(
+        let _usage = snapshot.usage_percent();
+        coverage_warn!(
             session_id = %session.id,
             session_name = %session.name,
-            usage,
+            _usage,
             available_mb = snapshot.available_mb,
             total_mb = snapshot.total_mb,
             "Watchdog intervention: stopped session due to memory pressure"

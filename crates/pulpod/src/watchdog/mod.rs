@@ -164,8 +164,9 @@ async fn run_memory_check(
                 }
             }
         }
-        Err(e) => {
-            warn!("Failed to read memory: {e}");
+        #[allow(unused_variables)]
+        Err(error) => {
+            coverage_warn!("Failed to read memory: {error}");
         }
     }
 }

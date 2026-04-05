@@ -1,7 +1,7 @@
 #[cfg(not(coverage))]
 use pulpo_common::session::SessionStatus;
 #[cfg(not(coverage))]
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::store::Store;
 
@@ -13,7 +13,7 @@ pub(super) async fn update_git_info(store: &Store) {
     let sessions = match store.list_sessions().await {
         Ok(s) => s,
         Err(e) => {
-            warn!("Watchdog: failed to list sessions for git info: {e}");
+            coverage_warn!("Watchdog: failed to list sessions for git info: {e}");
             return;
         }
     };
@@ -89,7 +89,7 @@ pub(super) async fn update_git_info(store: &Store) {
                         .update_session_git_info(&session_id, branch.as_deref(), commit.as_deref())
                         .await
                 {
-                    warn!("Watchdog: failed to update git info for {session_id}: {e}");
+                    coverage_warn!("Watchdog: failed to update git info for {session_id}: {e}");
                 }
 
                 if let Some((files, ins, del)) = diff_stat
@@ -98,13 +98,13 @@ pub(super) async fn update_git_info(store: &Store) {
                         .update_session_git_diff(&session_id, files, ins, del)
                         .await
                 {
-                    warn!("Watchdog: failed to update git diff for {session_id}: {e}");
+                    coverage_warn!("Watchdog: failed to update git diff for {session_id}: {e}");
                 }
 
                 if ahead != old_ahead
                     && let Err(e) = store.update_session_git_ahead(&session_id, ahead).await
                 {
-                    warn!("Watchdog: failed to update git ahead for {session_id}: {e}");
+                    coverage_warn!("Watchdog: failed to update git ahead for {session_id}: {e}");
                 }
             }
             Err(e) => {

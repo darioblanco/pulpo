@@ -1,3 +1,6 @@
+#[macro_use]
+mod coverage_macros;
+
 pub mod api;
 pub mod auth_info;
 pub mod backend;

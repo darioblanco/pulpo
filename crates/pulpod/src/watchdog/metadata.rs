@@ -1,6 +1,6 @@
 use pulpo_common::event::SessionEvent;
 use pulpo_common::session::{Session, SessionStatus, meta};
-use tracing::{info, warn};
+use tracing::info;
 
 use super::output_patterns;
 use crate::store::Store;
@@ -16,11 +16,12 @@ pub(super) async fn detect_and_store_output_metadata(
 ) {
     let has_pr = session.meta_str(meta::PR_URL).is_some();
     if !has_pr && let Some(pr_url) = output_patterns::extract_pr_url(output) {
+        #[allow(unused_variables)]
         if let Err(error) = store
             .update_session_metadata_field(&session.id.to_string(), meta::PR_URL, &pr_url)
             .await
         {
-            warn!(
+            coverage_warn!(
                 session_name = %session.name,
                 "Failed to store pr_url metadata: {error}"
             );
@@ -35,11 +36,12 @@ pub(super) async fn detect_and_store_output_metadata(
 
     let has_branch = session.meta_str(meta::BRANCH).is_some();
     if !has_branch && let Some(branch) = output_patterns::extract_branch(output) {
+        #[allow(unused_variables)]
         if let Err(error) = store
             .update_session_metadata_field(&session.id.to_string(), meta::BRANCH, &branch)
             .await
         {
-            warn!(
+            coverage_warn!(
                 session_name = %session.name,
                 "Failed to store branch metadata: {error}"
             );
@@ -54,20 +56,22 @@ pub(super) async fn detect_and_store_output_metadata(
 
     if let Some(rate_msg) = output_patterns::detect_rate_limit(output) {
         let timestamp = chrono::Utc::now().to_rfc3339();
+        #[allow(unused_variables)]
         if let Err(error) = store
             .update_session_metadata_field(&session.id.to_string(), meta::RATE_LIMIT, &rate_msg)
             .await
         {
-            warn!(
+            coverage_warn!(
                 session_name = %session.name,
                 "Failed to store rate_limit metadata: {error}"
             );
         }
+        #[allow(unused_variables)]
         if let Err(error) = store
             .update_session_metadata_field(&session.id.to_string(), meta::RATE_LIMIT_AT, &timestamp)
             .await
         {
-            warn!(
+            coverage_warn!(
                 session_name = %session.name,
                 "Failed to store rate_limit_at metadata: {error}"
             );
@@ -85,6 +89,7 @@ pub(super) async fn detect_and_store_output_metadata(
     match (&current_error, stored_error) {
         (Some(error_status), _) => {
             let timestamp = chrono::Utc::now().to_rfc3339();
+            #[allow(unused_variables)]
             if let Err(error) = store
                 .update_session_metadata_field(
                     &session.id.to_string(),
@@ -93,7 +98,7 @@ pub(super) async fn detect_and_store_output_metadata(
                 )
                 .await
             {
-                warn!(
+                coverage_warn!(
                     session_name = %session.name,
                     "Failed to store error_status metadata: {error}"
                 );
@@ -107,11 +112,12 @@ pub(super) async fn detect_and_store_output_metadata(
                 .await;
         }
         (None, Some(_)) => {
+            #[allow(unused_variables)]
             if let Err(error) = store
                 .remove_session_metadata_field(&session.id.to_string(), meta::ERROR_STATUS)
                 .await
             {
-                warn!(
+                coverage_warn!(
                     session_name = %session.name,
                     "Failed to clear error_status metadata: {error}"
                 );

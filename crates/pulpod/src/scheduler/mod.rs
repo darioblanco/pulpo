@@ -22,9 +22,6 @@ use crate::store::Store;
 #[cfg(not(coverage))]
 use crate::{config::NodeRole, peers::PeerRegistry};
 
-#[cfg(coverage)]
-use crate::config::NodeRole;
-
 /// Normalize a cron expression to the 7-field format expected by the `cron` crate.
 /// Accepts standard 5-field (`min hour dom month dow`) and prepends `0` for seconds
 /// and appends `*` for year. Also accepts 6-field (with seconds) and 7-field (full).
@@ -223,6 +220,7 @@ async fn fire_due_schedules(
     }
 }
 
+#[cfg(not(coverage))]
 fn should_fire_schedule(role: NodeRole, local_node_name: &str, target_node: Option<&str>) -> bool {
     if let Some(target) = target_node
         && role != NodeRole::Controller

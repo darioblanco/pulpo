@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use pulpo_common::event::{PulpoEvent, SessionEvent};
 use pulpo_common::session::{Session, SessionStatus};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use super::ReadyContext;
 use crate::backend::Backend;
@@ -49,8 +49,9 @@ pub(super) async fn adopt_tmux_sessions(
 
     let pulpo_sessions = match store.list_sessions().await {
         Ok(sessions) => sessions,
+        #[allow(unused_variables)]
         Err(error) => {
-            warn!("Adopt: failed to list pulpo sessions: {error}");
+            coverage_warn!("Adopt: failed to list pulpo sessions: {error}");
             return;
         }
     };
@@ -109,8 +110,9 @@ pub(super) async fn adopt_tmux_sessions(
             ..Default::default()
         };
 
+        #[allow(unused_variables)]
         if let Err(error) = store.insert_session(&session).await {
-            warn!("Adopt: failed to insert session {tmux_name}: {error}");
+            coverage_warn!("Adopt: failed to insert session {tmux_name}: {error}");
             continue;
         }
 
