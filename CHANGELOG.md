@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.0.42](https://github.com/darioblanco/pulpo/compare/v0.0.41...v0.0.42) (2026-04-05)
+
+
+### Features
+
+* **multinode:** add worker enrollment operability ([2a4ceac](https://github.com/darioblanco/pulpo/commit/2a4ceac996959f49253b30c61da8954ba8051146))
+* **multinode:** consolidate master mode prototype ([2ebf99a](https://github.com/darioblanco/pulpo/commit/2ebf99a02676bc4da8b0c32585f1e71dbf05e0b4))
+* **multinode:** enroll workers and bind worker auth ([6800b8d](https://github.com/darioblanco/pulpo/commit/6800b8d97adf5ace95389700c147af174b0a5580))
+* **multinode:** persist master session index ([540a837](https://github.com/darioblanco/pulpo/commit/540a837ab42f53f501fe2bb1f0be6ff082c9d56c))
+* **multinode:** route create and schedules through master ([5f08356](https://github.com/darioblanco/pulpo/commit/5f08356f64b106feea2fade372278b1a8d31a65e))
+* smart token/cost tracking with keyword-proximity parsing ([8c177c4](https://github.com/darioblanco/pulpo/commit/8c177c477d26e761bcd0c109424f86ea4f1dcf6f))
+* **web:** improve PWA usability — settings tabs, batch ops, error messages ([f4fc6d4](https://github.com/darioblanco/pulpo/commit/f4fc6d402aa22e43543f3dc7f1053c112788dbda))
+
+
+### Bug Fixes
+
+* audit and update waiting-for-input patterns ([1bcb887](https://github.com/darioblanco/pulpo/commit/1bcb8874f4fb93cafa4f9988776e0b6f22a51f3d))
+* **multinode:** drop purged sessions from master index ([55448cd](https://github.com/darioblanco/pulpo/commit/55448cdde2a3f09bbe96cdd3bb9dd5129df3def6))
+* **multinode:** reject remote schedules outside master ([2b60f0a](https://github.com/darioblanco/pulpo/commit/2b60f0a980717fcc8873620a9cb3a47cc3fd34bd))
+* **scheduler:** make is_due deterministic for tests ([380e97d](https://github.com/darioblanco/pulpo/commit/380e97dcc331df82fb5839d377d4e6b75cf7f609))
+* **store:** harden sqlx migration bootstrap ([121f017](https://github.com/darioblanco/pulpo/commit/121f017d5f7466a330e9fb5b8661bc06fe547687))
+
 ## [0.0.41](https://github.com/darioblanco/pulpo/compare/v0.0.40...v0.0.41) (2026-03-30)
 
 
