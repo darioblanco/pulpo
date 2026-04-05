@@ -1,7 +1,7 @@
 #[cfg(not(coverage))]
 use std::time::Duration;
 
-use chrono::Local;
+use chrono::{DateTime, Local};
 use cron::Schedule as CronSchedule;
 #[cfg(not(coverage))]
 use pulpo_common::api::CreateSessionRequest;
@@ -49,6 +49,11 @@ pub fn validate_cron(expr: &str) -> Result<(), String> {
 /// `created_at`) is converted to local time before computing the next fire.
 #[cfg_attr(coverage, allow(dead_code))]
 fn is_due(schedule: &Schedule) -> bool {
+    is_due_at(schedule, Local::now())
+}
+
+#[cfg_attr(coverage, allow(dead_code))]
+fn is_due_at(schedule: &Schedule, now: DateTime<Local>) -> bool {
     let Ok(cron) = normalize_cron(&schedule.cron).parse::<CronSchedule>() else {
         return false;
     };
@@ -62,7 +67,7 @@ fn is_due(schedule: &Schedule) -> bool {
         .map_or_else(
             || {
                 chrono::DateTime::parse_from_rfc3339(&schedule.created_at)
-                    .map_or_else(|_| Local::now(), |dt| dt.with_timezone(&Local))
+                    .map_or_else(|_| now, |dt| dt.with_timezone(&Local))
             },
             |dt| dt.with_timezone(&Local),
         );
@@ -70,7 +75,7 @@ fn is_due(schedule: &Schedule) -> bool {
     // Get the next fire time after the reference, in local time
     cron.after(&reference_time)
         .next()
-        .is_some_and(|next| next <= Local::now())
+        .is_some_and(|next| next <= now)
 }
 
 /// Run the scheduler loop. Ticks every 60 seconds and fires due schedules.
@@ -305,7 +310,7 @@ mod tests {
     use super::*;
     #[cfg(not(coverage))]
     use crate::peers::PeerRegistry;
-    use chrono::Utc;
+    use chrono::{Duration as ChronoDuration, TimeZone, Utc};
     #[cfg(not(coverage))]
     use pulpo_common::{api::CreateSessionRequest, peer::PeerEntry};
 
@@ -340,6 +345,7 @@ mod tests {
     #[test]
     fn test_is_due_never_run() {
         // Schedule created 2 hours ago with "every minute" cron — should be due
+        let now_local = Local.timestamp_opt(1_700_000_100, 0).single().unwrap();
         let schedule = Schedule {
             id: "s1".into(),
             name: "test".into(),
@@ -358,14 +364,17 @@ mod tests {
             last_session_id: None,
             last_attempted_at: None,
             last_error: None,
-            created_at: (Utc::now() - chrono::Duration::hours(2)).to_rfc3339(),
+            created_at: (now_local - ChronoDuration::hours(2))
+                .with_timezone(&Utc)
+                .to_rfc3339(),
         };
-        assert!(is_due(&schedule));
+        assert!(is_due_at(&schedule, now_local));
     }
 
     #[test]
     fn test_is_due_recently_run() {
         // Last run 10 seconds ago with "every hour" cron — should NOT be due
+        let now_local = Local.timestamp_opt(1_700_000_100, 0).single().unwrap();
         let schedule = Schedule {
             id: "s1".into(),
             name: "test".into(),
@@ -380,17 +389,24 @@ mod tests {
             worktree: None,
             worktree_base: None,
             enabled: true,
-            last_run_at: Some((Utc::now() - chrono::Duration::seconds(10)).to_rfc3339()),
+            last_run_at: Some(
+                (now_local - ChronoDuration::seconds(10))
+                    .with_timezone(&Utc)
+                    .to_rfc3339(),
+            ),
             last_session_id: Some("prev".into()),
             last_attempted_at: None,
             last_error: None,
-            created_at: (Utc::now() - chrono::Duration::hours(24)).to_rfc3339(),
+            created_at: (now_local - ChronoDuration::hours(24))
+                .with_timezone(&Utc)
+                .to_rfc3339(),
         };
-        assert!(!is_due(&schedule));
+        assert!(!is_due_at(&schedule, now_local));
     }
 
     #[test]
     fn test_is_due_invalid_cron() {
+        let now_local = Local.timestamp_opt(1_700_000_100, 0).single().unwrap();
         let schedule = Schedule {
             id: "s1".into(),
             name: "test".into(),
@@ -409,9 +425,9 @@ mod tests {
             last_session_id: None,
             last_attempted_at: None,
             last_error: None,
-            created_at: Utc::now().to_rfc3339(),
+            created_at: now_local.with_timezone(&Utc).to_rfc3339(),
         };
-        assert!(!is_due(&schedule));
+        assert!(!is_due_at(&schedule, now_local));
     }
 
     #[test]
@@ -435,7 +451,7 @@ mod tests {
             last_session_id: None,
             last_attempted_at: None,
             last_error: None,
-            created_at: (Utc::now() - chrono::Duration::hours(1)).to_rfc3339(),
+            created_at: (Utc::now() - ChronoDuration::hours(1)).to_rfc3339(),
         };
         assert!(is_due(&schedule));
     }
