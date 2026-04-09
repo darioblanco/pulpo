@@ -146,6 +146,7 @@ async fn test_list_returns_local_session_without_filters() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let _ = create(State(state.clone()), Json(req)).await.unwrap();
 
@@ -172,6 +173,7 @@ async fn test_list_with_status_filter() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let _ = create(State(state.clone()), Json(req)).await.unwrap();
 
@@ -216,6 +218,7 @@ async fn test_get_returns_local_session() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
 
@@ -284,6 +287,7 @@ async fn test_create_returns_created() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let result = create(State(state), Json(req)).await;
     assert!(result.is_ok());
@@ -308,6 +312,7 @@ async fn test_create_target_node_requires_controller() {
         runtime: None,
         secrets: None,
         target_node: Some("node-1".into()),
+        term_program: None,
     };
 
     let result = create(State(state), Json(req)).await;
@@ -342,6 +347,7 @@ async fn test_create_target_node_matching_controller_name_creates_locally() {
         runtime: None,
         secrets: None,
         target_node: Some("controller-node".into()),
+        term_program: None,
     };
 
     let (status, Json(resp)) = create(State(state), Json(req)).await.unwrap();
@@ -384,6 +390,7 @@ async fn test_create_target_node_offline_node_returns_bad_gateway() {
         runtime: None,
         secrets: None,
         target_node: Some("node-1".into()),
+        term_program: None,
     };
 
     let result = create(State(state), Json(req)).await;
@@ -412,6 +419,7 @@ async fn test_create_duplicate_name_returns_conflict() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let _ = create(State(state.clone()), Json(req())).await.unwrap();
     let result = create(State(state), Json(req())).await;
@@ -478,6 +486,7 @@ async fn test_cleanup_removes_stopped_sessions() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session_id = resp.session.id.to_string();
@@ -529,6 +538,7 @@ async fn test_stop_returns_no_content() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -554,6 +564,7 @@ async fn test_stop_with_purge() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -590,6 +601,7 @@ async fn test_output_for_session() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -661,6 +673,7 @@ async fn test_input_for_session() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -827,6 +840,7 @@ async fn test_get_internal_error() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -854,6 +868,7 @@ async fn test_stop_internal_error() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -911,6 +926,7 @@ async fn test_create_internal_error() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let result = create(State(state), Json(req)).await;
     assert!(result.is_err());
@@ -934,6 +950,7 @@ async fn test_output_internal_error() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -962,6 +979,7 @@ async fn test_input_internal_error() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -1023,6 +1041,7 @@ async fn test_output_capture_fallback_to_log() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -1051,6 +1070,7 @@ async fn test_input_send_error() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -1143,6 +1163,7 @@ async fn test_download_output_running_session() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -1202,6 +1223,7 @@ async fn test_download_output_dead_session_no_snapshot() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -1372,6 +1394,7 @@ async fn test_download_output_internal_error() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -1399,6 +1422,7 @@ async fn test_list_interventions_empty() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -1424,6 +1448,7 @@ async fn test_list_interventions_with_events() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -1493,6 +1518,7 @@ async fn test_resume_not_stale() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -1584,6 +1610,7 @@ async fn test_resume_stale_session() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;
@@ -1644,6 +1671,7 @@ async fn test_resume_name_collision_returns_conflict() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let old_id = resp.session.id.to_string();
@@ -1667,6 +1695,7 @@ async fn test_resume_name_collision_returns_conflict() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let _ = create(State(state.clone()), Json(req2)).await.unwrap();
 
@@ -1772,6 +1801,7 @@ async fn test_resume_internal_error() {
         runtime: None,
         secrets: None,
         target_node: None,
+        term_program: None,
     };
     let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
     let session = resp.session;

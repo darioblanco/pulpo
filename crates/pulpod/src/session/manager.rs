@@ -267,7 +267,13 @@ impl SessionManager {
         let final_command = if runtime == Runtime::Docker {
             command.clone()
         } else {
-            wrap_command(&command, &id, &name, secrets_file.as_deref())
+            wrap_command(
+                &command,
+                &id,
+                &name,
+                secrets_file.as_deref(),
+                req.term_program.as_deref(),
+            )
         };
 
         let now = Utc::now();
@@ -379,7 +385,7 @@ impl SessionManager {
         let final_command = if session.runtime == Runtime::Docker {
             session.command.clone()
         } else {
-            wrap_command(&session.command, &session.id, &session.name, None)
+            wrap_command(&session.command, &session.id, &session.name, None, None)
         };
         active_backend.create_session(create_id, effective_workdir, &final_command)
     }
@@ -929,6 +935,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         }
     }
 
@@ -969,6 +976,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -1009,6 +1017,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -1046,6 +1055,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Explicit command wins over ink command
@@ -1069,6 +1079,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let result = mgr.create_session(req).await;
         let err = result.unwrap_err().to_string();
@@ -1113,10 +1124,10 @@ mod tests {
     fn test_wrap_command_escapes_session_name() {
         // Even if validation is bypassed, wrap_command should escape the name
         let id = uuid::Uuid::new_v4();
-        let wrapped = wrap_command("echo test", &id, "safe-name", None);
+        let wrapped = wrap_command("echo test", &id, "safe-name", None, None);
         assert!(wrapped.contains("PULPO_SESSION_NAME=safe-name"));
         // Verify single quotes in name would be escaped (defense-in-depth)
-        let wrapped = wrap_command("echo test", &id, "name'inject", None);
+        let wrapped = wrap_command("echo test", &id, "name'inject", None, None);
         assert!(!wrapped.contains("name'inject"));
         assert!(wrapped.contains("name'\\''inject"));
     }
@@ -1137,6 +1148,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let err = mgr.create_session(req).await.unwrap_err().to_string();
         assert!(err.contains("lowercase"), "got: {err}");
@@ -1158,6 +1170,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert!(!session.workdir.is_empty());
@@ -1707,7 +1720,7 @@ mod tests {
     #[test]
     fn test_wrap_command_basic() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo hello", &id, "test-session", None);
+        let cmd = wrap_command("echo hello", &id, "test-session", None, None);
         assert!(cmd.contains("-l -c"));
         assert!(cmd.contains("echo hello"));
         assert!(cmd.contains("[pulpo] Agent exited (session: test-session)"));
@@ -1722,7 +1735,7 @@ mod tests {
     #[test]
     fn test_wrap_command_single_quotes() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude -p 'Fix the bug'", &id, "my-task", None);
+        let cmd = wrap_command("claude -p 'Fix the bug'", &id, "my-task", None, None);
         assert!(cmd.contains("-l -c"));
         // Single quotes should be properly escaped
         assert!(cmd.contains("claude -p"));
@@ -1738,7 +1751,7 @@ mod tests {
         // Verify the wrapped command has balanced single quotes so it doesn't
         // cause "unmatched '" errors when tmux passes it to the shell.
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude", &id, "test-session", None);
+        let cmd = wrap_command("claude", &id, "test-session", None, None);
 
         // Count single quotes outside of escaped sequences (\')
         // The '\'' pattern (end-quote, escaped-quote, start-quote) is valid.
@@ -1758,7 +1771,7 @@ mod tests {
         // quoting bugs. The wrapped command is a complete shell invocation like
         // `/bin/zsh -l -c '...'`, so we parse it as a whole.
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("true", &id, "test-session", None);
+        let cmd = wrap_command("true", &id, "test-session", None, None);
 
         let output = std::process::Command::new("sh")
             .args(["-n", "-c", &cmd])
@@ -1776,7 +1789,7 @@ mod tests {
     fn test_wrap_command_with_quotes_executes_without_parse_error() {
         // Same test but with a command containing single quotes (common with claude -p).
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo 'hello world'", &id, "quoted-session", None);
+        let cmd = wrap_command("echo 'hello world'", &id, "quoted-session", None, None);
 
         let output = std::process::Command::new("sh")
             .args(["-n", "-c", &cmd])
@@ -1808,7 +1821,7 @@ mod tests {
     #[test]
     fn test_wrap_command_shell_no_exit_marker() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("bash", &id, "my-shell", None);
+        let cmd = wrap_command("bash", &id, "my-shell", None, None);
         assert!(cmd.contains("exec bash"));
         assert!(cmd.contains(&format!("PULPO_SESSION_ID={id}")));
         assert!(cmd.contains("PULPO_SESSION_NAME=my-shell"));
@@ -1820,7 +1833,7 @@ mod tests {
     #[test]
     fn test_wrap_command_shell_with_path() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("/usr/bin/zsh", &id, "zsh-session", None);
+        let cmd = wrap_command("/usr/bin/zsh", &id, "zsh-session", None, None);
         assert!(cmd.contains("exec /usr/bin/zsh"));
         assert!(!cmd.contains("[pulpo] Agent exited"));
     }
@@ -1829,7 +1842,7 @@ mod tests {
     fn test_wrap_command_with_secrets_file() {
         let id = uuid::Uuid::new_v4();
         let secrets_path = "/tmp/pulpo-secrets-test.sh";
-        let cmd = wrap_command("echo hello", &id, "test", Some(secrets_path));
+        let cmd = wrap_command("echo hello", &id, "test", Some(secrets_path), None);
         // Command should source the secrets file and delete it — NOT contain secret values
         assert!(cmd.contains(". /tmp/pulpo-secrets-test.sh && rm -f /tmp/pulpo-secrets-test.sh"));
         assert!(cmd.contains("echo hello"));
@@ -1841,7 +1854,7 @@ mod tests {
     fn test_wrap_command_shell_with_secrets_file() {
         let id = uuid::Uuid::new_v4();
         let secrets_path = "/tmp/pulpo-secrets-shell.sh";
-        let cmd = wrap_command("bash", &id, "my-shell", Some(secrets_path));
+        let cmd = wrap_command("bash", &id, "my-shell", Some(secrets_path), None);
         assert!(cmd.contains(". /tmp/pulpo-secrets-shell.sh && rm -f /tmp/pulpo-secrets-shell.sh"));
         assert!(cmd.contains("exec bash"));
     }
@@ -1849,11 +1862,25 @@ mod tests {
     #[test]
     fn test_wrap_command_no_secrets_file() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo hello", &id, "test", None);
+        let cmd = wrap_command("echo hello", &id, "test", None, None);
         // Without secrets, no source/rm prefix should appear
         assert!(!cmd.contains(". /tmp/pulpo-secrets"));
         assert!(!cmd.contains("rm -f"));
         assert!(cmd.contains("echo hello"));
+    }
+
+    #[test]
+    fn test_wrap_command_term_program() {
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("claude", &id, "test-session", None, Some("ghostty"));
+        assert!(cmd.contains("export TERM_PROGRAM=ghostty"));
+    }
+
+    #[test]
+    fn test_wrap_command_no_term_program() {
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("claude", &id, "test-session", None, None);
+        assert!(!cmd.contains("TERM_PROGRAM"));
     }
 
     #[test]
@@ -2068,6 +2095,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let resolved = mgr.resolve_ink(&req).unwrap();
         // Falls back to $SHELL or /bin/sh
@@ -2106,6 +2134,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.description, Some("Ink desc".into()));
@@ -2142,6 +2171,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         // Ink with no command falls back to $SHELL
         let session = mgr.create_session(req).await.unwrap();
@@ -2171,6 +2201,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude");
@@ -2199,6 +2230,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "custom-agent");
@@ -2236,6 +2268,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -2275,6 +2308,7 @@ mod tests {
             runtime: None, // Not set — should inherit from ink
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.runtime, Runtime::Docker);
@@ -2311,6 +2345,7 @@ mod tests {
             runtime: Some(Runtime::Tmux), // Override ink's docker runtime
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.runtime, Runtime::Tmux);
@@ -2350,6 +2385,7 @@ mod tests {
             runtime: None,
             secrets: Some(vec!["REQ_SECRET".into()]),
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Secret values should NOT appear in the command string (security fix)
@@ -2433,7 +2469,7 @@ mod tests {
     #[test]
     fn test_wrap_command_secrets_source_before_env_vars() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo test", &id, "sess", Some("/tmp/secrets.sh"));
+        let cmd = wrap_command("echo test", &id, "sess", Some("/tmp/secrets.sh"), None);
         // The source-and-delete must come BEFORE the env var exports
         let source_pos = cmd.find(". /tmp/secrets.sh").unwrap();
         let env_pos = cmd.find("PULPO_SESSION_ID").unwrap();
@@ -2447,7 +2483,7 @@ mod tests {
     fn test_wrap_command_secrets_source_and_delete_pattern() {
         let id = uuid::Uuid::new_v4();
         let path = "/tmp/pulpo-secrets-test.sh";
-        let cmd = wrap_command("my-agent", &id, "sess", Some(path));
+        let cmd = wrap_command("my-agent", &id, "sess", Some(path), None);
         // Pattern: `. <file> && rm -f <file>; `
         assert!(cmd.contains(&format!(". {path} && rm -f {path}; ")));
     }
@@ -2498,6 +2534,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -2632,6 +2669,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let err = mgr.create_session(req).await.unwrap_err();
         assert!(
@@ -2664,6 +2702,7 @@ mod tests {
             runtime: Some(Runtime::Docker),
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.runtime, Runtime::Docker);
@@ -2716,6 +2755,7 @@ mod tests {
             runtime: Some(Runtime::Docker),
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.runtime, Runtime::Docker);
@@ -2756,6 +2796,7 @@ mod tests {
             runtime: Some(Runtime::Docker),
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let err = mgr.create_session(req).await.unwrap_err();
         assert!(
@@ -2787,6 +2828,7 @@ mod tests {
             runtime: Some(Runtime::Docker),
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         mgr.create_session(req).await.unwrap();
         // Docker command should NOT be wrapped with bash -l -c
@@ -2912,6 +2954,7 @@ mod tests {
             runtime: Some(Runtime::Docker),
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Mark it active (create_session left it as Active) — backend is dead
@@ -2944,7 +2987,7 @@ mod tests {
     #[test]
     fn test_wrap_command_double_quotes() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo \"hello world\"", &id, "test", None);
+        let cmd = wrap_command("echo \"hello world\"", &id, "test", None, None);
         assert!(cmd.contains("echo \"hello world\""));
         assert!(cmd.contains("-l -c"));
     }
@@ -2952,21 +2995,21 @@ mod tests {
     #[test]
     fn test_wrap_command_backticks() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo `date`", &id, "test", None);
+        let cmd = wrap_command("echo `date`", &id, "test", None, None);
         assert!(cmd.contains("echo `date`"));
     }
 
     #[test]
     fn test_wrap_command_dollar_variables() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo $HOME $USER", &id, "test", None);
+        let cmd = wrap_command("echo $HOME $USER", &id, "test", None, None);
         assert!(cmd.contains("echo $HOME $USER"));
     }
 
     #[test]
     fn test_wrap_command_empty_string() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("", &id, "test", None);
+        let cmd = wrap_command("", &id, "test", None, None);
         // Empty command is not a shell command, so gets agent wrapper
         assert!(cmd.contains("-l -c"));
         assert!(cmd.contains("[pulpo] Agent exited"));
@@ -2976,7 +3019,7 @@ mod tests {
     fn test_wrap_command_very_long() {
         let id = uuid::Uuid::new_v4();
         let long_cmd = "echo ".to_owned() + &"a".repeat(10_000);
-        let cmd = wrap_command(&long_cmd, &id, "test", None);
+        let cmd = wrap_command(&long_cmd, &id, "test", None, None);
         assert!(cmd.contains(&"a".repeat(10_000)));
         assert!(cmd.contains("-l -c"));
     }
@@ -3034,6 +3077,7 @@ mod tests {
             // SHARED_SECRET overlaps with ink, REQ_ONLY is new
             secrets: Some(vec!["SHARED_SECRET".into(), "REQ_ONLY".into()]),
             target_node: None,
+            term_program: None,
         };
         let session = mgr.create_session(req).await.unwrap();
 

@@ -412,6 +412,7 @@ impl PulpoMcp {
                 runtime: None,
                 secrets: None,
                 target_node: None,
+                term_program: None,
             };
             self.session_manager.create_session(req).await
         } else {
@@ -488,6 +489,7 @@ impl PulpoMcp {
                 runtime: None,
                 secrets: None,
                 target_node: None,
+                term_program: None,
             };
             self.session_manager.create_session(req).await
         } else {

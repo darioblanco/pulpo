@@ -1878,6 +1878,9 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             if !secret.is_empty() {
                 body["secrets"] = serde_json::json!(secret);
             }
+            if let Ok(tp) = std::env::var("TERM_PROGRAM") {
+                body["term_program"] = serde_json::json!(tp);
+            }
             let resp = authed_post(&client, format!("{url}/api/v1/sessions"), token.as_deref())
                 .json(&body)
                 .send()

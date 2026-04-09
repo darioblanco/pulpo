@@ -35,6 +35,7 @@ async fn execute_command(
                 runtime: None,
                 secrets: None,
                 target_node: None,
+                term_program: None,
             };
             match session_manager.create_session(req).await {
                 Ok(session) => {

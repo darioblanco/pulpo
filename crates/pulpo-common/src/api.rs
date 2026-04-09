@@ -28,6 +28,10 @@ pub struct CreateSessionRequest {
     /// Target node name when routing creation through a controller.
     #[serde(default)]
     pub target_node: Option<String>,
+    /// Terminal program identifier (e.g. "ghostty", "iTerm.app") from the CLI's environment.
+    /// Forwarded into the session so Claude Code can detect the outer terminal for image paste.
+    #[serde(default)]
+    pub term_program: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -659,6 +663,20 @@ mod tests {
     }
 
     #[test]
+    fn test_create_session_request_term_program() {
+        let json = r#"{"name":"my-task","term_program":"ghostty"}"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.term_program.as_deref(), Some("ghostty"));
+    }
+
+    #[test]
+    fn test_create_session_request_no_term_program() {
+        let json = r#"{"name":"my-task"}"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert!(req.term_program.is_none());
+    }
+
+    #[test]
     fn test_send_input_request_deserialize() {
         let json = r#"{"text":"hello world"}"#;
         let req: SendInputRequest = serde_json::from_str(json).unwrap();
@@ -735,6 +753,7 @@ mod tests {
             runtime: None,
             secrets: None,
             target_node: None,
+            term_program: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("/tmp"));

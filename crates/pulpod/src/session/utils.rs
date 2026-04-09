@@ -216,7 +216,7 @@ pub fn wrap_command_for_test(
     session_name: &str,
     secrets_file: Option<&str>,
 ) -> String {
-    wrap_command(command, session_id, session_name, secrets_file)
+    wrap_command(command, session_id, session_name, secrets_file, None)
 }
 
 /// Wrap an agent command with env vars, exit marker, and fallback shell.
@@ -225,14 +225,19 @@ pub fn wrap_command(
     session_id: &uuid::Uuid,
     session_name: &str,
     secrets_file: Option<&str>,
+    term_program: Option<&str>,
 ) -> String {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_owned());
     let secrets_source =
         secrets_file.map_or_else(String::new, |path| format!(". {path} && rm -f {path}; "));
     let safe_name = session_name.replace('\'', "'\\''");
+    let term_program_export = term_program.map_or_else(String::new, |tp| {
+        let safe_tp = tp.replace('\'', "'\\''");
+        format!("export TERM_PROGRAM={safe_tp}; ")
+    });
 
     let env = format!(
-        "{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={safe_name}; export BROWSER=true; \
+        "{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={safe_name}; {term_program_export}export BROWSER=true; \
          open() {{ case \"$1\" in http://*|https://*) return 0;; *) command open \"$@\";; esac; }}; "
     );
 
