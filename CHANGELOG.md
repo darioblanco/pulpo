@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.43](https://github.com/darioblanco/pulpo/compare/v0.0.42...v0.0.43) (2026-04-09)
+
+
+### Bug Fixes
+
+* **session:** forward TERM_PROGRAM from CLI into tmux sessions ([2fc68d3](https://github.com/darioblanco/pulpo/commit/2fc68d3498c4b75d2209da39cd8628f0937a7a4a))
+
 ## [0.0.42](https://github.com/darioblanco/pulpo/compare/v0.0.41...v0.0.42) (2026-04-05)
 
 
