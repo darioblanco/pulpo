@@ -2499,3 +2499,97 @@ async fn test_touch_enrolled_controller_node_updates_seen_fields() {
     );
     assert_eq!(node.last_seen_address.as_deref(), Some("10.0.0.20"));
 }
+
+#[tokio::test]
+async fn test_delete_sessions_bulk_empty_ids() {
+    let store = test_store().await;
+    // Should be a no-op without error
+    store.delete_sessions_bulk(&[]).await.unwrap();
+}
+
+#[tokio::test]
+async fn test_delete_sessions_bulk_deletes_all() {
+    let store = test_store().await;
+
+    let s1 = make_session("bulk-a");
+    let s2 = make_session("bulk-b");
+    store.insert_session(&s1).await.unwrap();
+    store.insert_session(&s2).await.unwrap();
+
+    let ids = vec![s1.id.to_string(), s2.id.to_string()];
+    store.delete_sessions_bulk(&ids).await.unwrap();
+
+    assert!(
+        store
+            .get_session(&s1.id.to_string())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .get_session(&s2.id.to_string())
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn test_fetch_dead_sessions_empty() {
+    let store = test_store().await;
+    let dead = store.fetch_dead_sessions().await.unwrap();
+    assert!(dead.is_empty());
+}
+
+#[tokio::test]
+async fn test_fetch_dead_sessions_returns_stopped_and_lost() {
+    let store = test_store().await;
+
+    let mut stopped = make_session("stopped-one");
+    stopped.status = SessionStatus::Stopped;
+    store.insert_session(&stopped).await.unwrap();
+
+    let mut lost = make_session("lost-one");
+    lost.status = SessionStatus::Lost;
+    store.insert_session(&lost).await.unwrap();
+
+    let dead = store.fetch_dead_sessions().await.unwrap();
+    assert_eq!(dead.len(), 2);
+    let names: Vec<&str> = dead.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"stopped-one"));
+    assert!(names.contains(&"lost-one"));
+}
+
+#[tokio::test]
+async fn test_fetch_dead_sessions_excludes_active() {
+    let store = test_store().await;
+
+    let active = make_session("active-one");
+    store.insert_session(&active).await.unwrap();
+
+    let mut stopped = make_session("stopped-two");
+    stopped.status = SessionStatus::Stopped;
+    store.insert_session(&stopped).await.unwrap();
+
+    let dead = store.fetch_dead_sessions().await.unwrap();
+    assert_eq!(dead.len(), 1);
+    assert_eq!(dead[0].name, "stopped-two");
+}
+
+#[tokio::test]
+async fn test_fetch_dead_sessions_preserves_worktree_path() {
+    let store = test_store().await;
+
+    let mut s = make_session("wt-session");
+    s.status = SessionStatus::Stopped;
+    s.worktree_path = Some("/home/user/.pulpo/worktrees/wt-session".into());
+    store.insert_session(&s).await.unwrap();
+
+    let dead = store.fetch_dead_sessions().await.unwrap();
+    assert_eq!(dead.len(), 1);
+    assert_eq!(
+        dead[0].worktree_path.as_deref(),
+        Some("/home/user/.pulpo/worktrees/wt-session")
+    );
+}

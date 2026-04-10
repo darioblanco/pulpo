@@ -226,11 +226,25 @@ impl Store {
         Ok(())
     }
 
-    pub async fn cleanup_dead_sessions(&self) -> Result<u64> {
-        let result = sqlx::query("DELETE FROM sessions WHERE status IN ('stopped', 'lost')")
-            .execute(&self.pool)
+    pub async fn fetch_dead_sessions(&self) -> Result<Vec<Session>> {
+        let rows = sqlx::query("SELECT * FROM sessions WHERE status IN ('stopped', 'lost')")
+            .fetch_all(&self.pool)
             .await?;
-        Ok(result.rows_affected())
+        rows.iter().map(row_to_session).collect()
+    }
+
+    pub async fn delete_sessions_bulk(&self, ids: &[String]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!("DELETE FROM sessions WHERE id IN ({placeholders})");
+        let mut q = sqlx::query(&sql);
+        for id in ids {
+            q = q.bind(id);
+        }
+        q.execute(&self.pool).await?;
+        Ok(())
     }
 
     pub const fn pool(&self) -> &sqlx::SqlitePool {

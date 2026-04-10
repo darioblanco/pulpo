@@ -500,7 +500,7 @@ async fn test_cleanup_removes_stopped_sessions() {
     .unwrap();
 
     let Json(result) = cleanup(State(state.clone())).await.unwrap();
-    assert_eq!(result["deleted"], 1);
+    assert_eq!(result.sessions_deleted, 1);
 
     let result = get(State(state), Path(session_id)).await;
     assert!(result.is_err());

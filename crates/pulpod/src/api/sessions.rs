@@ -6,8 +6,8 @@ use axum::{
     http::StatusCode,
 };
 use pulpo_common::api::{
-    CreateSessionRequest, CreateSessionResponse, ErrorResponse, ListSessionsQuery, NodeCommand,
-    OutputQuery, SendInputRequest, SessionIndexEntry,
+    CleanupResponse, CreateSessionRequest, CreateSessionResponse, ErrorResponse, ListSessionsQuery,
+    NodeCommand, OutputQuery, SendInputRequest, SessionIndexEntry,
 };
 use pulpo_common::session::{Session, SessionStatus};
 use serde::Deserialize;
@@ -184,13 +184,13 @@ pub async fn stop(
 
 pub async fn cleanup(
     State(state): State<Arc<super::AppState>>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let count = state
-        .store
+) -> Result<Json<CleanupResponse>, ApiError> {
+    let response = state
+        .session_manager
         .cleanup_dead_sessions()
         .await
         .map_err(|e| internal_error(&e.to_string()))?;
-    Ok(Json(serde_json::json!({ "deleted": count })))
+    Ok(Json(response))
 }
 
 pub async fn output(

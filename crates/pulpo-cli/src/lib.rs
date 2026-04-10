@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 #[cfg_attr(coverage, allow(unused_imports))]
 use pulpo_common::api::{
-    AuthTokenResponse, ConfigResponse, CreateSessionResponse, EnrollNodeRequest,
+    AuthTokenResponse, CleanupResponse, ConfigResponse, CreateSessionResponse, EnrollNodeRequest,
     EnrollNodeResponse, EnrolledNodesResponse, InterventionEventResponse, PeersResponse,
 };
 #[cfg(test)]
@@ -1332,6 +1332,16 @@ async fn execute_worktree(
 
 /// Format worktree sessions as a table.
 #[cfg_attr(coverage, allow(dead_code))]
+fn format_cleanup_message(sessions: u64, worktrees: u64) -> String {
+    if sessions == 0 {
+        "No stopped or lost sessions to clean up.".into()
+    } else if worktrees > 0 {
+        format!("Cleaned up {sessions} session(s). Removed {worktrees} worktree(s).")
+    } else {
+        format!("Cleaned up {sessions} session(s).")
+    }
+}
+
 fn format_worktree_sessions(sessions: &[&Session]) -> String {
     if sessions.is_empty() {
         return "No worktree sessions.".into();
@@ -1948,13 +1958,11 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             .await
             .map_err(|e| friendly_error(&e, node))?;
             let text = ok_or_api_error(resp).await?;
-            let result: serde_json::Value = serde_json::from_str(&text)?;
-            let count = result["deleted"].as_u64().unwrap_or(0);
-            if count == 0 {
-                Ok("No stopped or lost sessions to clean up.".into())
-            } else {
-                Ok(format!("Cleaned up {count} session(s)."))
-            }
+            let result: CleanupResponse = serde_json::from_str(&text)?;
+            Ok(format_cleanup_message(
+                result.sessions_deleted,
+                result.worktrees_cleaned,
+            ))
         }
         Commands::Logs {
             name,
@@ -5543,5 +5551,34 @@ mod tests {
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("USAGE"));
+    }
+
+    #[test]
+    fn test_cleanup_format_none_deleted() {
+        assert_eq!(
+            format_cleanup_message(0, 0),
+            "No stopped or lost sessions to clean up."
+        );
+    }
+
+    #[test]
+    fn test_cleanup_format_sessions_no_worktrees() {
+        assert_eq!(format_cleanup_message(3, 0), "Cleaned up 3 session(s).");
+    }
+
+    #[test]
+    fn test_cleanup_format_sessions_with_worktrees() {
+        assert_eq!(
+            format_cleanup_message(2, 2),
+            "Cleaned up 2 session(s). Removed 2 worktree(s)."
+        );
+    }
+
+    #[test]
+    fn test_cleanup_format_partial_worktrees() {
+        assert_eq!(
+            format_cleanup_message(5, 3),
+            "Cleaned up 5 session(s). Removed 3 worktree(s)."
+        );
     }
 }

@@ -233,7 +233,7 @@ pub fn wrap_command(
     let safe_name = session_name.replace('\'', "'\\''");
     let term_program_export = term_program.map_or_else(String::new, |tp| {
         let safe_tp = tp.replace('\'', "'\\''");
-        format!("export TERM_PROGRAM={safe_tp}; ")
+        format!("export TERM_PROGRAM='{safe_tp}'; ")
     });
 
     let env = format!(

@@ -29,7 +29,8 @@ pub struct CreateSessionRequest {
     #[serde(default)]
     pub target_node: Option<String>,
     /// Terminal program identifier (e.g. "ghostty", "iTerm.app") from the CLI's environment.
-    /// Forwarded into the session so Claude Code can detect the outer terminal for image paste.
+    /// Forwarded into the session shell environment as `TERM_PROGRAM` so agents can detect
+    /// the outer terminal's capabilities (image paste, color support, etc.).
     #[serde(default)]
     pub term_program: Option<String>,
 }
@@ -37,6 +38,12 @@ pub struct CreateSessionRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateSessionResponse {
     pub session: Session,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CleanupResponse {
+    pub sessions_deleted: u64,
+    pub worktrees_cleaned: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2079,5 +2086,35 @@ mod tests {
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains("\"node_address\":\"addr\""));
         assert!(json.contains("\"command\":\"cmd\""));
+    }
+
+    #[test]
+    fn test_cleanup_response_serialize() {
+        let resp = CleanupResponse {
+            sessions_deleted: 3,
+            worktrees_cleaned: 2,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"sessions_deleted\":3"));
+        assert!(json.contains("\"worktrees_cleaned\":2"));
+    }
+
+    #[test]
+    fn test_cleanup_response_deserialize() {
+        let json = r#"{"sessions_deleted":5,"worktrees_cleaned":1}"#;
+        let resp: CleanupResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.sessions_deleted, 5);
+        assert_eq!(resp.worktrees_cleaned, 1);
+    }
+
+    #[test]
+    fn test_cleanup_response_debug() {
+        let resp = CleanupResponse {
+            sessions_deleted: 0,
+            worktrees_cleaned: 0,
+        };
+        let debug = format!("{resp:?}");
+        assert!(debug.contains("sessions_deleted"));
+        assert!(debug.contains("worktrees_cleaned"));
     }
 }

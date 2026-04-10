@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 use chrono::Utc;
-use pulpo_common::api::CreateSessionRequest;
+use pulpo_common::api::{CleanupResponse, CreateSessionRequest};
 use pulpo_common::event::{PulpoEvent, SessionDeletedEvent, SessionEvent};
 use pulpo_common::session::{Runtime, Session, SessionStatus, meta};
 use std::sync::RwLock;
@@ -663,6 +663,32 @@ impl SessionManager {
         }
 
         Ok(())
+    }
+
+    pub async fn cleanup_dead_sessions(&self) -> Result<CleanupResponse> {
+        let dead_sessions = self.store.fetch_dead_sessions().await?;
+        if dead_sessions.is_empty() {
+            return Ok(CleanupResponse {
+                sessions_deleted: 0,
+                worktrees_cleaned: 0,
+            });
+        }
+        let mut worktrees_cleaned = 0u64;
+        for session in &dead_sessions {
+            if let Some(ref wt_path) = session.worktree_path {
+                cleanup_worktree(wt_path, &session.workdir);
+                worktrees_cleaned += 1;
+            }
+        }
+        let ids: Vec<String> = dead_sessions.iter().map(|s| s.id.to_string()).collect();
+        self.store.delete_sessions_bulk(&ids).await?;
+        for session in &dead_sessions {
+            self.emit_session_deleted(session);
+        }
+        Ok(CleanupResponse {
+            sessions_deleted: dead_sessions.len() as u64,
+            worktrees_cleaned,
+        })
     }
 
     pub fn capture_output(&self, id: &str, backend_id: &str, lines: usize) -> String {
@@ -1873,7 +1899,7 @@ mod tests {
     fn test_wrap_command_term_program() {
         let id = uuid::Uuid::new_v4();
         let cmd = wrap_command("claude", &id, "test-session", None, Some("ghostty"));
-        assert!(cmd.contains("export TERM_PROGRAM=ghostty"));
+        assert!(cmd.contains("export TERM_PROGRAM='ghostty'"));
     }
 
     #[test]
@@ -3142,6 +3168,111 @@ mod tests {
         mgr.stop_session(&id, true).await.unwrap();
         let fetched = mgr.get_session(&id).await.unwrap();
         assert!(fetched.is_none());
+    }
+
+    // -- cleanup_dead_sessions --
+
+    #[tokio::test]
+    async fn test_cleanup_dead_sessions_empty() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let resp = mgr.cleanup_dead_sessions().await.unwrap();
+        assert_eq!(resp.sessions_deleted, 0);
+        assert_eq!(resp.worktrees_cleaned, 0);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_dead_sessions_deletes_stopped_and_lost() {
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+
+        let s1 = mgr
+            .create_session(make_req("cleanup-stopped"))
+            .await
+            .unwrap();
+        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE id = ?")
+            .bind(s1.id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let s2 = mgr.create_session(make_req("cleanup-lost")).await.unwrap();
+        sqlx::query("UPDATE sessions SET status = 'lost' WHERE id = ?")
+            .bind(s2.id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let resp = mgr.cleanup_dead_sessions().await.unwrap();
+        assert_eq!(resp.sessions_deleted, 2);
+        assert_eq!(resp.worktrees_cleaned, 0);
+
+        assert!(mgr.get_session(&s1.id.to_string()).await.unwrap().is_none());
+        assert!(mgr.get_session(&s2.id.to_string()).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_dead_sessions_preserves_active() {
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+
+        let active = mgr.create_session(make_req("keep-active")).await.unwrap();
+        let stopped = mgr.create_session(make_req("del-stopped")).await.unwrap();
+        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE id = ?")
+            .bind(stopped.id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let resp = mgr.cleanup_dead_sessions().await.unwrap();
+        assert_eq!(resp.sessions_deleted, 1);
+
+        assert!(
+            mgr.get_session(&active.id.to_string())
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            mgr.get_session(&stopped.id.to_string())
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_dead_sessions_counts_worktrees() {
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+
+        let s = mgr.create_session(make_req("wt-cleanup")).await.unwrap();
+        sqlx::query("UPDATE sessions SET status = 'stopped', worktree_path = '/nonexistent/path' WHERE id = ?")
+            .bind(s.id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let resp = mgr.cleanup_dead_sessions().await.unwrap();
+        assert_eq!(resp.sessions_deleted, 1);
+        assert_eq!(resp.worktrees_cleaned, 1);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_dead_sessions_emits_deleted_events() {
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+        let (event_tx, mut event_rx) = broadcast::channel(16);
+        let mgr = mgr.with_event_tx(event_tx, "test-node".into());
+
+        let s = mgr.create_session(make_req("evt-cleanup")).await.unwrap();
+        let _ = event_rx.recv().await; // drain create event
+        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE id = ?")
+            .bind(s.id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let resp = mgr.cleanup_dead_sessions().await.unwrap();
+        assert_eq!(resp.sessions_deleted, 1);
+
+        let event = event_rx.recv().await.unwrap();
+        assert!(matches!(event, PulpoEvent::SessionDeleted(_)));
     }
 
     // -- resume_session emits event --
