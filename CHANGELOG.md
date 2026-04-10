@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.44](https://github.com/darioblanco/pulpo/compare/v0.0.43...v0.0.44) (2026-04-10)
+
+
+### Features
+
+* **cleanup:** clean up worktrees when removing dead sessions ([7d957aa](https://github.com/darioblanco/pulpo/commit/7d957aa028c3b7468c75e14ee340dbf562f22cb7))
+
 ## [0.0.43](https://github.com/darioblanco/pulpo/compare/v0.0.42...v0.0.43) (2026-04-09)
 
 
