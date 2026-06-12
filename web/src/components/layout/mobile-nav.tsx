@@ -1,10 +1,9 @@
-import { Waves, LayoutList, Clock, Settings, GitBranch } from 'lucide-react';
+import { Waves, LayoutList, Clock, Settings } from 'lucide-react';
 import { Link, useLocation } from 'react-router';
 
 const navItems = [
   { to: '/', icon: Waves, label: 'Ocean' },
   { to: '/sessions', icon: LayoutList, label: 'Sessions' },
-  { to: '/worktrees', icon: GitBranch, label: 'Worktrees' },
   { to: '/schedules', icon: Clock, label: 'Schedules' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];

@@ -10,7 +10,6 @@ import { OceanPage } from '@/pages/ocean';
 import { ConnectPage } from '@/pages/connect';
 import { SessionDetailPage } from '@/pages/session-detail';
 import { SchedulesPage } from '@/pages/schedules';
-import { WorktreesPage } from '@/pages/worktrees';
 
 export function App() {
   return (
@@ -23,7 +22,6 @@ export function App() {
                 <Route index element={<OceanPage />} />
                 <Route path="sessions" element={<DashboardPage />} />
                 <Route path="sessions/:id" element={<SessionDetailPage />} />
-                <Route path="worktrees" element={<WorktreesPage />} />
                 <Route path="schedules" element={<SchedulesPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>
