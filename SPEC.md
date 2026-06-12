@@ -571,7 +571,7 @@ Ship the smallest useful thing first.
 - [x] Multi-node peer discovery
 - [x] Session resume after reboot
 - [x] In-app + desktop notifications (Notification API)
-- [x] iOS native app (Tauri 2 + TestFlight)
+- [x] Installable mobile app (PWA + Web Push; native Tauri builds retired June 2026)
 
 ---
 
@@ -624,24 +624,22 @@ Ship the smallest useful thing first.
 
 ### Phase 6: Mobile + Notifications
 
-**Stack:** Tauri 2 mobile (iOS/Android) + `tauri-plugin-remote-push` (APNs + FCM)
+**Stack:** PWA (installable web app + service worker) + Web Push
 
-Tauri 2 builds native iOS `.ipa` and Android `.apk` from the same React + Rust codebase. The shadcn/ui components from Phase 5 already provide a responsive, mobile-friendly look.
+The mobile surface is the embedded web UI, installable as a PWA on iOS and
+Android. Native Tauri builds and the voice-command experiments (formerly
+Phase 7) were retired in June 2026: the PWA plus Web Push covers remote
+monitoring without app-store distribution overhead, and the phone remains
+the primary management surface.
 
 **Deliverables:**
 
-- ✅ Tauri iOS build + TestFlight distribution
-- ✅ Tauri Android build + Play Store distribution
 - ✅ Token authentication + bind modes (local/public/container)
 - ✅ QR code pairing for mobile clients
 - ✅ Tailscale auto-discovery
-- ⬜ Push notifications via APNs (iOS) and FCM (Android) — not planned (polling + Notification API sufficient)
-
-### Phase 7: Voice Commands (experimental)
-
-- ✅ Connection settings bridge (Tauri `save_connection` / `load_connection` commands)
-- 🧪 iOS Siri Shortcuts: "Check my agents in Pulpo", "Tell my Pulpo agent [message]", "Stop my Pulpo agent"
-- 🧪 Android App Actions: check agents, send to agent, stop agent via Google Assistant
+- ✅ PWA install + Web Push notifications
+- ~~Tauri iOS/Android native builds~~ — retired June 2026 in favor of the PWA
+- ~~Voice commands (Siri Shortcuts / Google Assistant)~~ — retired June 2026
 
 ### Phase 8: Control Plane + Notifications ✅
 
