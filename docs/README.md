@@ -103,7 +103,6 @@ Everything else is a control surface or an operational convenience around that c
 - REST API and SSE
 - scheduler
 - peer discovery
-- Discord bot
 - MCP server
 
 ## Who It Is For
@@ -137,7 +136,6 @@ Pulpo is for users who want coding agents to:
 
 **Experimental / convenience surfaces**
 
-- Discord bot
 - MCP server
 - ocean UI and other presentation layers
 

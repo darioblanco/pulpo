@@ -96,7 +96,6 @@ Control surfaces are ways to operate the same underlying session model.
 - REST API
 - SSE stream
 - scheduler
-- Discord bot
 - MCP server
 
 These are not separate products. They are different interfaces to the same daemon-owned state.
