@@ -132,6 +132,8 @@ pub async fn create(
             let msg = e.to_string();
             if msg.contains("already active") {
                 (StatusCode::CONFLICT, Json(ErrorResponse { error: msg }))
+            } else if msg.contains("docker runtime was removed") {
+                (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg }))
             } else {
                 internal_error(&msg)
             }

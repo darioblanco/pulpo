@@ -57,7 +57,7 @@ async fn test_state_with_pool() -> (Arc<AppState>, sqlx::SqlitePool) {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller: crate::config::ControllerConfig::default(),
         },
         manager,
@@ -106,7 +106,7 @@ async fn controller_state_with_index_and_peers(
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller: crate::config::ControllerConfig {
                 enabled: true,
                 ..crate::config::ControllerConfig::default()
@@ -294,6 +294,35 @@ async fn test_create_returns_created() {
     let (status, Json(resp)) = result.unwrap();
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(resp.session.name, "test");
+}
+
+#[tokio::test]
+async fn test_create_docker_runtime_rejected_with_bad_request() {
+    let state = test_state().await;
+    let req = CreateSessionRequest {
+        name: "docker-rejected".into(),
+        workdir: Some("/tmp".into()),
+        metadata: None,
+        command: Some("claude".into()),
+        description: None,
+        ink: None,
+        idle_threshold_secs: None,
+        worktree: None,
+        worktree_base: None,
+        runtime: Some(pulpo_common::session::Runtime::Docker),
+        secrets: None,
+        target_node: None,
+        term_program: None,
+    };
+    let result = create(State(state), Json(req)).await;
+    assert!(result.is_err());
+    let (status, Json(err)) = result.unwrap_err();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        err.error.contains("docker runtime was removed"),
+        "{}",
+        err.error
+    );
 }
 
 #[tokio::test]
@@ -814,7 +843,7 @@ async fn failing_state() -> Arc<AppState> {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller: crate::config::ControllerConfig::default(),
         },
         manager,
@@ -905,7 +934,7 @@ async fn test_create_internal_error() {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller: crate::config::ControllerConfig::default(),
         },
         manager,
@@ -1016,7 +1045,7 @@ async fn capture_fail_state() -> Arc<AppState> {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller: crate::config::ControllerConfig::default(),
         },
         manager,
@@ -1588,7 +1617,7 @@ async fn test_resume_stale_session() {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller: crate::config::ControllerConfig::default(),
         },
         manager,
@@ -1649,7 +1678,7 @@ async fn test_resume_name_collision_returns_conflict() {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller: crate::config::ControllerConfig::default(),
         },
         manager,
@@ -1779,7 +1808,7 @@ async fn test_resume_internal_error() {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller: crate::config::ControllerConfig::default(),
         },
         manager,

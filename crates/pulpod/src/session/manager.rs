@@ -15,7 +15,8 @@ use crate::config::InkConfig;
 #[cfg(not(coverage))]
 use crate::session::utils::create_worktree;
 use crate::session::utils::{
-    validate_session_name, validate_workdir, wrap_command, write_secrets_file,
+    DOCKER_RUNTIME_REMOVED, validate_runtime, validate_session_name, validate_workdir,
+    wrap_command, write_secrets_file,
 };
 use crate::store::Store;
 
@@ -27,7 +28,6 @@ pub(crate) use crate::session::utils::{is_shell_command, wrap_command_for_test};
 #[derive(Clone)]
 pub struct SessionManager {
     backend: Arc<dyn Backend>,
-    docker_backend: Option<Arc<dyn Backend>>,
     store: Store,
     inks: Arc<RwLock<HashMap<String, InkConfig>>>,
     default_command: Option<String>,
@@ -66,28 +66,12 @@ impl SessionManager {
     ) -> Self {
         Self {
             backend,
-            docker_backend: None,
             store,
             inks: Arc::new(RwLock::new(inks)),
             default_command,
             event_tx: None,
             node_name: String::new(),
             stale_grace_secs: 5,
-        }
-    }
-
-    #[must_use]
-    pub fn with_docker_backend(mut self, backend: Arc<dyn Backend>) -> Self {
-        self.docker_backend = Some(backend);
-        self
-    }
-
-    /// Get the right backend for a session based on its `backend_session_id`.
-    fn backend_for_id(&self, backend_id: &str) -> &Arc<dyn Backend> {
-        if crate::backend::docker::is_docker_session(backend_id) {
-            self.docker_backend.as_ref().unwrap_or(&self.backend)
-        } else {
-            &self.backend
         }
     }
 
@@ -161,8 +145,7 @@ impl SessionManager {
         let mut plan = self.build_create_plan(req).await?;
         self.store.insert_session(&plan.session).await?;
 
-        let active_backend = self.backend_for_id(&plan.backend_id);
-        if let Err(error) = active_backend.create_session(
+        if let Err(error) = self.backend.create_session(
             &plan.backend_id,
             &plan.effective_workdir,
             &plan.final_command,
@@ -193,14 +176,12 @@ impl SessionManager {
             dirs::home_dir().map_or_else(|| "/tmp".to_owned(), |h| h.to_string_lossy().into_owned())
         });
 
-        // Runtime: request overrides ink, ink overrides default (tmux)
+        // Runtime: request overrides ink, ink overrides default (tmux).
+        // The docker runtime was removed — reject it wherever it comes from.
         let runtime = req.runtime.or(resolved.runtime).unwrap_or_default();
+        validate_runtime(runtime)?;
         let wants_worktree = req.worktree.unwrap_or(false);
-        // Validate workdir exists on the host.
-        // Skip for Docker unless --worktree is requested (worktree creation happens on the host).
-        if runtime != Runtime::Docker || wants_worktree {
-            validate_workdir(&workdir)?;
-        }
+        validate_workdir(&workdir)?;
 
         // Create git worktree if requested
         let (effective_workdir, worktree_path, worktree_branch) = if wants_worktree {
@@ -245,36 +226,24 @@ impl SessionManager {
 
         let id = Uuid::new_v4();
         let name = req.name.clone();
-        let backend_id = if runtime == Runtime::Docker {
-            if self.docker_backend.is_none() {
-                bail!("docker runtime not configured — set [docker] image in config.toml");
-            }
-            format!("docker:pulpo-{}", req.name)
-        } else {
-            self.backend.session_id(&name)
-        };
+        let backend_id = self.backend.session_id(&name);
 
-        // Write secrets to a temp file (tmux only — Docker passes env vars separately).
-        // The file is sourced and immediately deleted by the session shell, so secrets
-        // never appear in the command string visible in `ps` or `capture-pane`.
-        let secrets_file = if runtime != Runtime::Docker && !secrets_env.is_empty() {
-            write_secrets_file(&id, &secrets_env, self.store.data_dir())?
-        } else {
+        // Write secrets to a temp file. The file is sourced and immediately deleted
+        // by the session shell, so secrets never appear in the command string visible
+        // in `ps` or `capture-pane`.
+        let secrets_file = if secrets_env.is_empty() {
             None
+        } else {
+            write_secrets_file(&id, &secrets_env, self.store.data_dir())?
         };
 
-        // Docker sessions run the command directly; tmux sessions get the wrapper
-        let final_command = if runtime == Runtime::Docker {
-            command.clone()
-        } else {
-            wrap_command(
-                &command,
-                &id,
-                &name,
-                secrets_file.as_deref(),
-                req.term_program.as_deref(),
-            )
-        };
+        let final_command = wrap_command(
+            &command,
+            &id,
+            &name,
+            secrets_file.as_deref(),
+            req.term_program.as_deref(),
+        );
 
         let now = Utc::now();
         let session = Session {
@@ -323,14 +292,10 @@ impl SessionManager {
         session: &mut Session,
         backend_id: &str,
     ) -> Result<()> {
-        let runtime = session.runtime;
         let id = session.id;
         let name = session.name.clone();
-        let active_backend = self.backend_for_id(backend_id);
-        // Query the tmux $N session ID and update if available (tmux only)
-        if runtime == Runtime::Tmux
-            && let Ok(tmux_id) = self.backend.query_backend_id(&name)
-        {
+        // Query the tmux $N session ID and update if available
+        if let Ok(tmux_id) = self.backend.query_backend_id(&name) {
             let _ = self
                 .store
                 .update_backend_session_id(&id.to_string(), &tmux_id)
@@ -346,7 +311,7 @@ impl SessionManager {
         let log_dir = format!("{}/logs", self.store.data_dir());
         let _ = std::fs::create_dir_all(&log_dir);
         let log_path = format!("{log_dir}/{id}.log");
-        let _ = active_backend.setup_logging(backend_id, &log_path);
+        let _ = self.backend.setup_logging(backend_id, &log_path);
 
         // Detect auth info from agent credentials and store in metadata
         #[cfg(not(coverage))]
@@ -377,23 +342,18 @@ impl SessionManager {
     }
 
     fn recreate_backend_session(
+        &self,
         session: &Session,
-        active_backend: &Arc<dyn crate::backend::Backend>,
         effective_workdir: &str,
         create_id: &str,
     ) -> Result<()> {
-        let final_command = if session.runtime == Runtime::Docker {
-            session.command.clone()
-        } else {
-            wrap_command(&session.command, &session.id, &session.name, None, None)
-        };
-        active_backend.create_session(create_id, effective_workdir, &final_command)
+        let final_command = wrap_command(&session.command, &session.id, &session.name, None, None);
+        self.backend
+            .create_session(create_id, effective_workdir, &final_command)
     }
 
     async fn refresh_backend_session_id(&self, session: &Session) {
-        if session.runtime == Runtime::Tmux
-            && let Ok(tmux_id) = self.backend.query_backend_id(&session.name)
-        {
+        if let Ok(tmux_id) = self.backend.query_backend_id(&session.name) {
             let _ = self
                 .store
                 .update_backend_session_id(&session.id.to_string(), &tmux_id)
@@ -437,34 +397,28 @@ impl SessionManager {
         backend_id: &str,
         prefer_name_for_tmux: bool,
     ) -> String {
-        if session.runtime == Runtime::Docker || !prefer_name_for_tmux {
-            backend_id.to_owned()
-        } else {
+        if prefer_name_for_tmux {
             self.backend.session_id(&session.name)
+        } else {
+            backend_id.to_owned()
         }
     }
 
     async fn restore_session_backend(
         &self,
         session: &Session,
-        active_backend: &Arc<dyn crate::backend::Backend>,
         effective_workdir: &str,
         create_id: &str,
     ) -> Result<()> {
-        Self::recreate_backend_session(session, active_backend, effective_workdir, create_id)?;
+        self.recreate_backend_session(session, effective_workdir, create_id)?;
         self.refresh_backend_session_id(session).await;
         Ok(())
     }
 
-    fn stop_session_backend(
-        &self,
-        session: &Session,
-        backend_id: &str,
-        backend: &Arc<dyn crate::backend::Backend>,
-    ) -> Result<()> {
-        if let Err(error) = backend.kill_session(backend_id) {
+    fn stop_session_backend(&self, session: &Session, backend_id: &str) -> Result<()> {
+        if let Err(error) = self.backend.kill_session(backend_id) {
             let name_id = self.backend.session_id(&session.name);
-            if name_id != backend_id && backend.kill_session(&name_id).is_ok() {
+            if name_id != backend_id && self.backend.kill_session(&name_id).is_ok() {
                 tracing::info!(
                     session = %session.name,
                     "Killed session by name after stale backend ID failed"
@@ -635,7 +589,7 @@ impl SessionManager {
             return Ok(false);
         }
         let backend_id = self.resolve_backend_id(session);
-        let alive = self.backend_for_id(&backend_id).is_alive(&backend_id)?;
+        let alive = self.backend.is_alive(&backend_id)?;
         if alive {
             return Ok(false);
         }
@@ -654,8 +608,7 @@ impl SessionManager {
             .ok_or_else(|| anyhow!("session not found: {id}"))?;
 
         let backend_id = self.resolve_backend_id(&session);
-        let backend = self.backend_for_id(&backend_id);
-        self.stop_session_backend(&session, &backend_id, backend)?;
+        self.stop_session_backend(&session, &backend_id)?;
         self.mark_session_stopped(&mut session).await?;
 
         if purge {
@@ -721,6 +674,11 @@ impl SessionManager {
             bail!("session cannot be resumed (status: {previous_status})");
         }
 
+        // Historical docker-runtime sessions remain readable but cannot be resumed.
+        if session.runtime == Runtime::Docker {
+            bail!("{DOCKER_RUNTIME_REMOVED} — historical docker sessions cannot be resumed");
+        }
+
         // Check for name collision with another live session (exclude self)
         if self
             .store
@@ -735,22 +693,17 @@ impl SessionManager {
 
         // Use worktree path as workdir if it still exists, otherwise fall back to original workdir.
         let effective_workdir = Self::effective_resume_workdir(&session);
-
-        // Validate workdir still exists (skip for Docker — workdir is inside the container)
-        if session.runtime != Runtime::Docker {
-            validate_workdir(&effective_workdir)?;
-        }
+        validate_workdir(&effective_workdir)?;
 
         // If the backend session is still alive, just re-mark it as running.
         // Only recreate the session if the backend process is gone.
         let backend_id = self.resolve_backend_id(&session);
-        let active_backend = self.backend_for_id(&backend_id);
-        let alive = active_backend.is_alive(&backend_id)?;
+        let alive = self.backend.is_alive(&backend_id)?;
         if !alive {
             // Use session name for the new tmux session, not the stale $N backend ID.
             // The old backend_session_id may point to a dead tmux session that no longer exists.
             let create_id = self.resume_create_id(&session, &backend_id, true);
-            self.restore_session_backend(&session, active_backend, &effective_workdir, &create_id)
+            self.restore_session_backend(&session, &effective_workdir, &create_id)
                 .await?;
         }
 
@@ -770,16 +723,27 @@ impl SessionManager {
             if session.status != SessionStatus::Active && session.status != SessionStatus::Idle {
                 continue;
             }
+            // The docker runtime was removed — historical docker sessions cannot be
+            // auto-resumed in tmux. Mark them Lost so they surface in the dashboard.
+            if session.runtime == Runtime::Docker {
+                tracing::warn!(
+                    session = %session.name,
+                    "Cannot auto-resume docker-runtime session — {DOCKER_RUNTIME_REMOVED}"
+                );
+                self.store
+                    .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+                    .await?;
+                continue;
+            }
             let backend_id = self.resolve_backend_id(&session);
-            let active_backend = self.backend_for_id(&backend_id);
-            let alive = active_backend.is_alive(&backend_id).unwrap_or(false);
+            let alive = self.backend.is_alive(&backend_id).unwrap_or(false);
             if alive {
                 continue;
             }
             // Backend is dead — resume the session
             let create_id = self.resume_create_id(&session, &backend_id, false);
             if let Err(e) = self
-                .restore_session_backend(&session, active_backend, &session.workdir, &create_id)
+                .restore_session_backend(&session, &session.workdir, &create_id)
                 .await
             {
                 tracing::warn!(
@@ -2301,7 +2265,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_ink_provides_runtime() {
+    async fn test_create_session_ink_docker_runtime_rejected() {
         let mut inks = HashMap::new();
         inks.insert(
             "sandbox-coder".into(),
@@ -2312,32 +2276,21 @@ mod tests {
                 ..InkConfig::default()
             },
         );
-        let docker = Arc::new(MockBackend::new());
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let mgr = SessionManager::new(Arc::new(MockBackend::new()), store, inks, None)
-            .with_docker_backend(docker)
             .with_no_stale_grace();
 
-        let req = CreateSessionRequest {
-            name: "ink-rt".into(),
-            workdir: Some("/tmp".into()),
-            command: None,
-            ink: Some("sandbox-coder".into()),
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: None, // Not set — should inherit from ink
-            secrets: None,
-            target_node: None,
-            term_program: None,
-        };
-        let session = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.runtime, Runtime::Docker);
+        let mut req = make_req("ink-rt");
+        req.command = None;
+        req.ink = Some("sandbox-coder".into()); // Ink carries the retired docker runtime
+        let err = mgr.create_session(req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("docker runtime was removed"),
+            "{err}"
+        );
     }
 
     #[tokio::test]
@@ -2705,33 +2658,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_session_docker_skips_workdir_check() {
-        let docker = Arc::new(MockBackend::new());
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let mgr = SessionManager::new(Arc::new(MockBackend::new()), store, HashMap::new(), None)
-            .with_docker_backend(docker)
-            .with_no_stale_grace();
-        // Docker session with nonexistent workdir should succeed (workdir is inside container)
-        let req = CreateSessionRequest {
-            name: "docker-bad-dir".to_owned(),
-            workdir: Some("/nonexistent/container/path".into()),
-            command: Some("echo hi".into()),
-            ink: None,
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: Some(Runtime::Docker),
-            secrets: None,
-            target_node: None,
-            term_program: None,
-        };
-        let session = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.runtime, Runtime::Docker);
+    async fn test_create_session_docker_runtime_rejected() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let mut req = make_req("docker-rejected");
+        req.runtime = Some(Runtime::Docker);
+        let err = mgr.create_session(req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("docker runtime was removed"),
+            "{err}"
+        );
+        // The backend must never be asked to create anything
+        let calls = backend.calls.lock().unwrap();
+        assert!(!calls.iter().any(|c| c.starts_with("create:")));
+        drop(calls);
     }
 
     #[tokio::test]
@@ -2757,116 +2696,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_with_docker_backend_routes_docker_sessions() {
-        let docker = Arc::new(MockBackend::new());
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let main_backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(main_backend.clone(), store, HashMap::new(), None)
-            .with_docker_backend(docker.clone())
-            .with_no_stale_grace();
-        // Create a docker session
-        let req = CreateSessionRequest {
-            name: "docker-test".to_owned(),
-            workdir: Some("/tmp".into()),
-            command: Some("echo hi".into()),
-            ink: None,
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: Some(Runtime::Docker),
-            secrets: None,
-            target_node: None,
-            term_program: None,
+    async fn test_resume_session_docker_runtime_rejected() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        // Force-insert a historical docker-runtime session (cannot be created anymore)
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "old-docker".into(),
+            workdir: "/tmp".into(),
+            command: "claude".into(),
+            status: SessionStatus::Lost,
+            backend_session_id: Some("docker:pulpo-old-docker".into()),
+            runtime: Runtime::Docker,
+            created_at: Utc::now() - chrono::Duration::hours(1),
+            ..Default::default()
         };
-        let session = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.runtime, Runtime::Docker);
-        assert!(
-            session
-                .backend_session_id
-                .as_deref()
-                .unwrap()
-                .starts_with("docker:")
-        );
-        // Docker backend should have received the create call, not the main backend
-        let docker_calls: Vec<_> = docker.calls.lock().unwrap().clone();
-        assert!(
-            docker_calls.iter().any(|c| c.starts_with("create:")),
-            "docker backend should handle docker sessions"
-        );
-        let main_calls: Vec<_> = main_backend.calls.lock().unwrap().clone();
-        assert!(
-            !main_calls.iter().any(|c| c.starts_with("create:")),
-            "main backend should not handle docker sessions"
-        );
-    }
+        mgr.store().insert_session(&session).await.unwrap();
 
-    #[tokio::test]
-    async fn test_docker_no_config_fails() {
-        // No docker backend configured
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let req = CreateSessionRequest {
-            name: "docker-test".to_owned(),
-            workdir: Some("/tmp".into()),
-            command: Some("echo hi".into()),
-            ink: None,
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: Some(Runtime::Docker),
-            secrets: None,
-            target_node: None,
-            term_program: None,
-        };
-        let err = mgr.create_session(req).await.unwrap_err();
+        let err = mgr
+            .resume_session(&session.id.to_string())
+            .await
+            .unwrap_err();
         assert!(
-            err.to_string().contains("docker runtime not configured"),
+            err.to_string().contains("docker runtime was removed"),
             "{err}"
         );
+        let calls = backend.calls.lock().unwrap();
+        assert!(!calls.iter().any(|c| c.starts_with("create:")));
+        drop(calls);
     }
 
     #[tokio::test]
-    async fn test_docker_command_not_wrapped() {
-        let docker = Arc::new(MockBackend::new());
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let mgr = SessionManager::new(Arc::new(MockBackend::new()), store, HashMap::new(), None)
-            .with_docker_backend(docker.clone())
-            .with_no_stale_grace();
-        let req = CreateSessionRequest {
-            name: "docker-cmd".to_owned(),
-            workdir: Some("/tmp".into()),
-            command: Some("claude".into()),
-            ink: None,
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: Some(Runtime::Docker),
-            secrets: None,
-            target_node: None,
-            term_program: None,
+    async fn test_list_sessions_includes_historical_docker_sessions() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        // Historical rows stored with runtime = "docker" must still list
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "old-docker-row".into(),
+            workdir: "/tmp".into(),
+            command: "claude".into(),
+            status: SessionStatus::Stopped,
+            backend_session_id: Some("docker:pulpo-old-docker-row".into()),
+            runtime: Runtime::Docker,
+            created_at: Utc::now() - chrono::Duration::hours(1),
+            ..Default::default()
         };
-        mgr.create_session(req).await.unwrap();
-        // Docker command should NOT be wrapped with bash -l -c
-        let calls: Vec<_> = docker.calls.lock().unwrap().clone();
-        let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
+        mgr.store().insert_session(&session).await.unwrap();
+
+        let sessions = mgr.list_sessions().await.unwrap();
+        let listed = sessions
+            .iter()
+            .find(|s| s.name == "old-docker-row")
+            .unwrap();
+        assert_eq!(listed.runtime, Runtime::Docker);
+        assert_eq!(listed.status, SessionStatus::Stopped);
+    }
+
+    #[test]
+    fn test_validate_runtime_tmux_ok_docker_rejected() {
+        assert!(validate_runtime(Runtime::Tmux).is_ok());
+        let err = validate_runtime(Runtime::Docker).unwrap_err();
         assert!(
-            !create_call.contains("-l -c"),
-            "docker command should not be wrapped: {create_call}"
-        );
-        assert!(
-            create_call.contains("claude"),
-            "docker command should be raw: {create_call}"
+            err.to_string()
+                .contains("the docker runtime was removed; sessions run in tmux"),
+            "{err}"
         );
     }
 
@@ -2950,62 +2842,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resume_lost_sessions_docker_command_not_wrapped() {
-        let docker = Arc::new(MockBackend::new().with_alive(false));
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let pool = store.pool().clone();
-        let mgr = SessionManager::new(
-            Arc::new(MockBackend::new().with_alive(false)),
-            store,
-            HashMap::new(),
-            None,
-        )
-        .with_docker_backend(docker.clone())
-        .with_no_stale_grace();
-
-        // Create a docker session and mark it active with dead backend
-        let req = CreateSessionRequest {
-            name: "auto-resume-docker".to_owned(),
-            workdir: Some("/tmp".into()),
-            command: Some("echo hi".into()),
-            ink: None,
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: Some(Runtime::Docker),
-            secrets: None,
-            target_node: None,
-            term_program: None,
+    async fn test_resume_lost_sessions_marks_historical_docker_sessions_lost() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        // Force-insert a historical docker-runtime session that looks active
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "old-docker-active".into(),
+            workdir: "/tmp".into(),
+            command: "claude".into(),
+            status: SessionStatus::Active,
+            backend_session_id: Some("docker:pulpo-old-docker-active".into()),
+            runtime: Runtime::Docker,
+            created_at: Utc::now() - chrono::Duration::hours(1),
+            ..Default::default()
         };
-        let session = mgr.create_session(req).await.unwrap();
-        // Mark it active (create_session left it as Active) — backend is dead
-        docker.calls.lock().unwrap().clear();
+        mgr.store().insert_session(&session).await.unwrap();
 
         let resumed = mgr.resume_lost_sessions().await.unwrap();
-        assert_eq!(resumed, 1);
-        // Docker auto-resume should NOT wrap the command
-        let calls: Vec<_> = docker.calls.lock().unwrap().clone();
-        let create_call = calls.iter().find(|c| c.starts_with("create:"));
-        assert!(
-            create_call.is_some(),
-            "docker backend should re-create session"
-        );
-        assert!(
-            !create_call.unwrap().contains("bash -l -c"),
-            "auto-resumed docker command should not be wrapped"
-        );
-        // Verify the session ID was stored correctly
-        let updated = sqlx::query_as::<_, (String,)>("SELECT status FROM sessions WHERE id = ?")
-            .bind(session.id.to_string())
-            .fetch_one(&pool)
+        assert_eq!(resumed, 0);
+
+        // The session is marked Lost instead of being re-created in tmux
+        let fetched = mgr
+            .get_session(&session.id.to_string())
             .await
+            .unwrap()
             .unwrap();
-        assert_eq!(updated.0, "active");
+        assert_eq!(fetched.status, SessionStatus::Lost);
+        let calls = backend.calls.lock().unwrap();
+        assert!(!calls.iter().any(|c| c.starts_with("create:")));
+        drop(calls);
     }
 
     // -- wrap_command edge cases --

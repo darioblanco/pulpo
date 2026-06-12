@@ -45,6 +45,7 @@ export interface Session {
   git_insertions?: number | null;
   git_deletions?: number | null;
   git_ahead?: number | null;
+  /** 'docker' only appears on historical sessions — the docker runtime was removed. */
   runtime?: 'tmux' | 'docker';
   last_output_at: string | null;
   output_snippet?: string | null;
@@ -167,7 +168,6 @@ export interface CreateSessionRequest {
   metadata?: Record<string, string>;
   worktree?: boolean;
   worktree_base?: string;
-  runtime?: 'tmux' | 'docker';
   idle_threshold_secs?: number;
   secrets?: string[];
   target_node?: string;

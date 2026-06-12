@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/darioblanco/pulpo/main/scripts/inst
 
 Set `BIN_DIR` or `TARGET` when invoking the script if you need a different install directory or target triple. Re-running the script always pulls the latest release, so it doubles as the update command.
 
-Download binaries from [GitHub Releases](https://github.com/darioblanco/pulpo/releases). Windows uses Docker runtime (no tmux required).
+Download binaries from [GitHub Releases](https://github.com/darioblanco/pulpo/releases).
 </details>
 
 ## Quick Start
@@ -83,7 +83,7 @@ web control over the same underlying sessions.
 Pulpo treats every agent run as a managed session:
 
 1. You start a command as a session
-2. `pulpod` runs it on a runtime backend (`tmux` or `docker`)
+2. `pulpod` runs it in a tmux session on a machine you control
 3. Pulpo tracks lifecycle, output, git state, and intervention history
 4. You inspect, resume, stop, schedule, or redirect it from anywhere
 
@@ -100,9 +100,6 @@ pulpo --node mac-mini spawn review -- claude -p "security audit"
 
 # Schedule nightly runs on the right machine
 pulpo schedule add nightly "0 3 * * *" --workdir ~/repo -- claude -p "review code"
-
-# Run in Docker when the task needs stronger isolation
-pulpo spawn risky --runtime docker -- claude --dangerously-skip-permissions -p "refactor"
 ```
 
 ## Who It Is For
@@ -135,7 +132,6 @@ It is strongest when you need:
 - remote supervision across multiple machines
 - explicit recovery semantics after failure or reboot
 - worktree isolation for parallel agent work
-- Docker isolation for higher-risk sessions
 - command-agnostic support instead of one vendor workflow
 
 ## Core Capabilities
@@ -143,7 +139,7 @@ It is strongest when you need:
 - **Durable sessions**: explicit lifecycle states (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output.
 - **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error patterns, token tracking, and git telemetry.
 - **Multi-node fleet control**: Tailscale discovery + manual peer config. Manage sessions across machines from one dashboard or CLI.
-- **Execution isolation**: use worktrees for parallel repo work and Docker for sandboxed runs.
+- **Execution isolation**: use worktrees for parallel repo work.
 - **Operational surfaces**: CLI, web UI/PWA, REST API, SSE, and notifications.
 - **Command-agnostic execution**: Claude Code, Codex, Gemini CLI, Aider, shell scripts, and other terminal commands.
 
@@ -168,7 +164,6 @@ Everything else builds on top of that core.
 | Git tracking (branch, diff, ahead) | Yes | No | No | No |
 | Worktrees | Any agent | Yes | Claude only | No |
 | Scheduling | Built-in cron | No | No | No |
-| Docker runtime | Yes | Yes | No | No |
 | Adopts external tmux | Yes | No | No | No |
 | Command-agnostic | Any command | Generic | Claude only | 3 agents |
 | Web UI + mobile PWA | Yes | Web | No | Dashboard |

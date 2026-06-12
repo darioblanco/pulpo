@@ -86,10 +86,6 @@ pub enum Commands {
         #[arg(long = "worktree-base")]
         worktree_base: Option<String>,
 
-        /// Runtime environment: tmux (default) or docker
-        #[arg(long)]
-        runtime: Option<String>,
-
         /// Secrets to inject as environment variables (by name)
         #[arg(long)]
         secret: Vec<String>,
@@ -239,9 +235,6 @@ pub enum InkAction {
         /// Command template
         #[arg(long)]
         command: Option<String>,
-        /// Runtime environment: tmux (default) or docker
-        #[arg(long)]
-        runtime: Option<String>,
         /// Secrets to inject (by name, repeatable)
         #[arg(long)]
         secret: Vec<String>,
@@ -256,9 +249,6 @@ pub enum InkAction {
         /// Command template
         #[arg(long)]
         command: Option<String>,
-        /// Runtime environment: tmux (default) or docker
-        #[arg(long)]
-        runtime: Option<String>,
         /// Secrets to inject (by name, repeatable). Replaces existing secrets.
         #[arg(long)]
         secret: Vec<String>,
@@ -304,9 +294,6 @@ pub enum ScheduleAction {
         /// Description
         #[arg(long)]
         description: Option<String>,
-        /// Runtime environment: tmux (default) or docker
-        #[arg(long)]
-        runtime: Option<String>,
         /// Secrets to inject as environment variables (by name, repeatable)
         #[arg(long)]
         secret: Vec<String>,
@@ -688,15 +675,8 @@ fn is_safe_term(term: &str) -> bool {
 }
 
 /// Build the command to attach to a session's terminal.
-/// Detects Docker sessions by the `docker:` prefix in the backend session ID.
 #[cfg_attr(coverage, allow(dead_code))]
 fn build_attach_command(backend_session_id: &str) -> std::process::Command {
-    // Docker sessions: exec into the container
-    if let Some(container) = backend_session_id.strip_prefix("docker:") {
-        let mut cmd = std::process::Command::new("docker");
-        cmd.args(["exec", "-it", container, "/bin/sh"]);
-        return cmd;
-    }
     // tmux sessions — force a safe TERM value so attach works even when the
     // local terminal uses an exotic terminfo (e.g. xterm-ghostty) that isn't
     // installed on the machine running tmux.
@@ -717,7 +697,7 @@ fn build_attach_command(backend_session_id: &str) -> std::process::Command {
         cmd.args([
             "/C",
             "echo",
-            "Attach not available on Windows. Use the web UI or --runtime docker.",
+            "Attach not available on Windows. Use the web UI.",
         ]);
         cmd
     }
@@ -736,7 +716,7 @@ fn attach_session(backend_session_id: &str) -> Result<()> {
 /// Stub for Windows — tmux attach is not available.
 #[cfg(all(target_os = "windows", not(test), not(coverage)))]
 fn attach_session(_backend_session_id: &str) -> Result<()> {
-    eprintln!("tmux attach is not available on Windows. Use the web UI or --runtime docker.");
+    eprintln!("tmux attach is not available on Windows. Use the web UI.");
     Ok(())
 }
 
@@ -979,7 +959,7 @@ async fn check_session_alive(
     session_id: &str,
     token: Option<&str>,
 ) -> Result<()> {
-    // Poll up to 3 times at 500ms intervals — handles slow daemons and Docker pull delays
+    // Poll up to 3 times at 500ms intervals — handles slow daemons
     for _ in 0..3 {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         // Fetch by ID to avoid name collisions with old sessions
@@ -1120,7 +1100,6 @@ async fn execute_schedule(
             node,
             ink,
             description,
-            runtime,
             secret,
             worktree,
             worktree_base,
@@ -1152,9 +1131,6 @@ async fn execute_schedule(
             }
             if let Some(d) = description {
                 body["description"] = serde_json::json!(d);
-            }
-            if let Some(r) = runtime {
-                body["runtime"] = serde_json::json!(r);
             }
             if !secret.is_empty() {
                 body["secrets"] = serde_json::json!(secret);
@@ -1366,7 +1342,6 @@ fn build_ink_body(
     base: &serde_json::Value,
     description: Option<&String>,
     command: Option<&String>,
-    runtime: Option<&String>,
     secret: &[String],
 ) -> serde_json::Value {
     let mut body = base.clone();
@@ -1375,9 +1350,6 @@ fn build_ink_body(
     }
     if let Some(c) = command {
         body["command"] = serde_json::json!(c);
-    }
-    if let Some(r) = runtime {
-        body["runtime"] = serde_json::json!(r);
     }
     if !secret.is_empty() {
         body["secrets"] = serde_json::json!(secret);
@@ -1419,14 +1391,12 @@ async fn execute_ink(
             name,
             description,
             command,
-            runtime,
             secret,
         } => {
             let body = build_ink_body(
                 &serde_json::json!({}),
                 description.as_ref(),
                 command.as_ref(),
-                runtime.as_ref(),
                 secret,
             );
             let resp = authed_post(client, format!("{base}/api/v1/inks/{name}"), token)
@@ -1440,7 +1410,6 @@ async fn execute_ink(
             name,
             description,
             command,
-            runtime,
             secret,
         } => {
             let get_resp = authed_get(client, format!("{base}/api/v1/inks/{name}"), token)
@@ -1448,13 +1417,7 @@ async fn execute_ink(
                 .await?;
             let text = ok_or_api_error(get_resp).await?;
             let existing: serde_json::Value = serde_json::from_str(&text)?;
-            let body = build_ink_body(
-                &existing,
-                description.as_ref(),
-                command.as_ref(),
-                runtime.as_ref(),
-                secret,
-            );
+            let body = build_ink_body(&existing, description.as_ref(), command.as_ref(), secret);
             let resp = authed_put(client, format!("{base}/api/v1/inks/{name}"), token)
                 .json(&body)
                 .send()
@@ -1831,7 +1794,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             idle_threshold,
             worktree,
             worktree_base,
-            runtime,
             secret,
             command,
         } => {
@@ -1881,9 +1843,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                         "Worktree: branch {resolved_name} in ~/.pulpo/worktrees/{resolved_name}/"
                     );
                 }
-            }
-            if let Some(rt) = runtime {
-                body["runtime"] = serde_json::json!(rt);
             }
             if !secret.is_empty() {
                 body["secrets"] = serde_json::json!(secret);
@@ -2739,7 +2698,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                runtime: None,
                 secret: vec![],
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
@@ -2766,7 +2724,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                runtime: None,
                 secret: vec![],
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
@@ -2777,7 +2734,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_spawn_with_idle_threshold_and_worktree_and_docker_runtime() {
+    async fn test_execute_spawn_with_idle_threshold_and_worktree() {
         let node = start_test_server().await;
         let cli = Cli {
             node,
@@ -2792,7 +2749,6 @@ mod tests {
 
                 worktree: true,
                 worktree_base: None,
-                runtime: Some("docker".into()),
                 secret: vec![],
                 command: vec!["claude".into()],
             }),
@@ -2818,7 +2774,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                runtime: None,
                 secret: vec![],
                 command: vec!["echo".into(), "hello".into()],
             }),
@@ -2844,7 +2799,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                runtime: None,
                 secret: vec![],
                 command: vec![],
             }),
@@ -2870,7 +2824,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                runtime: None,
                 secret: vec![],
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
@@ -2896,7 +2849,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                runtime: None,
                 secret: vec![],
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
@@ -3111,7 +3063,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                runtime: None,
                 secret: vec![],
                 command: vec!["test".into()],
             }),
@@ -3625,7 +3576,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                runtime: None,
                 secret: vec![],
                 command: vec!["test".into()],
             }),
@@ -4026,11 +3976,11 @@ mod tests {
     }
 
     #[test]
-    fn test_build_attach_command_docker() {
+    fn test_build_attach_command_uses_tmux_for_historical_docker_ids() {
+        // Historical docker backend IDs no longer get a docker exec — the
+        // docker runtime was removed, so attach always goes through tmux.
         let cmd = build_attach_command("docker:pulpo-my-task");
-        assert_eq!(cmd.get_program(), "docker");
-        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
-        assert_eq!(args, vec!["exec", "-it", "pulpo-my-task", "/bin/sh"]);
+        assert_eq!(cmd.get_program(), "tmux");
     }
 
     #[test]
@@ -5204,8 +5154,6 @@ mod tests {
             "A coder ink",
             "--command",
             "claude -p 'code'",
-            "--runtime",
-            "docker",
             "--secret",
             "GH_TOKEN",
             "--secret",
@@ -5215,13 +5163,19 @@ mod tests {
         assert!(matches!(
             &cli.command,
             Some(Commands::Ink {
-                action: InkAction::Add { name, description, command, runtime, secret }
+                action: InkAction::Add { name, description, command, secret }
             }) if name == "coder"
                 && description.as_deref() == Some("A coder ink")
                 && command.as_deref() == Some("claude -p 'code'")
-                && runtime.as_deref() == Some("docker")
                 && secret == &["GH_TOKEN", "NPM_TOKEN"]
         ));
+    }
+
+    #[test]
+    fn test_cli_parse_ink_add_runtime_flag_removed() {
+        // --runtime was removed along with the docker session runtime
+        let result = Cli::try_parse_from(["pulpo", "ink", "add", "coder", "--runtime", "docker"]);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -5352,15 +5306,13 @@ mod tests {
     // -- Schedule CLI new flags tests --
 
     #[test]
-    fn test_cli_parse_schedule_add_with_runtime() {
+    fn test_cli_parse_schedule_add_with_flags() {
         let cli = Cli::try_parse_from([
             "pulpo",
             "schedule",
             "add",
             "nightly",
             "0 3 * * *",
-            "--runtime",
-            "docker",
             "--secret",
             "GH_TOKEN",
             "--worktree",
@@ -5371,13 +5323,27 @@ mod tests {
         assert!(matches!(
             &cli.command,
             Some(Commands::Schedule {
-                action: ScheduleAction::Add { name, runtime, secret, worktree, worktree_base, .. }
+                action: ScheduleAction::Add { name, secret, worktree, worktree_base, .. }
             }) if name == "nightly"
-                && runtime.as_deref() == Some("docker")
                 && secret == &["GH_TOKEN"]
                 && *worktree
                 && worktree_base.as_deref() == Some("main")
         ));
+    }
+
+    #[test]
+    fn test_cli_parse_schedule_add_runtime_flag_removed() {
+        // --runtime was removed along with the docker session runtime
+        let result = Cli::try_parse_from([
+            "pulpo",
+            "schedule",
+            "add",
+            "nightly",
+            "0 3 * * *",
+            "--runtime",
+            "docker",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -5439,7 +5405,7 @@ mod tests {
 
     #[test]
     fn test_build_ink_body_empty() {
-        let body = build_ink_body(&serde_json::json!({}), None, None, None, &[]);
+        let body = build_ink_body(&serde_json::json!({}), None, None, &[]);
         assert_eq!(body, serde_json::json!({}));
     }
 
@@ -5449,19 +5415,17 @@ mod tests {
             &serde_json::json!({}),
             Some(&"desc".into()),
             Some(&"cmd".into()),
-            Some(&"docker".into()),
             &["S1".into(), "S2".into()],
         );
         assert_eq!(body["description"], "desc");
         assert_eq!(body["command"], "cmd");
-        assert_eq!(body["runtime"], "docker");
         assert_eq!(body["secrets"], serde_json::json!(["S1", "S2"]));
     }
 
     #[test]
     fn test_build_ink_body_merges_with_base() {
         let base = serde_json::json!({"description": "old", "command": "old_cmd"});
-        let body = build_ink_body(&base, None, Some(&"new_cmd".into()), None, &[]);
+        let body = build_ink_body(&base, None, Some(&"new_cmd".into()), &[]);
         // description preserved from base, command overridden
         assert_eq!(body["description"], "old");
         assert_eq!(body["command"], "new_cmd");

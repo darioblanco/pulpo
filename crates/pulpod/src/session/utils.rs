@@ -36,6 +36,19 @@ pub fn validate_workdir(workdir: &str) -> Result<()> {
     Ok(())
 }
 
+/// Error message returned wherever the retired docker runtime is requested.
+pub const DOCKER_RUNTIME_REMOVED: &str = "the docker runtime was removed; sessions run in tmux";
+
+/// Validate a session runtime. Only tmux is accepted — the docker session
+/// runtime was removed. Historical sessions stored with `runtime = "docker"`
+/// remain readable, but nothing new can be spawned or resumed with it.
+pub fn validate_runtime(runtime: pulpo_common::session::Runtime) -> Result<()> {
+    if runtime == pulpo_common::session::Runtime::Docker {
+        bail!(DOCKER_RUNTIME_REMOVED);
+    }
+    Ok(())
+}
+
 const SHELL_COMMANDS: &[&str] = &["bash", "zsh", "sh", "fish", "nu"];
 
 /// Check if a command is a bare shell (no agent work to wrap).

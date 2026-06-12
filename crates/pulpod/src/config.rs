@@ -21,8 +21,12 @@ pub struct Config {
     pub inks: HashMap<String, InkConfig>,
     #[serde(default)]
     pub notifications: NotificationsConfig,
-    #[serde(default)]
-    pub docker: DockerConfig,
+    /// Retired `[docker]` session-runtime configuration.
+    /// The docker session runtime was removed — this field only exists so
+    /// configs written before the removal still load (`deny_unknown_fields`
+    /// would otherwise reject them). It is ignored and dropped on save.
+    #[serde(default, skip_serializing)]
+    pub docker: Option<toml::Value>,
     #[serde(default)]
     pub controller: ControllerConfig,
 }
@@ -71,40 +75,6 @@ pub enum NodeRole {
     Node,
 }
 
-/// Docker runtime configuration.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DockerConfig {
-    /// Docker image for container sessions.
-    #[serde(default = "default_docker_image")]
-    pub image: String,
-    /// Volume mounts for Docker containers (host:container:mode format).
-    /// Default includes agent auth directories (Claude, Codex, Gemini) as read-only.
-    #[serde(default = "default_docker_volumes")]
-    pub volumes: Vec<String>,
-}
-
-impl Default for DockerConfig {
-    fn default() -> Self {
-        Self {
-            image: default_docker_image(),
-            volumes: default_docker_volumes(),
-        }
-    }
-}
-
-fn default_docker_image() -> String {
-    "ubuntu:latest".into()
-}
-
-fn default_docker_volumes() -> Vec<String> {
-    vec![
-        "~/.claude:/root/.claude:ro".to_owned(),
-        "~/.codex:/root/.codex:ro".to_owned(),
-        "~/.gemini:/root/.gemini:ro".to_owned(),
-    ]
-}
-
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InkConfig {
@@ -115,7 +85,8 @@ pub struct InkConfig {
     /// Secret names to inject as environment variables.
     #[serde(default)]
     pub secrets: Vec<String>,
-    /// Runtime to use (tmux or docker). Overridden by --runtime on spawn.
+    /// Runtime override (historical). The docker runtime was removed — inks
+    /// stored with `runtime = "docker"` still load, but spawning them is rejected.
     #[serde(default)]
     pub runtime: Option<String>,
 }
@@ -558,7 +529,7 @@ pub fn load(path: &str) -> Result<Config> {
             watchdog: WatchdogConfig::default(),
             inks: built_in_inks(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         })
     }
@@ -686,7 +657,7 @@ finished_ttl_secs = 60
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         let expanded = config.data_dir();
@@ -712,7 +683,7 @@ finished_ttl_secs = 60
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         assert_eq!(config.data_dir(), "/absolute/path");
@@ -846,7 +817,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         let debug = format!("{config:?}");
@@ -870,7 +841,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -899,7 +870,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -929,7 +900,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -953,7 +924,7 @@ name = "test"
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                docker: DockerConfig::default(),
+                docker: None,
                 controller: ControllerConfig::default(),
             },
             Path::new("/dev/null/impossible/config.toml"),
@@ -979,7 +950,7 @@ name = "test"
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                docker: DockerConfig::default(),
+                docker: None,
                 controller: ControllerConfig::default(),
             },
             Path::new(""),
@@ -1009,7 +980,7 @@ name = "test"
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: NotificationsConfig::default(),
-                docker: DockerConfig::default(),
+                docker: None,
                 controller: ControllerConfig::default(),
             },
             &dir_target,
@@ -1034,7 +1005,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         #[allow(clippy::redundant_clone)]
@@ -1070,7 +1041,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -1142,7 +1113,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         assert!(config.auth.token.is_empty());
@@ -1169,7 +1140,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         let generated = ensure_auth_token(&mut config);
@@ -1238,7 +1209,7 @@ token = "my-secret-token"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -1308,7 +1279,7 @@ token = "peer-secret"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -1421,7 +1392,7 @@ breach_count = 5
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -1631,7 +1602,7 @@ idle_action = "pause"
             },
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -1750,7 +1721,7 @@ command = "codex -p 'Do it'"
             watchdog: WatchdogConfig::default(),
             inks,
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -1868,7 +1839,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
                 webhooks: vec![],
                 ..Default::default()
             },
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -1977,7 +1948,7 @@ url = "https://example.com"
                 }],
                 ..Default::default()
             },
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -2059,7 +2030,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -2271,7 +2242,7 @@ command = "codex -p 'review'"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         assert!(config.notifications.vapid.private_key.is_empty());
@@ -2297,7 +2268,7 @@ command = "codex -p 'review'"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         ensure_vapid_keys(&mut config);
@@ -2322,7 +2293,7 @@ command = "codex -p 'review'"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         ensure_vapid_keys(&mut config);
@@ -2359,7 +2330,7 @@ command = "codex -p 'review'"
                 },
                 ..Default::default()
             },
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         let generated = ensure_vapid_keys(&mut config);
@@ -2377,7 +2348,7 @@ command = "codex -p 'review'"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         let mut config2 = config1.clone();
@@ -2405,7 +2376,7 @@ command = "codex -p 'review'"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         ensure_vapid_keys(&mut config);
@@ -2475,7 +2446,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -2499,7 +2470,7 @@ name = "test"
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -2511,23 +2482,29 @@ name = "test"
     }
 
     #[test]
-    fn test_docker_config_default() {
-        let config = DockerConfig::default();
-        assert_eq!(config.image, "ubuntu:latest");
+    fn test_load_config_with_legacy_docker_section() {
+        // Configs written before the docker runtime removal still load.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[docker]
+image = "my-custom-image:v1"
+volumes = ["~/.ssh:/root/.ssh:ro"]
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert!(config.docker.is_some(), "legacy [docker] section is parsed");
     }
 
     #[test]
-    fn test_docker_config_debug_clone() {
-        let config = DockerConfig::default();
-        let debug = format!("{config:?}");
-        assert!(debug.contains("ubuntu:latest"));
-        #[allow(clippy::redundant_clone)]
-        let cloned = config.clone();
-        assert_eq!(cloned.image, "ubuntu:latest");
-    }
-
-    #[test]
-    fn test_load_config_with_docker() {
+    fn test_save_drops_legacy_docker_section() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(
@@ -2543,11 +2520,18 @@ image = "my-custom-image:v1"
         )
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.docker.image, "my-custom-image:v1");
+        save(&config, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("[docker]"),
+            "retired [docker] section is dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.docker.is_none());
     }
 
     #[test]
-    fn test_load_config_without_docker_defaults() {
+    fn test_load_config_without_docker_section() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(
@@ -2560,96 +2544,7 @@ port = 7433
         )
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.docker.image, "ubuntu:latest");
-    }
-
-    #[test]
-    fn test_default_docker_image_fn() {
-        assert_eq!(default_docker_image(), "ubuntu:latest");
-    }
-
-    #[test]
-    fn test_default_docker_volumes() {
-        let volumes = default_docker_volumes();
-        assert_eq!(volumes.len(), 3);
-        assert_eq!(volumes[0], "~/.claude:/root/.claude:ro");
-        assert_eq!(volumes[1], "~/.codex:/root/.codex:ro");
-        assert_eq!(volumes[2], "~/.gemini:/root/.gemini:ro");
-    }
-
-    #[test]
-    fn test_docker_config_default_has_volumes() {
-        let config = DockerConfig::default();
-        assert_eq!(config.volumes.len(), 3);
-        assert!(config.volumes[0].contains(".claude"));
-    }
-
-    #[test]
-    fn test_load_config_with_custom_docker_volumes() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[docker]
-image = "my-image:v1"
-volumes = [
-    "~/.ssh:/root/.ssh:ro",
-    "~/.gitconfig:/root/.gitconfig:ro",
-]
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.docker.image, "my-image:v1");
-        assert_eq!(config.docker.volumes.len(), 2);
-        assert_eq!(config.docker.volumes[0], "~/.ssh:/root/.ssh:ro");
-        assert_eq!(config.docker.volumes[1], "~/.gitconfig:/root/.gitconfig:ro");
-    }
-
-    #[test]
-    fn test_load_config_with_empty_docker_volumes() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[docker]
-volumes = []
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert!(config.docker.volumes.is_empty());
-    }
-
-    #[test]
-    fn test_load_config_without_docker_volumes_uses_defaults() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[docker]
-image = "my-image:v1"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(config.docker.volumes.len(), 3);
-        assert!(config.docker.volumes[0].contains(".claude"));
+        assert!(config.docker.is_none());
     }
 
     #[test]
@@ -2678,7 +2573,7 @@ image = "my-image:v1"
             watchdog: WatchdogConfig::default(),
             inks,
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         save(&config, &path).unwrap();
@@ -2687,53 +2582,6 @@ image = "my-image:v1"
         assert_eq!(ink.secrets, vec!["GITHUB_TOKEN", "NPM_TOKEN"]);
         assert_eq!(ink.runtime.as_deref(), Some("docker"));
         assert_eq!(ink.command.as_deref(), Some("claude -p 'build'"));
-    }
-
-    #[test]
-    fn test_load_config_without_docker_section_defaults() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "old-node"
-port = 7433
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        // Docker config should have defaults
-        assert_eq!(config.docker.image, "ubuntu:latest");
-        assert_eq!(config.docker.volumes.len(), 3);
-    }
-
-    #[test]
-    fn test_docker_volumes_save_roundtrip() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("config.toml");
-        let config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            docker: DockerConfig {
-                image: "my-image:v1".into(),
-                volumes: vec!["~/.ssh:/root/.ssh:ro".into()],
-            },
-            controller: ControllerConfig::default(),
-        };
-        save(&config, &path).unwrap();
-        let loaded = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(loaded.docker.volumes.len(), 1);
-        assert_eq!(loaded.docker.volumes[0], "~/.ssh:/root/.ssh:ro");
     }
 
     // -- Controller mode config tests --
@@ -2932,7 +2780,7 @@ enabled = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig {
                 enabled: true,
                 address: None,
@@ -2976,7 +2824,7 @@ enabled = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig::default(),
         };
         assert!(config.validate_controller().is_ok());
@@ -2993,7 +2841,7 @@ enabled = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig {
                 enabled: true,
                 address: None,
@@ -3012,7 +2860,7 @@ enabled = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig {
                 enabled: false,
                 address: Some("http://controller:7433".into()),
@@ -3034,7 +2882,7 @@ enabled = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig {
                 enabled: true,
                 address: Some("http://controller:7433".into()),
@@ -3057,7 +2905,7 @@ enabled = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig {
                 enabled: true,
                 address: None,
@@ -3080,7 +2928,7 @@ enabled = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig {
                 enabled: true,
                 address: None,
@@ -3102,7 +2950,7 @@ enabled = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig {
                 enabled: false,
                 address: Some("http://controller:7433".into()),
@@ -3126,7 +2974,7 @@ enabled = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig {
                 enabled: false,
                 address: Some("https://controller.tailnet.ts.net".into()),
@@ -3150,7 +2998,7 @@ enabled = true
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: NotificationsConfig::default(),
-            docker: DockerConfig::default(),
+            docker: None,
             controller: ControllerConfig {
                 enabled: false,
                 address: Some("http://controller:7433".into()),

@@ -234,7 +234,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                docker: crate::config::DockerConfig::default(),
+                docker: None,
                 controller: crate::config::ControllerConfig::default(),
             },
             manager,
@@ -268,7 +268,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                docker: crate::config::DockerConfig::default(),
+                docker: None,
                 controller: crate::config::ControllerConfig::default(),
             },
             config_path,
@@ -454,7 +454,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller: crate::config::ControllerConfig::default(),
         };
         let resp = config_to_response(&config);
@@ -721,7 +721,7 @@ mod tests {
                 webhooks: vec![],
                 ..Default::default()
             },
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller: crate::config::ControllerConfig::default(),
         };
         let resp = config_to_response(&config);
@@ -776,7 +776,7 @@ mod tests {
                 ],
                 ..Default::default()
             },
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller: crate::config::ControllerConfig::default(),
         };
         let resp = config_to_response(&config);
@@ -908,7 +908,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                docker: crate::config::DockerConfig::default(),
+                docker: None,
                 controller: crate::config::ControllerConfig::default(),
             },
             std::path::PathBuf::from("/dev/null/impossible/config.toml"),

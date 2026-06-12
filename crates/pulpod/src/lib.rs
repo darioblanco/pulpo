@@ -71,14 +71,14 @@ impl backend::Backend for CoverageBackend {
 }
 
 /// Stub backend for platforms where tmux is not available (Windows).
-/// Sessions require --runtime docker on these platforms.
+/// Sessions cannot be created on these platforms.
 #[cfg(target_os = "windows")]
 struct WindowsStubBackend;
 
 #[cfg(target_os = "windows")]
 impl backend::Backend for WindowsStubBackend {
     fn create_session(&self, _: &str, _: &str, _: &str) -> anyhow::Result<()> {
-        anyhow::bail!("tmux is not available on Windows — use --runtime docker for Docker sessions")
+        anyhow::bail!("tmux is not available on Windows — sessions cannot be created here")
     }
     fn kill_session(&self, _: &str) -> anyhow::Result<()> {
         Ok(())
@@ -237,6 +237,8 @@ async fn upgrade_backend_ids(manager: &SessionManager, store: &store::Store) {
         if !is_live {
             continue;
         }
+        // Skip already-upgraded `$N` IDs and historical `docker:` IDs from the
+        // retired docker runtime — those sessions never map to a tmux session.
         if session
             .backend_session_id
             .as_ref()
@@ -303,32 +305,13 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let node_name = config.node.name.clone();
     let (event_tx, _) = broadcast::channel::<PulpoEvent>(256);
 
-    let docker_backend: Option<Arc<dyn backend::Backend>> = if config.docker.image.is_empty() {
-        None
-    } else {
-        #[cfg(not(coverage))]
-        {
-            Some(Arc::new(backend::docker::DockerBackend::new(
-                &config.docker.image,
-                config.docker.volumes.clone(),
-            )))
-        }
-        #[cfg(coverage)]
-        {
-            None
-        }
-    };
-
-    let mut manager = SessionManager::new(
+    let manager = SessionManager::new(
         backend,
         store.clone(),
         config.inks.clone(),
         config.node.default_command.clone(),
     )
     .with_event_tx(event_tx.clone(), node_name.clone());
-    if let Some(ref db) = docker_backend {
-        manager = manager.with_docker_backend(db.clone());
-    }
 
     // Auto-resume sessions that were active before a restart
     match manager.resume_lost_sessions().await {
