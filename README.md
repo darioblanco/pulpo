@@ -144,7 +144,7 @@ It is strongest when you need:
 - **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error patterns, token tracking, and git telemetry.
 - **Multi-node fleet control**: Tailscale discovery + manual peer config. Manage sessions across machines from one dashboard or CLI.
 - **Execution isolation**: use worktrees for parallel repo work and Docker for sandboxed runs.
-- **Operational surfaces**: CLI, web UI/PWA, REST API, SSE, MCP server, and notifications.
+- **Operational surfaces**: CLI, web UI/PWA, REST API, SSE, and notifications.
 - **Command-agnostic execution**: Claude Code, Codex, Gemini CLI, Aider, shell scripts, and other terminal commands.
 
 ## How It Works

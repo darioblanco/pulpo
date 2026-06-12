@@ -6,40 +6,30 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = pulpod::Cli::parse();
 
-    match &cli.command {
-        Some(pulpod::CliCommand::Mcp) => {
-            // MCP mode: no tracing to stdout (would corrupt STDIO protocol)
-            let server = pulpod::build_mcp_server(&cli).await?;
-            pulpod::mcp::run_stdio(server).await?;
-        }
-        None => {
-            // HTTP daemon mode
-            let config = pulpod::config::load(&cli.config)?;
-            let data_dir = std::path::PathBuf::from(config.data_dir());
-            let _log_guard = pulpod::init_tracing(Some(&data_dir), config.node.log_retain_days)?;
-            let (app, addr, shutdown_handle) = pulpod::build_app(&cli).await?;
-            let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let config = pulpod::config::load(&cli.config)?;
+    let data_dir = std::path::PathBuf::from(config.data_dir());
+    let _log_guard = pulpod::init_tracing(Some(&data_dir), config.node.log_retain_days)?;
+    let (app, addr, shutdown_handle) = pulpod::build_app(&cli).await?;
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
 
-            // After the shutdown signal fires, give in-flight streaming
-            // connections (SSE, WebSocket) 3 seconds to close before forcing exit.
-            let (shutdown_done_tx, shutdown_done_rx) = tokio::sync::oneshot::channel::<()>();
-            let server = axum::serve(listener, app).with_graceful_shutdown(async move {
-                shutdown_signal(shutdown_handle).await;
-                let _ = shutdown_done_tx.send(());
-            });
+    // After the shutdown signal fires, give in-flight streaming
+    // connections (SSE, WebSocket) 3 seconds to close before forcing exit.
+    let (shutdown_done_tx, shutdown_done_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = axum::serve(listener, app).with_graceful_shutdown(async move {
+        shutdown_signal(shutdown_handle).await;
+        let _ = shutdown_done_tx.send(());
+    });
 
-            tokio::select! {
-                result = server => result?,
-                () = async {
-                    let _ = shutdown_done_rx.await;
-                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                } => {
-                    info!("Streaming connections still open — forcing shutdown");
-                }
-            }
-            info!("pulpod shut down cleanly");
+    tokio::select! {
+        result = server => result?,
+        () = async {
+            let _ = shutdown_done_rx.await;
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        } => {
+            info!("Streaming connections still open — forcing shutdown");
         }
     }
+    info!("pulpod shut down cleanly");
 
     Ok(())
 }

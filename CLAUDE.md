@@ -86,7 +86,7 @@ async fn main() -> anyhow::Result<()> { /* ... */ }
 fn main() {}
 ```
 
-2. **Untestable I/O** — functions that require real infrastructure (PTY spawn, MCP stdio) are gated with `#[cfg(not(coverage))]` on the function itself.
+2. **Untestable I/O** — functions that require real infrastructure (PTY spawn) are gated with `#[cfg(not(coverage))]` on the function itself.
 
 3. **Dead code under coverage** — helpers that become unused when their callers are excluded use `#[cfg_attr(coverage, allow(dead_code))]` to suppress warnings.
 
@@ -279,9 +279,6 @@ pulpo/
 │   │   ├── watchdog/             # Resource monitoring
 │   │   │   ├── mod.rs            # Watchdog loop (memory + idle detection)
 │   │   │   └── memory.rs         # System memory probing
-│   │   ├── mcp/                  # MCP server
-│   │   │   ├── mod.rs            # MCP tool handlers
-│   │   │   └── resources.rs      # MCP resource definitions
 │   │   └── discovery/            # Peer discovery (Tailscale)
 │   │       ├── mod.rs            # Discovery types + constants
 │   │       └── tailscale.rs      # Tailscale API peer discovery
