@@ -39,7 +39,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
   const [inks, setInks] = useState<Record<string, InkConfig>>({});
   const [worktree, setWorktree] = useState(false);
   const [worktreeBase, setWorktreeBase] = useState('');
-  const [runtime, setRuntime] = useState<'tmux' | 'docker'>('tmux');
   const [idleThreshold, setIdleThreshold] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,7 +93,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         ...(selectedInk ? { ink: selectedInk } : {}),
         ...(worktree ? { worktree: true } : {}),
         ...(worktree && worktreeBase ? { worktree_base: worktreeBase } : {}),
-        ...(runtime !== 'tmux' ? { runtime } : {}),
         ...(idleThreshold ? { idle_threshold_secs: Number(idleThreshold) } : {}),
         ...(selectedSecrets.length > 0 ? { secrets: selectedSecrets } : {}),
       };
@@ -110,7 +108,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
       setSelectedInk('');
       setWorktree(false);
       setWorktreeBase('');
-      setRuntime('tmux');
       setIdleThreshold('');
       setSelectedSecrets([]);
       setOpen(false);
@@ -267,35 +264,21 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="target-node">Node</Label>
-              <Select value={targetNode} onValueChange={setTargetNode}>
-                <SelectTrigger id="target-node" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="local">Local</SelectItem>
-                  {onlinePeers.map((peer) => (
-                    <SelectItem key={peer.name} value={peer.name}>
-                      {peer.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="runtime-select">Runtime</Label>
-              <Select value={runtime} onValueChange={(v) => setRuntime(v as 'tmux' | 'docker')}>
-                <SelectTrigger id="runtime-select" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="tmux">tmux</SelectItem>
-                  <SelectItem value="docker">docker</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="target-node">Node</Label>
+            <Select value={targetNode} onValueChange={setTargetNode}>
+              <SelectTrigger id="target-node" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="local">Local</SelectItem>
+                {onlinePeers.map((peer) => (
+                  <SelectItem key={peer.name} value={peer.name}>
+                    {peer.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="space-y-1.5">

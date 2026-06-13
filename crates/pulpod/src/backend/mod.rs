@@ -1,9 +1,8 @@
-pub mod docker;
 pub mod tmux;
 
 use anyhow::Result;
 
-/// Backend trait — abstracts the terminal session runtime (tmux, Docker, etc.).
+/// Backend trait — abstracts the terminal session runtime (tmux).
 ///
 /// All methods that operate on a session take `backend_id` — the backend-specific
 /// session identifier (e.g. `my-session` for tmux). This ID is created once

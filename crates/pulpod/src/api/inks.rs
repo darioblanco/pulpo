@@ -44,6 +44,15 @@ pub struct InksResponse {
     pub inks: HashMap<String, InkConfig>,
 }
 
+/// Reject the retired docker runtime on ink create/update.
+/// Historical inks stored with `runtime = "docker"` still load and list.
+fn validate_ink_runtime(runtime: Option<&str>) -> Result<(), ApiError> {
+    if runtime == Some("docker") {
+        return Err(bad_request(crate::session::utils::DOCKER_RUNTIME_REMOVED));
+    }
+    Ok(())
+}
+
 pub async fn list(State(state): State<Arc<super::AppState>>) -> Json<InksResponse> {
     let inks = state.config.read().await.inks.clone();
     Json(InksResponse { inks })
@@ -68,6 +77,7 @@ pub async fn create(
     if name.is_empty() {
         return Err(bad_request("ink name must not be empty"));
     }
+    validate_ink_runtime(req.runtime.as_deref())?;
     let config_snapshot = {
         let mut config = state.config.write().await;
         if config.inks.contains_key(&name) {
@@ -91,6 +101,7 @@ pub async fn update(
     Path(name): Path<String>,
     Json(req): Json<InkConfigResponse>,
 ) -> Result<Json<InkConfigResponse>, ApiError> {
+    validate_ink_runtime(req.runtime.as_deref())?;
     let config_snapshot = {
         let mut config = state.config.write().await;
         if !config.inks.contains_key(&name) {
@@ -181,7 +192,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks,
                 notifications: crate::config::NotificationsConfig::default(),
-                docker: crate::config::DockerConfig::default(),
+                docker: None,
                 controller: crate::config::ControllerConfig::default(),
             },
             manager,
@@ -333,7 +344,7 @@ mod tests {
             description: Some("Updated".into()),
             command: Some("new cmd".into()),
             secrets: vec!["SECRET_A".into()],
-            runtime: Some("docker".into()),
+            runtime: Some("tmux".into()),
         };
         let result = update(State(state.clone()), Path("coder".into()), Json(req)).await;
         assert!(result.is_ok());
@@ -344,7 +355,53 @@ mod tests {
         // Verify config updated
         let ink = state.config.read().await.inks["coder"].clone();
         assert_eq!(ink.command, Some("new cmd".into()));
-        assert_eq!(ink.runtime, Some("docker".into()));
+        assert_eq!(ink.runtime, Some("tmux".into()));
+    }
+
+    #[tokio::test]
+    async fn test_create_ink_docker_runtime_rejected() {
+        let state = test_state(HashMap::new()).await;
+        let req = InkConfigResponse {
+            description: None,
+            command: Some("claude".into()),
+            secrets: vec![],
+            runtime: Some("docker".into()),
+        };
+        let result = create(State(state.clone()), Path("docker-ink".into()), Json(req)).await;
+        assert!(result.is_err());
+        let (status, Json(body)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.error.contains("docker runtime was removed"));
+        assert!(!state.config.read().await.inks.contains_key("docker-ink"));
+    }
+
+    #[tokio::test]
+    async fn test_update_ink_docker_runtime_rejected() {
+        let mut inks = HashMap::new();
+        inks.insert(
+            "coder".into(),
+            InkConfig {
+                command: Some("claude".into()),
+                ..InkConfig::default()
+            },
+        );
+        let state = test_state(inks).await;
+        let req = InkConfigResponse {
+            description: None,
+            command: Some("claude".into()),
+            secrets: vec![],
+            runtime: Some("docker".into()),
+        };
+        let result = update(State(state.clone()), Path("coder".into()), Json(req)).await;
+        assert!(result.is_err());
+        let (status, Json(body)) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.error.contains("docker runtime was removed"));
+        // Existing ink is untouched
+        assert!(
+            state.config.read().await.inks["coder"].runtime.is_none(),
+            "rejected update must not modify the ink"
+        );
     }
 
     #[tokio::test]
@@ -440,7 +497,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller: crate::config::ControllerConfig::default(),
         };
         let manager =

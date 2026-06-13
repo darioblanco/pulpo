@@ -14,7 +14,10 @@ pub enum Runtime {
     /// Native tmux session (default).
     #[default]
     Tmux,
-    /// Docker container session.
+    /// Docker container session (retired). The docker session runtime was
+    /// removed — this variant is kept only so historical session rows stored
+    /// with `runtime = "docker"` continue to deserialize and list. Spawning,
+    /// resuming, or scheduling with it is rejected server-side.
     Docker,
 }
 
@@ -155,7 +158,8 @@ pub struct Session {
     pub git_deletions: Option<u32>,
     /// Commits ahead of remote tracking branch (tracked by watchdog).
     pub git_ahead: Option<u32>,
-    /// The runtime environment for this session (tmux or docker).
+    /// The runtime environment for this session. Always tmux for new sessions;
+    /// docker only appears on historical rows (the docker runtime was removed).
     #[serde(default)]
     pub runtime: Runtime,
     pub created_at: DateTime<Utc>,

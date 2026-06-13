@@ -213,7 +213,7 @@ mod tests {
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
-                docker: crate::config::DockerConfig::default(),
+                docker: None,
                 controller: crate::config::ControllerConfig::default(),
             },
             manager,

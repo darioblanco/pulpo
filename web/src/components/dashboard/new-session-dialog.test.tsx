@@ -588,13 +588,13 @@ describe('NewSessionDialog', () => {
     });
   });
 
-  it('shows runtime selector in dialog', async () => {
+  it('does not show a runtime selector (docker runtime removed)', async () => {
     render(<NewSessionDialog onCreated={vi.fn()} />);
     await openDialog();
-    expect(screen.getByLabelText('Runtime')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Runtime')).not.toBeInTheDocument();
   });
 
-  it('defaults runtime to tmux and does not send it', async () => {
+  it('never sends a runtime field', async () => {
     mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
     render(<NewSessionDialog onCreated={vi.fn()} />);
     const user = await openDialog();
@@ -608,38 +608,6 @@ describe('NewSessionDialog', () => {
     await waitFor(() => {
       const call = mockCreateSession.mock.calls[0][0];
       expect(call).not.toHaveProperty('runtime');
-    });
-  });
-
-  it('sends runtime when docker is selected', async () => {
-    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    const user = await openDialog();
-
-    await user.type(screen.getByLabelText('Name'), 'docker-test');
-    await user.type(screen.getByLabelText('Working directory'), '/repo');
-
-    // Select docker runtime
-    const runtimeSelect = screen.getByRole('combobox', { name: 'Runtime' });
-    await user.click(runtimeSelect);
-    await waitFor(() => {
-      expect(screen.getAllByText('docker').length).toBeGreaterThan(0);
-    });
-    const options = screen.getAllByText('docker');
-    const listboxOption = options.find((el) => el.closest('[role="option"]'));
-    if (listboxOption) await user.click(listboxOption);
-
-    const form = screen.getByLabelText('Working directory').closest('form')!;
-    fireEvent.submit(form);
-
-    await waitFor(() => {
-      expect(mockCreateSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: 'docker-test',
-          workdir: '/repo',
-          runtime: 'docker',
-        }),
-      );
     });
   });
 

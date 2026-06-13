@@ -42,6 +42,14 @@ fn internal_error(msg: &str) -> ApiError {
     )
 }
 
+/// Reject the retired docker runtime on schedule create/update.
+fn validate_schedule_runtime(runtime: Option<&str>) -> Result<(), ApiError> {
+    if runtime == Some("docker") {
+        return Err(bad_request(crate::session::utils::DOCKER_RUNTIME_REMOVED));
+    }
+    Ok(())
+}
+
 async fn validate_target_node(
     state: &Arc<AppState>,
     target_node: Option<&str>,
@@ -91,6 +99,7 @@ pub async fn create(
     Json(req): Json<CreateScheduleRequest>,
 ) -> Result<(StatusCode, Json<Schedule>), ApiError> {
     validate_target_node(&state, req.target_node.as_deref()).await?;
+    validate_schedule_runtime(req.runtime.as_deref())?;
 
     // Validate name: schedule names become session name prefixes (e.g. "nightly-20260331-0300"),
     // so they must be safe for shell interpolation — same rules as session names.
@@ -165,6 +174,7 @@ pub async fn update(
         req.target_node.as_ref().and_then(|node| node.as_deref()),
     )
     .await?;
+    validate_schedule_runtime(req.runtime.as_ref().and_then(|rt| rt.as_deref()))?;
 
     let mut schedule = state
         .store
@@ -314,7 +324,7 @@ mod tests {
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
-            docker: crate::config::DockerConfig::default(),
+            docker: None,
             controller,
         };
         let backend = Arc::new(StubBackend);
@@ -767,11 +777,11 @@ mod tests {
         let resp = server
             .post("/api/v1/schedules")
             .json(&serde_json::json!({
-                "name": "docker-review",
+                "name": "nightly-review",
                 "cron": "0 3 * * *",
                 "command": "claude -p 'review'",
                 "workdir": "/tmp",
-                "runtime": "docker",
+                "runtime": "tmux",
                 "secrets": ["GH_TOKEN", "NPM_TOKEN"],
                 "worktree": true,
                 "worktree_base": "main"
@@ -779,13 +789,31 @@ mod tests {
             .await;
         resp.assert_status(StatusCode::CREATED);
         let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
-        assert_eq!(body["runtime"], "docker");
+        assert_eq!(body["runtime"], "tmux");
         assert_eq!(
             body["secrets"],
             serde_json::json!(["GH_TOKEN", "NPM_TOKEN"])
         );
         assert_eq!(body["worktree"], true);
         assert_eq!(body["worktree_base"], "main");
+    }
+
+    #[tokio::test]
+    async fn test_create_schedule_docker_runtime_rejected() {
+        let server = test_server().await;
+        let resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "docker-review",
+                "cron": "0 3 * * *",
+                "command": "claude -p 'review'",
+                "workdir": "/tmp",
+                "runtime": "docker"
+            }))
+            .await;
+        resp.assert_status(StatusCode::BAD_REQUEST);
+        let body = resp.text();
+        assert!(body.contains("docker runtime was removed"), "{body}");
     }
 
     #[tokio::test]
@@ -806,7 +834,7 @@ mod tests {
         let resp = server
             .put(&format!("/api/v1/schedules/{id}"))
             .json(&serde_json::json!({
-                "runtime": "docker",
+                "runtime": "tmux",
                 "secrets": ["SECRET_A"],
                 "worktree": true,
                 "worktree_base": "develop"
@@ -814,10 +842,34 @@ mod tests {
             .await;
         resp.assert_status_ok();
         let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
-        assert_eq!(body["runtime"], "docker");
+        assert_eq!(body["runtime"], "tmux");
         assert_eq!(body["secrets"], serde_json::json!(["SECRET_A"]));
         assert_eq!(body["worktree"], true);
         assert_eq!(body["worktree_base"], "develop");
+    }
+
+    #[tokio::test]
+    async fn test_update_schedule_docker_runtime_rejected() {
+        let server = test_server().await;
+        let create_resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "update-docker",
+                "cron": "0 3 * * *",
+                "command": "echo",
+                "workdir": "/tmp"
+            }))
+            .await;
+        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
+        let id = created["id"].as_str().unwrap();
+
+        let resp = server
+            .put(&format!("/api/v1/schedules/{id}"))
+            .json(&serde_json::json!({ "runtime": "docker" }))
+            .await;
+        resp.assert_status(StatusCode::BAD_REQUEST);
+        let body = resp.text();
+        assert!(body.contains("docker runtime was removed"), "{body}");
     }
 
     #[tokio::test]

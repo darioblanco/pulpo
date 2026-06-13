@@ -20,7 +20,8 @@ pub struct CreateSessionRequest {
     pub worktree: Option<bool>,
     /// Base branch to fork the worktree from (defaults to current HEAD).
     pub worktree_base: Option<String>,
-    /// Runtime environment (tmux or docker). Defaults to tmux.
+    /// Runtime environment. Defaults to tmux. Kept for wire compatibility —
+    /// "docker" still deserializes but is rejected server-side (runtime removed).
     pub runtime: Option<crate::session::Runtime>,
     /// Secret names to inject as environment variables.
     #[serde(default)]
@@ -169,7 +170,8 @@ pub struct InkConfigResponse {
     /// Secret names to inject as environment variables.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub secrets: Vec<String>,
-    /// Runtime to use (tmux or docker).
+    /// Runtime override (historical). "docker" is rejected on create/update —
+    /// the docker session runtime was removed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<String>,
 }
@@ -317,7 +319,7 @@ pub struct Schedule {
     pub target_node: Option<String>,
     pub ink: Option<String>,
     pub description: Option<String>,
-    /// Runtime environment (tmux or docker).
+    /// Runtime environment (historical; "docker" is rejected on create/update).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<String>,
     /// Secret names to inject as environment variables.
@@ -350,7 +352,7 @@ pub struct CreateScheduleRequest {
     pub target_node: Option<String>,
     pub ink: Option<String>,
     pub description: Option<String>,
-    /// Runtime environment (tmux or docker).
+    /// Runtime environment (historical; "docker" is rejected — runtime removed).
     pub runtime: Option<String>,
     /// Secret names to inject as environment variables.
     #[serde(default)]
@@ -371,7 +373,8 @@ pub struct UpdateScheduleRequest {
     pub ink: Option<Option<String>>,
     pub description: Option<Option<String>>,
     pub enabled: Option<bool>,
-    /// Runtime environment (tmux or docker). Use `Some(None)` to clear.
+    /// Runtime environment. Use `Some(None)` to clear.
+    /// "docker" is rejected — the docker session runtime was removed.
     pub runtime: Option<Option<String>>,
     /// Secret names. Use `Some(vec![])` to clear.
     pub secrets: Option<Vec<String>>,

@@ -123,12 +123,17 @@ Git hooks live in `.githooks/` and are activated via `git config core.hooksPath 
 7. Add the API client function in `web/src/api/client.ts`
 8. Verify `make ci` passes before committing.
 
-### Adding a new backend feature (tmux/Docker)
+### Adding a new backend feature (tmux)
 
 1. **Write tests first** for command construction (TDD).
 2. Add the method to the `Backend` trait in `crates/pulpod/src/backend/mod.rs`
-3. Implement in `tmux.rs` (and `docker.rs` if applicable)
+3. Implement in `tmux.rs`
 4. Test command building by inspecting `Command::get_args()` — do not execute tmux in tests.
+
+> The Docker **session runtime** was removed (`--runtime docker`, `backend/docker.rs`).
+> Historical sessions stored with `runtime = "docker"` remain readable; spawning,
+> resuming, or scheduling with the docker runtime is rejected server-side.
+> Deploying pulpod itself in a container (`bind = "container"`, `docker/`) is unaffected.
 
 ### Writing tests
 
