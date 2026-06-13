@@ -79,6 +79,11 @@ pub struct ModelRates {
     pub cache_write_1h: f64,
 }
 
+// Built-in default rates (USD per MTok). This table is a convenience default, not an
+// authority — Pulpo is model-agnostic: unknown models still report tokens (cost withheld),
+// and a `[rates.<model>]` config override is the planned way to add/reprice models without
+// a code change. The Fable row is retained only so sessions priced before Fable's worldwide
+// withdrawal (June 2026) still resolve; no new session can use it.
 const FABLE_RATES: ModelRates = ModelRates {
     input: 10.0,
     output: 50.0,

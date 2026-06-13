@@ -43,7 +43,17 @@ What nobody ships — and what first parties are **incentive-blocked** from ever
 
 The #1 community complaint about parallel agents is that they are a *quota multiplier*
 (Max users burning 20% of a weekly allowance in 2 hours). That pain grows with every
-model-price increase. This is the gap Pulpo fills.
+model-price increase, and it is **not tied to any one model** — it's structural to running
+fleets of agents on metered subscriptions and API keys. This is the gap Pulpo fills.
+
+**Model volatility is the case for being model-agnostic.** Models launch, get restricted,
+reprice, and get pulled — Fable 5 was withdrawn worldwide in June 2026, months after
+launch. A cost-and-control layer welded to one model or vendor inherits that whiplash;
+Pulpo doesn't. It meters and governs whatever you're actually allowed to run today
+(Claude Opus/Sonnet/Haiku, Codex, and any future CLI agent) via structured readers with an
+output-scraping fallback, and a built-in rate table that is **user-overridable in config**
+so a new or repriced model never needs a code change. "Don't bet your tooling on one
+model" is itself a positioning line.
 
 Sovereignty remains the supporting argument: the daemon reads usage and account identity
 from local files and never ships them anywhere except your own controller node. Exactly
@@ -115,8 +125,13 @@ Replace terminal-scraping with structured readers of the agents' own session fil
    migration. Keep keyword-proximity scraping as fallback for unknown agents.
 4. **Account identity** per machine (`~/.claude.json` oauth email, `~/.codex/auth.json`),
    attached to sessions. Local-only; rollup metadata goes only to your own controller.
-5. Cost = tokens × per-model rates (shipped rate table, user-overridable in config).
-   Upgrade CLI USAGE column and UI badges from estimated to exact.
+5. Cost = tokens × per-model rates. **Shipped:** a built-in rate table (Opus/Sonnet/Haiku;
+   a now-inert Fable row is retained only so historical sessions priced before the
+   worldwide withdrawal still resolve), unknown models emit tokens without a misleading
+   cost. **Model-agnostic follow-up (next):** a `[rates.<model>]` config section so
+   operators add or reprice models without a code change — the concrete embodiment of
+   "don't depend on a built-in model list." Upgrade CLI USAGE column and UI badges from
+   estimated to exact.
 
 ### Phase B — Visibility first; enforcement as a thin credibility proof
 
@@ -136,7 +151,9 @@ and accounts. Self-hosted.* Lead with **see**; **control** is the half-sentence 
 proves it's a breaker box. Explicit foil: live and fleet-wide, not post-hoc and
 single-machine (ccusage).
 
-**Launch set = B1 + B2 + minimal B3.** Target the June 23 Fable subscription cliff.
+**Launch set = B1 + B2 + minimal B3.** Ship when the surface is ready — the launch is no
+longer pinned to a model-specific date (the Fable cliff is moot; Fable was pulled). The
+durable hook is evergreen: agent cost/quota burn across machines and accounts.
 
 **B1 — Projection / burn-rate (SHIP — this is the identity).** Burn rate ($/hr, tokens/hr)
 and time-to-wall, per-session and per-account. **Codex:** exact, extrapolated from the
@@ -188,10 +205,11 @@ are implemented. Distributed terminal attach stays out of scope. See
   overnight → wake to a PR and an exact cost number
 - PR to `andyrewlee/awesome-agent-orchestrators` — submitted 2026-06-12 (PR #61)
 - Show HN after Phase B ships: "self-hosted fleet dashboard for coding-agent token burn
-  across all your machines and accounts". Target the week of **June 23, 2026** — the day
-  Fable 5 leaves Pro/Max plan limits and requires prepaid per-token usage credits
-  ($10/$50 per MTok, ~2× Opus burn). That is the moment the audience starts paying
-  per-token and goes looking for a meter.
+  across all your machines and accounts." No longer timed to the Fable cliff (Fable was
+  pulled worldwide). Time it to a durable hook instead — a fresh price/quota change on any
+  major model, the headless-pool billing split, or just "we shipped." The angle that
+  *gained* from Fable's removal: models get banned and pulled; your cost-control layer
+  shouldn't depend on any one of them — Pulpo is model- and vendor-agnostic.
 - ~~Verify the June 15 headless billing split~~ — confirmed by Anthropic (2026-06-13).
   Pool attribution is now Phase B item 2; the "interactive-in-tmux stays on your
   subscription pool" advantage goes in the launch messaging.
