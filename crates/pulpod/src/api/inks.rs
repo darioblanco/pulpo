@@ -196,6 +196,7 @@ mod tests {
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
+                metrics: crate::config::MetricsConfig::default(),
             },
             manager,
             peer_registry,
@@ -504,6 +505,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let manager =
             SessionManager::new(Arc::new(StubBackend), store.clone(), HashMap::new(), None)

@@ -161,6 +161,7 @@ mod tests {
                 enabled: true,
                 ..crate::config::ControllerConfig::default()
             },
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -206,6 +207,7 @@ mod tests {
                 enabled: true,
                 ..crate::config::ControllerConfig::default()
             },
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -308,6 +310,7 @@ mod tests {
                 enabled: true,
                 ..crate::config::ControllerConfig::default()
             },
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -445,6 +448,7 @@ mod tests {
                 enabled: true,
                 ..crate::config::ControllerConfig::default()
             },
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -527,6 +531,7 @@ mod tests {
                 enabled: true,
                 ..crate::config::ControllerConfig::default()
             },
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
