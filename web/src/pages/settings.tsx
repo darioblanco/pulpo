@@ -37,8 +37,6 @@ export function SettingsPage() {
   const [watchdogAdoptTmux, setWatchdogAdoptTmux] = useState(true);
 
   // Notifications
-  const [discordWebhookUrl, setDiscordWebhookUrl] = useState('');
-  const [discordEvents, setDiscordEvents] = useState('');
   const [webhooks, setWebhooks] = useState<WebhookFormData[]>([]);
 
   // Inks
@@ -66,8 +64,6 @@ export function SettingsPage() {
       setWatchdogIdleAction(config.watchdog.idle_action);
       setWatchdogAdoptTmux(config.watchdog.adopt_tmux);
 
-      setDiscordWebhookUrl(config.notifications.discord?.webhook_url ?? '');
-      setDiscordEvents(config.notifications.discord?.events.join(', ') ?? '');
       setWebhooks((config.notifications.webhooks ?? []).map((w) => ({ ...w, secret: '' })));
 
       setInks(config.inks ?? {});
@@ -102,7 +98,6 @@ export function SettingsPage() {
         watchdog_breach_count: watchdogBreachCount,
         watchdog_idle_timeout_secs: watchdogIdleTimeout,
         watchdog_idle_action: watchdogIdleAction,
-        discord_webhook_url: discordWebhookUrl,
         webhooks: webhooks
           .filter((w) => w.name.trim() && w.url.trim())
           .map((w) => ({
@@ -115,13 +110,6 @@ export function SettingsPage() {
 
       if (Object.keys(inks).length > 0) {
         req.inks = inks;
-      }
-
-      if (discordEvents.trim()) {
-        req.discord_events = discordEvents
-          .split(',')
-          .map((e) => e.trim())
-          .filter(Boolean);
       }
 
       const result = await updateConfig(req);
@@ -240,14 +228,7 @@ export function SettingsPage() {
               </TabsContent>
 
               <TabsContent value="notifications">
-                <NotificationsSettings
-                  discordWebhookUrl={discordWebhookUrl}
-                  onDiscordWebhookUrlChange={setDiscordWebhookUrl}
-                  discordEvents={discordEvents}
-                  onDiscordEventsChange={setDiscordEvents}
-                  webhooks={webhooks}
-                  onWebhooksChange={setWebhooks}
-                />
+                <NotificationsSettings webhooks={webhooks} onWebhooksChange={setWebhooks} />
               </TabsContent>
 
               <TabsContent value="peers">

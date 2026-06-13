@@ -428,20 +428,6 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         | pulpo_common::auth::BindMode::Container => {}
     }
 
-    // Start Discord notification loop if configured
-    if let Some(discord_config) = config.notifications.discord.clone() {
-        let notifier = notifications::discord::DiscordNotifier::new(discord_config);
-        let discord_rx = event_tx.subscribe();
-        let (discord_shutdown_tx, discord_shutdown_rx) = watch::channel(false);
-        tokio::spawn(notifications::discord::run_notification_loop(
-            notifier,
-            discord_rx,
-            discord_shutdown_rx,
-        ));
-        shutdown_handle.add_sender(discord_shutdown_tx);
-        info!("Discord notifications enabled");
-    }
-
     // Start generic webhook notification loops
     for webhook_config in &config.notifications.webhooks {
         let notifier = notifications::webhook::WebhookNotifier::new(webhook_config.clone());
@@ -1290,7 +1276,9 @@ enabled = true
     }
 
     #[tokio::test]
-    async fn test_build_app_with_discord_notifications() {
+    async fn test_build_app_tolerates_retired_discord_config() {
+        // Pre-removal configs may still carry a `[notifications.discord]` section.
+        // The daemon must boot and ignore it rather than reject it.
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
         let data_dir = tmpdir.path().join("data");
@@ -1319,7 +1307,6 @@ events = ["ready", "killed"]
 
         let (_app, addr, handle) = build_app(&cli).await.unwrap();
         assert_eq!(addr, "127.0.0.1:0");
-        // Shutdown should signal the discord notification loop too
         handle.shutdown();
     }
 

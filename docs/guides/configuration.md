@@ -92,14 +92,11 @@ See [Session Lifecycle](/operations/session-lifecycle) for how the watchdog driv
 ## Notifications
 
 ```toml
-[notifications.discord]
-webhook_url = "https://discord.com/api/webhooks/..."
-events = ["ready", "stopped", "lost"]      # empty means all events
-
 [[notifications.webhooks]]
 name = "primary"
 url = "https://example.com/hooks/pulpo"
-events = ["ready", "stopped", "lost"]
+events = ["ready", "stopped", "lost"]      # empty means all events
+secret = "optional-hmac-signing-secret"    # signs requests with X-Pulpo-Signature
 ```
 
 ## Peers

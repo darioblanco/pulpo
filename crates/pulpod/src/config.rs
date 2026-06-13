@@ -114,9 +114,12 @@ pub struct InkConfig {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NotificationsConfig {
-    /// Discord webhook notifications.
-    #[serde(default)]
-    pub discord: Option<DiscordWebhookConfig>,
+    /// Retired `[notifications.discord]` webhook notifier configuration.
+    /// The Discord webhook notifier was removed — this field only exists so
+    /// configs written before the removal still load (`deny_unknown_fields`
+    /// would otherwise reject them). It is ignored and dropped on save.
+    #[serde(default, skip_serializing)]
+    pub discord: Option<toml::Value>,
     /// Generic webhook endpoints.
     #[serde(default)]
     pub webhooks: Vec<WebhookEndpointConfig>,
@@ -135,18 +138,6 @@ pub struct VapidConfig {
     /// Base64url-encoded P-256 uncompressed public key (65 bytes).
     #[serde(default)]
     pub public_key: String,
-}
-
-/// Discord webhook configuration.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DiscordWebhookConfig {
-    /// Discord webhook URL.
-    pub webhook_url: String,
-    /// Optional event filter — only send notifications for these statuses.
-    /// If empty/absent, all events are sent.
-    #[serde(default)]
-    pub events: Vec<String>,
 }
 
 /// Generic webhook endpoint configuration.
@@ -1798,59 +1789,7 @@ data_dir = "/tmp/test"
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
         assert!(config.notifications.discord.is_none());
-    }
-
-    #[test]
-    fn test_config_with_discord_notifications() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-data_dir = "/tmp/test"
-
-[notifications.discord]
-webhook_url = "https://discord.com/api/webhooks/123/abc"
-events = ["ready", "killed"]
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        let discord = config.notifications.discord.unwrap();
-        assert_eq!(
-            discord.webhook_url,
-            "https://discord.com/api/webhooks/123/abc"
-        );
-        assert_eq!(discord.events, vec!["ready", "killed"]);
-    }
-
-    #[test]
-    fn test_config_with_discord_no_filter() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-port = 7433
-data_dir = "/tmp/test"
-
-[notifications.discord]
-webhook_url = "https://discord.com/api/webhooks/456/def"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        let discord = config.notifications.discord.unwrap();
-        assert_eq!(
-            discord.webhook_url,
-            "https://discord.com/api/webhooks/456/def"
-        );
-        assert!(discord.events.is_empty());
+        assert!(config.notifications.webhooks.is_empty());
     }
 
     #[test]
@@ -1871,11 +1810,12 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig {
-                discord: Some(DiscordWebhookConfig {
-                    webhook_url: "https://discord.com/api/webhooks/789/xyz".into(),
+                webhooks: vec![WebhookEndpointConfig {
+                    name: "ci".into(),
+                    url: "https://example.com/api/hooks/789/xyz".into(),
                     events: vec!["killed".into()],
-                }),
-                webhooks: vec![],
+                    secret: None,
+                }],
                 ..Default::default()
             },
             docker: None,
@@ -1883,39 +1823,31 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
-        let discord = loaded.notifications.discord.unwrap();
+        assert_eq!(loaded.notifications.webhooks.len(), 1);
         assert_eq!(
-            discord.webhook_url,
-            "https://discord.com/api/webhooks/789/xyz"
+            loaded.notifications.webhooks[0].url,
+            "https://example.com/api/hooks/789/xyz"
         );
-        assert_eq!(discord.events, vec!["killed"]);
+        assert_eq!(loaded.notifications.webhooks[0].events, vec!["killed"]);
     }
 
     #[test]
     fn test_notifications_config_default() {
         let config = NotificationsConfig::default();
         assert!(config.discord.is_none());
+        assert!(config.webhooks.is_empty());
     }
 
     #[test]
     fn test_notifications_config_debug_clone() {
         let config = NotificationsConfig {
-            discord: Some(DiscordWebhookConfig {
-                webhook_url: "url".into(),
+            webhooks: vec![WebhookEndpointConfig {
+                name: "hook".into(),
+                url: "url".into(),
                 events: vec![],
-            }),
-            webhooks: vec![],
+                secret: None,
+            }],
             ..Default::default()
-        };
-        let cloned = config.clone();
-        assert_eq!(format!("{config:?}"), format!("{cloned:?}"));
-    }
-
-    #[test]
-    fn test_discord_webhook_config_debug_clone() {
-        let config = DiscordWebhookConfig {
-            webhook_url: "url".into(),
-            events: vec!["killed".into()],
         };
         let cloned = config.clone();
         assert_eq!(format!("{config:?}"), format!("{cloned:?}"));
@@ -1979,7 +1911,6 @@ url = "https://example.com"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig {
-                discord: None,
                 webhooks: vec![WebhookEndpointConfig {
                     name: "test-hook".into(),
                     url: "https://example.com/hook".into(),
@@ -3089,5 +3020,67 @@ port = 7433
         assert!(!config.controller.enabled);
         assert!(config.controller.address.is_none());
         assert_eq!(config.role(), NodeRole::Standalone);
+    }
+
+    #[test]
+    fn test_load_tolerates_retired_discord_section() {
+        // The Discord webhook notifier was removed, but pre-removal configs
+        // may still carry a `[notifications.discord]` section. With
+        // `deny_unknown_fields` on `NotificationsConfig`, that section must be
+        // tolerated (captured into the ignored `discord` field) rather than
+        // rejected at boot.
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "legacy"
+port = 7433
+
+[notifications.discord]
+webhook_url = "https://discord.com/api/webhooks/123/abc"
+events = ["ready", "killed"]
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        // The section is captured but ignored.
+        assert!(config.notifications.discord.is_some());
+        assert!(config.notifications.webhooks.is_empty());
+    }
+
+    #[test]
+    fn test_retired_discord_dropped_on_save() {
+        // A captured legacy discord section must not be re-serialized on save.
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("discord-drop.toml");
+        let config = Config {
+            node: NodeConfig {
+                name: "drop".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
+            notifications: NotificationsConfig {
+                discord: Some(toml::Value::String("legacy".into())),
+                ..NotificationsConfig::default()
+            },
+            docker: None,
+            controller: ControllerConfig::default(),
+        };
+        save(&config, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("discord"),
+            "retired discord field must not be serialized: {content}"
+        );
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert!(loaded.notifications.discord.is_none());
     }
 }

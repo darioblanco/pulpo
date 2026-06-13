@@ -519,7 +519,7 @@ pulpo/
 │   │   ├── backend/            #   tmux.rs — terminal backend
 │   │   ├── session/            #   manager, state machine, output capture, PTY bridge
 │   │   ├── store/              #   SQLite persistence + migrations
-│   │   ├── notifications/      #   Discord webhook notifier
+│   │   ├── notifications/      #   webhook + web-push notifiers
 │   │   ├── peers/              #   PeerRegistry + health probing
 │   │   └── discovery/          #   Tailscale peer discovery
 │   ├── pulpo-cli/src/          # CLI: thin client, clap commands
@@ -644,8 +644,9 @@ the primary management surface.
 - ✅ Flexible session model (command, description, metadata, ink)
 - ✅ Ink config (`[inks.name]` in config.toml with command + description, `GET /api/v1/inks`)
 - ✅ SSE event stream (`GET /api/v1/events`, broadcast channel, SessionEvent)
-- ✅ Discord webhook notifications (`[notifications.discord]` config)
-- ~~Discord bot (`contrib/discord-bot/`)~~ — removed June 2026 (webhook notifications remain)
+- ✅ Generic webhook notifications (`[[notifications.webhooks]]` config) + Web Push
+- ~~Discord webhook notifier (`[notifications.discord]` config)~~ — removed June 2026: use `[[notifications.webhooks]]`
+- ~~Discord bot (`contrib/discord-bot/`)~~ — removed June 2026
 - ~~MCP server (session management as MCP tools)~~ — removed June 2026: REST API is the primary integration surface
 
 ---
@@ -683,8 +684,9 @@ description = "Code reviewer focused on correctness and security"
 command = "claude --dangerously-skip-permissions"
 description = "Autonomous coder with tests and clear commit messages"
 
-[notifications.discord]
-webhook_url = "https://discord.com/api/webhooks/..."
+[[notifications.webhooks]]
+name = "primary"
+url = "https://example.com/hooks/pulpo"
 events = ["active", "ready", "stopped"]   # optional filter; omit for all events
 ```
 

@@ -146,12 +146,6 @@ const fn default_adopt_tmux() -> bool {
     true
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DiscordWebhookConfigResponse {
-    pub webhook_url: String,
-    pub events: Vec<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebhookEndpointConfigResponse {
     pub name: String,
@@ -162,7 +156,6 @@ pub struct WebhookEndpointConfigResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NotificationsConfigResponse {
-    pub discord: Option<DiscordWebhookConfigResponse>,
     pub webhooks: Vec<WebhookEndpointConfigResponse>,
 }
 
@@ -204,9 +197,6 @@ pub struct UpdateConfigRequest {
     pub watchdog_breach_count: Option<u32>,
     pub watchdog_idle_timeout_secs: Option<u64>,
     pub watchdog_idle_action: Option<String>,
-    // Notifications — Discord
-    pub discord_webhook_url: Option<String>,
-    pub discord_events: Option<Vec<String>>,
     // Notifications — Generic webhooks (full replace when provided)
     pub webhooks: Option<Vec<WebhookEndpointUpdateRequest>>,
     // Inks (full replace)
@@ -239,16 +229,7 @@ pub struct UpdateWatchdogRequest {
 /// Update request for notification settings.
 #[derive(Debug, Default, Deserialize)]
 pub struct UpdateNotificationsRequest {
-    pub discord: Option<DiscordWebhookUpdateRequest>,
     pub webhooks: Option<Vec<WebhookEndpointUpdateRequest>>,
-}
-
-/// Discord webhook update — set url to empty string to remove.
-#[derive(Debug, Clone, Deserialize)]
-pub struct DiscordWebhookUpdateRequest {
-    pub webhook_url: String,
-    #[serde(default)]
-    pub events: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -573,10 +554,7 @@ mod tests {
                 idle_threshold_secs: 60,
                 extra_waiting_patterns: vec![],
             },
-            notifications: NotificationsConfigResponse {
-                discord: None,
-                webhooks: vec![],
-            },
+            notifications: NotificationsConfigResponse { webhooks: vec![] },
             inks: HashMap::new(),
         }
     }
@@ -591,13 +569,13 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"discovery_interval_secs":30},"auth":{},"peers":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"discord":null,"webhooks":[]},"inks":{}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"discovery_interval_secs":30},"auth":{},"peers":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"webhooks":[]},"inks":{}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
         assert_eq!(resp.node.bind, BindMode::Local);
         assert!(resp.watchdog.enabled);
-        assert!(resp.notifications.discord.is_none());
+        assert!(resp.notifications.webhooks.is_empty());
         assert!(resp.inks.is_empty());
     }
 
@@ -1428,18 +1406,18 @@ mod tests {
     #[test]
     fn test_update_notifications_request_default() {
         let req = UpdateNotificationsRequest::default();
-        assert!(req.discord.is_none());
         assert!(req.webhooks.is_none());
     }
 
     #[test]
     fn test_update_notifications_request_deserialize() {
-        let json = r#"{"discord":{"webhook_url":"http://hook","events":["killed"]}}"#;
+        let json = r#"{"webhooks":[{"name":"hook","url":"http://hook","events":["killed"],"secret":null}]}"#;
         let req: UpdateNotificationsRequest = serde_json::from_str(json).unwrap();
-        assert!(req.discord.is_some());
-        let d = req.discord.unwrap();
-        assert_eq!(d.webhook_url, "http://hook");
-        assert_eq!(d.events, vec!["killed"]);
+        let webhooks = req.webhooks.unwrap();
+        assert_eq!(webhooks.len(), 1);
+        assert_eq!(webhooks[0].name, "hook");
+        assert_eq!(webhooks[0].url, "http://hook");
+        assert_eq!(webhooks[0].events, vec!["killed"]);
     }
 
     #[test]

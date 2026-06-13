@@ -114,13 +114,6 @@ token = "secret"
 
 `[peers]` is discovery and routing metadata. In controller/node mode it is not the authority source for node identity.
 
-## `[notifications.discord]`
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `webhook_url` | string | — | Discord webhook URL |
-| `events` | string[] | `[]` | Event filter; empty means all events |
-
 ## `[notifications.webhooks]`
 
 | Field | Type | Default | Description |

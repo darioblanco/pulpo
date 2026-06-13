@@ -71,7 +71,7 @@ describe('types', () => {
         ready_ttl_secs: 0,
         adopt_tmux: true,
       },
-      notifications: { discord: null, webhooks: [] },
+      notifications: { webhooks: [] },
       inks: {},
     };
     expect(config.node.name).toBe('test');

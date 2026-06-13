@@ -1596,7 +1596,6 @@ mod tests {
         let resp = server.get("/api/v1/notifications").await;
         resp.assert_status_ok();
         let body: serde_json::Value = resp.json();
-        assert!(body["discord"].is_null());
         assert_eq!(body["webhooks"], serde_json::json!([]));
     }
 
@@ -1606,19 +1605,19 @@ mod tests {
         let resp = server
             .put("/api/v1/notifications")
             .json(&serde_json::json!({
-                "discord": {
-                    "webhook_url": "https://discord.com/api/webhooks/test",
-                    "events": ["active"]
-                }
+                "webhooks": [{
+                    "name": "ci-hook",
+                    "url": "https://example.com/hook",
+                    "events": ["active"],
+                    "secret": null
+                }]
             }))
             .await;
         resp.assert_status_ok();
         let body: serde_json::Value = resp.json();
-        assert_eq!(
-            body["discord"]["webhook_url"],
-            "https://discord.com/api/webhooks/test"
-        );
-        assert_eq!(body["discord"]["events"], serde_json::json!(["active"]));
+        assert_eq!(body["webhooks"][0]["name"], "ci-hook");
+        assert_eq!(body["webhooks"][0]["url"], "https://example.com/hook");
+        assert_eq!(body["webhooks"][0]["events"], serde_json::json!(["active"]));
     }
 
     // -- Push endpoint integration tests --

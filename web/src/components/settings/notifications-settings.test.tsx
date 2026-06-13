@@ -22,113 +22,16 @@ import { usePushNotifications } from '@/hooks/use-push-notifications';
 const mockUsePush = vi.mocked(usePushNotifications);
 
 const defaults = {
-  discordWebhookUrl: '',
-  onDiscordWebhookUrlChange: vi.fn(),
-  discordEvents: '',
-  onDiscordEventsChange: vi.fn(),
   webhooks: [] as WebhookFormData[],
   onWebhooksChange: vi.fn(),
 };
 
 describe('NotificationsSettings', () => {
-  it('renders tabs with webhooks first', () => {
+  it('renders the webhooks section', () => {
     render(<NotificationsSettings {...defaults} />);
     expect(screen.getByTestId('notifications-settings')).toBeInTheDocument();
-    expect(screen.getByTestId('tab-webhooks')).toBeInTheDocument();
-    expect(screen.getByTestId('tab-discord')).toBeInTheDocument();
-  });
-
-  it('shows inactive badge when no webhooks configured', () => {
-    render(<NotificationsSettings {...defaults} />);
-    const badges = screen.getAllByText('inactive');
-    expect(badges.length).toBe(2);
-  });
-
-  it('shows active badge for webhooks when configured', () => {
-    render(
-      <NotificationsSettings
-        {...defaults}
-        webhooks={[
-          { name: 'hook', url: 'https://a.com', events: [], has_secret: false, secret: '' },
-        ]}
-      />,
-    );
-    const activeBadges = screen.getAllByText('active');
-    expect(activeBadges.length).toBe(1);
-  });
-
-  it('shows active badge for discord when webhook URL set', () => {
-    render(
-      <NotificationsSettings
-        {...defaults}
-        discordWebhookUrl="https://discord.com/api/webhooks/test"
-      />,
-    );
-    const activeBadges = screen.getAllByText('active');
-    expect(activeBadges.length).toBe(1);
-  });
-
-  it('shows both active when both configured', () => {
-    render(
-      <NotificationsSettings
-        {...defaults}
-        discordWebhookUrl="https://discord.com/api/webhooks/test"
-        webhooks={[
-          { name: 'hook', url: 'https://a.com', events: [], has_secret: false, secret: '' },
-        ]}
-      />,
-    );
-    const activeBadges = screen.getAllByText('active');
-    expect(activeBadges.length).toBe(2);
-  });
-
-  it('renders discord fields in discord tab', () => {
-    render(<NotificationsSettings {...defaults} />);
-    fireEvent.click(screen.getByTestId('tab-discord'));
-    const discordContent = screen.getByTestId('discord-content');
-    expect(within(discordContent).getByLabelText('Webhook URL')).toHaveValue('');
-  });
-
-  it('displays existing discord values', () => {
-    render(
-      <NotificationsSettings
-        {...defaults}
-        discordWebhookUrl="https://discord.com/api/webhooks/test"
-        discordEvents="session.created, session.ready"
-      />,
-    );
-    fireEvent.click(screen.getByTestId('tab-discord'));
-    const discordContent = screen.getByTestId('discord-content');
-    expect(within(discordContent).getByLabelText('Webhook URL')).toHaveValue(
-      'https://discord.com/api/webhooks/test',
-    );
-    expect(within(discordContent).getByLabelText('Events')).toHaveValue(
-      'session.created, session.ready',
-    );
-  });
-
-  it('calls onDiscordWebhookUrlChange', () => {
-    const onDiscordWebhookUrlChange = vi.fn();
-    render(
-      <NotificationsSettings {...defaults} onDiscordWebhookUrlChange={onDiscordWebhookUrlChange} />,
-    );
-    fireEvent.click(screen.getByTestId('tab-discord'));
-    const discordContent = screen.getByTestId('discord-content');
-    fireEvent.change(within(discordContent).getByLabelText('Webhook URL'), {
-      target: { value: 'https://discord.com/api/webhooks/new' },
-    });
-    expect(onDiscordWebhookUrlChange).toHaveBeenCalledWith('https://discord.com/api/webhooks/new');
-  });
-
-  it('calls onDiscordEventsChange', () => {
-    const onDiscordEventsChange = vi.fn();
-    render(<NotificationsSettings {...defaults} onDiscordEventsChange={onDiscordEventsChange} />);
-    fireEvent.click(screen.getByTestId('tab-discord'));
-    const discordContent = screen.getByTestId('discord-content');
-    fireEvent.change(within(discordContent).getByLabelText('Events'), {
-      target: { value: 'session.lost' },
-    });
-    expect(onDiscordEventsChange).toHaveBeenCalledWith('session.lost');
+    expect(screen.getByTestId('webhooks-content')).toBeInTheDocument();
+    expect(screen.getByTestId('add-webhook-btn')).toBeInTheDocument();
   });
 
   it('adds a webhook', () => {

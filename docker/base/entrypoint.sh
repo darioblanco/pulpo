@@ -36,30 +36,6 @@ write_config() {
     if [[ -n "${PULPO_OUTPUT_FORMAT:-}" ]]; then
       echo "output_format = \"${PULPO_OUTPUT_FORMAT}\""
     fi
-
-    if [[ -n "${DISCORD_WEBHOOK_URL:-}" ]]; then
-      echo
-      echo "[notifications.discord]"
-      echo "webhook_url = \"${DISCORD_WEBHOOK_URL}\""
-      if [[ -n "${DISCORD_EVENTS:-}" ]]; then
-        IFS=',' read -r -a events <<< "${DISCORD_EVENTS}"
-        printf 'events = ['
-        local first=1
-        for e in "${events[@]}"; do
-          # Trim whitespace around items.
-          e="${e#${e%%[![:space:]]*}}"
-          e="${e%${e##*[![:space:]]}}"
-          [[ -z "$e" ]] && continue
-          if [[ "$first" -eq 1 ]]; then
-            first=0
-          else
-            printf ', '
-          fi
-          printf '"%s"' "$e"
-        done
-        printf ']\n'
-      fi
-    fi
   } > "$PULPO_CONFIG_PATH"
 }
 
