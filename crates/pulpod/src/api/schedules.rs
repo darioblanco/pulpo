@@ -325,6 +325,7 @@ mod tests {
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller,
             metrics: crate::config::MetricsConfig::default(),

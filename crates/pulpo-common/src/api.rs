@@ -150,7 +150,11 @@ const fn default_adopt_tmux() -> bool {
 pub struct WebhookEndpointConfigResponse {
     pub name: String,
     pub url: String,
+    /// `<type>.<subtype>` glob filter (e.g. `lifecycle.*`). Empty ⇒ all events.
     pub events: Vec<String>,
+    /// Minimum severity floor (`info` < `warn` < `critical`). Absent ⇒ no floor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_severity: Option<String>,
     pub has_secret: bool,
 }
 
@@ -176,8 +180,12 @@ pub struct InkConfigResponse {
 pub struct WebhookEndpointUpdateRequest {
     pub name: String,
     pub url: String,
+    /// `<type>.<subtype>` glob filter (e.g. `lifecycle.*`). Empty ⇒ all events.
     #[serde(default)]
     pub events: Vec<String>,
+    /// Minimum severity floor (`info` < `warn` < `critical`). Absent ⇒ no floor.
+    #[serde(default)]
+    pub min_severity: Option<String>,
     pub secret: Option<String>,
 }
 
@@ -1533,11 +1541,13 @@ mod tests {
             name: "test".into(),
             url: "http://hook".into(),
             events: vec!["killed".into()],
+            min_severity: Some("warn".into()),
             has_secret: false,
         };
         #[allow(clippy::redundant_clone)]
         let cloned = resp.clone();
         assert_eq!(cloned.name, "test");
+        assert_eq!(cloned.min_severity.as_deref(), Some("warn"));
     }
 
     // -- Schedule type tests --

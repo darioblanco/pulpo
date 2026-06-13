@@ -17,15 +17,18 @@ fn internal_error(msg: &str) -> ApiError {
     )
 }
 
-fn to_response(config: &crate::config::NotificationsConfig) -> NotificationsConfigResponse {
+fn to_response(config: &crate::config::Config) -> NotificationsConfigResponse {
     NotificationsConfigResponse {
+        // Surface the full set of endpoints (canonical top-level `[[webhooks]]`
+        // unioned with the deprecated `[notifications.webhooks]` form).
         webhooks: config
-            .webhooks
+            .webhook_endpoints()
             .iter()
             .map(|w| WebhookEndpointConfigResponse {
                 name: w.name.clone(),
                 url: w.url.clone(),
                 events: w.events.clone(),
+                min_severity: w.min_severity.clone(),
                 has_secret: w.secret.is_some(),
             })
             .collect(),
@@ -36,7 +39,7 @@ pub async fn get_notifications(
     State(state): State<Arc<super::AppState>>,
 ) -> Result<Json<NotificationsConfigResponse>, ApiError> {
     let config = state.config.read().await;
-    let resp = to_response(&config.notifications);
+    let resp = to_response(&config);
     drop(config);
     Ok(Json(resp))
 }
@@ -47,17 +50,21 @@ pub async fn update_notifications(
 ) -> Result<Json<NotificationsConfigResponse>, ApiError> {
     let mut config = state.config.write().await;
 
-    // Webhooks (full replace when provided)
+    // Webhooks (full replace when provided). Writes the canonical top-level
+    // `[[webhooks]]` list and clears the deprecated `[notifications.webhooks]`
+    // form so the edited set is authoritative.
     if let Some(webhooks) = req.webhooks {
-        config.notifications.webhooks = webhooks
+        config.webhooks = webhooks
             .into_iter()
             .map(|w| crate::config::WebhookEndpointConfig {
                 name: w.name,
                 url: w.url,
                 events: w.events,
+                min_severity: w.min_severity,
                 secret: w.secret,
             })
             .collect();
+        config.notifications.webhooks.clear();
     }
 
     // Save to disk
@@ -66,7 +73,7 @@ pub async fn update_notifications(
             .map_err(|e| internal_error(&e.to_string()))?;
     }
 
-    let resp = to_response(&config.notifications);
+    let resp = to_response(&config);
     drop(config);
     Ok(Json(resp))
 }
@@ -107,6 +114,7 @@ mod tests {
                 inks: HashMap::new(),
                 plans: std::collections::HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                webhooks: Vec::new(),
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
                 metrics: crate::config::MetricsConfig::default(),
@@ -142,6 +150,7 @@ mod tests {
                 inks: HashMap::new(),
                 plans: std::collections::HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                webhooks: Vec::new(),
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
                 metrics: crate::config::MetricsConfig::default(),
@@ -170,12 +179,14 @@ mod tests {
                     name: "ci-hook".into(),
                     url: "https://example.com/hook".into(),
                     events: vec!["ready".into()],
+                    min_severity: None,
                     secret: Some("s3cret".into()),
                 },
                 WebhookEndpointUpdateRequest {
                     name: "logs-hook".into(),
                     url: "https://logs.example.com".into(),
                     events: vec![],
+                    min_severity: None,
                     secret: None,
                 },
             ]),
@@ -197,6 +208,7 @@ mod tests {
                 name: "old".into(),
                 url: "https://old.com".into(),
                 events: vec![],
+                min_severity: None,
                 secret: None,
             }]),
         };
@@ -209,6 +221,7 @@ mod tests {
                 name: "new".into(),
                 url: "https://new.com".into(),
                 events: vec!["killed".into()],
+                min_severity: None,
                 secret: None,
             }]),
         };
@@ -226,6 +239,7 @@ mod tests {
                 name: "hook".into(),
                 url: "https://a.com".into(),
                 events: vec![],
+                min_severity: None,
                 secret: None,
             }]),
         };
@@ -256,6 +270,7 @@ mod tests {
                 name: "save-hook".into(),
                 url: "https://example.com/save".into(),
                 events: vec!["active".into()],
+                min_severity: None,
                 secret: None,
             }]),
         };
@@ -263,11 +278,9 @@ mod tests {
             .await
             .unwrap();
         let loaded = crate::config::load(state.config_path.to_str().unwrap()).unwrap();
-        assert_eq!(loaded.notifications.webhooks.len(), 1);
-        assert_eq!(
-            loaded.notifications.webhooks[0].url,
-            "https://example.com/save"
-        );
+        // Updates write the canonical top-level `[[webhooks]]` list.
+        assert_eq!(loaded.webhooks.len(), 1);
+        assert_eq!(loaded.webhooks[0].url, "https://example.com/save");
     }
 
     #[test]
@@ -279,17 +292,41 @@ mod tests {
 
     #[test]
     fn test_to_response_with_all() {
-        let config = crate::config::NotificationsConfig {
+        // Top-level canonical endpoint plus a legacy one — the response unions both.
+        let config = Config {
+            node: NodeConfig::default(),
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
+            notifications: crate::config::NotificationsConfig {
+                webhooks: vec![crate::config::WebhookEndpointConfig {
+                    name: "legacy".into(),
+                    url: "https://legacy.com".into(),
+                    events: vec![],
+                    min_severity: None,
+                    secret: None,
+                }],
+                ..Default::default()
+            },
             webhooks: vec![crate::config::WebhookEndpointConfig {
                 name: "hook".into(),
                 url: "https://hook.com".into(),
                 events: vec![],
+                min_severity: Some("warn".into()),
                 secret: Some("key".into()),
             }],
-            ..Default::default()
+            docker: None,
+            controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let resp = to_response(&config);
-        assert_eq!(resp.webhooks.len(), 1);
+        assert_eq!(resp.webhooks.len(), 2);
+        // Top-level endpoint comes first.
+        assert_eq!(resp.webhooks[0].name, "hook");
         assert!(resp.webhooks[0].has_secret);
+        assert_eq!(resp.webhooks[0].min_severity.as_deref(), Some("warn"));
+        assert_eq!(resp.webhooks[1].name, "legacy");
     }
 }

@@ -113,6 +113,7 @@ mod tests {
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: crate::config::ControllerConfig {
                 enabled: true,
@@ -157,6 +158,7 @@ mod tests {
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: crate::config::ControllerConfig {
                 enabled: true,
@@ -216,6 +218,7 @@ mod tests {
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: crate::config::ControllerConfig {
                 enabled: true,
@@ -258,6 +261,7 @@ mod tests {
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: crate::config::ControllerConfig {
                 enabled: true,

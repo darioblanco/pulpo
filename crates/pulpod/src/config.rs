@@ -23,6 +23,14 @@ pub struct Config {
     pub plans: HashMap<String, PlanConfig>,
     #[serde(default)]
     pub notifications: NotificationsConfig,
+    /// Canonical top-level `[[webhooks]]` endpoints.
+    ///
+    /// Each endpoint filters the universal event stream by `events`
+    /// (`<type>.<subtype>` globs) and `min_severity`. This is the supported
+    /// location; the legacy `[notifications.webhooks]` form is still read and
+    /// unioned with this list at startup for back-compat.
+    #[serde(default)]
+    pub webhooks: Vec<WebhookEndpointConfig>,
     /// Retired `[docker]` session-runtime configuration.
     /// The docker session runtime was removed — this field only exists so
     /// configs written before the removal still load (`deny_unknown_fields`
@@ -136,6 +144,11 @@ pub struct NotificationsConfig {
     #[serde(default, skip_serializing)]
     pub discord: Option<toml::Value>,
     /// Generic webhook endpoints.
+    ///
+    /// **Deprecated location.** Prefer the canonical top-level `[[webhooks]]`
+    /// table on [`Config`]. This nested form is still read for back-compat and
+    /// unioned with the top-level list at startup, so configs written before the
+    /// promotion keep working unchanged.
     #[serde(default)]
     pub webhooks: Vec<WebhookEndpointConfig>,
     /// VAPID keys for Web Push notifications.
@@ -156,21 +169,86 @@ pub struct VapidConfig {
 }
 
 /// Generic webhook endpoint configuration.
+///
+/// An endpoint subscribes to the universal event stream and receives every
+/// canonical [`Event`](pulpo_common::event::Event) whose `<type>.<subtype>`
+/// matches one of its `events` globs and whose `severity` is at or above
+/// `min_severity`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebhookEndpointConfig {
-    /// Human-readable name for this endpoint.
+    /// Human-readable name for this endpoint. Used to resolve outbox rows back
+    /// to their endpoint, so it must be unique across configured webhooks.
     pub name: String,
     /// URL to POST event payloads to.
     pub url: String,
-    /// Optional event filter — only send for these statuses.
-    /// If empty/absent, all events are sent.
+    /// Event filter — glob patterns matched against `"<type>.<subtype>"`
+    /// (e.g. `"lifecycle.idle"`, `"usage_alert.*"`, `"intervention.*"`).
+    ///
+    /// Supported forms: an exact match (`lifecycle.idle`), a prefix glob
+    /// (`lifecycle.*`), a bare type (`lifecycle`, matching every subtype of that
+    /// type), and `*` (everything). An empty/absent list matches all events.
     #[serde(default)]
     pub events: Vec<String>,
+    /// Minimum severity to deliver, ordered `info` < `warn` < `critical`.
+    /// Events below this floor are dropped. Absent ⇒ no floor (all severities).
+    #[serde(default)]
+    pub min_severity: Option<String>,
     /// Optional HMAC-SHA256 signing secret. When set, a `X-Pulpo-Signature`
     /// header is included with each request.
     #[serde(default)]
     pub secret: Option<String>,
+}
+
+/// Match a single `events` glob pattern against an `"<type>.<subtype>"` event key.
+///
+/// Supported pattern forms (see [`WebhookEndpointConfig::events`]):
+/// - `*` — matches everything.
+/// - `lifecycle.*` — prefix glob: matches any `lifecycle.<subtype>`.
+/// - `lifecycle` — bare type: matches any `lifecycle.<subtype>` (and the bare
+///   `lifecycle` key itself, defensively).
+/// - `lifecycle.idle` — exact match.
+///
+/// Deliberately tiny: only the trailing-`*` and bare-type shapes the contract
+/// uses, so we avoid pulling in a glob crate.
+pub fn glob_match(pattern: &str, event_key: &str) -> bool {
+    if pattern == "*" || pattern == event_key {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix(".*") {
+        // `lifecycle.*` matches `lifecycle.<anything>`.
+        return event_key
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with('.'));
+    }
+    if !pattern.contains('.') {
+        // Bare type, e.g. `lifecycle` ⇒ matches `lifecycle.<anything>`.
+        return event_key
+            .strip_prefix(pattern)
+            .is_some_and(|rest| rest.starts_with('.'));
+    }
+    false
+}
+
+/// Numeric rank for a severity string, ordered `info` < `warn` < `critical`.
+///
+/// Unknown severities sort lowest (rank 0) so they are never dropped by a floor
+/// they cannot be compared against.
+const fn severity_rank(severity: &str) -> u8 {
+    match severity.as_bytes() {
+        b"critical" => 2,
+        b"warn" => 1,
+        _ => 0,
+    }
+}
+
+/// Whether `severity` clears the optional `min_severity` floor.
+///
+/// `None` floor admits every severity. Otherwise the event's severity must rank
+/// at or above the floor (`info` < `warn` < `critical`). An unknown floor string
+/// ranks lowest, so it admits everything (fail-open — never silently drop).
+pub fn severity_at_least(severity: &str, min_severity: Option<&str>) -> bool {
+    min_severity.is_none_or(|floor| severity_rank(severity) >= severity_rank(floor))
 }
 
 /// Authentication configuration.
@@ -394,6 +472,20 @@ impl Config {
         shellexpand::tilde(&self.node.data_dir).into_owned()
     }
 
+    /// All configured webhook endpoints: the canonical top-level `[[webhooks]]`
+    /// list unioned with the deprecated `[notifications.webhooks]` form.
+    ///
+    /// Top-level endpoints come first; legacy ones follow. Names are not
+    /// deduplicated here — endpoint names are expected to be unique across both
+    /// locations (the outbox resolves rows back to endpoints by name).
+    pub fn webhook_endpoints(&self) -> Vec<WebhookEndpointConfig> {
+        self.webhooks
+            .iter()
+            .chain(self.notifications.webhooks.iter())
+            .cloned()
+            .collect()
+    }
+
     /// Determine the node's role based on controller configuration.
     pub const fn role(&self) -> NodeRole {
         if self.controller.enabled {
@@ -555,6 +647,7 @@ pub fn load(path: &str) -> Result<Config> {
             inks: built_in_inks(),
             plans: HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -685,6 +778,7 @@ finished_ttl_secs = 60
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -713,6 +807,7 @@ finished_ttl_secs = 60
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -849,6 +944,7 @@ name = "test"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -875,6 +971,7 @@ name = "test"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -906,6 +1003,7 @@ name = "test"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -938,6 +1036,7 @@ name = "test"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -964,6 +1063,7 @@ name = "test"
                 inks: HashMap::new(),
                 plans: std::collections::HashMap::new(),
                 notifications: NotificationsConfig::default(),
+                webhooks: Vec::new(),
                 docker: None,
                 controller: ControllerConfig::default(),
                 metrics: MetricsConfig::default(),
@@ -992,6 +1092,7 @@ name = "test"
                 inks: HashMap::new(),
                 plans: std::collections::HashMap::new(),
                 notifications: NotificationsConfig::default(),
+                webhooks: Vec::new(),
                 docker: None,
                 controller: ControllerConfig::default(),
                 metrics: MetricsConfig::default(),
@@ -1024,6 +1125,7 @@ name = "test"
                 inks: HashMap::new(),
                 plans: std::collections::HashMap::new(),
                 notifications: NotificationsConfig::default(),
+                webhooks: Vec::new(),
                 docker: None,
                 controller: ControllerConfig::default(),
                 metrics: MetricsConfig::default(),
@@ -1051,6 +1153,7 @@ name = "test"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -1089,6 +1192,7 @@ name = "test"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -1163,6 +1267,7 @@ name = "test"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -1192,6 +1297,7 @@ name = "test"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -1263,6 +1369,7 @@ token = "my-secret-token"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -1335,6 +1442,7 @@ token = "peer-secret"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -1450,6 +1558,7 @@ breach_count = 5
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -1662,6 +1771,7 @@ idle_action = "pause"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -1783,6 +1893,7 @@ command = "codex -p 'Do it'"
             inks,
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -1848,10 +1959,12 @@ data_dir = "/tmp/test"
                     name: "ci".into(),
                     url: "https://example.com/api/hooks/789/xyz".into(),
                     events: vec!["killed".into()],
+                    min_severity: None,
                     secret: None,
                 }],
                 ..Default::default()
             },
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -1880,6 +1993,7 @@ data_dir = "/tmp/test"
                 name: "hook".into(),
                 url: "url".into(),
                 events: vec![],
+                min_severity: None,
                 secret: None,
             }],
             ..Default::default()
@@ -1900,6 +2014,7 @@ data_dir = "/tmp/test"
             name: "hook".into(),
             url: "https://example.com".into(),
             events: vec!["killed".into()],
+            min_severity: None,
             secret: Some("key".into()),
         };
         let cloned = config.clone();
@@ -1912,6 +2027,7 @@ data_dir = "/tmp/test"
             name: "ci".into(),
             url: "https://ci.example.com/hook".into(),
             events: vec!["ready".into()],
+            min_severity: None,
             secret: Some("s3cret".into()),
         };
         let toml_str = toml::to_string(&config).unwrap();
@@ -1950,10 +2066,12 @@ url = "https://example.com"
                     name: "test-hook".into(),
                     url: "https://example.com/hook".into(),
                     events: vec!["killed".into()],
+                    min_severity: None,
                     secret: Some("key".into()),
                 }],
                 ..Default::default()
             },
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -2038,6 +2156,7 @@ name = "test"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -2252,6 +2371,7 @@ command = "codex -p 'review'"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -2280,6 +2400,7 @@ command = "codex -p 'review'"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -2307,6 +2428,7 @@ command = "codex -p 'review'"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -2346,6 +2468,7 @@ command = "codex -p 'review'"
                 },
                 ..Default::default()
             },
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -2366,6 +2489,7 @@ command = "codex -p 'review'"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -2396,6 +2520,7 @@ command = "codex -p 'review'"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -2468,6 +2593,7 @@ name = "test"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -2494,6 +2620,7 @@ name = "test"
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -2600,6 +2727,7 @@ port = 7433
             inks,
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -2809,6 +2937,7 @@ enabled = true
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig {
                 enabled: true,
@@ -2855,6 +2984,7 @@ enabled = true
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -2874,6 +3004,7 @@ enabled = true
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig {
                 enabled: true,
@@ -2895,6 +3026,7 @@ enabled = true
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig {
                 enabled: false,
@@ -2919,6 +3051,7 @@ enabled = true
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig {
                 enabled: true,
@@ -2944,6 +3077,7 @@ enabled = true
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig {
                 enabled: true,
@@ -2969,6 +3103,7 @@ enabled = true
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig {
                 enabled: true,
@@ -2993,6 +3128,7 @@ enabled = true
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig {
                 enabled: false,
@@ -3019,6 +3155,7 @@ enabled = true
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig {
                 enabled: false,
@@ -3045,6 +3182,7 @@ enabled = true
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig {
                 enabled: false,
@@ -3127,6 +3265,7 @@ events = ["ready", "killed"]
                 discord: Some(toml::Value::String("legacy".into())),
                 ..NotificationsConfig::default()
             },
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
@@ -3231,6 +3370,7 @@ bogus = 1
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig { enabled: true },
@@ -3238,5 +3378,251 @@ bogus = 1
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
         assert!(loaded.metrics.enabled);
+    }
+
+    // --- glob_match ---
+
+    #[test]
+    fn test_glob_match_exact() {
+        assert!(glob_match("lifecycle.idle", "lifecycle.idle"));
+        assert!(!glob_match("lifecycle.idle", "lifecycle.active"));
+        assert!(!glob_match("lifecycle.idle", "lifecycle"));
+    }
+
+    #[test]
+    fn test_glob_match_prefix_glob() {
+        assert!(glob_match("lifecycle.*", "lifecycle.idle"));
+        assert!(glob_match("lifecycle.*", "lifecycle.active"));
+        assert!(!glob_match("lifecycle.*", "usage_alert.budget_threshold"));
+        // Prefix glob requires the dot separator, not a mere prefix string.
+        assert!(!glob_match("life.*", "lifecycle.idle"));
+    }
+
+    #[test]
+    fn test_glob_match_bare_type() {
+        assert!(glob_match("lifecycle", "lifecycle.idle"));
+        assert!(glob_match("usage_alert", "usage_alert.rate_limit"));
+        assert!(!glob_match("lifecycle", "usage_alert.rate_limit"));
+        // A bare type must not match a different type sharing a prefix.
+        assert!(!glob_match("life", "lifecycle.idle"));
+        // A bare type also matches the bare key with no subtype (exact match,
+        // defensive — real event keys always carry a subtype).
+        assert!(glob_match("lifecycle", "lifecycle"));
+    }
+
+    #[test]
+    fn test_glob_match_star_matches_everything() {
+        assert!(glob_match("*", "lifecycle.idle"));
+        assert!(glob_match("*", "fleet.node_down"));
+        assert!(glob_match("*", "anything"));
+    }
+
+    #[test]
+    fn test_glob_match_no_match() {
+        assert!(!glob_match("lifecycle.idle", "fleet.node_down"));
+        assert!(!glob_match("intervention.*", "lifecycle.idle"));
+    }
+
+    // --- severity_at_least ---
+
+    #[test]
+    fn test_severity_rank_order() {
+        assert!(severity_rank("info") < severity_rank("warn"));
+        assert!(severity_rank("warn") < severity_rank("critical"));
+        // Unknown severities rank lowest.
+        assert_eq!(severity_rank("bogus"), 0);
+    }
+
+    #[test]
+    fn test_severity_at_least_no_floor_admits_all() {
+        assert!(severity_at_least("info", None));
+        assert!(severity_at_least("critical", None));
+    }
+
+    #[test]
+    fn test_severity_at_least_floor_warn() {
+        assert!(!severity_at_least("info", Some("warn")));
+        assert!(severity_at_least("warn", Some("warn")));
+        assert!(severity_at_least("critical", Some("warn")));
+    }
+
+    #[test]
+    fn test_severity_at_least_floor_critical() {
+        assert!(!severity_at_least("info", Some("critical")));
+        assert!(!severity_at_least("warn", Some("critical")));
+        assert!(severity_at_least("critical", Some("critical")));
+    }
+
+    #[test]
+    fn test_severity_at_least_unknown_floor_admits_all() {
+        // A floor we cannot rank must never silently drop events (fail-open).
+        assert!(severity_at_least("info", Some("bogus")));
+    }
+
+    // --- top-level [[webhooks]] parsing + legacy union ---
+
+    #[test]
+    fn test_load_top_level_webhooks() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "wh"
+
+[[webhooks]]
+name = "ops"
+url = "https://example.com/ops"
+events = ["lifecycle.*", "usage_alert.*"]
+min_severity = "warn"
+secret = "s3cret"
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.webhooks.len(), 1);
+        let w = &config.webhooks[0];
+        assert_eq!(w.name, "ops");
+        assert_eq!(w.url, "https://example.com/ops");
+        assert_eq!(w.events, vec!["lifecycle.*", "usage_alert.*"]);
+        assert_eq!(w.min_severity.as_deref(), Some("warn"));
+        assert_eq!(w.secret.as_deref(), Some("s3cret"));
+        // Legacy nested list stays empty.
+        assert!(config.notifications.webhooks.is_empty());
+    }
+
+    #[test]
+    fn test_load_webhook_min_severity_optional() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "wh"
+
+[[webhooks]]
+name = "all"
+url = "https://example.com/all"
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.webhooks.len(), 1);
+        assert!(config.webhooks[0].events.is_empty());
+        assert!(config.webhooks[0].min_severity.is_none());
+    }
+
+    #[test]
+    fn test_load_legacy_notifications_webhooks_still_parse() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "wh"
+
+[[notifications.webhooks]]
+name = "legacy"
+url = "https://example.com/legacy"
+events = ["lifecycle.stopped"]
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert!(config.webhooks.is_empty());
+        assert_eq!(config.notifications.webhooks.len(), 1);
+        assert_eq!(config.notifications.webhooks[0].name, "legacy");
+    }
+
+    #[test]
+    fn test_webhook_endpoints_union_top_level_first() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "wh"
+
+[[webhooks]]
+name = "canonical"
+url = "https://example.com/canonical"
+
+[[notifications.webhooks]]
+name = "legacy"
+url = "https://example.com/legacy"
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        let endpoints = config.webhook_endpoints();
+        assert_eq!(endpoints.len(), 2);
+        assert_eq!(endpoints[0].name, "canonical");
+        assert_eq!(endpoints[1].name, "legacy");
+    }
+
+    #[test]
+    fn test_webhook_endpoints_empty_by_default() {
+        let config = load("/nonexistent/wh/config.toml").unwrap();
+        assert!(config.webhook_endpoints().is_empty());
+    }
+
+    #[test]
+    fn test_load_rejects_unknown_webhook_field() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "wh"
+
+[[webhooks]]
+name = "bad"
+url = "https://example.com"
+bogus_field = true
+"#
+        )
+        .unwrap();
+        let err = format!("{:#}", load(tmpfile.path().to_str().unwrap()).unwrap_err());
+        assert!(err.contains("bogus_field"));
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip_with_top_level_webhooks() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("wh-rt.toml");
+        let config = Config {
+            node: NodeConfig {
+                name: "wh-rt".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
+            notifications: NotificationsConfig::default(),
+            webhooks: vec![WebhookEndpointConfig {
+                name: "ops".into(),
+                url: "https://example.com/ops".into(),
+                events: vec!["lifecycle.*".into()],
+                min_severity: Some("warn".into()),
+                secret: Some("k".into()),
+            }],
+            docker: None,
+            controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
+        };
+        save(&config, &path).unwrap();
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.webhooks.len(), 1);
+        assert_eq!(loaded.webhooks[0].name, "ops");
+        assert_eq!(loaded.webhooks[0].events, vec!["lifecycle.*"]);
+        assert_eq!(loaded.webhooks[0].min_severity.as_deref(), Some("warn"));
     }
 }

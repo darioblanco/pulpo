@@ -43,14 +43,16 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
             extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
         },
         notifications: NotificationsConfigResponse {
+            // Surface the full set of endpoints (canonical top-level `[[webhooks]]`
+            // unioned with the deprecated `[notifications.webhooks]` form).
             webhooks: config
-                .notifications
-                .webhooks
+                .webhook_endpoints()
                 .iter()
                 .map(|w| WebhookEndpointConfigResponse {
                     name: w.name.clone(),
                     url: w.url.clone(),
                     events: w.events.clone(),
+                    min_severity: w.min_severity.clone(),
                     has_secret: w.secret.is_some(),
                 })
                 .collect(),
@@ -119,17 +121,23 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
         config.watchdog.idle_action = action;
     }
 
-    // Generic webhooks (full replace when provided)
+    // Generic webhooks (full replace when provided).
+    //
+    // The API manages the canonical top-level `[[webhooks]]` list. A full replace
+    // also clears the deprecated `[notifications.webhooks]` form so the edited set
+    // is authoritative (and the response union does not show stale duplicates).
     if let Some(webhooks) = req.webhooks {
-        config.notifications.webhooks = webhooks
+        config.webhooks = webhooks
             .into_iter()
             .map(|w| crate::config::WebhookEndpointConfig {
                 name: w.name,
                 url: w.url,
                 events: w.events,
+                min_severity: w.min_severity,
                 secret: w.secret,
             })
             .collect();
+        config.notifications.webhooks.clear();
     }
 
     // Inks (full replace when provided)
@@ -210,6 +218,7 @@ mod tests {
                 inks: HashMap::new(),
                 plans: std::collections::HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                webhooks: Vec::new(),
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
                 metrics: crate::config::MetricsConfig::default(),
@@ -246,6 +255,7 @@ mod tests {
                 inks: HashMap::new(),
                 plans: std::collections::HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                webhooks: Vec::new(),
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
                 metrics: crate::config::MetricsConfig::default(),
@@ -434,6 +444,7 @@ mod tests {
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
@@ -630,10 +641,12 @@ mod tests {
                     name: "primary".into(),
                     url: "https://example.com/hook".into(),
                     events: vec!["session.created".into()],
+                    min_severity: None,
                     secret: None,
                 }],
                 ..Default::default()
             },
+            webhooks: Vec::new(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
@@ -680,17 +693,20 @@ mod tests {
                         name: "ci-hook".into(),
                         url: "https://example.com/hook".into(),
                         events: vec!["ready".into(), "killed".into()],
+                        min_severity: None,
                         secret: Some("s3cret".into()),
                     },
                     crate::config::WebhookEndpointConfig {
                         name: "logs-hook".into(),
                         url: "https://logs.example.com".into(),
                         events: vec![],
+                        min_severity: None,
                         secret: None,
                     },
                 ],
                 ..Default::default()
             },
+            webhooks: Vec::new(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
@@ -717,6 +733,7 @@ mod tests {
                 name: "my-hook".into(),
                 url: "https://example.com/webhook".into(),
                 events: vec!["active".into()],
+                min_severity: None,
                 secret: Some("key".into()),
             }]),
             ..Default::default()
@@ -742,12 +759,14 @@ mod tests {
                     name: "hook-1".into(),
                     url: "https://a.com".into(),
                     events: vec![],
+                    min_severity: None,
                     secret: None,
                 },
                 WebhookEndpointUpdateRequest {
                     name: "hook-2".into(),
                     url: "https://b.com".into(),
                     events: vec![],
+                    min_severity: None,
                     secret: None,
                 },
             ]),
@@ -762,6 +781,7 @@ mod tests {
                 name: "hook-3".into(),
                 url: "https://c.com".into(),
                 events: vec!["killed".into()],
+                min_severity: None,
                 secret: None,
             }]),
             ..Default::default()
@@ -780,6 +800,7 @@ mod tests {
                 name: "hook".into(),
                 url: "https://a.com".into(),
                 events: vec![],
+                min_severity: None,
                 secret: None,
             }]),
             ..Default::default()
@@ -825,6 +846,7 @@ mod tests {
                 inks: HashMap::new(),
                 plans: std::collections::HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
+                webhooks: Vec::new(),
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
                 metrics: crate::config::MetricsConfig::default(),

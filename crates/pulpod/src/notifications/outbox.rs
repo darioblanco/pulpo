@@ -281,6 +281,7 @@ mod tests {
             name: name.into(),
             url: url.into(),
             events: vec![],
+            min_severity: None,
             secret: None,
         }
     }
