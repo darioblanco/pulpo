@@ -118,29 +118,56 @@ Replace terminal-scraping with structured readers of the agents' own session fil
 5. Cost = tokens × per-model rates (shipped rate table, user-overridable in config).
    Upgrade CLI USAGE column and UI badges from estimated to exact.
 
-### Phase B — Projection first, then enforcement (the breaker box)
+### Phase B — Visibility first; enforcement as a thin credibility proof
 
-Visibility ships before enforcement — it is the bigger half of the value. On
-subscription plans Anthropic already hard-stops you at the window cap; what Pulpo adds
-there is *allocation* of the shared pool (one runaway overnight session can starve every
-other session plus your interactive use). Enforcement protects real dollars on prepaid
-Fable credits and API keys.
+**Positioning principle (decided 2026-06-13):** the OSS adoption driver in this category
+is *visibility*, not enforcement. ccusage has ~16k stars doing nothing but read-only,
+single-machine, Claude-only, post-hoc cost display — people star "show me the number,"
+not "stop my agent." So the project's identity is the **live, cross-machine,
+cross-account, cross-agent burn-rate gauge** (B1+B2) — the thing ccusage can't do (it
+doesn't run your sessions) and first parties won't (it arbitrages their rate limits).
+A *minimal* enforcement (B3) earns its place only as the one-line proof that Pulpo is
+infrastructure, not a dashboard: "ccusage shows you the bill; Pulpo can also pull the
+plug, because it runs your sessions." Elaborate enforcement and thrash handling are
+fleet-ops depth nobody stars you for — parked until real fleet usage asks.
 
-1. **Projection & alerts**: quota model per account — **exact** for Codex (from
-   `rate_limits`), **estimated** for Claude (tokens vs. known 5h/weekly windows),
-   labeled honestly in the UI. Burn-rate + time-to-wall projection endpoint, 80% push
-   alerts, daily cost digest through existing notifiers.
-2. **Pool attribution** (confirmed by Anthropic, effective June 15, 2026): `claude -p`
-   / Agent SDK usage draws from a separate monthly headless credit pool; interactive
-   sessions in tmux draw from the subscription pool. Pulpo sessions run interactive
-   agents under a real TTY, so they stay on the subscription pool — a structural
-   advantage over SDK-built orchestrators, worth documenting loudly. Work item: detect
-   `-p`/`--print` in session commands and label which pool the session burns.
-3. **Budgets & enforcement**: per-session, per-ink, per-day caps (config + ink fields +
-   spawn flag). Watchdog enforces via existing intervention machinery — alert at 80%,
-   stop at 100%.
-4. **Rate-limit thrash handling**: detect, pause session, auto-resume after `resets_at`
-   instead of letting the agent retry-burn.
+**One-liner:** *See and control what every coding agent costs — across all your machines
+and accounts. Self-hosted.* Lead with **see**; **control** is the half-sentence that
+proves it's a breaker box. Explicit foil: live and fleet-wide, not post-hoc and
+single-machine (ccusage).
+
+**Launch set = B1 + B2 + minimal B3.** Target the June 23 Fable subscription cliff.
+
+**B1 — Projection / burn-rate (SHIP — this is the identity).** Burn rate ($/hr, tokens/hr)
+and time-to-wall, per-session and per-account. **Codex:** exact, extrapolated from the
+`rate_limits` snapshot (`used_percent` → 100% within the window, bounded by `resets_at`).
+**Claude:** honest estimation — always show $/hr and tokens/hr; show "% of weekly cap" and
+time-to-wall **only if** the user configures `[plans]` allowances (Anthropic doesn't
+publish the token allowance), labeled "estimated." `GET /api/v1/usage/projection`, a BURN
+column on `pulpo list` / `pulpo usage`, web badges. Read-only, zero config risk. Pure
+projection math in a `usage::projection` module → high-value unit tests.
+
+**B2 — Pool attribution (SHIP — cheap, makes rollups honest, the launch talking point).**
+Detect `-p`/`--print` in a session command → `usage_pool` = `subscription` (interactive
+tmux, our default) vs `headless` (the separate monthly credit pool Anthropic confirmed
+effective June 15, 2026). Projection rollups become pool-aware. Documents the structural
+advantage: Pulpo's interactive-in-tmux sessions stay on the subscription pool, unlike
+SDK-built orchestrators on `claude -p`.
+
+**B3 — Minimal budget guardrail (SHIP — credibility proof, not a headline).** Per-session
+and per-ink **cost cap only**: alert at 80% (one-shot, deduped via metadata flag), stop at
+100% via the existing intervention path (new `InterventionCode::BudgetExceeded`). Config
+on `WatchdogConfig`/`InkConfig` + a `--budget-cost` spawn flag (resolution: spawn > ink >
+global). Frame honestly: on subscriptions this *allocates the shared pool* (a runaway
+session can starve the rest until reset); on prepaid credits / API keys it protects real
+dollars. NOT overdraft prevention on subscriptions.
+
+**Parked (build on real fleet demand, not for launch):**
+- Multi-dimension budgets (token caps, quota-% guard, per-day per-node rollup cap)
+- Rate-limit thrash handling (pause + auto-resume after `resets_at`) — high complexity
+  (new session state + scheduling), narrow benefit, undemoable
+- Daily cost digest — cheap (cron + B1 endpoint + existing notifiers) and good for the
+  "phone is the gauge" story, but retention not acquisition; post-launch only if cheap
 
 ### Phase C — Fleet rollups + placement (the unique part)
 
