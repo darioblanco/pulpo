@@ -56,10 +56,11 @@ Then point a Pulpo webhook at it:
 ```toml
 # ~/.pulpo/config.toml
 [[webhooks]]
+name = "discord-relay"                  # required — unique endpoint id
 url = "http://localhost:8099/pulpo"
 secret = "change-me"                    # must match PULPO_WEBHOOK_SECRET
-events = ["lifecycle.*", "usage_alert.*", "intervention.*"]
-min_severity = "warn"
+events = ["lifecycle.*", "usage_alert.*", "intervention.*"]  # globs on "<type>.<subtype>"
+min_severity = "warn"                   # info < warn < critical
 ```
 
 ## Environment
