@@ -32,6 +32,25 @@ pub struct EnrolledNode {
     pub last_seen_address: Option<String>,
 }
 
+/// A durable webhook-delivery row from the `webhook_outbox` table.
+///
+/// One pending/delivered/dead delivery attempt of a single canonical event to a
+/// single endpoint. The stored `envelope_json` is posted verbatim on every
+/// retry so the receiver can dedupe on the stable `event_id`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebhookOutboxRow {
+    pub id: i64,
+    pub endpoint: String,
+    pub event_id: String,
+    pub envelope_json: String,
+    pub status: String,
+    pub attempts: i64,
+    pub next_attempt_at: String,
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub delivered_at: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct Store {
     pub(super) pool: SqlitePool,

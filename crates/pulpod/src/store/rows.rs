@@ -5,7 +5,7 @@ use pulpo_common::session::{InterventionCode, Session, SessionStatus};
 use sqlx::{Row, sqlite::SqliteRow};
 use uuid::Uuid;
 
-use super::{EnrolledNode, InterventionEvent};
+use super::{EnrolledNode, InterventionEvent, WebhookOutboxRow};
 
 pub(super) fn row_to_session(row: &SqliteRow) -> Result<Session> {
     let id_str: String = row.get("id");
@@ -157,6 +157,21 @@ pub(super) fn row_to_enrolled_node(row: &SqliteRow) -> Result<EnrolledNode> {
         token_hash: row.try_get("token_hash")?,
         last_seen_at,
         last_seen_address: row.try_get("last_seen_address").unwrap_or(None),
+    })
+}
+
+pub(super) fn row_to_webhook_outbox(row: &SqliteRow) -> Result<WebhookOutboxRow> {
+    Ok(WebhookOutboxRow {
+        id: row.try_get("id")?,
+        endpoint: row.try_get("endpoint")?,
+        event_id: row.try_get("event_id")?,
+        envelope_json: row.try_get("envelope_json")?,
+        status: row.try_get("status")?,
+        attempts: row.try_get("attempts")?,
+        next_attempt_at: row.try_get("next_attempt_at")?,
+        last_error: row.try_get("last_error").unwrap_or(None),
+        created_at: row.try_get("created_at")?,
+        delivered_at: row.try_get("delivered_at").unwrap_or(None),
     })
 }
 

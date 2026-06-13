@@ -36,6 +36,51 @@ pub fn should_notify(config: &WebhookEndpointConfig, status: &str) -> bool {
     config.events.is_empty() || config.events.iter().any(|e| e == status)
 }
 
+/// Whether an endpoint config wants the given canonical event.
+///
+/// Lifecycle events respect the per-endpoint status filter (mapped onto the
+/// event subtype). Usage alerts are always delivered so cost/budget alerts reach
+/// webhooks. Other event types pass through (no per-type filter built yet). Free
+/// function so the dispatcher can filter by config without constructing a
+/// [`WebhookSink`] (which holds a reqwest client).
+pub fn webhook_wants(config: &WebhookEndpointConfig, event: &Event) -> bool {
+    match event.event_type.as_str() {
+        "lifecycle" => should_notify(config, &event.subtype),
+        _ => true,
+    }
+}
+
+/// Build the signed webhook `POST` request for a raw envelope body.
+///
+/// Single source of truth for the on-the-wire contract: the same headers and
+/// HMAC signing are used by the inline [`WebhookSink::send`] and the durable
+/// outbox worker, so a stored envelope replays byte-for-byte identically to a
+/// fresh send (and stays compatible with `contrib/examples/webhook-discord/`).
+///
+/// `body` is the exact bytes posted and signed; `event_header` is the
+/// `X-Pulpo-Event` value (`<type>.<subtype>`); `event_id` is the idempotency key.
+pub fn build_webhook_request(
+    client: &reqwest::Client,
+    config: &WebhookEndpointConfig,
+    body: Vec<u8>,
+    event_header: &str,
+    event_id: &str,
+) -> reqwest::RequestBuilder {
+    let mut req = client
+        .post(&config.url)
+        .header("Content-Type", "application/json")
+        .header("User-Agent", concat!("pulpo/", env!("CARGO_PKG_VERSION")))
+        .header("X-Pulpo-Event", event_header)
+        .header("X-Pulpo-Event-Id", event_id);
+
+    if let Some(secret) = &config.secret {
+        let sig = compute_signature(secret, &body);
+        req = req.header("X-Pulpo-Signature", sig);
+    }
+
+    req.body(body)
+}
+
 impl WebhookSink {
     /// Create a new `WebhookSink` from config.
     pub fn new(config: WebhookEndpointConfig) -> Self {
@@ -52,16 +97,10 @@ impl WebhookSink {
 
     /// Whether this endpoint wants the given canonical event.
     ///
-    /// Lifecycle events respect the per-endpoint status filter (mapped onto the
-    /// event subtype). Usage alerts are always delivered so cost/budget alerts
-    /// reach webhooks. Other event types pass through (no filter built yet).
+    /// Delegates to [`webhook_wants`] so inline-send and outbox filtering share
+    /// one rule.
     pub fn wants(&self, event: &Event) -> bool {
-        match event.event_type.as_str() {
-            "lifecycle" => should_notify(&self.config, &event.subtype),
-            // "usage_alert" and any future type pass through; per-endpoint
-            // type.subtype/severity routing is a later step.
-            _ => true,
-        }
+        webhook_wants(&self.config, event)
     }
 
     /// POST the canonical [`Event`] JSON to the endpoint. Best-effort; logs on failure.
@@ -87,20 +126,16 @@ impl WebhookSink {
             "Sending webhook notification"
         );
 
-        let mut req = self
-            .client
-            .post(&self.config.url)
-            .header("Content-Type", "application/json")
-            .header("User-Agent", concat!("pulpo/", env!("CARGO_PKG_VERSION")))
-            .header("X-Pulpo-Event", &event_header)
-            .header("X-Pulpo-Event-Id", &event.event_id);
-
-        if let Some(secret) = &self.config.secret {
-            let sig = compute_signature(secret, &body);
-            req = req.header("X-Pulpo-Signature", sig);
-        }
-
-        req.body(body).send().await?.error_for_status()?;
+        build_webhook_request(
+            &self.client,
+            &self.config,
+            body,
+            &event_header,
+            &event.event_id,
+        )
+        .send()
+        .await?
+        .error_for_status()?;
         Ok(())
     }
 }

@@ -60,7 +60,7 @@ async fn test_migrate_uses_sqlx_migrations_table() {
             .fetch_all(store.pool())
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3]);
+    assert_eq!(versions, vec![1, 2, 3, 4]);
 
     let has_sandbox: i32 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'sandbox'",
@@ -2592,4 +2592,272 @@ async fn test_fetch_dead_sessions_preserves_worktree_path() {
         dead[0].worktree_path.as_deref(),
         Some("/home/user/.pulpo/worktrees/wt-session")
     );
+}
+
+// --- webhook outbox ---
+
+#[tokio::test]
+async fn test_enqueue_webhook_inserts_pending_row() {
+    let store = test_store().await;
+    store
+        .enqueue_webhook(
+            "hook-a",
+            "evt-1",
+            "{\"event_id\":\"evt-1\"}",
+            "2026-06-13T12:00:00Z",
+        )
+        .await
+        .unwrap();
+
+    let due = store
+        .fetch_due_webhook_deliveries("2026-06-13T12:00:01Z", 10)
+        .await
+        .unwrap();
+    assert_eq!(due.len(), 1);
+    let row = &due[0];
+    assert_eq!(row.endpoint, "hook-a");
+    assert_eq!(row.event_id, "evt-1");
+    assert_eq!(row.envelope_json, "{\"event_id\":\"evt-1\"}");
+    assert_eq!(row.status, "pending");
+    assert_eq!(row.attempts, 0);
+    assert_eq!(row.next_attempt_at, "2026-06-13T12:00:00Z");
+    assert!(row.last_error.is_none());
+    assert!(row.delivered_at.is_none());
+    assert!(!row.created_at.is_empty());
+    assert!(row.id > 0);
+}
+
+#[tokio::test]
+async fn test_fetch_due_excludes_future_rows() {
+    let store = test_store().await;
+    store
+        .enqueue_webhook("hook", "evt-future", "{}", "2026-06-13T13:00:00Z")
+        .await
+        .unwrap();
+
+    // Now is before next_attempt_at -> not due.
+    let due = store
+        .fetch_due_webhook_deliveries("2026-06-13T12:00:00Z", 10)
+        .await
+        .unwrap();
+    assert!(due.is_empty());
+
+    // Now equals next_attempt_at -> due (<=).
+    let due = store
+        .fetch_due_webhook_deliveries("2026-06-13T13:00:00Z", 10)
+        .await
+        .unwrap();
+    assert_eq!(due.len(), 1);
+}
+
+#[tokio::test]
+async fn test_fetch_due_oldest_first_and_respects_limit() {
+    let store = test_store().await;
+    for i in 0..3 {
+        store
+            .enqueue_webhook("hook", &format!("evt-{i}"), "{}", "2026-06-13T12:00:00Z")
+            .await
+            .unwrap();
+    }
+
+    let due = store
+        .fetch_due_webhook_deliveries("2026-06-13T12:00:01Z", 2)
+        .await
+        .unwrap();
+    assert_eq!(due.len(), 2);
+    // Oldest first (ascending id).
+    assert_eq!(due[0].event_id, "evt-0");
+    assert_eq!(due[1].event_id, "evt-1");
+}
+
+#[tokio::test]
+async fn test_fetch_due_skips_delivered_and_dead() {
+    let store = test_store().await;
+    store
+        .enqueue_webhook("hook", "evt-del", "{}", "2026-06-13T12:00:00Z")
+        .await
+        .unwrap();
+    store
+        .enqueue_webhook("hook", "evt-dead", "{}", "2026-06-13T12:00:00Z")
+        .await
+        .unwrap();
+    store
+        .enqueue_webhook("hook", "evt-pending", "{}", "2026-06-13T12:00:00Z")
+        .await
+        .unwrap();
+
+    store
+        .mark_webhook_delivered(1, "2026-06-13T12:00:05Z")
+        .await
+        .unwrap();
+    store.mark_webhook_dead(2, "gave up").await.unwrap();
+
+    let due = store
+        .fetch_due_webhook_deliveries("2026-06-13T12:00:10Z", 10)
+        .await
+        .unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].event_id, "evt-pending");
+}
+
+#[tokio::test]
+async fn test_mark_webhook_delivered_sets_status_and_clears_error() {
+    let store = test_store().await;
+    store
+        .enqueue_webhook("hook", "evt", "{}", "2026-06-13T12:00:00Z")
+        .await
+        .unwrap();
+    store
+        .reschedule_webhook(1, 1, "2026-06-13T12:05:00Z", "temp fail")
+        .await
+        .unwrap();
+
+    store
+        .mark_webhook_delivered(1, "2026-06-13T12:06:00Z")
+        .await
+        .unwrap();
+
+    let counts = store.count_webhook_outbox_by_status().await.unwrap();
+    assert_eq!(counts, vec![("delivered".to_owned(), 1)]);
+
+    // No longer due.
+    let due = store
+        .fetch_due_webhook_deliveries("2026-06-13T23:00:00Z", 10)
+        .await
+        .unwrap();
+    assert!(due.is_empty());
+}
+
+#[tokio::test]
+async fn test_reschedule_webhook_bumps_attempts_and_keeps_pending() {
+    let store = test_store().await;
+    store
+        .enqueue_webhook("hook", "evt", "{}", "2026-06-13T12:00:00Z")
+        .await
+        .unwrap();
+
+    store
+        .reschedule_webhook(1, 2, "2026-06-13T12:10:00Z", "connection refused")
+        .await
+        .unwrap();
+
+    // Still pending but due later.
+    let not_yet = store
+        .fetch_due_webhook_deliveries("2026-06-13T12:05:00Z", 10)
+        .await
+        .unwrap();
+    assert!(not_yet.is_empty());
+
+    let due = store
+        .fetch_due_webhook_deliveries("2026-06-13T12:10:00Z", 10)
+        .await
+        .unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].attempts, 2);
+    assert_eq!(due[0].status, "pending");
+    assert_eq!(due[0].last_error.as_deref(), Some("connection refused"));
+}
+
+#[tokio::test]
+async fn test_mark_webhook_dead_sets_status_and_error() {
+    let store = test_store().await;
+    store
+        .enqueue_webhook("hook", "evt", "{}", "2026-06-13T12:00:00Z")
+        .await
+        .unwrap();
+
+    store
+        .mark_webhook_dead(1, "max attempts reached")
+        .await
+        .unwrap();
+
+    let due = store
+        .fetch_due_webhook_deliveries("2026-06-13T23:00:00Z", 10)
+        .await
+        .unwrap();
+    assert!(due.is_empty());
+
+    let counts = store.count_webhook_outbox_by_status().await.unwrap();
+    assert_eq!(counts, vec![("dead".to_owned(), 1)]);
+}
+
+#[tokio::test]
+async fn test_count_webhook_outbox_by_status_groups() {
+    let store = test_store().await;
+    for i in 0..4 {
+        store
+            .enqueue_webhook("hook", &format!("evt-{i}"), "{}", "2026-06-13T12:00:00Z")
+            .await
+            .unwrap();
+    }
+    store
+        .mark_webhook_delivered(1, "2026-06-13T12:00:05Z")
+        .await
+        .unwrap();
+    store.mark_webhook_dead(2, "x").await.unwrap();
+
+    let mut counts = store.count_webhook_outbox_by_status().await.unwrap();
+    counts.sort();
+    assert_eq!(
+        counts,
+        vec![
+            ("dead".to_owned(), 1),
+            ("delivered".to_owned(), 1),
+            ("pending".to_owned(), 2),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn test_count_webhook_outbox_empty() {
+    let store = test_store().await;
+    let counts = store.count_webhook_outbox_by_status().await.unwrap();
+    assert!(counts.is_empty());
+}
+
+#[tokio::test]
+async fn test_enqueue_webhook_after_table_dropped_errors() {
+    let store = test_store().await;
+    sqlx::query("DROP TABLE webhook_outbox")
+        .execute(store.pool())
+        .await
+        .unwrap();
+    assert!(
+        store
+            .enqueue_webhook("hook", "evt", "{}", "2026-06-13T12:00:00Z")
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn test_fetch_due_after_table_dropped_errors() {
+    let store = test_store().await;
+    sqlx::query("DROP TABLE webhook_outbox")
+        .execute(store.pool())
+        .await
+        .unwrap();
+    assert!(
+        store
+            .fetch_due_webhook_deliveries("2026-06-13T12:00:00Z", 10)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn test_webhook_outbox_row_debug_clone_eq() {
+    let store = test_store().await;
+    store
+        .enqueue_webhook("hook", "evt", "{}", "2026-06-13T12:00:00Z")
+        .await
+        .unwrap();
+    let due = store
+        .fetch_due_webhook_deliveries("2026-06-13T12:00:01Z", 10)
+        .await
+        .unwrap();
+    let row = due.into_iter().next().unwrap();
+    let cloned = row.clone();
+    assert_eq!(row, cloned);
+    assert_eq!(format!("{row:?}"), format!("{cloned:?}"));
 }
