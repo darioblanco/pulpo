@@ -248,11 +248,56 @@ collector, not a vendor relay). Decisions locked:
   forward important events to the controller, which fans out to centrally-configured sinks
   and exposes a fleet event feed. Same event model, two deployment shapes.
 
+**Webhook message contract (locked 2026-06-13).** One canonical envelope for *every*
+event — session state changes (idle/active/ready/stopped/lost) are first-class `lifecycle`
+events alongside interventions, usage alerts, and fleet events.
+
+```
+POST <endpoint-url>
+  Content-Type: application/json
+  User-Agent: pulpo/<version>
+  X-Pulpo-Event: lifecycle.idle            # "<type>.<subtype>" for quick routing
+  X-Pulpo-Event-Id: <uuid>                 # stable across retries (idempotency key)
+  X-Pulpo-Signature: sha256=<hex hmac>     # HMAC-SHA256(raw body, endpoint secret)
+
+{
+  "schema_version": 1,
+  "event_id": "<uuid>",
+  "type": "lifecycle",        // lifecycle | intervention | usage_alert | fleet
+  "subtype": "idle",          // the specific event within the type
+  "severity": "warn",         // info | warn | critical
+  "occurred_at": "2026-06-13T12:00:00Z",
+  "node": "mac-mini",
+  "session": {                // present for session-scoped events
+    "id": "...", "name": "fix-auth", "status": "idle", "ink": "coder",
+    "git_branch": "...", "pr_url": null,
+    "cost_usd": 2.5, "total_tokens": 1234000, "pool": "subscription"
+  },
+  "payload": { }              // type-specific extras (budget_usd, quota_used_percent,
+                              // intervention_reason, ...)
+}
+```
+
+Event catalogue (`type.subtype` → severity):
+- `lifecycle.{creating,active,idle,ready,stopped,error,rate_limited}` (info/warn),
+  `lifecycle.lost` (critical)
+- `intervention.{memory_pressure,idle_timeout,budget_exceeded,user_stop}` (warn/critical),
+  `payload.intervention_reason`
+- `usage_alert.{budget_threshold,burn_ceiling,quota_threshold,rate_limit}` (warn/critical),
+  `payload.{cost_usd,budget_usd,quota_used_percent}`
+- `fleet.{node_up,node_down,peer_unreachable}` (warn/critical)
+
+Per-endpoint filter: `events = ["lifecycle.idle", "usage_alert.*", "intervention.*"]`
+(glob on `type.subtype`) plus `min_severity`. Delivery is at-least-once from the outbox
+with exponential backoff; receivers dedupe on `event_id` and verify `X-Pulpo-Signature`.
+The `X-Pulpo-Event` header lets a receiver route/drop without parsing the body.
+
 Build order (non-breaking; existing `[notifications.webhooks]` maps onto the new model):
 **0)** descope Discord · **1)** canonical event model + `EventSink` trait + dispatcher
-(fold webhook/web-push in) · **2)** durable SQLite outbox + retry/backoff + HMAC +
-idempotency · **3)** universal `[[webhooks]]` config + type/severity routing · **4)**
-`/metrics` toggle · **5)** controller aggregation + fleet event feed.
+(fold webhook/web-push in; session lifecycle + usage alerts both flow to webhooks) ·
+**2)** durable SQLite outbox + retry/backoff + HMAC + idempotency · **3)** universal
+`[[webhooks]]` config + `type.subtype`/severity routing · **4)** `/metrics` toggle ·
+**5)** controller aggregation + fleet event feed.
 
 **M2 — Burn-velocity governor (the marquee optimizer).** A configurable `$/hr` (and/or
 tokens/hr) ceiling on the watchdog: crossing it **alerts** by default; **opt-in** to pause
