@@ -1,0 +1,9 @@
+{
+  "name": "pulpo-webhook-discord-example",
+  "private": true,
+  "type": "module",
+  "description": "Reference: consume Pulpo's universal webhook and post to Discord",
+  "scripts": {
+    "start": "node --env-file=.env index.mjs"
+  }
+}
