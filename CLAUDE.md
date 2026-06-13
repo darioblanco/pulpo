@@ -241,23 +241,6 @@ pulpo/
 ├── contrib/
 │   ├── com.pulpo.daemon.plist    # macOS launchd service definition
 │   ├── pulpo.service             # Linux systemd user service
-│   └── discord-bot/              # Discord bot for controlling pulpod
-│       ├── src/
-│       │   ├── index.ts          # Entry: init client, register commands, autocomplete
-│       │   ├── config.ts         # Env-based config
-│       │   ├── commands/         # Slash commands
-│       │   │   ├── spawn.ts      # /spawn — create a new session
-│       │   │   ├── status.ts     # /status — show session(s)
-│       │   │   ├── logs.ts       # /logs — recent output
-│       │   │   ├── stop.ts       # /stop — terminate session
-│       │   │   ├── resume.ts     # /resume — resume lost/ready session
-│       │   │   ├── inks.ts       # /inks — list inks
-│       │   │   └── input.ts      # /input — send text to session
-│       │   ├── listeners/sse.ts  # EventSource → Discord channel messages
-│       │   ├── api/pulpod.ts     # HTTP client for pulpod REST API
-│       │   └── formatters/embed.ts # Discord embed builders
-│       ├── package.json
-│       └── tsconfig.json
 ├── crates/
 │   ├── pulpod/src/
 │   │   ├── main.rs               # Thin entry point (cfg(coverage) excluded)

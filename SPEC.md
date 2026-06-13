@@ -43,8 +43,8 @@ Too many layers. And if a machine reboots, you lose your session state.
 
 ```
   ┌───────────┐  ┌───────────┐  ┌─────────────┐
-  │  Browser  │  │    CLI    │  │ Discord Bot │
-  │  (phone/  │  │  (pulpo)  │  │ (contrib/)  │
+  │  Browser  │  │    CLI    │  │ Any REST/   │
+  │  (phone/  │  │  (pulpo)  │  │ SSE client  │
   │  laptop)  │  │           │  │             │
   └─────┬─────┘  └─────┬─────┘  └──────┬──────┘
         │ REST/WS       │ REST          │ REST/SSE
@@ -527,7 +527,6 @@ pulpo/
 │   └── pulpo-common/src/       # Shared types: Session, NodeInfo, PeerInfo,
 │                               #   SessionEvent, API request/response
 ├── web/                        # React 19 + Vite + Tailwind v4 + shadcn/ui
-└── contrib/discord-bot/        # Discord bot: slash commands + SSE listener
 ```
 
 ---
@@ -647,7 +646,7 @@ the primary management surface.
 - ✅ Ink config (`[inks.name]` in config.toml with command + description, `GET /api/v1/inks`)
 - ✅ SSE event stream (`GET /api/v1/events`, broadcast channel, SessionEvent)
 - ✅ Discord webhook notifications (`[notifications.discord]` config)
-- ✅ Discord bot (`contrib/discord-bot/`) — slash commands + SSE listener
+- ~~Discord bot (`contrib/discord-bot/`)~~ — removed June 2026 (webhook notifications remain)
 - ✅ MCP server (session management as MCP tools)
 
 ---
