@@ -55,11 +55,6 @@ Core Pulpo settings (read by `base/entrypoint.sh`):
 - `PULPO_MAX_BUDGET_USD` (optional)
 - `PULPO_OUTPUT_FORMAT` (optional)
 
-Optional webhook passthrough:
-
-- `DISCORD_WEBHOOK_URL`
-- `DISCORD_EVENTS` (comma-separated)
-
 ## Provider credential precedence (`pulpo-agents`)
 
 Claude:

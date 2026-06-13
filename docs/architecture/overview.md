@@ -184,7 +184,7 @@ Session spawn → resolve_ink → build_command → tmux create
        ↓
   State transitions (active ⇄ idle → ready/stopped/lost)
        ↓
-  SSE events → web UI / Discord / webhooks
+  SSE events → web UI / webhooks
 ```
 
 ## Runtime Details

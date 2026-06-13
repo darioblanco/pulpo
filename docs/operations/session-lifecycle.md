@@ -125,8 +125,9 @@ waiting_patterns = []         # Extra patterns for waiting-for-input detection
 Default notification events: `["ready", "stopped"]`. Configure via:
 
 ```toml
-[notifications.discord]
-webhook_url = "https://discord.com/api/webhooks/..."
+[[notifications.webhooks]]
+name = "primary"
+url = "https://example.com/hooks/pulpo"
 events = ["ready", "stopped", "lost"]
 ```
 

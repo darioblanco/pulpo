@@ -96,11 +96,6 @@ export interface WatchdogConfigResponse {
   adopt_tmux: boolean;
 }
 
-export interface DiscordWebhookConfigResponse {
-  webhook_url: string;
-  events: string[];
-}
-
 export interface WebhookEndpointConfigResponse {
   name: string;
   url: string;
@@ -116,7 +111,6 @@ export interface WebhookEndpointUpdateRequest {
 }
 
 export interface NotificationsConfigResponse {
-  discord: DiscordWebhookConfigResponse | null;
   webhooks: WebhookEndpointConfigResponse[];
 }
 
@@ -143,8 +137,6 @@ export interface UpdateConfigRequest {
   watchdog_breach_count?: number;
   watchdog_idle_timeout_secs?: number;
   watchdog_idle_action?: string;
-  discord_webhook_url?: string;
-  discord_events?: string[];
   webhooks?: WebhookEndpointUpdateRequest[];
   inks?: Record<string, InkConfig>;
   peers?: Record<string, PeerEntry>;

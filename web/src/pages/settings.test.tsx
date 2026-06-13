@@ -52,7 +52,6 @@ const testConfig: ConfigResponse = {
     adopt_tmux: true,
   },
   notifications: {
-    discord: null,
     webhooks: [],
   },
   inks: {},
@@ -185,18 +184,21 @@ describe('SettingsPage', () => {
     });
   });
 
-  it('loads discord notifications when present', async () => {
-    const configWithDiscord: ConfigResponse = {
+  it('loads webhook notifications when present', async () => {
+    const configWithWebhook: ConfigResponse = {
       ...testConfig,
       notifications: {
-        discord: {
-          webhook_url: 'https://discord.com/api/webhooks/test',
-          events: ['session.created', 'session.ready'],
-        },
-        webhooks: [],
+        webhooks: [
+          {
+            name: 'ci-hook',
+            url: 'https://example.com/hook',
+            events: ['session.created', 'session.ready'],
+            has_secret: false,
+          },
+        ],
       },
     };
-    mockGetConfig.mockResolvedValue(configWithDiscord);
+    mockGetConfig.mockResolvedValue(configWithWebhook);
     mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     renderSettings();
 
@@ -207,19 +209,9 @@ describe('SettingsPage', () => {
     clickTab('settings-tab-notifications');
 
     await waitFor(() => {
-      expect(screen.getByTestId('tab-discord')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByTestId('tab-discord'));
-
-    await waitFor(() => {
-      const discordContent = screen.getByTestId('discord-content');
-      expect(within(discordContent).getByLabelText('Webhook URL')).toHaveValue(
-        'https://discord.com/api/webhooks/test',
-      );
-      expect(within(discordContent).getByLabelText('Events')).toHaveValue(
-        'session.created, session.ready',
-      );
+      const webhookSection = screen.getByTestId('webhook-0');
+      expect(within(webhookSection).getByLabelText('Name')).toHaveValue('ci-hook');
+      expect(within(webhookSection).getByLabelText('URL')).toHaveValue('https://example.com/hook');
     });
   });
 
@@ -297,21 +289,24 @@ describe('SettingsPage', () => {
     });
   });
 
-  it('sends discord events when set', async () => {
-    const configWithDiscord: ConfigResponse = {
+  it('sends webhooks when set', async () => {
+    const configWithWebhook: ConfigResponse = {
       ...testConfig,
       notifications: {
-        discord: {
-          webhook_url: 'https://discord.com/api/webhooks/test',
-          events: ['session.created'],
-        },
-        webhooks: [],
+        webhooks: [
+          {
+            name: 'ci-hook',
+            url: 'https://example.com/hook',
+            events: ['session.created'],
+            has_secret: false,
+          },
+        ],
       },
     };
-    mockGetConfig.mockResolvedValue(configWithDiscord);
+    mockGetConfig.mockResolvedValue(configWithWebhook);
     mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     mockUpdateConfig.mockResolvedValue({
-      config: configWithDiscord,
+      config: configWithWebhook,
       restart_required: false,
     });
     renderSettings();
@@ -325,8 +320,9 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       expect(mockUpdateConfig).toHaveBeenCalledWith(
         expect.objectContaining({
-          discord_webhook_url: 'https://discord.com/api/webhooks/test',
-          discord_events: ['session.created'],
+          webhooks: [
+            { name: 'ci-hook', url: 'https://example.com/hook', events: ['session.created'] },
+          ],
         }),
       );
     });

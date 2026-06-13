@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode};
 use pulpo_common::api::{
-    DiscordWebhookConfigResponse, ErrorResponse, NotificationsConfigResponse,
-    UpdateNotificationsRequest, WebhookEndpointConfigResponse,
+    ErrorResponse, NotificationsConfigResponse, UpdateNotificationsRequest,
+    WebhookEndpointConfigResponse,
 };
 
 type ApiError = (StatusCode, Json<ErrorResponse>);
@@ -19,13 +19,6 @@ fn internal_error(msg: &str) -> ApiError {
 
 fn to_response(config: &crate::config::NotificationsConfig) -> NotificationsConfigResponse {
     NotificationsConfigResponse {
-        discord: config
-            .discord
-            .as_ref()
-            .map(|d| DiscordWebhookConfigResponse {
-                webhook_url: d.webhook_url.clone(),
-                events: d.events.clone(),
-            }),
         webhooks: config
             .webhooks
             .iter()
@@ -53,18 +46,6 @@ pub async fn update_notifications(
     Json(req): Json<UpdateNotificationsRequest>,
 ) -> Result<Json<NotificationsConfigResponse>, ApiError> {
     let mut config = state.config.write().await;
-
-    // Discord
-    if let Some(discord) = req.discord {
-        if discord.webhook_url.is_empty() {
-            config.notifications.discord = None;
-        } else {
-            config.notifications.discord = Some(crate::config::DiscordWebhookConfig {
-                webhook_url: discord.webhook_url,
-                events: discord.events,
-            });
-        }
-    }
 
     // Webhooks (full replace when provided)
     if let Some(webhooks) = req.webhooks {
@@ -100,7 +81,7 @@ mod tests {
     use crate::session::manager::SessionManager;
     use crate::store::Store;
     use axum::extract::State;
-    use pulpo_common::api::{DiscordWebhookUpdateRequest, WebhookEndpointUpdateRequest};
+    use pulpo_common::api::WebhookEndpointUpdateRequest;
     use std::collections::HashMap;
 
     async fn test_state() -> Arc<AppState> {
@@ -175,63 +156,13 @@ mod tests {
     async fn test_get_notifications_empty() {
         let state = test_state().await;
         let Json(resp) = get_notifications(State(state)).await.unwrap();
-        assert!(resp.discord.is_none());
         assert!(resp.webhooks.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_update_notifications_set_discord() {
-        let state = test_state().await;
-        let req = UpdateNotificationsRequest {
-            discord: Some(DiscordWebhookUpdateRequest {
-                webhook_url: "https://discord.com/api/webhooks/test".into(),
-                events: vec!["active".into(), "killed".into()],
-            }),
-            webhooks: None,
-        };
-        let Json(resp) = update_notifications(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        let discord = resp.discord.as_ref().unwrap();
-        assert_eq!(discord.webhook_url, "https://discord.com/api/webhooks/test");
-        assert_eq!(discord.events, vec!["active", "killed"]);
-
-        // Verify persisted
-        let Json(current) = get_notifications(State(state)).await.unwrap();
-        assert!(current.discord.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_update_notifications_clear_discord() {
-        let state = test_state().await;
-        // Set discord first
-        let req = UpdateNotificationsRequest {
-            discord: Some(DiscordWebhookUpdateRequest {
-                webhook_url: "https://discord.com/api/webhooks/test".into(),
-                events: vec![],
-            }),
-            webhooks: None,
-        };
-        let _ = update_notifications(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        // Clear with empty URL
-        let req = UpdateNotificationsRequest {
-            discord: Some(DiscordWebhookUpdateRequest {
-                webhook_url: String::new(),
-                events: vec![],
-            }),
-            webhooks: None,
-        };
-        let Json(resp) = update_notifications(State(state), Json(req)).await.unwrap();
-        assert!(resp.discord.is_none());
     }
 
     #[tokio::test]
     async fn test_update_notifications_set_webhooks() {
         let state = test_state().await;
         let req = UpdateNotificationsRequest {
-            discord: None,
             webhooks: Some(vec![
                 WebhookEndpointUpdateRequest {
                     name: "ci-hook".into(),
@@ -260,7 +191,6 @@ mod tests {
         let state = test_state().await;
         // Set initial
         let req = UpdateNotificationsRequest {
-            discord: None,
             webhooks: Some(vec![WebhookEndpointUpdateRequest {
                 name: "old".into(),
                 url: "https://old.com".into(),
@@ -273,7 +203,6 @@ mod tests {
             .unwrap();
         // Replace
         let req = UpdateNotificationsRequest {
-            discord: None,
             webhooks: Some(vec![WebhookEndpointUpdateRequest {
                 name: "new".into(),
                 url: "https://new.com".into(),
@@ -291,7 +220,6 @@ mod tests {
         let state = test_state().await;
         // Set initial
         let req = UpdateNotificationsRequest {
-            discord: None,
             webhooks: Some(vec![WebhookEndpointUpdateRequest {
                 name: "hook".into(),
                 url: "https://a.com".into(),
@@ -304,7 +232,6 @@ mod tests {
             .unwrap();
         // Clear
         let req = UpdateNotificationsRequest {
-            discord: None,
             webhooks: Some(vec![]),
         };
         let Json(resp) = update_notifications(State(state), Json(req)).await.unwrap();
@@ -316,7 +243,6 @@ mod tests {
         let state = test_state().await;
         let req = UpdateNotificationsRequest::default();
         let Json(resp) = update_notifications(State(state), Json(req)).await.unwrap();
-        assert!(resp.discord.is_none());
         assert!(resp.webhooks.is_empty());
     }
 
@@ -324,20 +250,21 @@ mod tests {
     async fn test_update_notifications_saves_to_disk() {
         let state = test_state_with_config_path().await;
         let req = UpdateNotificationsRequest {
-            discord: Some(DiscordWebhookUpdateRequest {
-                webhook_url: "https://discord.com/api/webhooks/save-test".into(),
+            webhooks: Some(vec![WebhookEndpointUpdateRequest {
+                name: "save-hook".into(),
+                url: "https://example.com/save".into(),
                 events: vec!["active".into()],
-            }),
-            webhooks: None,
+                secret: None,
+            }]),
         };
         let _ = update_notifications(State(state.clone()), Json(req))
             .await
             .unwrap();
         let loaded = crate::config::load(state.config_path.to_str().unwrap()).unwrap();
-        let discord = loaded.notifications.discord.unwrap();
+        assert_eq!(loaded.notifications.webhooks.len(), 1);
         assert_eq!(
-            discord.webhook_url,
-            "https://discord.com/api/webhooks/save-test"
+            loaded.notifications.webhooks[0].url,
+            "https://example.com/save"
         );
     }
 
@@ -351,10 +278,6 @@ mod tests {
     #[test]
     fn test_to_response_with_all() {
         let config = crate::config::NotificationsConfig {
-            discord: Some(crate::config::DiscordWebhookConfig {
-                webhook_url: "https://test.com".into(),
-                events: vec!["killed".into()],
-            }),
             webhooks: vec![crate::config::WebhookEndpointConfig {
                 name: "hook".into(),
                 url: "https://hook.com".into(),
@@ -364,9 +287,6 @@ mod tests {
             ..Default::default()
         };
         let resp = to_response(&config);
-        let d = resp.discord.unwrap();
-        assert_eq!(d.webhook_url, "https://test.com");
-        assert_eq!(d.events, vec!["killed"]);
         assert_eq!(resp.webhooks.len(), 1);
         assert!(resp.webhooks[0].has_secret);
     }
