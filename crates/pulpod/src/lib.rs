@@ -428,37 +428,49 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         | pulpo_common::auth::BindMode::Container => {}
     }
 
-    // Build the event sinks (webhooks + web-push) and run a single dispatcher
-    // loop that fans canonical events out to every sink whose filter admits them.
-    let mut sinks: Vec<notifications::EventSink> = Vec::new();
-    for webhook_config in &config.notifications.webhooks {
-        info!(webhook = %webhook_config.name, "Webhook sink enabled");
-        sinks.push(notifications::EventSink::Webhook(
-            notifications::webhook::WebhookSink::new(webhook_config.clone()),
-        ));
+    // Event forwarding: a single dispatcher converts bus events to the canonical
+    // envelope and routes them — webhooks through the durable SQLite outbox
+    // (delivered by a separate worker with retry + backoff, surviving restarts),
+    // web-push inline best-effort. The outbox worker also drains any rows left
+    // pending from before a restart, which is the durability guarantee.
+    let webhooks = config.notifications.webhooks.clone();
+    for webhook_config in &webhooks {
+        info!(webhook = %webhook_config.name, "Webhook endpoint enabled (durable outbox)");
     }
-    if !config.notifications.vapid.private_key.is_empty()
+    let web_push = if !config.notifications.vapid.private_key.is_empty()
         && !config.notifications.vapid.public_key.is_empty()
     {
         info!("Web Push sink enabled");
-        sinks.push(notifications::EventSink::WebPush(
-            notifications::web_push::WebPushSink::new(
-                store.clone(),
-                config.notifications.vapid.private_key.clone(),
-            ),
-        ));
-    }
-    if !sinks.is_empty() {
+        Some(notifications::web_push::WebPushSink::new(
+            store.clone(),
+            config.notifications.vapid.private_key.clone(),
+        ))
+    } else {
+        None
+    };
+    if !webhooks.is_empty() || web_push.is_some() {
         let dispatcher_rx = event_tx.subscribe();
         let (dispatcher_shutdown_tx, dispatcher_shutdown_rx) = watch::channel(false);
         tokio::spawn(notifications::run_dispatcher_loop(
-            sinks,
+            store.clone(),
+            webhooks.clone(),
+            web_push,
             config.node.name.clone(),
             dispatcher_rx,
             dispatcher_shutdown_rx,
         ));
         shutdown_handle.add_sender(dispatcher_shutdown_tx);
         info!("Event dispatcher started");
+    }
+    if !webhooks.is_empty() {
+        let (outbox_shutdown_tx, outbox_shutdown_rx) = watch::channel(false);
+        tokio::spawn(notifications::outbox::run_outbox_worker(
+            store.clone(),
+            webhooks,
+            outbox_shutdown_rx,
+        ));
+        shutdown_handle.add_sender(outbox_shutdown_tx);
+        info!("Webhook outbox worker started");
     }
 
     #[cfg(not(coverage))]
