@@ -73,6 +73,22 @@ Auth rules:
 | `command` | string | — | Shell command to run (e.g. `"claude -p 'review code'"`) |
 | `secrets` | string[] | `[]` | Stored secret names to inject when the ink is used |
 
+## `[plans.<name>]`
+
+Per-plan quota estimates, keyed by the plan name in a session's `auth_plan` (e.g. `max`,
+`pro`). Anthropic does not publish subscription token allowances, so Claude "% of weekly
+cap" and time-to-cap in `pulpo usage` are shown **only** when you supply an estimate here.
+Codex quota is read exactly from the agent and needs no configuration.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `weekly_token_allowance` | integer | — | Estimated weekly token allowance for the plan |
+
+```toml
+[plans.max]
+weekly_token_allowance = 500_000_000
+```
+
 ## `[peers]` / `[peers.<name>]`
 
 Short form:

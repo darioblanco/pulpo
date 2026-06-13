@@ -13,6 +13,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod projection;
 
 use chrono::{DateTime, TimeDelta, Utc};
 use pulpo_common::session::Session;

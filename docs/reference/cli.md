@@ -12,6 +12,7 @@ pulpo stop <NAME>                         Stop a running session
 pulpo cleanup                             Remove all stopped and lost sessions
 pulpo resume <NAME>                       Resume a lost or ready session (auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions
+pulpo usage                               Show token/cost burn rate and projected spend
 pulpo nodes                               List known nodes/peers
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
 pulpo ink <SUBCOMMAND>                    Manage ink presets (reusable command templates)

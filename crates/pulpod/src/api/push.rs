@@ -99,6 +99,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig {
                 vapid: VapidConfig {
                     private_key: private_key.into(),

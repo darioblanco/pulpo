@@ -491,6 +491,54 @@ pub struct ListSessionsQuery {
     pub order: Option<String>,
 }
 
+/// Burn rate, projected spend, and exact-quota passthrough for one session.
+/// Burn rate is the session-lifetime average (cumulative usage ÷ age).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionProjection {
+    pub session_id: String,
+    pub session_name: String,
+    /// `claude-jsonl` / `codex-jsonl`, or `None` when totals came from output scraping.
+    pub usage_source: Option<String>,
+    pub auth_provider: Option<String>,
+    pub auth_plan: Option<String>,
+    pub auth_email: Option<String>,
+    pub total_tokens: u64,
+    pub cost_usd: Option<f64>,
+    pub elapsed_secs: i64,
+    pub cost_per_hour: Option<f64>,
+    pub tokens_per_hour: Option<f64>,
+    /// Codex only — exact subscription quota, surfaced as the agent reported it.
+    pub quota_used_percent: Option<f64>,
+    pub quota_resets_at: Option<i64>,
+    /// Claude only, and only when a `[plans]` allowance is configured — estimated.
+    pub allowance_tokens: Option<u64>,
+    pub allowance_used_percent: Option<f64>,
+    pub secs_to_allowance: Option<i64>,
+}
+
+/// Aggregated burn across the sessions of one account (provider + plan + email).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AccountRollup {
+    pub provider: Option<String>,
+    pub plan: Option<String>,
+    pub email: Option<String>,
+    pub session_count: u32,
+    pub total_tokens: u64,
+    pub total_cost_usd: Option<f64>,
+    pub cost_per_hour: Option<f64>,
+    /// Highest exact quota % seen across the account's Codex sessions.
+    pub max_quota_used_percent: Option<f64>,
+}
+
+/// `GET /api/v1/usage/projection` — per-session projections plus account rollups.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsageProjectionResponse {
+    pub node_name: String,
+    pub generated_at: String,
+    pub sessions: Vec<SessionProjection>,
+    pub accounts: Vec<AccountRollup>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

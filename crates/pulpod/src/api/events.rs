@@ -63,6 +63,7 @@ mod tests {
                 peers: HashMap::new(),
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
+                plans: std::collections::HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
