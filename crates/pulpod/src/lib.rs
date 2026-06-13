@@ -428,38 +428,37 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         | pulpo_common::auth::BindMode::Container => {}
     }
 
-    // Start generic webhook notification loops
+    // Build the event sinks (webhooks + web-push) and run a single dispatcher
+    // loop that fans canonical events out to every sink whose filter admits them.
+    let mut sinks: Vec<notifications::EventSink> = Vec::new();
     for webhook_config in &config.notifications.webhooks {
-        let notifier = notifications::webhook::WebhookNotifier::new(webhook_config.clone());
-        let webhook_rx = event_tx.subscribe();
-        let (webhook_shutdown_tx, webhook_shutdown_rx) = watch::channel(false);
-        let name = webhook_config.name.clone();
-        tokio::spawn(notifications::webhook::run_notification_loop(
-            notifier,
-            webhook_rx,
-            webhook_shutdown_rx,
+        info!(webhook = %webhook_config.name, "Webhook sink enabled");
+        sinks.push(notifications::EventSink::Webhook(
+            notifications::webhook::WebhookSink::new(webhook_config.clone()),
         ));
-        shutdown_handle.add_sender(webhook_shutdown_tx);
-        info!(webhook = %name, "Webhook notifications enabled");
     }
-
-    // Start Web Push notification loop (always enabled when VAPID keys are present)
     if !config.notifications.vapid.private_key.is_empty()
         && !config.notifications.vapid.public_key.is_empty()
     {
-        let notifier = notifications::web_push::WebPushNotifier::new(
-            store.clone(),
-            config.notifications.vapid.private_key.clone(),
-        );
-        let push_rx = event_tx.subscribe();
-        let (push_shutdown_tx, push_shutdown_rx) = watch::channel(false);
-        tokio::spawn(notifications::web_push::run_notification_loop(
-            notifier,
-            push_rx,
-            push_shutdown_rx,
+        info!("Web Push sink enabled");
+        sinks.push(notifications::EventSink::WebPush(
+            notifications::web_push::WebPushSink::new(
+                store.clone(),
+                config.notifications.vapid.private_key.clone(),
+            ),
         ));
-        shutdown_handle.add_sender(push_shutdown_tx);
-        info!("Web Push notifications enabled");
+    }
+    if !sinks.is_empty() {
+        let dispatcher_rx = event_tx.subscribe();
+        let (dispatcher_shutdown_tx, dispatcher_shutdown_rx) = watch::channel(false);
+        tokio::spawn(notifications::run_dispatcher_loop(
+            sinks,
+            config.node.name.clone(),
+            dispatcher_rx,
+            dispatcher_shutdown_rx,
+        ));
+        shutdown_handle.add_sender(dispatcher_shutdown_tx);
+        info!("Event dispatcher started");
     }
 
     #[cfg(not(coverage))]

@@ -1,22 +1,25 @@
 use hmac::{Hmac, Mac};
-use pulpo_common::event::{PulpoEvent, SessionEvent};
+use pulpo_common::event::Event;
 use sha2::Sha256;
 use tracing::{error, info};
 
 use crate::config::WebhookEndpointConfig;
 
-/// Sends generic webhook notifications for session events.
-pub struct WebhookNotifier {
+/// Emits the canonical [`Event`] envelope to a configured webhook endpoint.
+///
+/// Posts the locked webhook message contract (see ROADMAP "Webhook message
+/// contract"): signed JSON body plus `X-Pulpo-*` routing headers. Lifecycle and
+/// usage-alert events both flow here; the universal `type.subtype`/severity
+/// routing arrives in a later step.
+pub struct WebhookSink {
     config: WebhookEndpointConfig,
     client: reqwest::Client,
 }
 
-/// Build the JSON payload for a generic webhook — just the `SessionEvent` as-is.
-pub fn build_webhook_payload(event: &SessionEvent) -> serde_json::Value {
-    serde_json::to_value(event).unwrap_or_default()
-}
-
-/// Compute HMAC-SHA256 signature for a payload body.
+/// Compute the `X-Pulpo-Signature` value: `sha256=<hex HMAC-SHA256(body, secret)>`.
+///
+/// Matches the contrib example consumer, which recomputes the HMAC over the raw
+/// request body and compares constant-time.
 pub fn compute_signature(secret: &str, body: &[u8]) -> String {
     let mut mac =
         Hmac::<Sha256>::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
@@ -25,13 +28,16 @@ pub fn compute_signature(secret: &str, body: &[u8]) -> String {
     format!("sha256={}", hex::encode(result.into_bytes()))
 }
 
-/// Returns whether the notifier should send a notification for the given status.
+/// Returns whether the endpoint's status filter admits the given lifecycle status.
+///
+/// An empty filter admits everything. The filter only applies to `lifecycle`
+/// events — usage alerts are always admitted (see [`WebhookSink::wants`]).
 pub fn should_notify(config: &WebhookEndpointConfig, status: &str) -> bool {
     config.events.is_empty() || config.events.iter().any(|e| e == status)
 }
 
-impl WebhookNotifier {
-    /// Create a new `WebhookNotifier` from config.
+impl WebhookSink {
+    /// Create a new `WebhookSink` from config.
     pub fn new(config: WebhookEndpointConfig) -> Self {
         Self {
             config,
@@ -39,15 +45,45 @@ impl WebhookNotifier {
         }
     }
 
-    /// Send a session event to the webhook endpoint.
-    pub async fn send(&self, event: &SessionEvent) -> Result<(), reqwest::Error> {
-        let payload = build_webhook_payload(event);
-        let body = serde_json::to_vec(&payload).unwrap_or_default();
+    /// Sink name (the endpoint's configured name).
+    pub fn name(&self) -> &str {
+        &self.config.name
+    }
+
+    /// Whether this endpoint wants the given canonical event.
+    ///
+    /// Lifecycle events respect the per-endpoint status filter (mapped onto the
+    /// event subtype). Usage alerts are always delivered so cost/budget alerts
+    /// reach webhooks. Other event types pass through (no filter built yet).
+    pub fn wants(&self, event: &Event) -> bool {
+        match event.event_type.as_str() {
+            "lifecycle" => should_notify(&self.config, &event.subtype),
+            // "usage_alert" and any future type pass through; per-endpoint
+            // type.subtype/severity routing is a later step.
+            _ => true,
+        }
+    }
+
+    /// POST the canonical [`Event`] JSON to the endpoint. Best-effort; logs on failure.
+    pub async fn deliver(&self, event: &Event) {
+        if let Err(e) = self.send(event).await {
+            error!(
+                webhook = %self.config.name,
+                error = %e,
+                "Webhook delivery failed"
+            );
+        }
+    }
+
+    /// Send the canonical event to the webhook endpoint.
+    async fn send(&self, event: &Event) -> Result<(), reqwest::Error> {
+        let body = serde_json::to_vec(event).unwrap_or_default();
+        let event_header = format!("{}.{}", event.event_type, event.subtype);
 
         info!(
             webhook = %self.config.name,
-            session = %event.session_name,
-            status = %event.status,
+            event = %event_header,
+            severity = %event.severity,
             "Sending webhook notification"
         );
 
@@ -55,7 +91,9 @@ impl WebhookNotifier {
             .client
             .post(&self.config.url)
             .header("Content-Type", "application/json")
-            .header("X-Pulpo-Event", &event.status);
+            .header("User-Agent", concat!("pulpo/", env!("CARGO_PKG_VERSION")))
+            .header("X-Pulpo-Event", &event_header)
+            .header("X-Pulpo-Event-Id", &event.event_id);
 
         if let Some(secret) = &self.config.secret {
             let sig = compute_signature(secret, &body);
@@ -67,60 +105,10 @@ impl WebhookNotifier {
     }
 }
 
-/// Run the notification loop for a generic webhook endpoint.
-pub async fn run_notification_loop(
-    notifier: WebhookNotifier,
-    mut rx: tokio::sync::broadcast::Receiver<PulpoEvent>,
-    mut shutdown: tokio::sync::watch::Receiver<bool>,
-) {
-    loop {
-        tokio::select! {
-            result = rx.recv() => {
-                match result {
-                    Ok(event) => match event {
-                        PulpoEvent::Session(ref se) => {
-                            if should_notify(&notifier.config, &se.status)
-                                && let Err(e) = notifier.send(se).await
-                            {
-                                error!(
-                                    webhook = %notifier.config.name,
-                                    error = %e,
-                                    "Webhook notification failed"
-                                );
-                            }
-                        }
-                        // TODO(M1b): route session-deleted + usage alerts to external channels
-
-                        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {}
-                    },
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!(
-                            webhook = %notifier.config.name,
-                            missed = n,
-                            "Webhook notifier lagged, skipping events"
-                        );
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        info!(
-                            webhook = %notifier.config.name,
-                            "Event bus closed, stopping webhook notifier"
-                        );
-                        break;
-                    }
-                }
-            }
-            _ = shutdown.changed() => {
-                info!(webhook = %notifier.config.name, "Webhook notifier shutting down");
-                break;
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notifications::test_event;
+    use pulpo_common::event::{EventSessionRef, PulpoEvent};
 
     fn test_config() -> WebhookEndpointConfig {
         WebhookEndpointConfig {
@@ -131,58 +119,40 @@ mod tests {
         }
     }
 
-    // --- build_webhook_payload tests ---
-
-    #[test]
-    fn test_build_payload_contains_all_fields() {
-        let event = test_event("active");
-        let payload = build_webhook_payload(&event);
-        assert_eq!(payload["session_id"], "abc-123");
-        assert_eq!(payload["session_name"], "my-session");
-        assert_eq!(payload["status"], "active");
-        assert_eq!(payload["node_name"], "node-1");
-        assert_eq!(payload["timestamp"], "2026-01-01T00:00:00Z");
+    fn lifecycle_event(subtype: &str) -> Event {
+        Event {
+            schema_version: 1,
+            event_id: "evt-1".into(),
+            event_type: "lifecycle".into(),
+            subtype: subtype.into(),
+            severity: "info".into(),
+            occurred_at: "2026-06-13T12:00:00Z".into(),
+            node: "node-1".into(),
+            session: Some(EventSessionRef {
+                id: "abc-123".into(),
+                name: "my-session".into(),
+                status: subtype.into(),
+                ..Default::default()
+            }),
+            payload: serde_json::json!({}),
+        }
     }
 
-    #[test]
-    fn test_build_payload_with_optionals() {
-        let mut event = test_event("active");
-        event.previous_status = Some("lost".into());
-        event.output_snippet = Some("hello".into());
-        let payload = build_webhook_payload(&event);
-        assert_eq!(payload["previous_status"], "lost");
-        assert_eq!(payload["output_snippet"], "hello");
-    }
-
-    #[test]
-    fn test_build_payload_with_enrichment_fields() {
-        let mut event = test_event("ready");
-        event.git_branch = Some("main".into());
-        event.git_commit = Some("abc1234".into());
-        event.git_insertions = Some(42);
-        event.git_deletions = Some(7);
-        event.git_files_changed = Some(3);
-        event.pr_url = Some("https://github.com/org/repo/pull/1".into());
-        event.error_status = Some("Lint warning".into());
-        let payload = build_webhook_payload(&event);
-        assert_eq!(payload["git_branch"], "main");
-        assert_eq!(payload["git_commit"], "abc1234");
-        assert_eq!(payload["git_insertions"], 42);
-        assert_eq!(payload["git_deletions"], 7);
-        assert_eq!(payload["git_files_changed"], 3);
-        assert_eq!(payload["pr_url"], "https://github.com/org/repo/pull/1");
-        assert_eq!(payload["error_status"], "Lint warning");
-    }
-
-    #[test]
-    fn test_build_payload_enrichment_fields_omitted_when_none() {
-        let event = test_event("active");
-        let payload = build_webhook_payload(&event);
-        assert!(payload.get("git_branch").is_none());
-        assert!(payload.get("git_commit").is_none());
-        assert!(payload.get("git_insertions").is_none());
-        assert!(payload.get("pr_url").is_none());
-        assert!(payload.get("error_status").is_none());
+    fn usage_alert_event() -> Event {
+        Event::from_pulpo_event(
+            &PulpoEvent::UsageAlert(pulpo_common::event::UsageAlertEvent {
+                session_id: "s".into(),
+                session_name: "n".into(),
+                node_name: "x".into(),
+                alert_kind: "budget_threshold".into(),
+                message: "m".into(),
+                cost_usd: Some(0.85),
+                budget_usd: Some(1.0),
+                timestamp: "2026-06-13T12:00:00Z".into(),
+            }),
+            "node-1",
+        )
+        .unwrap()
     }
 
     // --- compute_signature tests ---
@@ -191,7 +161,6 @@ mod tests {
     fn test_compute_signature_format() {
         let sig = compute_signature("my-secret", b"hello");
         assert!(sig.starts_with("sha256="));
-        // Known HMAC-SHA256 of "hello" with key "my-secret"
         assert_eq!(sig.len(), 7 + 64); // "sha256=" + 64 hex chars
     }
 
@@ -216,6 +185,16 @@ mod tests {
         assert_ne!(sig1, sig2);
     }
 
+    #[test]
+    fn test_compute_signature_known_vector() {
+        // HMAC-SHA256("hello", key="key") — fixed reference value (lowercase hex).
+        let sig = compute_signature("key", b"hello");
+        assert_eq!(
+            sig,
+            "sha256=9307b3b915efb5171ff14d8cb55fbcc798c6c0ef1456d66ded1a6aa723a58b7b"
+        );
+    }
+
     // --- should_notify tests ---
 
     #[test]
@@ -236,95 +215,168 @@ mod tests {
         assert!(should_notify(&config, "ready"));
     }
 
-    // --- WebhookNotifier tests ---
+    // --- wants tests ---
 
     #[test]
-    fn test_notifier_new() {
-        let notifier = WebhookNotifier::new(test_config());
-        assert_eq!(notifier.config.name, "test-hook");
-        assert_eq!(notifier.config.url, "https://example.com/hook");
+    fn test_wants_lifecycle_respects_filter() {
+        let sink = WebhookSink::new(WebhookEndpointConfig {
+            events: vec!["stopped".into()],
+            ..test_config()
+        });
+        assert!(!sink.wants(&lifecycle_event("active")));
+        assert!(sink.wants(&lifecycle_event("stopped")));
     }
 
-    // --- send tests ---
+    #[test]
+    fn test_wants_lifecycle_empty_filter() {
+        let sink = WebhookSink::new(test_config());
+        assert!(sink.wants(&lifecycle_event("active")));
+    }
+
+    #[test]
+    fn test_wants_usage_alert_always() {
+        // Even with a status filter, usage alerts must reach the webhook.
+        let sink = WebhookSink::new(WebhookEndpointConfig {
+            events: vec!["stopped".into()],
+            ..test_config()
+        });
+        assert!(sink.wants(&usage_alert_event()));
+    }
+
+    #[test]
+    fn test_wants_unknown_type_passes() {
+        let sink = WebhookSink::new(WebhookEndpointConfig {
+            events: vec!["stopped".into()],
+            ..test_config()
+        });
+        let mut event = lifecycle_event("node_down");
+        event.event_type = "fleet".into();
+        assert!(sink.wants(&event));
+    }
+
+    // --- WebhookSink basics ---
+
+    #[test]
+    fn test_sink_new_and_name() {
+        let sink = WebhookSink::new(test_config());
+        assert_eq!(sink.name(), "test-hook");
+        assert_eq!(sink.config.url, "https://example.com/hook");
+    }
+
+    // --- send / deliver tests ---
 
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
-    #[tokio::test]
-    async fn test_send_success_without_secret() {
-        let captured_headers: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
-        let headers_clone = captured_headers.clone();
+    type CapturedRequest = (Vec<(String, String)>, String);
+
+    async fn capture_server() -> (String, Arc<Mutex<Vec<CapturedRequest>>>) {
+        let captured: Arc<Mutex<Vec<CapturedRequest>>> = Arc::new(Mutex::new(Vec::new()));
+        let captured_clone = captured.clone();
 
         let app = axum::Router::new().route(
             "/hook",
-            axum::routing::post(move |headers: axum::http::HeaderMap| async move {
-                let mut captured = headers_clone.lock().await;
-                for (k, v) in &headers {
-                    captured.push((k.to_string(), v.to_str().unwrap_or("").to_string()));
-                }
-                axum::http::StatusCode::OK
-            }),
+            axum::routing::post(
+                move |headers: axum::http::HeaderMap, body: String| async move {
+                    let mut hdrs = Vec::new();
+                    for (k, v) in &headers {
+                        hdrs.push((k.to_string(), v.to_str().unwrap_or("").to_string()));
+                    }
+                    captured_clone.lock().await.push((hdrs, body));
+                    axum::http::StatusCode::OK
+                },
+            ),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(axum::serve(listener, app).into_future());
+        (format!("http://{addr}/hook"), captured)
+    }
 
-        let config = WebhookEndpointConfig {
-            url: format!("http://{addr}/hook"),
-            ..test_config()
-        };
-        let notifier = WebhookNotifier::new(config);
-        let result = notifier.send(&test_event("active")).await;
-        assert!(result.is_ok());
-
-        let headers = captured_headers.lock().await;
-        let has_event = headers
-            .iter()
-            .any(|(k, v)| k == "x-pulpo-event" && v == "active");
-        let has_sig = headers.iter().any(|(k, _)| k == "x-pulpo-signature");
-        drop(headers);
-        assert!(has_event, "Missing X-Pulpo-Event header");
-        assert!(!has_sig, "Should not have signature without secret");
+    /// Snapshot the captured requests, releasing the guard before assertions.
+    async fn captured_requests(
+        captured: &Arc<Mutex<Vec<CapturedRequest>>>,
+    ) -> Vec<CapturedRequest> {
+        captured.lock().await.clone()
     }
 
     #[tokio::test]
-    async fn test_send_success_with_secret() {
-        let captured_headers: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
-        let headers_clone = captured_headers.clone();
+    async fn test_send_success_without_secret_posts_envelope() {
+        let (url, captured) = capture_server().await;
+        let sink = WebhookSink::new(WebhookEndpointConfig {
+            url,
+            ..test_config()
+        });
+        sink.send(&lifecycle_event("active")).await.unwrap();
 
-        let app = axum::Router::new().route(
-            "/hook",
-            axum::routing::post(move |headers: axum::http::HeaderMap| async move {
-                let mut captured = headers_clone.lock().await;
-                for (k, v) in &headers {
-                    captured.push((k.to_string(), v.to_str().unwrap_or("").to_string()));
-                }
-                axum::http::StatusCode::OK
-            }),
+        let reqs = captured_requests(&captured).await;
+        let (headers, body) = &reqs[0];
+        // Canonical envelope body.
+        let json: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(json["type"], "lifecycle");
+        assert_eq!(json["subtype"], "active");
+        assert_eq!(json["session"]["name"], "my-session");
+        // Routing headers.
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "x-pulpo-event" && v == "lifecycle.active")
         );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(axum::serve(listener, app).into_future());
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "x-pulpo-event-id" && v == "evt-1")
+        );
+        assert!(
+            headers
+                .iter()
+                .any(|(k, v)| k == "user-agent" && v.starts_with("pulpo/"))
+        );
+        assert!(!headers.iter().any(|(k, _)| k == "x-pulpo-signature"));
+    }
 
-        let config = WebhookEndpointConfig {
-            url: format!("http://{addr}/hook"),
+    #[tokio::test]
+    async fn test_send_success_with_secret_signs_body() {
+        let (url, captured) = capture_server().await;
+        let sink = WebhookSink::new(WebhookEndpointConfig {
+            url,
             secret: Some("my-secret".into()),
             ..test_config()
-        };
-        let notifier = WebhookNotifier::new(config);
-        let result = notifier.send(&test_event("active")).await;
-        assert!(result.is_ok());
+        });
+        sink.send(&lifecycle_event("active")).await.unwrap();
 
-        let sig = captured_headers
-            .lock()
-            .await
+        let reqs = captured_requests(&captured).await;
+        let (headers, body) = &reqs[0];
+        let sig = headers
             .iter()
             .find(|(k, _)| k == "x-pulpo-signature")
-            .map(|(_, v)| v.clone());
-        assert!(sig.is_some(), "Missing X-Pulpo-Signature header");
+            .map(|(_, v)| v.clone())
+            .expect("missing signature header");
+        // Signature must verify against the exact raw body the server received.
+        let expected = compute_signature("my-secret", body.as_bytes());
+        assert_eq!(sig, expected);
+        assert!(sig.starts_with("sha256="));
+    }
+
+    #[tokio::test]
+    async fn test_send_usage_alert_envelope() {
+        let (url, captured) = capture_server().await;
+        let sink = WebhookSink::new(WebhookEndpointConfig {
+            url,
+            ..test_config()
+        });
+        sink.send(&usage_alert_event()).await.unwrap();
+
+        let reqs = captured_requests(&captured).await;
+        let (headers, body) = &reqs[0];
+        let json: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(json["type"], "usage_alert");
+        assert_eq!(json["subtype"], "budget_threshold");
+        assert_eq!(json["payload"]["cost_usd"], 0.85);
         assert!(
-            sig.unwrap().starts_with("sha256="),
-            "Signature should start with sha256="
+            headers
+                .iter()
+                .any(|(k, v)| k == "x-pulpo-event" && v == "usage_alert.budget_threshold")
         );
     }
 
@@ -338,131 +390,31 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(axum::serve(listener, app).into_future());
 
-        let config = WebhookEndpointConfig {
+        let sink = WebhookSink::new(WebhookEndpointConfig {
             url: format!("http://{addr}/hook"),
             ..test_config()
-        };
-        let notifier = WebhookNotifier::new(config);
-        let result = notifier.send(&test_event("active")).await;
-        assert!(result.is_err());
-    }
-
-    // --- run_notification_loop tests ---
-
-    #[tokio::test]
-    async fn test_notification_loop_shutdown() {
-        let notifier = WebhookNotifier::new(test_config());
-        let (event_tx, _) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
-        let rx = event_tx.subscribe();
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        shutdown_tx.send(true).unwrap();
-
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            run_notification_loop(notifier, rx, shutdown_rx),
-        )
-        .await
-        .expect("should exit on shutdown");
+        });
+        assert!(sink.send(&lifecycle_event("active")).await.is_err());
     }
 
     #[tokio::test]
-    async fn test_notification_loop_channel_closed() {
-        let notifier = WebhookNotifier::new(test_config());
-        let (event_tx, rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
-        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        drop(event_tx);
-
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            run_notification_loop(notifier, rx, shutdown_rx),
-        )
-        .await
-        .expect("should exit when channel closes");
-    }
-
-    #[tokio::test]
-    async fn test_notification_loop_filtered_event() {
-        let config = WebhookEndpointConfig {
-            events: vec!["stopped".into()],
-            ..test_config()
-        };
-        let notifier = WebhookNotifier::new(config);
-        let (event_tx, rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        event_tx
-            .send(PulpoEvent::Session(test_event("active")))
-            .unwrap();
-
-        let handle = tokio::spawn(run_notification_loop(notifier, rx, shutdown_rx));
-
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        shutdown_tx.send(true).unwrap();
-
-        tokio::time::timeout(std::time::Duration::from_secs(2), handle)
-            .await
-            .expect("should finish")
-            .expect("should not panic");
-    }
-
-    #[tokio::test]
-    async fn test_notification_loop_send_error() {
-        let config = WebhookEndpointConfig {
+    async fn test_deliver_logs_on_failure() {
+        // Unreachable endpoint — deliver swallows the error (best-effort).
+        let sink = WebhookSink::new(WebhookEndpointConfig {
             url: "http://127.0.0.1:1/hook".into(),
             ..test_config()
-        };
-        let notifier = WebhookNotifier::new(config);
-        let (event_tx, rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        event_tx
-            .send(PulpoEvent::Session(test_event("active")))
-            .unwrap();
-
-        let handle = tokio::spawn(run_notification_loop(notifier, rx, shutdown_rx));
-
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        shutdown_tx.send(true).unwrap();
-
-        tokio::time::timeout(std::time::Duration::from_secs(5), handle)
-            .await
-            .expect("should finish")
-            .expect("should not panic");
+        });
+        sink.deliver(&lifecycle_event("active")).await;
     }
 
     #[tokio::test]
-    async fn test_notification_loop_lagged() {
-        let config = WebhookEndpointConfig {
-            events: vec!["stopped".into()],
+    async fn test_deliver_success() {
+        let (url, captured) = capture_server().await;
+        let sink = WebhookSink::new(WebhookEndpointConfig {
+            url,
             ..test_config()
-        };
-        let notifier = WebhookNotifier::new(config);
-        let (event_tx, rx) = tokio::sync::broadcast::channel::<PulpoEvent>(1);
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        for i in 0..5 {
-            let _ = event_tx.send(PulpoEvent::Session(SessionEvent {
-                session_id: format!("id-{i}"),
-                session_name: "s".into(),
-                status: "active".into(),
-                previous_status: None,
-                node_name: "n".into(),
-                output_snippet: None,
-                timestamp: "t".into(),
-                ..Default::default()
-            }));
-        }
-
-        let handle = tokio::spawn(run_notification_loop(notifier, rx, shutdown_rx));
-
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        shutdown_tx.send(true).unwrap();
-
-        tokio::time::timeout(std::time::Duration::from_secs(2), handle)
-            .await
-            .expect("should finish")
-            .expect("should not panic");
+        });
+        sink.deliver(&lifecycle_event("stopped")).await;
+        assert_eq!(captured_requests(&captured).await.len(), 1);
     }
 }
