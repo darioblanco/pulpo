@@ -19,6 +19,7 @@ pub mod secrets;
 mod session_remote;
 pub mod sessions;
 pub mod static_files;
+pub mod usage;
 pub mod watchdog;
 pub mod ws;
 
@@ -227,6 +228,7 @@ mod tests {
 
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -257,6 +259,7 @@ mod tests {
 
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -296,6 +299,7 @@ mod tests {
 
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -344,6 +348,7 @@ mod tests {
 
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -382,6 +387,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -427,6 +433,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -467,6 +474,7 @@ mod tests {
 
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),

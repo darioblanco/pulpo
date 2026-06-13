@@ -20,6 +20,8 @@ pub struct Config {
     #[serde(default)]
     pub inks: HashMap<String, InkConfig>,
     #[serde(default)]
+    pub plans: HashMap<String, PlanConfig>,
+    #[serde(default)]
     pub notifications: NotificationsConfig,
     /// Retired `[docker]` session-runtime configuration.
     /// The docker session runtime was removed — this field only exists so
@@ -73,6 +75,20 @@ pub enum NodeRole {
     Controller,
     /// Managed node: pushes events to a controller.
     Node,
+}
+
+/// Per-plan quota configuration.
+///
+/// Anthropic does not publish subscription token allowances, so Claude "% of weekly
+/// cap" / time-to-cap projections are computed only when the operator supplies an
+/// estimate here. Keyed by the plan name reported in session `auth_plan` metadata
+/// (e.g. `max`, `pro`).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanConfig {
+    /// Estimated weekly token allowance for this plan. `None` disables %-of-cap.
+    #[serde(default)]
+    pub weekly_token_allowance: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -528,6 +544,7 @@ pub fn load(path: &str) -> Result<Config> {
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: built_in_inks(),
+            plans: HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -656,6 +673,7 @@ finished_ttl_secs = 60
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -682,6 +700,7 @@ finished_ttl_secs = 60
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -816,6 +835,7 @@ name = "test"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -840,6 +860,7 @@ name = "test"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -869,6 +890,7 @@ name = "test"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -899,6 +921,7 @@ name = "test"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -923,6 +946,7 @@ name = "test"
 
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
+                plans: std::collections::HashMap::new(),
                 notifications: NotificationsConfig::default(),
                 docker: None,
                 controller: ControllerConfig::default(),
@@ -949,6 +973,7 @@ name = "test"
 
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
+                plans: std::collections::HashMap::new(),
                 notifications: NotificationsConfig::default(),
                 docker: None,
                 controller: ControllerConfig::default(),
@@ -979,6 +1004,7 @@ name = "test"
 
                 watchdog: WatchdogConfig::default(),
                 inks: HashMap::new(),
+                plans: std::collections::HashMap::new(),
                 notifications: NotificationsConfig::default(),
                 docker: None,
                 controller: ControllerConfig::default(),
@@ -1004,6 +1030,7 @@ name = "test"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -1040,6 +1067,7 @@ name = "test"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -1112,6 +1140,7 @@ name = "test"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -1139,6 +1168,7 @@ name = "test"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -1208,6 +1238,7 @@ token = "my-secret-token"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -1278,6 +1309,7 @@ token = "peer-secret"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -1391,6 +1423,7 @@ breach_count = 5
                 waiting_patterns: Vec::new(),
             },
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -1601,6 +1634,7 @@ idle_action = "pause"
                 ..WatchdogConfig::default()
             },
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -1720,6 +1754,7 @@ command = "codex -p 'Do it'"
 
             watchdog: WatchdogConfig::default(),
             inks,
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -1831,6 +1866,7 @@ webhook_url = "https://discord.com/api/webhooks/456/def"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig {
                 discord: Some(DiscordWebhookConfig {
                     webhook_url: "https://discord.com/api/webhooks/789/xyz".into(),
@@ -1938,6 +1974,7 @@ url = "https://example.com"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig {
                 discord: None,
                 webhooks: vec![WebhookEndpointConfig {
@@ -2029,6 +2066,7 @@ name = "test"
 
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -2241,6 +2279,7 @@ command = "codex -p 'review'"
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -2267,6 +2306,7 @@ command = "codex -p 'review'"
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -2292,6 +2332,7 @@ command = "codex -p 'review'"
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -2323,6 +2364,7 @@ command = "codex -p 'review'"
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig {
                 vapid: VapidConfig {
                     private_key: "existing-private".into(),
@@ -2347,6 +2389,7 @@ command = "codex -p 'review'"
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -2375,6 +2418,7 @@ command = "codex -p 'review'"
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -2445,6 +2489,7 @@ name = "test"
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -2469,6 +2514,7 @@ name = "test"
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -2572,6 +2618,7 @@ port = 7433
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks,
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -2779,6 +2826,7 @@ enabled = true
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig {
@@ -2823,6 +2871,7 @@ enabled = true
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
@@ -2840,6 +2889,7 @@ enabled = true
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig {
@@ -2859,6 +2909,7 @@ enabled = true
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig {
@@ -2881,6 +2932,7 @@ enabled = true
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig {
@@ -2904,6 +2956,7 @@ enabled = true
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig {
@@ -2927,6 +2980,7 @@ enabled = true
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig {
@@ -2949,6 +3003,7 @@ enabled = true
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig {
@@ -2973,6 +3028,7 @@ enabled = true
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig {
@@ -2997,6 +3053,7 @@ enabled = true
             peers: HashMap::new(),
             watchdog: WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig {

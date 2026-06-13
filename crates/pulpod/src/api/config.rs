@@ -233,6 +233,7 @@ mod tests {
 
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
+                plans: std::collections::HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
@@ -267,6 +268,7 @@ mod tests {
 
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
+                plans: std::collections::HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
@@ -453,6 +455,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -713,6 +716,7 @@ mod tests {
                 );
                 m
             },
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig {
                 discord: Some(crate::config::DiscordWebhookConfig {
                     webhook_url: "https://discord.com/test".into(),
@@ -758,6 +762,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig {
                 discord: None,
                 webhooks: vec![
@@ -907,6 +912,7 @@ mod tests {
 
                 watchdog: crate::config::WatchdogConfig::default(),
                 inks: HashMap::new(),
+                plans: std::collections::HashMap::new(),
                 notifications: crate::config::NotificationsConfig::default(),
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),

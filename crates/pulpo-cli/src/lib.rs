@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use pulpo_common::api::{
     AuthTokenResponse, CleanupResponse, ConfigResponse, CreateSessionResponse, EnrollNodeRequest,
     EnrollNodeResponse, EnrolledNodesResponse, InterventionEventResponse, PeersResponse,
+    SessionProjection, UsageProjectionResponse,
 };
 #[cfg(test)]
 use pulpo_common::session::Runtime;
@@ -153,6 +154,9 @@ pub enum Commands {
         /// Session name or ID
         name: String,
     },
+
+    /// Show token/cost burn rate and projected spend for sessions on this node
+    Usage,
 
     /// Open the web dashboard in your browser
     Ui,
@@ -611,6 +615,88 @@ fn format_interventions(events: &[InterventionEventResponse]) -> String {
         lines.push(format!("{:<8} {:<20} {}", e.id, e.created_at, e.reason));
     }
     lines.join("\n")
+}
+
+/// Compact a token count: `1234` -> `1.2K`, `4_500_000` -> `4.5M`.
+#[allow(clippy::cast_precision_loss)]
+fn fmt_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+/// Format an optional dollar amount, or "-" when absent.
+fn fmt_cost(c: Option<f64>) -> String {
+    c.map_or_else(|| "-".into(), |v| format!("${v:.2}"))
+}
+
+/// Format a per-hour dollar rate, or "-" when absent.
+fn fmt_rate(c: Option<f64>) -> String {
+    c.map_or_else(|| "-".into(), |v| format!("${v:.2}/h"))
+}
+
+/// Format one session's quota column: exact Codex %, estimated Claude ~%, or "-".
+fn fmt_quota(s: &SessionProjection) -> String {
+    s.quota_used_percent.map_or_else(
+        || {
+            s.allowance_used_percent
+                .map_or_else(|| "-".into(), |pct| format!("~{pct:.0}%"))
+        },
+        |pct| format!("{pct:.0}%"),
+    )
+}
+
+/// Format the usage projection as session and account tables.
+fn format_usage_projection(p: &UsageProjectionResponse) -> String {
+    if p.sessions.is_empty() {
+        return "No sessions with usage data.".into();
+    }
+    let mut lines = vec![format!(
+        "{:<20} {:<8} {:>8} {:>8} {:>9} {:>6}",
+        "SESSION", "SOURCE", "TOKENS", "COST", "$/HR", "QUOTA"
+    )];
+    for s in &p.sessions {
+        let source = s
+            .usage_source
+            .as_deref()
+            .map_or("scraped", |src| src.strip_suffix("-jsonl").unwrap_or(src));
+        lines.push(format!(
+            "{:<20} {:<8} {:>8} {:>8} {:>9} {:>6}",
+            truncate(&s.session_name, 20),
+            source,
+            fmt_tokens(s.total_tokens),
+            fmt_cost(s.cost_usd),
+            fmt_rate(s.cost_per_hour),
+            fmt_quota(s),
+        ));
+    }
+
+    if !p.accounts.is_empty() {
+        lines.push(String::new());
+        lines.push("Accounts:".into());
+        for a in &p.accounts {
+            let who = a
+                .email
+                .clone()
+                .or_else(|| a.provider.clone())
+                .unwrap_or_else(|| "unknown".into());
+            lines.push(format!(
+                "  {:<24} {} sessions  {} tokens  {}",
+                who,
+                a.session_count,
+                fmt_tokens(a.total_tokens),
+                fmt_cost(a.total_cost_usd),
+            ));
+        }
+    }
+    lines.join(
+        "
+",
+    )
 }
 
 /// Build the command to open a URL in the default browser.
@@ -1962,6 +2048,19 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let text = ok_or_api_error(resp).await?;
             let events: Vec<InterventionEventResponse> = serde_json::from_str(&text)?;
             Ok(format_interventions(&events))
+        }
+        Commands::Usage => {
+            let resp = authed_get(
+                &client,
+                format!("{url}/api/v1/usage/projection"),
+                token.as_deref(),
+            )
+            .send()
+            .await
+            .map_err(|e| friendly_error(&e, node))?;
+            let text = ok_or_api_error(resp).await?;
+            let projection: UsageProjectionResponse = serde_json::from_str(&text)?;
+            Ok(format_usage_projection(&projection))
         }
         Commands::Ui => {
             let dashboard = base_url(node);
@@ -3854,6 +3953,99 @@ mod tests {
             &cli.command,
             Some(Commands::Interventions { name }) if name == "my-session"
         ));
+    }
+
+    fn sample_projection() -> SessionProjection {
+        SessionProjection {
+            session_id: "id".into(),
+            session_name: "my-task".into(),
+            usage_source: Some("claude-jsonl".into()),
+            auth_provider: Some("claude.ai".into()),
+            auth_plan: Some("max".into()),
+            auth_email: Some("a@x.com".into()),
+            total_tokens: 1_234_000,
+            cost_usd: Some(2.5),
+            elapsed_secs: 3600,
+            cost_per_hour: Some(2.5),
+            tokens_per_hour: Some(1_234_000.0),
+            quota_used_percent: None,
+            quota_resets_at: None,
+            allowance_tokens: Some(100_000_000),
+            allowance_used_percent: Some(1.2),
+            secs_to_allowance: None,
+        }
+    }
+
+    #[test]
+    fn test_fmt_tokens() {
+        assert_eq!(fmt_tokens(500), "500");
+        assert_eq!(fmt_tokens(1_500), "1.5K");
+        assert_eq!(fmt_tokens(4_500_000), "4.5M");
+    }
+
+    #[test]
+    fn test_fmt_cost_and_rate() {
+        assert_eq!(fmt_cost(None), "-");
+        assert_eq!(fmt_cost(Some(1.234)), "$1.23");
+        assert_eq!(fmt_rate(None), "-");
+        assert_eq!(fmt_rate(Some(2.0)), "$2.00/h");
+    }
+
+    #[test]
+    fn test_fmt_quota_codex_exact_claude_estimate_none() {
+        let mut s = sample_projection();
+        assert_eq!(fmt_quota(&s), "~1%"); // claude estimate marked with ~
+        s.allowance_used_percent = None;
+        assert_eq!(fmt_quota(&s), "-");
+        s.quota_used_percent = Some(42.0);
+        assert_eq!(fmt_quota(&s), "42%"); // codex exact, no ~
+    }
+
+    #[test]
+    fn test_format_usage_projection_empty() {
+        let resp = UsageProjectionResponse {
+            node_name: "n".into(),
+            generated_at: "t".into(),
+            sessions: vec![],
+            accounts: vec![],
+        };
+        assert_eq!(
+            format_usage_projection(&resp),
+            "No sessions with usage data."
+        );
+    }
+
+    #[test]
+    fn test_format_usage_projection_with_sessions_and_accounts() {
+        let resp = UsageProjectionResponse {
+            node_name: "n".into(),
+            generated_at: "t".into(),
+            sessions: vec![sample_projection()],
+            accounts: vec![pulpo_common::api::AccountRollup {
+                provider: Some("claude.ai".into()),
+                plan: Some("max".into()),
+                email: Some("a@x.com".into()),
+                session_count: 1,
+                total_tokens: 1_234_000,
+                total_cost_usd: Some(2.5),
+                cost_per_hour: Some(2.5),
+                max_quota_used_percent: None,
+            }],
+        };
+        let out = format_usage_projection(&resp);
+        assert!(out.contains("SESSION"));
+        assert!(out.contains("my-task"));
+        assert!(out.contains("claude")); // source suffix stripped
+        assert!(out.contains("1.2M"));
+        assert!(out.contains("$2.50"));
+        assert!(out.contains("Accounts:"));
+        assert!(out.contains("a@x.com"));
+    }
+
+    #[test]
+    fn test_cli_parse_usage() {
+        let cli = Cli::try_parse_from(["pulpo", "usage"]).unwrap();
+        assert!(matches!(&cli.command, Some(Commands::Usage)));
     }
 
     #[test]

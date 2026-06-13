@@ -26,6 +26,7 @@ use super::schedules;
 use super::secrets;
 use super::sessions;
 use super::static_files;
+use super::usage;
 use super::watchdog;
 use super::ws;
 
@@ -58,6 +59,7 @@ pub fn build(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/api/v1/health", get(health::check))
+        .route("/api/v1/usage/projection", get(usage::projection))
         .route("/api/v1/auth/token", get(auth::get_token))
         .route("/api/v1/auth/pairing-url", get(auth::get_pairing_url))
         .route("/api/v1/node", get(node::get_info))
@@ -194,6 +196,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -252,6 +255,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: inks.clone(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -651,6 +655,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -840,6 +845,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -968,6 +974,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -1197,6 +1204,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -1376,6 +1384,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -1477,6 +1486,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
@@ -1623,6 +1633,7 @@ mod tests {
             peers: HashMap::new(),
             watchdog: crate::config::WatchdogConfig::default(),
             inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig {
                 vapid: crate::config::VapidConfig {
                     private_key: "test-priv-key".into(),
