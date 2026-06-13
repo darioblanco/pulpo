@@ -15,6 +15,7 @@ use super::events;
 use super::fleet;
 use super::health;
 use super::inks;
+use super::metrics;
 use super::node;
 use super::notifications;
 use super::peers;
@@ -59,6 +60,7 @@ pub fn build(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/api/v1/health", get(health::check))
+        .route("/api/v1/metrics", get(metrics::metrics))
         .route("/api/v1/usage/projection", get(usage::projection))
         .route("/api/v1/auth/token", get(auth::get_token))
         .route("/api/v1/auth/pairing-url", get(auth::get_pairing_url))
@@ -200,6 +202,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -259,6 +262,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), inks, None).with_no_stale_grace();
@@ -659,6 +663,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -849,6 +854,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -979,6 +985,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(FailIsAliveBackend);
         let manager =
@@ -1214,6 +1221,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1394,6 +1402,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1496,6 +1505,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1648,6 +1658,7 @@ mod tests {
             },
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1759,5 +1770,86 @@ mod tests {
             }))
             .await;
         resp.assert_status(StatusCode::NO_CONTENT);
+    }
+
+    // -- Metrics endpoint integration tests --
+
+    async fn test_server_with_metrics_enabled() -> TestServer {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let config = Config {
+            node: NodeConfig {
+                name: "test-node".into(),
+                port: 7433,
+                data_dir: tmpdir.path().to_str().unwrap().into(),
+                ..NodeConfig::default()
+            },
+            auth: crate::config::AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: crate::config::WatchdogConfig::default(),
+            inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
+            notifications: crate::config::NotificationsConfig::default(),
+            docker: None,
+            controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig { enabled: true },
+        };
+        let backend = Arc::new(StubBackend);
+        let manager =
+            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let state = AppState::new(config, manager, peer_registry, store);
+        let app = build(state);
+        TestServer::new(app).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_metrics_disabled_returns_404() {
+        // Default config has metrics off → endpoint behaves as absent.
+        let server = test_server().await;
+        let resp = server.get("/api/v1/metrics").await;
+        resp.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_metrics_enabled_returns_text() {
+        let server = test_server_with_metrics_enabled().await;
+        let resp = server.get("/api/v1/metrics").await;
+        resp.assert_status_ok();
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "text/plain; version=0.0.4"
+        );
+        let body = resp.text();
+        assert!(body.contains("# TYPE pulpo_sessions gauge"));
+        assert!(body.contains("pulpo_sessions{status=\"active\"} 0"));
+        assert!(body.contains("pulpo_build_info{version="));
+    }
+
+    #[tokio::test]
+    async fn test_metrics_enabled_counts_sessions() {
+        let server = test_server_with_metrics_enabled().await;
+        server
+            .post("/api/v1/sessions")
+            .json(&serde_json::json!({
+                "name": "metrics-test",
+                "workdir": "/tmp",
+                "command": "test"
+            }))
+            .await;
+        let resp = server.get("/api/v1/metrics").await;
+        resp.assert_status_ok();
+        let body = resp.text();
+        // A freshly created session is active.
+        assert!(
+            body.contains("pulpo_sessions{status=\"active\"} 1"),
+            "expected one active session in:\n{body}"
+        );
     }
 }

@@ -31,6 +31,21 @@ pub struct Config {
     pub docker: Option<toml::Value>,
     #[serde(default)]
     pub controller: ControllerConfig,
+    #[serde(default)]
+    pub metrics: MetricsConfig,
+}
+
+/// Prometheus `/metrics` endpoint configuration.
+///
+/// Off by default. When enabled, `GET /api/v1/metrics` serves pull-based,
+/// stateless Prometheus text — every gauge is computed from the current store
+/// state on each scrape; nothing is persisted.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsConfig {
+    /// When `true`, the `/metrics` endpoint is served. Defaults to `false`.
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// Controller/node mode configuration.
@@ -542,6 +557,7 @@ pub fn load(path: &str) -> Result<Config> {
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         })
     }
 }
@@ -671,6 +687,7 @@ finished_ttl_secs = 60
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         let expanded = config.data_dir();
         assert!(
@@ -698,6 +715,7 @@ finished_ttl_secs = 60
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         assert_eq!(config.data_dir(), "/absolute/path");
     }
@@ -833,6 +851,7 @@ name = "test"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         let debug = format!("{config:?}");
         assert!(debug.contains("node-a"));
@@ -858,6 +877,7 @@ name = "test"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -888,6 +908,7 @@ name = "test"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -919,6 +940,7 @@ name = "test"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -944,6 +966,7 @@ name = "test"
                 notifications: NotificationsConfig::default(),
                 docker: None,
                 controller: ControllerConfig::default(),
+                metrics: MetricsConfig::default(),
             },
             Path::new("/dev/null/impossible/config.toml"),
         );
@@ -971,6 +994,7 @@ name = "test"
                 notifications: NotificationsConfig::default(),
                 docker: None,
                 controller: ControllerConfig::default(),
+                metrics: MetricsConfig::default(),
             },
             Path::new(""),
         );
@@ -1002,6 +1026,7 @@ name = "test"
                 notifications: NotificationsConfig::default(),
                 docker: None,
                 controller: ControllerConfig::default(),
+                metrics: MetricsConfig::default(),
             },
             &dir_target,
         );
@@ -1028,6 +1053,7 @@ name = "test"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         #[allow(clippy::redundant_clone)]
         let cloned = config.clone();
@@ -1065,6 +1091,7 @@ name = "test"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("ser"));
@@ -1138,6 +1165,7 @@ name = "test"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         assert!(config.auth.token.is_empty());
         let generated = ensure_auth_token(&mut config);
@@ -1166,6 +1194,7 @@ name = "test"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         let generated = ensure_auth_token(&mut config);
         assert!(!generated);
@@ -1236,6 +1265,7 @@ token = "my-secret-token"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1307,6 +1337,7 @@ token = "peer-secret"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1421,6 +1452,7 @@ breach_count = 5
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1632,6 +1664,7 @@ idle_action = "pause"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1752,6 +1785,7 @@ command = "codex -p 'Do it'"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1820,6 +1854,7 @@ data_dir = "/tmp/test"
             },
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1921,6 +1956,7 @@ url = "https://example.com"
             },
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2004,6 +2040,7 @@ name = "test"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2217,6 +2254,7 @@ command = "codex -p 'review'"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         assert!(config.notifications.vapid.private_key.is_empty());
         assert!(config.notifications.vapid.public_key.is_empty());
@@ -2244,6 +2282,7 @@ command = "codex -p 'review'"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         ensure_vapid_keys(&mut config);
 
@@ -2270,6 +2309,7 @@ command = "codex -p 'review'"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         ensure_vapid_keys(&mut config);
 
@@ -2308,6 +2348,7 @@ command = "codex -p 'review'"
             },
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         let generated = ensure_vapid_keys(&mut config);
         assert!(!generated);
@@ -2327,6 +2368,7 @@ command = "codex -p 'review'"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         let mut config2 = config1.clone();
         ensure_vapid_keys(&mut config1);
@@ -2356,6 +2398,7 @@ command = "codex -p 'review'"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         ensure_vapid_keys(&mut config);
         let private_key = config.notifications.vapid.private_key.clone();
@@ -2427,6 +2470,7 @@ name = "test"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2452,6 +2496,7 @@ name = "test"
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -2557,6 +2602,7 @@ port = 7433
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2770,6 +2816,7 @@ enabled = true
                 token: Some("controller-token".into()),
                 stale_timeout_secs: 120,
             },
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2810,6 +2857,7 @@ enabled = true
             notifications: NotificationsConfig::default(),
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         assert!(config.validate_controller().is_ok());
     }
@@ -2832,6 +2880,7 @@ enabled = true
                 address: None,
                 ..ControllerConfig::default()
             },
+            metrics: MetricsConfig::default(),
         };
         assert!(config.validate_controller().is_ok());
     }
@@ -2853,6 +2902,7 @@ enabled = true
                 token: Some("node-token".into()),
                 ..ControllerConfig::default()
             },
+            metrics: MetricsConfig::default(),
         };
         assert!(config.validate_controller().is_ok());
     }
@@ -2875,6 +2925,7 @@ enabled = true
                 address: Some("http://controller:7433".into()),
                 ..ControllerConfig::default()
             },
+            metrics: MetricsConfig::default(),
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("mutually exclusive"));
@@ -2899,6 +2950,7 @@ enabled = true
                 address: None,
                 ..ControllerConfig::default()
             },
+            metrics: MetricsConfig::default(),
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("auth.token"));
@@ -2923,6 +2975,7 @@ enabled = true
                 address: None,
                 ..ControllerConfig::default()
             },
+            metrics: MetricsConfig::default(),
         };
         assert!(config.validate_controller().is_ok());
     }
@@ -2947,6 +3000,7 @@ enabled = true
                 token: None, // missing
                 ..ControllerConfig::default()
             },
+            metrics: MetricsConfig::default(),
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("controller.token"));
@@ -2972,6 +3026,7 @@ enabled = true
                 token: None,
                 ..ControllerConfig::default()
             },
+            metrics: MetricsConfig::default(),
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("controller.token"));
@@ -2997,6 +3052,7 @@ enabled = true
                 token: Some(String::new()), // empty string
                 ..ControllerConfig::default()
             },
+            metrics: MetricsConfig::default(),
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("controller.token"));
@@ -3073,6 +3129,7 @@ events = ["ready", "killed"]
             },
             docker: None,
             controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
         };
         save(&config, &path).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -3082,5 +3139,104 @@ events = ["ready", "killed"]
         );
         let loaded = load(path.to_str().unwrap()).unwrap();
         assert!(loaded.notifications.discord.is_none());
+    }
+
+    // -- MetricsConfig tests --
+
+    #[test]
+    fn test_metrics_config_default_disabled() {
+        assert!(!MetricsConfig::default().enabled);
+    }
+
+    #[test]
+    fn test_metrics_config_clone_debug() {
+        let mc = MetricsConfig { enabled: true };
+        #[allow(clippy::redundant_clone)]
+        let cloned = mc.clone();
+        assert!(cloned.enabled);
+        assert!(format!("{mc:?}").contains("MetricsConfig"));
+    }
+
+    #[test]
+    fn test_load_config_without_metrics_section_defaults_off() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "no-metrics"
+port = 7433
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert!(!config.metrics.enabled);
+    }
+
+    #[test]
+    fn test_load_config_with_metrics_enabled() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "with-metrics"
+
+[metrics]
+enabled = true
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert!(config.metrics.enabled);
+    }
+
+    #[test]
+    fn test_load_config_rejects_unknown_metrics_field() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "bad-metrics"
+
+[metrics]
+enabled = true
+bogus = 1
+"#
+        )
+        .unwrap();
+
+        let result = load(tmpfile.path().to_str().unwrap());
+        assert!(result.is_err());
+        assert!(format!("{:#}", result.unwrap_err()).contains("bogus"));
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip_with_metrics() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("metrics-rt.toml");
+        let config = Config {
+            node: NodeConfig {
+                name: "metrics-rt".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig::default(),
+            inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
+            notifications: NotificationsConfig::default(),
+            docker: None,
+            controller: ControllerConfig::default(),
+            metrics: MetricsConfig { enabled: true },
+        };
+        save(&config, &path).unwrap();
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert!(loaded.metrics.enabled);
     }
 }

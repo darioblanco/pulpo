@@ -6,6 +6,7 @@ pub mod events;
 pub mod fleet;
 pub mod health;
 pub mod inks;
+pub mod metrics;
 pub mod node;
 pub mod notifications;
 pub mod peers;
@@ -232,6 +233,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -263,6 +265,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let config_path = tmpdir.path().join("config.toml");
         let backend = Arc::new(StubBackend);
@@ -303,6 +306,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -352,6 +356,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -391,6 +396,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let config_path = tmpdir.path().join("config.toml");
         let backend = Arc::new(StubBackend);
@@ -437,6 +443,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -478,6 +485,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =

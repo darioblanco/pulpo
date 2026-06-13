@@ -327,6 +327,7 @@ mod tests {
             notifications: crate::config::NotificationsConfig::default(),
             docker: None,
             controller,
+            metrics: crate::config::MetricsConfig::default(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
