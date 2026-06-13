@@ -1,0 +1,9 @@
+# Single source of truth for the Rust toolchain across local dev and CI.
+# CI pins the same version via `dtolnay/rust-toolchain@1.93.1` in
+# .github/workflows/{ci,release}.yml. Bump both together, deliberately, in
+# their own PR — our clippy gate denies `nursery`/`pedantic` lints, which are
+# unstable and change between releases, so a toolchain bump must absorb any new
+# lints rather than break CI on unrelated PRs.
+[toolchain]
+channel = "1.93.1"
+components = ["rustfmt", "clippy", "llvm-tools-preview"]
