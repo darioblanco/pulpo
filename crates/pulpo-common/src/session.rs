@@ -53,6 +53,8 @@ pub enum InterventionCode {
     /// Manually stopped by user via API/CLI.
     #[serde(alias = "user_kill")]
     UserStop,
+    /// Stopped because the session exceeded its configured cost budget.
+    BudgetExceeded,
 }
 
 impl fmt::Display for InterventionCode {
@@ -61,6 +63,7 @@ impl fmt::Display for InterventionCode {
             Self::MemoryPressure => write!(f, "memory_pressure"),
             Self::IdleTimeout => write!(f, "idle_timeout"),
             Self::UserStop => write!(f, "user_stop"),
+            Self::BudgetExceeded => write!(f, "budget_exceeded"),
         }
     }
 }
@@ -73,6 +76,7 @@ impl FromStr for InterventionCode {
             "memory_pressure" => Ok(Self::MemoryPressure),
             "idle_timeout" => Ok(Self::IdleTimeout),
             "user_stop" | "user_kill" => Ok(Self::UserStop),
+            "budget_exceeded" => Ok(Self::BudgetExceeded),
             other => Err(format!("unknown intervention code: {other}")),
         }
     }
@@ -234,6 +238,9 @@ pub mod meta {
     pub const QUOTA_SECONDARY_WINDOW_MINUTES: &str = "quota_secondary_window_minutes";
     pub const QUOTA_SECONDARY_RESETS_AT: &str = "quota_secondary_resets_at";
     pub const QUOTA_PLAN: &str = "quota_plan";
+    // Cost budget (resolved at spawn: spawn flag > ink). Watchdog alerts at 80%, stops at 100%.
+    pub const BUDGET_COST_USD: &str = "budget_cost_usd";
+    pub const BUDGET_ALERTED_AT: &str = "budget_alerted_at";
 }
 
 impl Session {

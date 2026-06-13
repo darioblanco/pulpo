@@ -105,6 +105,9 @@ pub struct InkConfig {
     /// stored with `runtime = "docker"` still load, but spawning them is rejected.
     #[serde(default)]
     pub runtime: Option<String>,
+    /// Cost budget in USD applied to sessions spawned from this ink.
+    #[serde(default)]
+    pub budget_cost_usd: Option<f64>,
 }
 
 /// Notification configuration (webhooks for status updates).
@@ -2605,6 +2608,7 @@ port = 7433
                 command: Some("claude -p 'build'".into()),
                 secrets: vec!["GITHUB_TOKEN".into(), "NPM_TOKEN".into()],
                 runtime: Some("docker".into()),
+                budget_cost_usd: None,
             },
         );
         let config = Config {

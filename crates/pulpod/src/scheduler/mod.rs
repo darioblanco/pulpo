@@ -177,6 +177,7 @@ async fn fire_due_schedules(
             secrets,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
 
         let result = dispatch_schedule_create(
@@ -479,6 +480,7 @@ mod tests {
                 secrets: None,
                 target_node: None,
                 term_program: None,
+                budget_cost_usd: None,
             },
         )
         .await
@@ -516,6 +518,7 @@ mod tests {
                 secrets: None,
                 target_node: None,
                 term_program: None,
+                budget_cost_usd: None,
             },
         )
         .await

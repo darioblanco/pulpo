@@ -1,4 +1,5 @@
 mod adopt;
+mod budget;
 mod git;
 mod idle;
 mod intervention;
@@ -180,6 +181,8 @@ async fn run_watchdog_tick(
     consecutive_breaches: &mut u32,
 ) {
     run_memory_check(backend, store, reader, cfg, consecutive_breaches).await;
+
+    budget::enforce_budgets(backend, store).await;
 
     if cfg.idle.enabled {
         check_idle_sessions(

@@ -149,6 +149,7 @@ impl From<&InkConfigResponse> for InkConfig {
             command: resp.command.clone(),
             secrets: resp.secrets.clone(),
             runtime: resp.runtime.clone(),
+            budget_cost_usd: None,
         }
     }
 }
@@ -253,6 +254,7 @@ mod tests {
                 command: Some("claude -p 'code'".into()),
                 secrets: vec!["GH_TOKEN".into()],
                 runtime: Some("docker".into()),
+                budget_cost_usd: None,
             },
         );
         let state = test_state(inks).await;
@@ -455,6 +457,7 @@ mod tests {
             command: Some("cmd".into()),
             secrets: vec!["S1".into()],
             runtime: Some("docker".into()),
+            budget_cost_usd: None,
         };
         let resp = InkConfigResponse::from(&ink);
         let back = InkConfig::from(&resp);

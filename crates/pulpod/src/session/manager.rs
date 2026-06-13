@@ -245,6 +245,22 @@ impl SessionManager {
             req.term_program.as_deref(),
         );
 
+        // Resolve the cost budget (explicit spawn value wins over the ink default) and
+        // fold it into the session metadata so the watchdog can enforce it.
+        let budget_cost = req.budget_cost_usd.or_else(|| {
+            req.ink.as_ref().and_then(|name| {
+                self.inks
+                    .read()
+                    .ok()?
+                    .get(name)
+                    .and_then(|ink| ink.budget_cost_usd)
+            })
+        });
+        let mut metadata = req.metadata.unwrap_or_default();
+        if let Some(budget) = budget_cost {
+            metadata.insert(meta::BUDGET_COST_USD.to_owned(), budget.to_string());
+        }
+
         let now = Utc::now();
         let session = Session {
             id,
@@ -253,7 +269,7 @@ impl SessionManager {
             command,
             description,
             backend_session_id: Some(backend_id.clone()),
-            metadata: req.metadata,
+            metadata: Some(metadata),
             ink: req.ink,
             idle_threshold_secs: req.idle_threshold_secs,
             worktree_path,
@@ -926,6 +942,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         }
     }
 
@@ -967,6 +984,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -1008,6 +1026,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -1046,6 +1065,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Explicit command wins over ink command
@@ -1070,6 +1090,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let result = mgr.create_session(req).await;
         let err = result.unwrap_err().to_string();
@@ -1139,6 +1160,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let err = mgr.create_session(req).await.unwrap_err().to_string();
         assert!(err.contains("lowercase"), "got: {err}");
@@ -1161,6 +1183,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert!(!session.workdir.is_empty());
@@ -2086,6 +2109,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let resolved = mgr.resolve_ink(&req).unwrap();
         // Falls back to $SHELL or /bin/sh
@@ -2125,6 +2149,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.description, Some("Ink desc".into()));
@@ -2162,6 +2187,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         // Ink with no command falls back to $SHELL
         let session = mgr.create_session(req).await.unwrap();
@@ -2192,6 +2218,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude");
@@ -2221,6 +2248,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "custom-agent");
@@ -2259,6 +2287,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "claude -p 'implement'");
@@ -2325,6 +2354,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.runtime, Runtime::Tmux);
@@ -2365,6 +2395,7 @@ mod tests {
             secrets: Some(vec!["REQ_SECRET".into()]),
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Secret values should NOT appear in the command string (security fix)
@@ -2514,6 +2545,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         // Should fall back to $SHELL or /bin/sh
@@ -2649,6 +2681,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let err = mgr.create_session(req).await.unwrap_err();
         assert!(
@@ -2969,6 +3002,7 @@ mod tests {
             secrets: Some(vec!["SHARED_SECRET".into(), "REQ_ONLY".into()]),
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
 

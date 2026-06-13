@@ -41,6 +41,7 @@ By default, `spawn` auto-attaches to the session. Use `--detach` / `-d` to skip 
 | `--worktree` | Create an isolated git worktree for the session |
 | `--worktree-base <BRANCH>` | Fork worktree from a specific branch (implies `--worktree`) |
 | `--secret <NAME>` | Inject a stored secret as an environment variable |
+| `--budget-cost <USD>` | Cost budget; watchdog alerts at 80% and stops the session at 100% |
 
 If no name is provided, Pulpo derives one from the workdir/path context. If no command is provided, Pulpo falls back to the ink command, `node.default_command`, or finally `$SHELL`.
 

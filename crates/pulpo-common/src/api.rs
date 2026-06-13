@@ -34,6 +34,9 @@ pub struct CreateSessionRequest {
     /// the outer terminal's capabilities (image paste, color support, etc.).
     #[serde(default)]
     pub term_program: Option<String>,
+    /// Cost budget in USD. Watchdog alerts at 80% and stops the session at 100%.
+    #[serde(default)]
+    pub budget_cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -815,6 +818,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("/tmp"));

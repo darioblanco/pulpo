@@ -91,6 +91,10 @@ pub enum Commands {
         #[arg(long)]
         secret: Vec<String>,
 
+        /// Cost budget in USD (watchdog alerts at 80%, stops at 100%)
+        #[arg(long = "budget-cost")]
+        budget_cost: Option<f64>,
+
         /// Command to run (everything after --)
         #[arg(last = true)]
         command: Vec<String>,
@@ -1882,6 +1886,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             worktree,
             worktree_base,
             secret,
+            budget_cost,
             command,
         } => {
             let cmd = if command.is_empty() {
@@ -1916,6 +1921,9 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             if let Some(t) = idle_threshold {
                 body["idle_threshold_secs"] = serde_json::json!(t);
+            }
+            if let Some(b) = budget_cost {
+                body["budget_cost_usd"] = serde_json::json!(b);
             }
             // --base-branch implies --worktree
             if *worktree || worktree_base.is_some() {
@@ -2285,6 +2293,16 @@ mod tests {
         assert!(matches!(
             &cli.command,
             Some(Commands::Spawn { idle_threshold, .. }) if *idle_threshold == Some(60)
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_spawn_budget_cost() {
+        let cli =
+            Cli::try_parse_from(["pulpo", "spawn", "my-task", "--budget-cost", "5.50"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { budget_cost, .. }) if *budget_cost == Some(5.50)
         ));
     }
 
@@ -2799,6 +2817,7 @@ mod tests {
                 worktree: false,
                 worktree_base: None,
                 secret: vec![],
+                budget_cost: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -2825,6 +2844,7 @@ mod tests {
                 worktree: false,
                 worktree_base: None,
                 secret: vec![],
+                budget_cost: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -2850,6 +2870,7 @@ mod tests {
                 worktree: true,
                 worktree_base: None,
                 secret: vec![],
+                budget_cost: None,
                 command: vec!["claude".into()],
             }),
             path: None,
@@ -2875,6 +2896,7 @@ mod tests {
                 worktree: false,
                 worktree_base: None,
                 secret: vec![],
+                budget_cost: None,
                 command: vec!["echo".into(), "hello".into()],
             }),
             path: None,
@@ -2900,6 +2922,7 @@ mod tests {
                 worktree: false,
                 worktree_base: None,
                 secret: vec![],
+                budget_cost: None,
                 command: vec![],
             }),
             path: None,
@@ -2925,6 +2948,7 @@ mod tests {
                 worktree: false,
                 worktree_base: None,
                 secret: vec![],
+                budget_cost: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -2950,6 +2974,7 @@ mod tests {
                 worktree: false,
                 worktree_base: None,
                 secret: vec![],
+                budget_cost: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
             path: None,
@@ -3164,6 +3189,7 @@ mod tests {
                 worktree: false,
                 worktree_base: None,
                 secret: vec![],
+                budget_cost: None,
                 command: vec!["test".into()],
             }),
             path: None,
@@ -3677,6 +3703,7 @@ mod tests {
                 worktree: false,
                 worktree_base: None,
                 secret: vec![],
+                budget_cost: None,
                 command: vec!["test".into()],
             }),
             path: None,

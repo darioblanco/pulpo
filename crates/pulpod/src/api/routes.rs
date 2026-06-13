@@ -894,6 +894,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
         state
@@ -1000,6 +1001,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1036,6 +1038,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1071,6 +1074,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1116,6 +1120,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 
@@ -1159,6 +1164,7 @@ mod tests {
             secrets: None,
             target_node: None,
             term_program: None,
+            budget_cost_usd: None,
         };
         let session = state.session_manager.create_session(req).await.unwrap();
 

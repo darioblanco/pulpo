@@ -72,6 +72,7 @@ Auth rules:
 | `description` | string | — | Human-readable ink description |
 | `command` | string | — | Shell command to run (e.g. `"claude -p 'review code'"`) |
 | `secrets` | string[] | `[]` | Stored secret names to inject when the ink is used |
+| `budget_cost_usd` | float | — | Cost budget for sessions from this ink (watchdog alerts at 80%, stops at 100%) |
 
 ## `[plans.<name>]`
 

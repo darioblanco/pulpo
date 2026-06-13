@@ -36,6 +36,7 @@ async fn execute_command(
                 secrets: None,
                 target_node: None,
                 term_program: None,
+                budget_cost_usd: None,
             };
             match session_manager.create_session(req).await {
                 Ok(session) => {
