@@ -110,7 +110,6 @@ The watchdog is the supervision loop. It is responsible for:
 | Web UI | Dashboard, session inspection, settings |
 | REST API | Integration with tools, automation, CI/CD |
 | SSE (`/api/v1/events`) | Real-time event streaming |
-| MCP (`pulpod mcp`) | Agent-to-agent integration via Model Context Protocol |
 
 These are all clients of the same session model. If one surface disappears, the core runtime is still intact.
 
@@ -246,7 +245,6 @@ Useful but more secondary:
 
 Experimental or convenience-oriented:
 
-- MCP server
 - themed presentation surfaces
 
 ## Backend Abstraction

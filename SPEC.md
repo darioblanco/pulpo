@@ -515,14 +515,13 @@ See [CLAUDE.md](CLAUDE.md) for the full, maintained project layout. Key director
 pulpo/
 ├── crates/
 │   ├── pulpod/src/             # Daemon: Axum API, tmux backend, SQLite, watchdog,
-│   │   ├── api/                #   MCP server, SSE, inks
+│   │   ├── api/                #   REST API, SSE, inks
 │   │   ├── backend/            #   tmux.rs — terminal backend
 │   │   ├── session/            #   manager, state machine, output capture, PTY bridge
 │   │   ├── store/              #   SQLite persistence + migrations
 │   │   ├── notifications/      #   Discord webhook notifier
 │   │   ├── peers/              #   PeerRegistry + health probing
-│   │   ├── discovery/          #   Tailscale peer discovery
-│   │   └── mcp/                #   MCP server (session tools as MCP resources)
+│   │   └── discovery/          #   Tailscale peer discovery
 │   ├── pulpo-cli/src/          # CLI: thin client, clap commands
 │   └── pulpo-common/src/       # Shared types: Session, NodeInfo, PeerInfo,
 │                               #   SessionEvent, API request/response
@@ -647,7 +646,7 @@ the primary management surface.
 - ✅ SSE event stream (`GET /api/v1/events`, broadcast channel, SessionEvent)
 - ✅ Discord webhook notifications (`[notifications.discord]` config)
 - ~~Discord bot (`contrib/discord-bot/`)~~ — removed June 2026 (webhook notifications remain)
-- ✅ MCP server (session management as MCP tools)
+- ~~MCP server (session management as MCP tools)~~ — removed June 2026: REST API is the primary integration surface
 
 ---
 

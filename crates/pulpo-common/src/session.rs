@@ -2,14 +2,13 @@ use std::fmt;
 use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use std::collections::HashMap;
 
 /// The runtime environment for a session.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Runtime {
     /// Native tmux session (default).
@@ -41,7 +40,7 @@ impl FromStr for Runtime {
 }
 
 /// Machine-readable intervention reason codes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InterventionCode {
     /// Stopped due to system memory pressure exceeding threshold.
@@ -76,7 +75,7 @@ impl FromStr for InterventionCode {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
     #[default]
@@ -118,7 +117,7 @@ impl FromStr for SessionStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: Uuid,
     pub name: String,

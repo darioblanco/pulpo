@@ -16,7 +16,7 @@ Pulpo is an **agent session runtime**. It runs coding agents in tmux sessions or
 - **Command-agnostic** — runs Claude Code, Codex, Gemini CLI, Aider, shell scripts, anything
 - **Adopts existing tmux sessions** — start tmux however you want, pulpo discovers and manages it
 - **Mobile-first web UI** — PWA with push notifications, manage from your phone
-- **6 control surfaces** — CLI, web UI, REST API, SSE, MCP, Discord bot
+- **5 control surfaces** — CLI, web UI, REST API, SSE, Discord bot
 
 No other tool combines multi-node tmux orchestration with agent-aware lifecycle management. Tools like tmuxinator manage layouts, overmind runs Procfiles, cmux wraps Claude — Pulpo is the infrastructure layer that makes any terminal session durable, observable, and manageable across machines.
 

@@ -103,7 +103,6 @@ Everything else is a control surface or an operational convenience around that c
 - REST API and SSE
 - scheduler
 - peer discovery
-- MCP server
 
 ## Who It Is For
 
@@ -136,7 +135,6 @@ Pulpo is for users who want coding agents to:
 
 **Experimental / convenience surfaces**
 
-- MCP server
 - ocean UI and other presentation layers
 
 The project is still experimental overall, but the session/runtime/lifecycle model is the part to learn first.

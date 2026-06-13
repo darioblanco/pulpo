@@ -1,12 +1,11 @@
 use std::fmt;
 use std::str::FromStr;
 
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::node::NodeInfo;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PeerStatus {
     Online,
@@ -71,7 +70,7 @@ impl PeerEntry {
 }
 
 /// How a peer was discovered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PeerSource {
     /// Peer was explicitly listed in config.
@@ -90,7 +89,7 @@ impl fmt::Display for PeerSource {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerInfo {
     pub name: String,
     pub address: String,

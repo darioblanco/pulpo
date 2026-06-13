@@ -568,4 +568,99 @@ mod tests {
         let entries = store.list_controller_session_index_entries().await.unwrap();
         assert!(entries.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_push_events_rejects_missing_token() {
+        let (server, _) = controller_test_server().await;
+        let req = EventPushRequest {
+            events: vec![make_session_event("s1", "task-a", "active")],
+        };
+        let resp = server.post("/api/v1/events/push").json(&req).await;
+        resp.assert_status(axum::http::StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_push_events_store_error_on_upsert() {
+        let (server, state) = controller_test_server().await;
+        let token = enroll_node(&server, "node-1").await;
+
+        sqlx::query("DROP TABLE controller_session_index")
+            .execute(state.store.pool())
+            .await
+            .unwrap();
+
+        let req = EventPushRequest {
+            events: vec![make_session_event("s1", "task-a", "active")],
+        };
+        let resp = server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&req)
+            .await;
+        resp.assert_status(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_push_deleted_event_store_error_on_delete() {
+        let (server, state) = controller_test_server().await;
+        let token = enroll_node(&server, "node-1").await;
+
+        sqlx::query("DROP TABLE controller_session_index")
+            .execute(state.store.pool())
+            .await
+            .unwrap();
+
+        let req = EventPushRequest {
+            events: vec![make_deleted_event("s1", "task-a")],
+        };
+        let resp = server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&req)
+            .await;
+        resp.assert_status(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_push_events_store_error_on_node_heartbeat() {
+        let (server, state) = controller_test_server().await;
+        let token = enroll_node(&server, "node-1").await;
+
+        sqlx::query("DROP TABLE controller_nodes")
+            .execute(state.store.pool())
+            .await
+            .unwrap();
+
+        // Empty batch skips the event loop and goes straight to the heartbeat.
+        let req = EventPushRequest { events: vec![] };
+        let resp = server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&req)
+            .await;
+        resp.assert_status(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_push_events_store_error_on_enrolled_heartbeat() {
+        let (server, state) = controller_test_server().await;
+        let token = enroll_node(&server, "node-1").await;
+
+        // Auth still works (SELECT), but the heartbeat UPDATE fails via trigger.
+        sqlx::query(
+            "CREATE TRIGGER fail_enrolled_touch BEFORE UPDATE ON controller_enrolled_nodes \
+             BEGIN SELECT RAISE(FAIL, 'forced failure'); END",
+        )
+        .execute(state.store.pool())
+        .await
+        .unwrap();
+
+        let req = EventPushRequest { events: vec![] };
+        let resp = server
+            .post("/api/v1/events/push")
+            .add_header("authorization", format!("Bearer {token}"))
+            .json(&req)
+            .await;
+        resp.assert_status(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    }
 }

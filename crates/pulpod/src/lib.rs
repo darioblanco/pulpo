@@ -8,7 +8,6 @@ pub mod config;
 pub mod controller;
 pub mod discovery;
 
-pub mod mcp;
 pub mod node;
 pub mod notifications;
 pub mod peers;
@@ -144,15 +143,6 @@ pub struct Cli {
     /// Port to listen on (overrides config)
     #[arg(short, long)]
     pub port: Option<u16>,
-
-    #[command(subcommand)]
-    pub command: Option<CliCommand>,
-}
-
-#[derive(clap::Subcommand, Debug, Clone, PartialEq, Eq)]
-pub enum CliCommand {
-    /// Start the MCP server over STDIO (for use by AI agents)
-    Mcp,
 }
 
 /// Initialize tracing subscriber for logging.
@@ -753,43 +743,6 @@ fn resolve_tailscale_name() -> Result<String> {
     Ok("test-node.tailnet.ts.net".into())
 }
 
-/// Build the MCP server from config — same init as `build_app` but returns `PulpoMcp`
-/// instead of a router. No HTTP server, no tracing to stdout (would corrupt STDIO protocol).
-pub async fn build_mcp_server(cli: &Cli) -> Result<mcp::PulpoMcp> {
-    let mut config = config::load(&cli.config)?;
-
-    // Resolve config path for saving later
-    let expanded = shellexpand::tilde(&cli.config);
-    let config_path = std::path::PathBuf::from(expanded.as_ref());
-
-    // Auto-generate auth token on first run
-    if config::ensure_auth_token(&mut config) {
-        config::save(&config, &config_path)?;
-    }
-
-    let store = store::Store::new(&config.data_dir()).await?;
-    store.migrate().await?;
-
-    #[cfg(all(not(coverage), not(target_os = "windows")))]
-    let backend: Arc<dyn backend::Backend> = Arc::new(backend::tmux::TmuxBackend::new());
-
-    #[cfg(all(not(coverage), target_os = "windows"))]
-    let backend: Arc<dyn backend::Backend> = Arc::new(WindowsStubBackend);
-
-    #[cfg(coverage)]
-    let backend: Arc<dyn backend::Backend> = Arc::new(CoverageBackend);
-
-    let manager = session::manager::SessionManager::new(
-        backend,
-        store.clone(),
-        config.inks.clone(),
-        config.node.default_command.clone(),
-    );
-    let peer_registry = peers::PeerRegistry::new(&config.peers);
-
-    Ok(mcp::PulpoMcp::new(manager, peer_registry, config))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -904,7 +857,6 @@ data_dir = "{}"
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
-            command: None,
         };
 
         let (app, addr, handle) = build_app(&cli).await.unwrap();
@@ -932,7 +884,6 @@ data_dir = "{}"
         let cli = Cli::try_parse_from(["pulpod"]).unwrap();
         assert_eq!(cli.config, "~/.pulpo/config.toml");
         assert!(cli.port.is_none());
-        assert!(cli.command.is_none());
     }
 
     #[test]
@@ -941,35 +892,25 @@ data_dir = "{}"
             Cli::try_parse_from(["pulpod", "--config", "/custom/path", "--port", "8080"]).unwrap();
         assert_eq!(cli.config, "/custom/path");
         assert_eq!(cli.port, Some(8080));
-        assert!(cli.command.is_none());
     }
 
+    /// Exercise every `CoverageBackend` stub so the coverage build measures them
+    /// deterministically (they are otherwise only hit indirectly via `build_app`).
+    #[cfg(coverage)]
     #[test]
-    fn test_cli_parse_mcp_subcommand() {
-        let cli = Cli::try_parse_from(["pulpod", "mcp"]).unwrap();
-        assert_eq!(cli.command, Some(CliCommand::Mcp));
-    }
+    fn test_coverage_backend_stubs() {
+        use crate::backend::Backend;
 
-    #[test]
-    fn test_cli_parse_mcp_with_config() {
-        let cli = Cli::try_parse_from(["pulpod", "--config", "/custom/path", "mcp"]).unwrap();
-        assert_eq!(cli.config, "/custom/path");
-        assert_eq!(cli.command, Some(CliCommand::Mcp));
-    }
-
-    #[test]
-    fn test_cli_command_debug() {
-        let cmd = CliCommand::Mcp;
-        let debug = format!("{cmd:?}");
-        assert!(debug.contains("Mcp"));
-    }
-
-    #[test]
-    fn test_cli_command_clone() {
-        let cmd = CliCommand::Mcp;
-        #[allow(clippy::clone_on_copy)]
-        let cloned = cmd.clone();
-        assert_eq!(cmd, cloned);
+        let b = CoverageBackend;
+        assert_eq!(b.session_id("name"), "name");
+        assert!(b.create_session("a", "b", "c").is_ok());
+        assert!(b.kill_session("a").is_ok());
+        assert!(b.is_alive("a").unwrap());
+        assert_eq!(b.capture_output("a", 10).unwrap(), "");
+        assert!(b.send_input("a", "input").is_ok());
+        assert!(b.setup_logging("a", "b").is_ok());
+        assert!(b.list_sessions().unwrap().is_empty());
+        assert_eq!(b.pane_info("a").unwrap(), ("bash".into(), "/tmp".into()));
     }
 
     #[test]
@@ -1033,7 +974,6 @@ data_dir = "{}"
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: None,
-            command: None,
         };
 
         let (_app, addr, _handle) = build_app(&cli).await.unwrap();
@@ -1088,7 +1028,6 @@ enabled = true
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
-            command: None,
         };
 
         let (app, _addr, handle) = build_app(&cli).await.unwrap();
@@ -1134,7 +1073,6 @@ enabled = true
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
-            command: None,
         };
 
         let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
@@ -1225,7 +1163,6 @@ enabled = true
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
-            command: None,
         };
 
         let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
@@ -1290,7 +1227,6 @@ enabled = true
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
-            command: None,
         };
 
         let (app1, _addr1, handle1) = build_app(&cli).await.unwrap();
@@ -1371,73 +1307,6 @@ enabled = true
     }
 
     #[tokio::test]
-    async fn test_build_mcp_server() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let config_path = tmpdir.path().join("config.toml");
-        let data_dir = tmpdir.path().join("data");
-        std::fs::write(
-            &config_path,
-            format!(
-                r#"
-[node]
-name = "mcp-test"
-port = 0
-data_dir = "{}"
-"#,
-                data_dir.display()
-            ),
-        )
-        .unwrap();
-
-        let cli = Cli {
-            config: config_path.to_str().unwrap().into(),
-            port: None,
-            command: Some(CliCommand::Mcp),
-        };
-
-        let mcp = build_mcp_server(&cli).await.unwrap();
-        let info = <mcp::PulpoMcp as rmcp::ServerHandler>::get_info(&mcp);
-        assert_eq!(info.server_info.name, "pulpo");
-    }
-
-    #[tokio::test]
-    async fn test_build_mcp_server_existing_token() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let config_path = tmpdir.path().join("config.toml");
-        let data_dir = tmpdir.path().join("data");
-        std::fs::write(
-            &config_path,
-            format!(
-                r#"
-[node]
-name = "mcp-token-test"
-port = 0
-data_dir = "{}"
-
-[auth]
-token = "already-existing-token"
-"#,
-                data_dir.display()
-            ),
-        )
-        .unwrap();
-
-        let cli = Cli {
-            config: config_path.to_str().unwrap().into(),
-            port: None,
-            command: Some(CliCommand::Mcp),
-        };
-
-        let mcp = build_mcp_server(&cli).await.unwrap();
-        let info = <mcp::PulpoMcp as rmcp::ServerHandler>::get_info(&mcp);
-        assert_eq!(info.server_info.name, "pulpo");
-
-        // Token should NOT have been overwritten
-        let saved = config::load(config_path.to_str().unwrap()).unwrap();
-        assert_eq!(saved.auth.token, "already-existing-token");
-    }
-
-    #[tokio::test]
     async fn test_build_app_with_discord_notifications() {
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
@@ -1463,7 +1332,6 @@ events = ["ready", "killed"]
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
-            command: None,
         };
 
         let (_app, addr, handle) = build_app(&cli).await.unwrap();
@@ -1494,7 +1362,6 @@ data_dir = "{}"
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
-            command: None,
         };
 
         let (_app, _addr, handle) = build_app(&cli).await.unwrap();
@@ -1538,7 +1405,6 @@ public_key = "existing-pub"
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
-            command: None,
         };
 
         let (_app, _addr, handle) = build_app(&cli).await.unwrap();
@@ -1578,7 +1444,6 @@ token = "existing-token-value"
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
-            command: None,
         };
         let (_app, addr, _handle) = build_app(&cli).await.unwrap();
         assert_eq!(addr, "0.0.0.0:0");
@@ -1611,7 +1476,6 @@ bind = "container"
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
-            command: None,
         };
         let (_app, addr, _handle) = build_app(&cli).await.unwrap();
         assert_eq!(addr, "0.0.0.0:0");
@@ -1643,7 +1507,6 @@ discovery_interval_secs = 60
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
-            command: None,
         };
         let (_app, addr, handle) = build_app(&cli).await.unwrap();
         // Tailscale bind uses 127.0.0.1 (tailscale serve proxies over HTTPS)
@@ -1708,7 +1571,6 @@ events = ["killed"]
         let cli = Cli {
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
-            command: None,
         };
         let (_app, addr, handle) = build_app(&cli).await.unwrap();
         assert_eq!(addr, "127.0.0.1:0");
