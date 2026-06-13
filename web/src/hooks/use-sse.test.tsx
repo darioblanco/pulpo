@@ -4,6 +4,11 @@ import { SSEProvider, useSSE } from './use-sse';
 import { ConnectionProvider } from './use-connection';
 import { setApiConfig } from '@/api/client';
 import type { ReactNode } from 'react';
+import { toast } from 'sonner';
+
+vi.mock('sonner', () => ({
+  toast: { warning: vi.fn(), error: vi.fn(), success: vi.fn() },
+}));
 
 // Mock localStorage
 vi.stubGlobal('localStorage', {
@@ -325,6 +330,16 @@ describe('useSSE', () => {
 
     await waitFor(() => {
       expect(result.current.sessions).toHaveLength(1);
+    });
+
+    const esAlert = lastES();
+    act(() => {
+      esAlert._fireEvent('usage_alert', JSON.stringify({ message: 'Cost $0.85 reached 80%' }));
+    });
+    expect(toast.warning).toHaveBeenCalledWith('Cost $0.85 reached 80%');
+    // malformed alert must not throw
+    act(() => {
+      esAlert._fireEvent('usage_alert', 'not json');
     });
 
     const es = lastES();

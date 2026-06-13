@@ -1523,7 +1523,9 @@ async fn test_idle_transition_emits_sse_event() {
             assert_eq!(se.session_name, "idle-sse");
             assert!(se.output_snippet.is_some());
         }
-        PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
+        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+            panic!("expected session event")
+        }
     }
 }
 
@@ -1575,7 +1577,9 @@ async fn test_active_transition_emits_sse_event() {
             assert_eq!(se.previous_status, Some("idle".into()));
             assert_eq!(se.session_name, "active-sse");
         }
-        PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
+        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+            panic!("expected session event")
+        }
     }
 }
 
@@ -2327,7 +2331,9 @@ async fn test_ready_transition_emits_event() {
             assert_eq!(se.previous_status, Some("active".into()));
             assert_eq!(se.node_name, "test-node");
         }
-        PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
+        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+            panic!("expected session event")
+        }
     }
 }
 
@@ -2427,7 +2433,9 @@ async fn test_ready_from_idle_state() {
         PulpoEvent::Session(se) => {
             assert_eq!(se.previous_status, Some("idle".into()));
         }
-        PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
+        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+            panic!("expected session event")
+        }
     }
 }
 
@@ -2741,7 +2749,9 @@ async fn test_adopt_emits_sse_event() {
             assert!(se.previous_status.is_none());
             assert_eq!(se.node_name, "test-node");
         }
-        PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
+        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+            panic!("expected session event")
+        }
     }
 }
 

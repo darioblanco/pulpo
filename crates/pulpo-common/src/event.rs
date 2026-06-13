@@ -41,12 +41,34 @@ pub struct SessionDeletedEvent {
     pub timestamp: String,
 }
 
+/// A usage/cost monitoring alert.
+///
+/// Sources: budget threshold, burn-rate ceiling, quota approaching, rate limit.
+/// Non-destructive — informs; any auto-action is recorded separately as an intervention.
+/// `alert_kind` distinguishes the source so clients can filter/route.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UsageAlertEvent {
+    pub session_id: String,
+    pub session_name: String,
+    pub node_name: String,
+    /// `budget_threshold` | `burn_ceiling` | `quota_threshold` | `rate_limit`.
+    pub alert_kind: String,
+    /// Human-readable summary, e.g. "Cost $0.85 reached 80% of $1.00 budget".
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_usd: Option<f64>,
+    pub timestamp: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
 pub enum PulpoEvent {
     Session(SessionEvent),
     SessionDeleted(SessionDeletedEvent),
+    UsageAlert(UsageAlertEvent),
 }
 
 #[cfg(test)]

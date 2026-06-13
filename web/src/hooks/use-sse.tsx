@@ -12,6 +12,7 @@ import {
 import { getSessions, resolveBaseUrl, authHeaders } from '@/api/client';
 import type { Session } from '@/api/types';
 import { useConnection } from './use-connection';
+import { toast } from 'sonner';
 
 const MAX_RECONNECT_DELAY = 30000;
 
@@ -112,6 +113,15 @@ export function SSEProvider({ children }: { children: ReactNode }) {
         if (!found) {
           hydrate();
         }
+      } catch {
+        // Ignore malformed events
+      }
+    });
+
+    es.addEventListener('usage_alert', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data?.message) toast.warning(data.message);
       } catch {
         // Ignore malformed events
       }

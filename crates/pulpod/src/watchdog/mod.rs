@@ -182,7 +182,7 @@ async fn run_watchdog_tick(
 ) {
     run_memory_check(backend, store, reader, cfg, consecutive_breaches).await;
 
-    budget::enforce_budgets(backend, store).await;
+    budget::enforce_budgets(backend, store, ready_ctx).await;
 
     if cfg.idle.enabled {
         check_idle_sessions(

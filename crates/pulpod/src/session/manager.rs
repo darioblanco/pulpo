@@ -798,7 +798,9 @@ mod tests {
     fn unwrap_session_event(event: PulpoEvent) -> SessionEvent {
         match event {
             PulpoEvent::Session(se) => se,
-            PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
+            PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+                panic!("expected session event")
+            }
         }
     }
 
@@ -2059,7 +2061,9 @@ mod tests {
                 assert_eq!(se.session_name, "purge-event");
                 assert_eq!(se.node_name, "test-node");
             }
-            PulpoEvent::Session(_) => panic!("expected session_deleted event"),
+            PulpoEvent::Session(_) | PulpoEvent::UsageAlert(_) => {
+                panic!("expected session_deleted event")
+            }
         }
     }
 

@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use pulpo_common::event::{PulpoEvent, UsageAlertEvent};
 use pulpo_common::session::{InterventionCode, SessionStatus, meta};
 
-use super::resolve_backend_id;
+use super::{ReadyContext, resolve_backend_id};
 use crate::backend::Backend;
 use crate::store::Store;
 
@@ -16,7 +17,11 @@ const ALERT_FRACTION: f64 = 0.8;
 /// standard intervention path (capture output → kill → record `BudgetExceeded` → clean up
 /// the worktree). On a subscription this allocates the shared pool away from a runaway
 /// session; on prepaid credits / API keys it caps real dollars.
-pub(super) async fn enforce_budgets(backend: &Arc<dyn Backend>, store: &Store) {
+pub(super) async fn enforce_budgets(
+    backend: &Arc<dyn Backend>,
+    store: &Store,
+    ready_ctx: &ReadyContext,
+) {
     let sessions = match store.list_sessions().await {
         Ok(s) => s,
         #[allow(unused_variables)]
@@ -66,6 +71,18 @@ pub(super) async fn enforce_budgets(backend: &Arc<dyn Backend>, store: &Store) {
                     budget,
                     "Session reached 80% of its cost budget"
                 );
+                if let Some(tx) = &ready_ctx.event_tx {
+                    let _ = tx.send(PulpoEvent::UsageAlert(UsageAlertEvent {
+                        session_id: session.id.to_string(),
+                        session_name: session.name.clone(),
+                        node_name: ready_ctx.node_name.clone(),
+                        alert_kind: "budget_threshold".to_owned(),
+                        message: format!("Cost ${cost:.2} reached 80% of ${budget:.2} budget"),
+                        cost_usd: Some(cost),
+                        budget_usd: Some(budget),
+                        timestamp: timestamp.clone(),
+                    }));
+                }
             }
         }
     }
@@ -168,11 +185,18 @@ mod tests {
         Arc::new(StubBackend)
     }
 
+    fn ready_ctx() -> ReadyContext {
+        ReadyContext {
+            event_tx: None,
+            node_name: "test-node".into(),
+        }
+    }
+
     #[tokio::test]
     async fn test_stops_session_at_budget() {
         let store = test_store().await;
         let s = insert(&store, "over", Some("1.0"), Some("1.5")).await;
-        enforce_budgets(&backend(), &store).await;
+        enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let updated = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
         assert_eq!(updated.status, SessionStatus::Stopped);
         assert_eq!(
@@ -185,7 +209,7 @@ mod tests {
     async fn test_alerts_once_at_eighty_percent() {
         let store = test_store().await;
         let s = insert(&store, "warn", Some("1.0"), Some("0.85")).await;
-        enforce_budgets(&backend(), &store).await;
+        enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let after = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
         // alerted, not stopped
         assert_eq!(after.status, SessionStatus::Active);
@@ -193,7 +217,7 @@ mod tests {
         assert!(alerted_at.is_some());
 
         // second pass must not change the alert timestamp (one-shot)
-        enforce_budgets(&backend(), &store).await;
+        enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let again = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
         assert_eq!(
             again.meta_str(meta::BUDGET_ALERTED_AT).map(str::to_owned),
@@ -205,7 +229,7 @@ mod tests {
     async fn test_under_threshold_does_nothing() {
         let store = test_store().await;
         let s = insert(&store, "ok", Some("10.0"), Some("1.0")).await;
-        enforce_budgets(&backend(), &store).await;
+        enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let after = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
         assert_eq!(after.status, SessionStatus::Active);
         assert!(after.meta_str(meta::BUDGET_ALERTED_AT).is_none());
@@ -215,7 +239,7 @@ mod tests {
     async fn test_no_budget_is_ignored() {
         let store = test_store().await;
         let s = insert(&store, "nob", None, Some("99.0")).await;
-        enforce_budgets(&backend(), &store).await;
+        enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let after = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
         assert_eq!(after.status, SessionStatus::Active);
     }
@@ -224,7 +248,7 @@ mod tests {
     async fn test_zero_budget_is_ignored() {
         let store = test_store().await;
         let s = insert(&store, "zero", Some("0"), Some("5.0")).await;
-        enforce_budgets(&backend(), &store).await;
+        enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let after = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
         assert_eq!(after.status, SessionStatus::Active);
     }
@@ -233,8 +257,32 @@ mod tests {
     async fn test_budget_without_cost_is_ignored() {
         let store = test_store().await;
         let s = insert(&store, "nocost", Some("1.0"), None).await;
-        enforce_budgets(&backend(), &store).await;
+        enforce_budgets(&backend(), &store, &ready_ctx()).await;
         let after = store.get_session(&s.id.to_string()).await.unwrap().unwrap();
         assert_eq!(after.status, SessionStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn test_emits_usage_alert_event_at_eighty_percent() {
+        let store = test_store().await;
+        insert(&store, "alert-evt", Some("1.0"), Some("0.9")).await;
+        let (tx, mut rx) = tokio::sync::broadcast::channel(8);
+        let ctx = ReadyContext {
+            event_tx: Some(tx),
+            node_name: "node-a".into(),
+        };
+
+        enforce_budgets(&backend(), &store, &ctx).await;
+
+        let event = rx.try_recv().expect("expected a usage alert event");
+        match event {
+            pulpo_common::event::PulpoEvent::UsageAlert(a) => {
+                assert_eq!(a.alert_kind, "budget_threshold");
+                assert_eq!(a.node_name, "node-a");
+                assert_eq!(a.budget_usd, Some(1.0));
+                assert!(a.message.contains("80%"));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
     }
 }

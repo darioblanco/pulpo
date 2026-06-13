@@ -35,6 +35,7 @@ pub async fn push_events(
 
     for event in &req.events {
         match event {
+            PulpoEvent::UsageAlert(_) => {}
             PulpoEvent::Session(se) => {
                 let node_address = state
                     .peer_registry
@@ -348,7 +349,9 @@ mod tests {
                 assert_eq!(se.session_id, "s1");
                 assert_eq!(se.status, "active");
             }
-            PulpoEvent::SessionDeleted(_) => panic!("expected session event"),
+            PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+                panic!("expected session event")
+            }
         }
     }
 
