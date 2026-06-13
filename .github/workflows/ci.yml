@@ -65,7 +65,7 @@ jobs:
       - run: cd web && npx prettier --check .
       - run: cd web && npx eslint .
       - run: cd web && npx tsc --noEmit
-      - run: cd web && npx vitest run
+      - run: cd web && npx vitest run --coverage
       - uses: actions/upload-artifact@v4
         with:
           name: web-build
