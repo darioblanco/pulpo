@@ -15,6 +15,8 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use pulpo_common::api::{AccountRollup, SessionProjection};
+
+use super::pool::detect_pool;
 use pulpo_common::session::{Session, meta};
 
 /// Per-hour rate from a cumulative total over an elapsed span.
@@ -85,6 +87,7 @@ pub fn project_session(
         auth_provider: session.meta_str(meta::AUTH_PROVIDER).map(str::to_owned),
         auth_plan: session.meta_str(meta::AUTH_PLAN).map(str::to_owned),
         auth_email: session.meta_str(meta::AUTH_EMAIL).map(str::to_owned),
+        pool: detect_pool(&session.command).to_owned(),
         total_tokens: tokens,
         cost_usd,
         elapsed_secs,
@@ -99,7 +102,7 @@ pub fn project_session(
 }
 
 /// Account identity key: (provider, plan, email).
-type AccountKey = (Option<String>, Option<String>, Option<String>);
+type AccountKey = (Option<String>, Option<String>, Option<String>, String);
 
 /// Group per-session projections into per-account rollups (provider + plan + email).
 ///
@@ -111,6 +114,7 @@ pub fn build_rollups(projections: &[SessionProjection]) -> Vec<AccountRollup> {
         provider: Option<String>,
         plan: Option<String>,
         email: Option<String>,
+        pool: String,
         session_count: u32,
         total_tokens: u64,
         total_cost_usd: Option<f64>,
@@ -125,11 +129,13 @@ pub fn build_rollups(projections: &[SessionProjection]) -> Vec<AccountRollup> {
             p.auth_provider.clone(),
             p.auth_plan.clone(),
             p.auth_email.clone(),
+            p.pool.clone(),
         );
         let acc = groups.entry(key).or_insert_with(|| Acc {
             provider: p.auth_provider.clone(),
             plan: p.auth_plan.clone(),
             email: p.auth_email.clone(),
+            pool: p.pool.clone(),
             session_count: 0,
             total_tokens: 0,
             total_cost_usd: None,
@@ -156,6 +162,7 @@ pub fn build_rollups(projections: &[SessionProjection]) -> Vec<AccountRollup> {
             provider: a.provider,
             plan: a.plan,
             email: a.email,
+            pool: a.pool,
             session_count: a.session_count,
             total_tokens: a.total_tokens,
             total_cost_usd: a.total_cost_usd,
@@ -321,6 +328,7 @@ mod tests {
             auth_provider: Some(provider.into()),
             auth_plan: Some("max".into()),
             auth_email: Some(email.into()),
+            pool: "subscription".into(),
             total_tokens: tokens,
             cost_usd: cost,
             elapsed_secs: 3600,
@@ -376,5 +384,45 @@ mod tests {
     #[test]
     fn test_build_rollups_empty() {
         assert!(build_rollups(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_project_sets_pool_from_command() {
+        use pulpo_common::session::Runtime;
+        let now = DateTime::parse_from_rfc3339("2026-06-13T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let headless = Session {
+            id: Uuid::nil(),
+            name: "h".into(),
+            command: "claude -p 'review'".into(),
+            status: SessionStatus::Active,
+            runtime: Runtime::Tmux,
+            created_at: now,
+            metadata: Some(HashMap::new()),
+            ..Default::default()
+        };
+        assert_eq!(project_session(&headless, now, None).pool, "headless");
+
+        let interactive = Session {
+            command: "claude 'review'".into(),
+            ..headless
+        };
+        assert_eq!(
+            project_session(&interactive, now, None).pool,
+            "subscription"
+        );
+    }
+
+    #[test]
+    fn test_build_rollups_splits_by_pool() {
+        let mut headless = proj("claude.ai", "a@x.com", 100, Some(1.0), None);
+        headless.pool = "headless".into();
+        let interactive = proj("claude.ai", "a@x.com", 200, Some(2.0), None);
+        let rollups = build_rollups(&[headless, interactive]);
+        // same account, different pool → two separate rollups
+        assert_eq!(rollups.len(), 2);
+        assert!(rollups.iter().any(|r| r.pool == "headless"));
+        assert!(rollups.iter().any(|r| r.pool == "subscription"));
     }
 }

@@ -502,6 +502,8 @@ pub struct SessionProjection {
     pub auth_provider: Option<String>,
     pub auth_plan: Option<String>,
     pub auth_email: Option<String>,
+    /// Billing pool: `subscription` (interactive) or `headless` (`-p`/`--print`).
+    pub pool: String,
     pub total_tokens: u64,
     pub cost_usd: Option<f64>,
     pub elapsed_secs: i64,
@@ -522,6 +524,7 @@ pub struct AccountRollup {
     pub provider: Option<String>,
     pub plan: Option<String>,
     pub email: Option<String>,
+    pub pool: String,
     pub session_count: u32,
     pub total_tokens: u64,
     pub total_cost_usd: Option<f64>,

@@ -685,8 +685,9 @@ fn format_usage_projection(p: &UsageProjectionResponse) -> String {
                 .or_else(|| a.provider.clone())
                 .unwrap_or_else(|| "unknown".into());
             lines.push(format!(
-                "  {:<24} {} sessions  {} tokens  {}",
+                "  {:<24} {:<12} {} sessions  {} tokens  {}",
                 who,
+                a.pool,
                 a.session_count,
                 fmt_tokens(a.total_tokens),
                 fmt_cost(a.total_cost_usd),
@@ -3963,6 +3964,7 @@ mod tests {
             auth_provider: Some("claude.ai".into()),
             auth_plan: Some("max".into()),
             auth_email: Some("a@x.com".into()),
+            pool: "subscription".into(),
             total_tokens: 1_234_000,
             cost_usd: Some(2.5),
             elapsed_secs: 3600,
@@ -4025,6 +4027,7 @@ mod tests {
                 provider: Some("claude.ai".into()),
                 plan: Some("max".into()),
                 email: Some("a@x.com".into()),
+                pool: "subscription".into(),
                 session_count: 1,
                 total_tokens: 1_234_000,
                 total_cost_usd: Some(2.5),
@@ -4040,6 +4043,7 @@ mod tests {
         assert!(out.contains("$2.50"));
         assert!(out.contains("Accounts:"));
         assert!(out.contains("a@x.com"));
+        assert!(out.contains("subscription")); // pool shown
     }
 
     #[test]

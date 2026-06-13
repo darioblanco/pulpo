@@ -13,6 +13,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod pool;
 pub mod projection;
 
 use chrono::{DateTime, TimeDelta, Utc};
