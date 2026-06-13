@@ -3,14 +3,15 @@ use pulpo_common::event::Event;
 use sha2::Sha256;
 use tracing::{error, info};
 
-use crate::config::WebhookEndpointConfig;
+use crate::config::{WebhookEndpointConfig, glob_match, severity_at_least};
 
 /// Emits the canonical [`Event`] envelope to a configured webhook endpoint.
 ///
 /// Posts the locked webhook message contract (see ROADMAP "Webhook message
-/// contract"): signed JSON body plus `X-Pulpo-*` routing headers. Lifecycle and
-/// usage-alert events both flow here; the universal `type.subtype`/severity
-/// routing arrives in a later step.
+/// contract"): signed JSON body plus `X-Pulpo-*` routing headers. Every event
+/// type (`lifecycle`, `intervention`, `usage_alert`, `fleet`) flows through the
+/// same universal `<type>.<subtype>` glob + `min_severity` filter (see
+/// [`webhook_wants`]).
 pub struct WebhookSink {
     config: WebhookEndpointConfig,
     client: reqwest::Client,
@@ -28,26 +29,30 @@ pub fn compute_signature(secret: &str, body: &[u8]) -> String {
     format!("sha256={}", hex::encode(result.into_bytes()))
 }
 
-/// Returns whether the endpoint's status filter admits the given lifecycle status.
-///
-/// An empty filter admits everything. The filter only applies to `lifecycle`
-/// events — usage alerts are always admitted (see [`WebhookSink::wants`]).
-pub fn should_notify(config: &WebhookEndpointConfig, status: &str) -> bool {
-    config.events.is_empty() || config.events.iter().any(|e| e == status)
-}
-
 /// Whether an endpoint config wants the given canonical event.
 ///
-/// Lifecycle events respect the per-endpoint status filter (mapped onto the
-/// event subtype). Usage alerts are always delivered so cost/budget alerts reach
-/// webhooks. Other event types pass through (no per-type filter built yet). Free
-/// function so the dispatcher can filter by config without constructing a
-/// [`WebhookSink`] (which holds a reqwest client).
+/// Applies the universal routing filter uniformly to **every** event type:
+/// 1. the event's `severity` must clear the endpoint's `min_severity` floor
+///    (`info` < `warn` < `critical`; absent ⇒ no floor), and
+/// 2. its `"<type>.<subtype>"` key must match one of the endpoint's `events`
+///    globs (an empty/absent `events` list matches all).
+///
+/// Free function so the dispatcher can filter by config without constructing a
+/// [`WebhookSink`] (which holds a reqwest client). This is the single filtering
+/// point — the outbox worker resolves stored rows by endpoint name and does not
+/// re-filter.
 pub fn webhook_wants(config: &WebhookEndpointConfig, event: &Event) -> bool {
-    match event.event_type.as_str() {
-        "lifecycle" => should_notify(config, &event.subtype),
-        _ => true,
+    if !severity_at_least(&event.severity, config.min_severity.as_deref()) {
+        return false;
     }
+    if config.events.is_empty() {
+        return true;
+    }
+    let event_key = format!("{}.{}", event.event_type, event.subtype);
+    config
+        .events
+        .iter()
+        .any(|pattern| glob_match(pattern, &event_key))
 }
 
 /// Build the signed webhook `POST` request for a raw envelope body.
@@ -97,8 +102,8 @@ impl WebhookSink {
 
     /// Whether this endpoint wants the given canonical event.
     ///
-    /// Delegates to [`webhook_wants`] so inline-send and outbox filtering share
-    /// one rule.
+    /// Delegates to [`webhook_wants`] so inline-send and dispatcher filtering
+    /// share one rule (`<type>.<subtype>` globs + `min_severity`).
     pub fn wants(&self, event: &Event) -> bool {
         webhook_wants(&self.config, event)
     }
@@ -150,6 +155,7 @@ mod tests {
             name: "test-hook".into(),
             url: "https://example.com/hook".into(),
             events: vec![],
+            min_severity: None,
             secret: None,
         }
     }
@@ -230,63 +236,201 @@ mod tests {
         );
     }
 
-    // --- should_notify tests ---
+    fn event_with(event_type: &str, subtype: &str, severity: &str) -> Event {
+        let mut e = lifecycle_event(subtype);
+        e.event_type = event_type.into();
+        e.severity = severity.into();
+        e
+    }
+
+    // --- webhook_wants: glob matching (via the public filter) ---
 
     #[test]
-    fn test_should_notify_empty_filter_allows_all() {
+    fn test_wants_empty_events_matches_all() {
         let config = test_config();
-        assert!(should_notify(&config, "active"));
-        assert!(should_notify(&config, "stopped"));
+        assert!(webhook_wants(
+            &config,
+            &event_with("lifecycle", "idle", "info")
+        ));
+        assert!(webhook_wants(
+            &config,
+            &event_with("fleet", "node_down", "info")
+        ));
     }
 
     #[test]
-    fn test_should_notify_with_filter() {
+    fn test_wants_exact_match() {
         let config = WebhookEndpointConfig {
-            events: vec!["ready".into(), "stopped".into()],
+            events: vec!["lifecycle.idle".into()],
             ..test_config()
         };
-        assert!(!should_notify(&config, "active"));
-        assert!(should_notify(&config, "stopped"));
-        assert!(should_notify(&config, "ready"));
+        assert!(webhook_wants(
+            &config,
+            &event_with("lifecycle", "idle", "info")
+        ));
+        assert!(!webhook_wants(
+            &config,
+            &event_with("lifecycle", "active", "info")
+        ));
     }
 
-    // --- wants tests ---
+    #[test]
+    fn test_wants_prefix_glob() {
+        let config = WebhookEndpointConfig {
+            events: vec!["usage_alert.*".into()],
+            ..test_config()
+        };
+        assert!(webhook_wants(
+            &config,
+            &event_with("usage_alert", "budget_threshold", "warn")
+        ));
+        assert!(webhook_wants(
+            &config,
+            &event_with("usage_alert", "rate_limit", "warn")
+        ));
+        assert!(!webhook_wants(
+            &config,
+            &event_with("lifecycle", "idle", "warn")
+        ));
+    }
 
     #[test]
-    fn test_wants_lifecycle_respects_filter() {
+    fn test_wants_bare_type_matches_all_subtypes() {
+        let config = WebhookEndpointConfig {
+            events: vec!["intervention".into()],
+            ..test_config()
+        };
+        assert!(webhook_wants(
+            &config,
+            &event_with("intervention", "idle_timeout", "warn")
+        ));
+        assert!(!webhook_wants(
+            &config,
+            &event_with("lifecycle", "idle", "warn")
+        ));
+    }
+
+    #[test]
+    fn test_wants_star_matches_everything() {
+        let config = WebhookEndpointConfig {
+            events: vec!["*".into()],
+            ..test_config()
+        };
+        assert!(webhook_wants(
+            &config,
+            &event_with("lifecycle", "idle", "info")
+        ));
+        assert!(webhook_wants(
+            &config,
+            &event_with("fleet", "peer_unreachable", "critical")
+        ));
+    }
+
+    #[test]
+    fn test_wants_multiple_patterns_any_match() {
+        let config = WebhookEndpointConfig {
+            events: vec!["lifecycle.lost".into(), "usage_alert.*".into()],
+            ..test_config()
+        };
+        assert!(webhook_wants(
+            &config,
+            &event_with("lifecycle", "lost", "critical")
+        ));
+        assert!(webhook_wants(
+            &config,
+            &event_with("usage_alert", "burn_ceiling", "critical")
+        ));
+        assert!(!webhook_wants(
+            &config,
+            &event_with("lifecycle", "idle", "warn")
+        ));
+    }
+
+    #[test]
+    fn test_wants_no_match_drops() {
+        let config = WebhookEndpointConfig {
+            events: vec!["lifecycle.idle".into()],
+            ..test_config()
+        };
+        assert!(!webhook_wants(
+            &config,
+            &event_with("fleet", "node_down", "warn")
+        ));
+    }
+
+    // --- webhook_wants: severity floor ---
+
+    #[test]
+    fn test_wants_min_severity_drops_below_floor() {
+        let config = WebhookEndpointConfig {
+            min_severity: Some("warn".into()),
+            ..test_config()
+        };
+        assert!(!webhook_wants(
+            &config,
+            &event_with("lifecycle", "active", "info")
+        ));
+        assert!(webhook_wants(
+            &config,
+            &event_with("lifecycle", "idle", "warn")
+        ));
+        assert!(webhook_wants(
+            &config,
+            &event_with("lifecycle", "lost", "critical")
+        ));
+    }
+
+    #[test]
+    fn test_wants_min_severity_critical_only() {
+        let config = WebhookEndpointConfig {
+            min_severity: Some("critical".into()),
+            ..test_config()
+        };
+        assert!(!webhook_wants(
+            &config,
+            &event_with("usage_alert", "budget_threshold", "warn")
+        ));
+        assert!(webhook_wants(
+            &config,
+            &event_with("lifecycle", "lost", "critical")
+        ));
+    }
+
+    #[test]
+    fn test_wants_severity_and_glob_combined() {
+        // Both filters apply: pattern matches but severity below floor → dropped.
+        let config = WebhookEndpointConfig {
+            events: vec!["lifecycle.*".into()],
+            min_severity: Some("warn".into()),
+            ..test_config()
+        };
+        assert!(!webhook_wants(
+            &config,
+            &event_with("lifecycle", "active", "info")
+        ));
+        assert!(webhook_wants(
+            &config,
+            &event_with("lifecycle", "idle", "warn")
+        ));
+    }
+
+    // --- wants (sink delegates to webhook_wants) ---
+
+    #[test]
+    fn test_sink_wants_applies_to_all_types_uniformly() {
         let sink = WebhookSink::new(WebhookEndpointConfig {
-            events: vec!["stopped".into()],
+            events: vec!["usage_alert.*".into()],
             ..test_config()
         });
+        // Usage alerts now obey the glob filter like every other type.
+        assert!(sink.wants(&usage_alert_event()));
         assert!(!sink.wants(&lifecycle_event("active")));
-        assert!(sink.wants(&lifecycle_event("stopped")));
     }
 
     #[test]
-    fn test_wants_lifecycle_empty_filter() {
+    fn test_sink_wants_empty_filter() {
         let sink = WebhookSink::new(test_config());
         assert!(sink.wants(&lifecycle_event("active")));
-    }
-
-    #[test]
-    fn test_wants_usage_alert_always() {
-        // Even with a status filter, usage alerts must reach the webhook.
-        let sink = WebhookSink::new(WebhookEndpointConfig {
-            events: vec!["stopped".into()],
-            ..test_config()
-        });
-        assert!(sink.wants(&usage_alert_event()));
-    }
-
-    #[test]
-    fn test_wants_unknown_type_passes() {
-        let sink = WebhookSink::new(WebhookEndpointConfig {
-            events: vec!["stopped".into()],
-            ..test_config()
-        });
-        let mut event = lifecycle_event("node_down");
-        event.event_type = "fleet".into();
-        assert!(sink.wants(&event));
     }
 
     // --- WebhookSink basics ---

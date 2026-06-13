@@ -122,14 +122,19 @@ waiting_patterns = []         # Extra patterns for waiting-for-input detection
 
 ### Notification Events
 
-Default notification events: `["ready", "stopped"]`. Configure via:
+Webhook endpoints filter the universal event stream by `<type>.<subtype>` globs (empty
+means all). Session state changes are `lifecycle` events (`lifecycle.ready`,
+`lifecycle.stopped`, `lifecycle.lost`, ...):
 
 ```toml
-[[notifications.webhooks]]
+[[webhooks]]
 name = "primary"
 url = "https://example.com/hooks/pulpo"
-events = ["ready", "stopped", "lost"]
+events = ["lifecycle.ready", "lifecycle.stopped", "lifecycle.lost"]
 ```
+
+See the [config reference](/reference/config#webhooks) for `min_severity` and the full
+event catalogue. The legacy `[[notifications.webhooks]]` form still works.
 
 ## Corner Cases
 

@@ -139,6 +139,7 @@ mod tests {
             name: name.into(),
             url: format!("http://example.com/{name}"),
             events,
+            min_severity: None,
             secret: None,
         }
     }
@@ -216,26 +217,37 @@ mod tests {
         assert_eq!(enqueue_event_webhooks(&store, &webhooks, &event).await, 0);
     }
 
+    fn usage_alert_pulpo_event() -> PulpoEvent {
+        PulpoEvent::UsageAlert(pulpo_common::event::UsageAlertEvent {
+            session_id: "s".into(),
+            session_name: "n".into(),
+            node_name: "x".into(),
+            alert_kind: "budget_threshold".into(),
+            message: "m".into(),
+            cost_usd: Some(0.85),
+            budget_usd: Some(1.0),
+            timestamp: "2026-06-13T12:00:00Z".into(),
+        })
+    }
+
     #[tokio::test]
-    async fn test_enqueue_usage_alert_always_admitted() {
+    async fn test_enqueue_usage_alert_routed_uniformly() {
         let store = test_store().await;
-        let event = Event::from_pulpo_event(
-            &PulpoEvent::UsageAlert(pulpo_common::event::UsageAlertEvent {
-                session_id: "s".into(),
-                session_name: "n".into(),
-                node_name: "x".into(),
-                alert_kind: "budget_threshold".into(),
-                message: "m".into(),
-                cost_usd: Some(0.85),
-                budget_usd: Some(1.0),
-                timestamp: "2026-06-13T12:00:00Z".into(),
-            }),
-            "n",
-        )
-        .unwrap();
-        // Status filter would block lifecycle, but usage alerts still flow.
-        let webhooks = vec![webhook_config("stopped-only", vec!["stopped".into()])];
-        assert_eq!(enqueue_event_webhooks(&store, &webhooks, &event).await, 1);
+        let event = Event::from_pulpo_event(&usage_alert_pulpo_event(), "n").unwrap();
+        // Universal routing: a `usage_alert.*` glob admits it, a lifecycle-only
+        // glob does not (no more "usage alerts always flow" special case).
+        let webhooks = vec![
+            webhook_config("usage", vec!["usage_alert.*".into()]),
+            webhook_config("lifecycle-only", vec!["lifecycle.*".into()]),
+        ];
+        let n = enqueue_event_webhooks(&store, &webhooks, &event).await;
+        assert_eq!(n, 1);
+        let rows = store
+            .fetch_due_webhook_deliveries("2027-01-01T00:00:00Z", 10)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].endpoint, "usage");
     }
 
     #[tokio::test]
@@ -350,25 +362,12 @@ mod tests {
     #[tokio::test]
     async fn test_dispatcher_usage_alert_reaches_webhook() {
         let store = test_store().await;
-        // Status filter would block lifecycle, but usage alerts must still flow.
-        let webhooks = vec![webhook_config("hook", vec!["stopped".into()])];
+        // Universal routing: a `usage_alert.*` glob admits the alert.
+        let webhooks = vec![webhook_config("hook", vec!["usage_alert.*".into()])];
         let (event_tx, rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
-        event_tx
-            .send(PulpoEvent::UsageAlert(
-                pulpo_common::event::UsageAlertEvent {
-                    session_id: "s".into(),
-                    session_name: "n".into(),
-                    node_name: "x".into(),
-                    alert_kind: "budget_threshold".into(),
-                    message: "m".into(),
-                    cost_usd: Some(0.85),
-                    budget_usd: Some(1.0),
-                    timestamp: "2026-06-13T12:00:00Z".into(),
-                },
-            ))
-            .unwrap();
+        event_tx.send(usage_alert_pulpo_event()).unwrap();
         let handle = tokio::spawn(run_dispatcher_loop(
             store.clone(),
             webhooks,
@@ -386,6 +385,28 @@ mod tests {
         assert_eq!(rows.len(), 1);
         let json: serde_json::Value = serde_json::from_str(&rows[0].envelope_json).unwrap();
         assert_eq!(json["type"], "usage_alert");
+    }
+
+    #[tokio::test]
+    async fn test_dispatcher_usage_alert_dropped_by_lifecycle_filter() {
+        let store = test_store().await;
+        // A lifecycle-only filter now drops usage alerts (uniform routing).
+        let webhooks = vec![webhook_config("hook", vec!["lifecycle.*".into()])];
+        let (event_tx, rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+        event_tx.send(usage_alert_pulpo_event()).unwrap();
+        let handle = tokio::spawn(run_dispatcher_loop(
+            store.clone(),
+            webhooks,
+            None,
+            "n".into(),
+            rx,
+            shutdown_rx,
+        ));
+        run_until_idle(handle, &shutdown_tx).await;
+
+        assert!(pending_event_ids(&store).await.is_empty());
     }
 
     #[tokio::test]

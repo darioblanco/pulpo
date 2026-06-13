@@ -114,11 +114,44 @@ token = "secret"
 
 `[peers]` is discovery and routing metadata. In controller/node mode it is not the authority source for node identity.
 
-## `[notifications.webhooks]`
+## `[[webhooks]]`
+
+Each `[[webhooks]]` table is a delivery endpoint that subscribes to the universal event
+stream. Pulpo POSTs the canonical event envelope (see
+[the webhook example](https://github.com/darioblanco/pulpo/tree/main/contrib/examples/webhook-discord))
+to every endpoint whose filter admits the event. Delivery is at-least-once from a durable
+outbox with exponential backoff.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `name` | string | — | Human-readable endpoint name |
+| `name` | string | — | Endpoint name (must be unique — used to track deliveries) |
 | `url` | string | — | Webhook URL to POST events to |
-| `events` | string[] | `[]` | Event filter; empty means all events |
-| `secret` | string | — | Optional HMAC signing secret |
+| `events` | string[] | `[]` | `<type>.<subtype>` glob filter; empty means all events |
+| `min_severity` | string | — | Drop events below this floor (`info` < `warn` < `critical`); absent means no floor |
+| `secret` | string | — | Optional HMAC-SHA256 signing secret (`X-Pulpo-Signature`) |
+
+`events` patterns are matched against the event's `"<type>.<subtype>"` key:
+
+- exact — `lifecycle.idle`
+- prefix glob — `lifecycle.*` (any subtype of `lifecycle`)
+- bare type — `lifecycle` (also any subtype of `lifecycle`)
+- `*` — everything
+
+```toml
+[[webhooks]]
+name = "ops"
+url = "https://example.com/hooks/pulpo"
+events = ["lifecycle.*", "usage_alert.*", "intervention.*"]
+min_severity = "warn"
+secret = "optional-hmac-signing-secret"
+```
+
+Event types are `lifecycle`, `intervention`, `usage_alert`, and `fleet`; see the
+[session lifecycle reference](/operations/session-lifecycle) and the linked webhook example
+for the full event catalogue.
+
+### Legacy: `[notifications.webhooks]`
+
+The nested `[[notifications.webhooks]]` form is **deprecated** but still read for
+back-compat: any endpoints there are unioned with the top-level `[[webhooks]]` list at
+startup. Prefer the top-level form for new configs. The fields are identical.

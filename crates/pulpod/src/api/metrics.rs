@@ -382,6 +382,7 @@ mod tests {
             inks: HashMap::new(),
             plans: HashMap::new(),
             notifications: crate::config::NotificationsConfig::default(),
+            webhooks: Vec::new(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: MetricsConfig { enabled },

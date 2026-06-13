@@ -107,6 +107,7 @@ mod tests {
                 },
                 ..Default::default()
             },
+            webhooks: Vec::new(),
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),

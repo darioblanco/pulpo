@@ -91,13 +91,21 @@ See [Session Lifecycle](/operations/session-lifecycle) for how the watchdog driv
 
 ## Notifications
 
+Define one `[[webhooks]]` table per delivery endpoint. Each filters the universal event
+stream by `events` (`<type>.<subtype>` globs) and `min_severity`:
+
 ```toml
-[[notifications.webhooks]]
-name = "primary"
+[[webhooks]]
+name = "ops"
 url = "https://example.com/hooks/pulpo"
-events = ["ready", "stopped", "lost"]      # empty means all events
-secret = "optional-hmac-signing-secret"    # signs requests with X-Pulpo-Signature
+events = ["lifecycle.*", "usage_alert.*", "intervention.*"]  # empty means all events
+min_severity = "warn"                       # info < warn < critical; omit for no floor
+secret = "optional-hmac-signing-secret"     # signs requests with X-Pulpo-Signature
 ```
+
+The older `[[notifications.webhooks]]` form is deprecated but still read for back-compat
+(unioned with the top-level list). See the [config reference](/reference/config#webhooks)
+for the glob forms and the full event catalogue.
 
 ## Peers
 

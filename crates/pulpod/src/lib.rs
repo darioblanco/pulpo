@@ -433,7 +433,9 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     // (delivered by a separate worker with retry + backoff, surviving restarts),
     // web-push inline best-effort. The outbox worker also drains any rows left
     // pending from before a restart, which is the durability guarantee.
-    let webhooks = config.notifications.webhooks.clone();
+    // Union of the canonical top-level `[[webhooks]]` and the deprecated
+    // `[notifications.webhooks]` form, so existing configs keep working.
+    let webhooks = config.webhook_endpoints();
     for webhook_config in &webhooks {
         info!(webhook = %webhook_config.name, "Webhook endpoint enabled (durable outbox)");
     }
