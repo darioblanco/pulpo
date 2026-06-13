@@ -305,7 +305,7 @@ jobs:
           persist-credentials: false
           submodules: recursive
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.93.1
       - name: Publish pulpo-common
         run: cargo publish -p pulpo-common
       - name: Wait for crates.io index
