@@ -17,6 +17,7 @@ pub mod remote;
 pub mod scheduler;
 pub mod session;
 pub mod store;
+pub mod usage;
 pub mod watchdog;
 
 use std::path::Path;

@@ -219,6 +219,18 @@ pub mod meta {
     pub const AUTH_PROVIDER: &str = "auth_provider";
     pub const AUTH_PLAN: &str = "auth_plan";
     pub const AUTH_EMAIL: &str = "auth_email";
+    // Structured usage tracking (read from the agent's own session files).
+    // Absent USAGE_SOURCE means token/cost values were scraped from terminal output.
+    pub const USAGE_SOURCE: &str = "usage_source";
+    // Subscription quota snapshot (Codex writes exact rate-limit data to its session files).
+    // "Primary" is the short rolling window (e.g. 5h), "secondary" the long one (e.g. weekly).
+    pub const QUOTA_PRIMARY_USED_PERCENT: &str = "quota_primary_used_percent";
+    pub const QUOTA_PRIMARY_WINDOW_MINUTES: &str = "quota_primary_window_minutes";
+    pub const QUOTA_PRIMARY_RESETS_AT: &str = "quota_primary_resets_at";
+    pub const QUOTA_SECONDARY_USED_PERCENT: &str = "quota_secondary_used_percent";
+    pub const QUOTA_SECONDARY_WINDOW_MINUTES: &str = "quota_secondary_window_minutes";
+    pub const QUOTA_SECONDARY_RESETS_AT: &str = "quota_secondary_resets_at";
+    pub const QUOTA_PLAN: &str = "quota_plan";
 }
 
 impl Session {

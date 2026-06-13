@@ -4,15 +4,22 @@ use tracing::info;
 
 use super::output_patterns;
 use crate::store::Store;
+use crate::usage::ExactUsage;
 
 /// Detect PR URL, branch name, rate limits, errors, and token usage from session output.
 /// PR and branch are only written if not already present. Transient signals (rate limits,
 /// errors) are always updated and cleared when no longer detected.
+///
+/// When `exact_usage` is provided (read from the agent's own session files), it is
+/// authoritative: it overwrites token/cost metadata and disables the output scraper
+/// for usage fields. Once a session has ever had an exact source, scraped values are
+/// never written again (mixing the two would corrupt the totals).
 #[allow(clippy::too_many_lines)]
 pub(super) async fn detect_and_store_output_metadata(
     store: &Store,
     session: &Session,
     output: &str,
+    exact_usage: Option<ExactUsage>,
 ) {
     let has_pr = session.meta_str(meta::PR_URL).is_some();
     if !has_pr && let Some(pr_url) = output_patterns::extract_pr_url(output) {
@@ -129,9 +136,134 @@ pub(super) async fn detect_and_store_output_metadata(
         (None, None) => {}
     }
 
-    if let Some(usage) = output_patterns::extract_agent_usage(output) {
+    if let Some(exact) = exact_usage {
+        store_exact_usage(store, session, &exact).await;
+    } else if session.meta_str(meta::USAGE_SOURCE).is_none()
+        && let Some(usage) = output_patterns::extract_agent_usage(output)
+    {
         store_agent_usage(store, session, &usage).await;
     }
+}
+
+/// Append `(key, value)` to `updates` when it differs from the stored metadata value.
+fn push_if_changed(
+    updates: &mut Vec<(&'static str, String)>,
+    session: &Session,
+    key: &'static str,
+    value: String,
+) {
+    if session.meta_str(key) != Some(value.as_str()) {
+        updates.push((key, value));
+    }
+}
+
+/// Append quota-window fields for one rate-limit window.
+fn push_quota_window(
+    updates: &mut Vec<(&'static str, String)>,
+    session: &Session,
+    window: &crate::usage::QuotaWindow,
+    used_key: &'static str,
+    minutes_key: &'static str,
+    resets_key: &'static str,
+) {
+    push_if_changed(
+        updates,
+        session,
+        used_key,
+        format!("{}", window.used_percent),
+    );
+    if let Some(minutes) = window.window_minutes {
+        push_if_changed(updates, session, minutes_key, minutes.to_string());
+    }
+    if let Some(resets_at) = window.resets_at {
+        push_if_changed(updates, session, resets_key, resets_at.to_string());
+    }
+}
+
+/// Store exact usage read from the agent's own session files.
+///
+/// Unlike scraped usage, these values are session-lifetime totals computed fresh on
+/// every tick (restarts produce new files that are summed), so they overwrite rather
+/// than accumulate. Only changed values are written.
+async fn store_exact_usage(store: &Store, session: &Session, exact: &ExactUsage) {
+    let session_id = session.id.to_string();
+    let mut updates: Vec<(&'static str, String)> = Vec::new();
+
+    push_if_changed(
+        &mut updates,
+        session,
+        meta::USAGE_SOURCE,
+        exact.source.to_owned(),
+    );
+    push_if_changed(
+        &mut updates,
+        session,
+        meta::TOTAL_INPUT_TOKENS,
+        exact.input_tokens.to_string(),
+    );
+    push_if_changed(
+        &mut updates,
+        session,
+        meta::TOTAL_OUTPUT_TOKENS,
+        exact.output_tokens.to_string(),
+    );
+    push_if_changed(
+        &mut updates,
+        session,
+        meta::CACHE_WRITE_TOKENS,
+        exact.cache_write_tokens.to_string(),
+    );
+    push_if_changed(
+        &mut updates,
+        session,
+        meta::CACHE_READ_TOKENS,
+        exact.cache_read_tokens.to_string(),
+    );
+    if let Some(cost) = exact.cost_usd {
+        push_if_changed(
+            &mut updates,
+            session,
+            meta::SESSION_COST_USD,
+            format!("{cost:.6}"),
+        );
+    }
+    if let Some(quota) = &exact.quota {
+        if let Some(primary) = &quota.primary {
+            push_quota_window(
+                &mut updates,
+                session,
+                primary,
+                meta::QUOTA_PRIMARY_USED_PERCENT,
+                meta::QUOTA_PRIMARY_WINDOW_MINUTES,
+                meta::QUOTA_PRIMARY_RESETS_AT,
+            );
+        }
+        if let Some(secondary) = &quota.secondary {
+            push_quota_window(
+                &mut updates,
+                session,
+                secondary,
+                meta::QUOTA_SECONDARY_USED_PERCENT,
+                meta::QUOTA_SECONDARY_WINDOW_MINUTES,
+                meta::QUOTA_SECONDARY_RESETS_AT,
+            );
+        }
+        if let Some(plan) = &quota.plan {
+            push_if_changed(&mut updates, session, meta::QUOTA_PLAN, plan.clone());
+        }
+    }
+
+    if updates.is_empty() {
+        return;
+    }
+
+    let refs: Vec<(&str, &str)> = updates
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect();
+    let _ = store
+        .batch_update_session_metadata(&session_id, &refs, &[])
+        .await;
 }
 
 /// Build a `SessionEvent` from a session, populating token/cost enrichment from metadata.
@@ -408,7 +540,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        detect_and_store_output_metadata(&store, &fetched, "all green now").await;
+        detect_and_store_output_metadata(&store, &fetched, "all green now", None).await;
 
         let updated = store
             .get_session(&session.id.to_string())
@@ -417,5 +549,187 @@ mod tests {
             .unwrap();
         assert_eq!(updated.meta_str(meta::ERROR_STATUS), None);
         assert_eq!(updated.meta_str(meta::ERROR_STATUS_AT), None);
+    }
+
+    fn exact_usage_fixture() -> crate::usage::ExactUsage {
+        crate::usage::ExactUsage {
+            source: crate::usage::SOURCE_CLAUDE,
+            input_tokens: 1000,
+            output_tokens: 500,
+            cache_write_tokens: 300,
+            cache_read_tokens: 2000,
+            cost_usd: Some(0.123_456),
+            quota: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_exact_usage_writes_fields_and_source() {
+        let store = test_store().await;
+        let session = insert_session(&store, "exact-write").await;
+
+        detect_and_store_output_metadata(&store, &session, "", Some(exact_usage_fixture())).await;
+
+        let updated = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            updated.meta_str(meta::USAGE_SOURCE),
+            Some(crate::usage::SOURCE_CLAUDE)
+        );
+        assert_eq!(updated.meta_str(meta::TOTAL_INPUT_TOKENS), Some("1000"));
+        assert_eq!(updated.meta_str(meta::TOTAL_OUTPUT_TOKENS), Some("500"));
+        assert_eq!(updated.meta_str(meta::CACHE_WRITE_TOKENS), Some("300"));
+        assert_eq!(updated.meta_str(meta::CACHE_READ_TOKENS), Some("2000"));
+        assert_eq!(updated.meta_str(meta::SESSION_COST_USD), Some("0.123456"));
+    }
+
+    #[tokio::test]
+    async fn test_exact_usage_overwrites_instead_of_accumulating() {
+        let store = test_store().await;
+        let session = insert_session(&store, "exact-overwrite").await;
+        store
+            .batch_update_session_metadata(
+                &session.id.to_string(),
+                &[(meta::TOTAL_INPUT_TOKENS, "999999")],
+                &[],
+            )
+            .await
+            .unwrap();
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+
+        detect_and_store_output_metadata(&store, &fetched, "", Some(exact_usage_fixture())).await;
+
+        let updated = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.meta_str(meta::TOTAL_INPUT_TOKENS), Some("1000"));
+    }
+
+    #[tokio::test]
+    async fn test_exact_usage_writes_quota_snapshot() {
+        let store = test_store().await;
+        let session = insert_session(&store, "exact-quota").await;
+        let exact = crate::usage::ExactUsage {
+            source: crate::usage::SOURCE_CODEX,
+            cost_usd: None,
+            quota: Some(crate::usage::QuotaSnapshot {
+                primary: Some(crate::usage::QuotaWindow {
+                    used_percent: 12.5,
+                    window_minutes: Some(300),
+                    resets_at: Some(1_775_073_678),
+                }),
+                secondary: Some(crate::usage::QuotaWindow {
+                    used_percent: 3.0,
+                    window_minutes: Some(10_080),
+                    resets_at: Some(1_775_660_478),
+                }),
+                plan: Some("plus".into()),
+            }),
+            ..exact_usage_fixture()
+        };
+
+        detect_and_store_output_metadata(&store, &session, "", Some(exact)).await;
+
+        let updated = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            updated.meta_str(meta::QUOTA_PRIMARY_USED_PERCENT),
+            Some("12.5")
+        );
+        assert_eq!(
+            updated.meta_str(meta::QUOTA_PRIMARY_WINDOW_MINUTES),
+            Some("300")
+        );
+        assert_eq!(
+            updated.meta_str(meta::QUOTA_PRIMARY_RESETS_AT),
+            Some("1775073678")
+        );
+        assert_eq!(
+            updated.meta_str(meta::QUOTA_SECONDARY_USED_PERCENT),
+            Some("3")
+        );
+        assert_eq!(
+            updated.meta_str(meta::QUOTA_SECONDARY_WINDOW_MINUTES),
+            Some("10080")
+        );
+        assert_eq!(updated.meta_str(meta::QUOTA_PLAN), Some("plus"));
+        // No cost was provided; the field must stay unset.
+        assert_eq!(updated.meta_str(meta::SESSION_COST_USD), None);
+    }
+
+    #[tokio::test]
+    async fn test_exact_usage_noop_when_values_unchanged() {
+        let store = test_store().await;
+        let session = insert_session(&store, "exact-noop").await;
+        detect_and_store_output_metadata(&store, &session, "", Some(exact_usage_fixture())).await;
+        let after_first = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Same values again — must not error and must leave values identical.
+        detect_and_store_output_metadata(&store, &after_first, "", Some(exact_usage_fixture()))
+            .await;
+
+        let after_second = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(after_second.metadata, after_first.metadata);
+    }
+
+    #[tokio::test]
+    async fn test_scraper_disabled_once_exact_source_recorded() {
+        let store = test_store().await;
+        let session = insert_session(&store, "scraper-gate").await;
+        detect_and_store_output_metadata(&store, &session, "", Some(exact_usage_fixture())).await;
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Exact reader unavailable this tick, but scrapeable text is on screen.
+        let output = "Tokens: 999,999 sent, 888 received. Cost: $42.00 session.\n";
+        detect_and_store_output_metadata(&store, &fetched, output, None).await;
+
+        let updated = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.meta_str(meta::TOTAL_INPUT_TOKENS), Some("1000"));
+        assert_eq!(updated.meta_str(meta::SESSION_COST_USD), Some("0.123456"));
+    }
+
+    #[tokio::test]
+    async fn test_scraper_still_used_without_exact_source() {
+        let store = test_store().await;
+        let session = insert_session(&store, "scraper-fallback").await;
+
+        let output = "Tokens: 1,234 sent, 567 received. Cost: $0.03 message, $0.06 session.\n";
+        detect_and_store_output_metadata(&store, &session, output, None).await;
+
+        let updated = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.meta_str(meta::TOTAL_INPUT_TOKENS), Some("1234"));
+        assert_eq!(updated.meta_str(meta::USAGE_SOURCE), None);
     }
 }

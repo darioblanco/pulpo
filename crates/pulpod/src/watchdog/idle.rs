@@ -93,7 +93,8 @@ pub(super) async fn check_session_idle(
         return;
     }
 
-    detect_and_store_output_metadata(store, session, &current_output).await;
+    let exact_usage = crate::usage::read_exact_usage_for_session(session);
+    detect_and_store_output_metadata(store, session, &current_output, exact_usage).await;
 
     let output_changed = session.output_snapshot.as_deref() != Some(current_output.as_str());
     if output_changed {
