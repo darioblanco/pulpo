@@ -337,7 +337,6 @@ pulpo/
     │   │   └── connect/          # Connect form, saved connections
     │   └── pages/
     │       ├── dashboard.tsx     # Sessions dashboard with status filters
-    │       ├── worktrees.tsx     # Worktree sessions table
     │       ├── schedules.tsx     # Schedule management
     │       ├── settings.tsx      # Node, peers config
     │       └── connect.tsx       # Connection screen (standalone)
