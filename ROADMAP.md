@@ -212,11 +212,47 @@ pillar turns the signals into **real notifications** and into **operational opti
 Pulpo controls** — never the inference path. Everything here is alert-first and
 non-destructive by default; any auto-action (stop/pause/defer) is opt-in config.
 
-**M1 — Make alerts real (highest value, builds on B3).** Today the budget 80% "alert" only
-sets a metadata flag and logs. Wire usage signals into the existing notifier channels
-(SSE, web-push, webhook, Discord webhook): a new `UsageAlert` event for budget thresholds,
-burn-rate ceiling, quota-approaching-cap (from B1 projection), and rate-limit hits. Deduped
-(one-shot per crossing). This is the literal "monitor this better, with alerts."
+**M1 — Make alerts real (DONE).** `UsageAlert` event on the bus, delivered via SSE +
+in-app toast; emitted on the budget 80% crossing (deduped). External-channel delivery is
+folded into the event-forwarding backbone below.
+
+### Event-forwarding backbone (the monitoring system) — finalized 2026-06-13
+
+Pulpo becomes a universal event/control plane: it forwards **alerts and important events**
+to wherever you run observability. Model-agnostic and sovereign (data goes to *your*
+collector, not a vendor relay). Decisions locked:
+
+- **Canonical event envelope + taxonomy/severity.** One header (`event_id` idempotency key,
+  `schema_version`, `type`, `severity`, `occurred_at`, `node`, `session_id?`, `payload`).
+  Types: `lifecycle` (ready/stopped/lost/error/rate-limited), `intervention` (memory/idle/
+  budget stop), `usage_alert` (budget/burn/quota/rate-limit), `fleet` (node/peer health).
+  `severity` (info/warn/critical) is the universal filter knob.
+- **`EventSink` trait + one shared dispatcher** (owns bus subscription, filtering,
+  serialization, retries) replacing the per-notifier loops.
+- **Durable outbox (decided).** Persist events to a SQLite `events` table; deliver with
+  retry + **exponential backoff**; mark delivered; survive restarts. Generalizes
+  `intervention_events`. This is what makes it a monitoring backbone you can rely on.
+- **Universal webhooks (the headline).** `[[webhooks]]` — multiple endpoints, each with a
+  type/`min_severity` filter, **HMAC-signed payloads**, idempotency key (at-least-once,
+  dedup on the receiver), per-endpoint backoff. Web-push stays as a sink (phone alerts).
+- **Discord descoped** (owner's call, 2026-06-13 — "always a vanity example"). Remove the
+  Discord webhook notifier + `[notifications.discord]` config + its config-API surface;
+  tolerate a leftover `[notifications.discord]` section so old configs still boot.
+- **`/metrics` Prometheus endpoint (decided), toggleable, off by default.** Pull-based,
+  stateless (active sessions by status, $/hr, cost today, quota %, budget-breach +
+  intervention counters — computed on scrape, nothing stored). Gated by bind mode.
+  Push (webhooks) for discrete events; pull (`/metrics`) for continuous dashboard state.
+- **Scope boundary:** Pulpo emits events + exposes metrics; it is **not** a TSDB or log
+  store — forward to the user's stack (collector, Slack webhook, ntfy, Datadog, …).
+- **Topology:** standalone node forwards to its own sinks; in controller mode managed nodes
+  forward important events to the controller, which fans out to centrally-configured sinks
+  and exposes a fleet event feed. Same event model, two deployment shapes.
+
+Build order (non-breaking; existing `[notifications.webhooks]` maps onto the new model):
+**0)** descope Discord · **1)** canonical event model + `EventSink` trait + dispatcher
+(fold webhook/web-push in) · **2)** durable SQLite outbox + retry/backoff + HMAC +
+idempotency · **3)** universal `[[webhooks]]` config + type/severity routing · **4)**
+`/metrics` toggle · **5)** controller aggregation + fleet event feed.
 
 **M2 — Burn-velocity governor (the marquee optimizer).** A configurable `$/hr` (and/or
 tokens/hr) ceiling on the watchdog: crossing it **alerts** by default; **opt-in** to pause
