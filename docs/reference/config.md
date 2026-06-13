@@ -72,7 +72,6 @@ Auth rules:
 | `description` | string | — | Human-readable ink description |
 | `command` | string | — | Shell command to run (e.g. `"claude -p 'review code'"`) |
 | `secrets` | string[] | `[]` | Stored secret names to inject when the ink is used |
-| `runtime` | string | — | Default runtime for this ink: `tmux` or `docker` |
 
 ## `[peers]` / `[peers.<name>]`
 
@@ -97,20 +96,6 @@ token = "secret"
 | `token` | string | — | Auth token for this peer (optional) |
 
 `[peers]` is discovery and routing metadata. In controller/node mode it is not the authority source for node identity.
-
-## `[docker]`
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `image` | string | `"ubuntu:latest"` | Docker image for Docker runtime containers |
-| `volumes` | string[] | `["~/.claude:/root/.claude:ro", "~/.codex:/root/.codex:ro", "~/.gemini:/root/.gemini:ro"]` | Extra host mounts passed to Docker |
-
-```toml
-[docker]
-image = "my-agents-image:latest"  # Image with your agent tools installed
-```
-
-Use with `pulpo spawn --runtime docker` to run sessions in isolated Docker containers.
 
 ## `[notifications.discord]`
 

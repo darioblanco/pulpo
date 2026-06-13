@@ -45,12 +45,9 @@ Pulpo is command-agnostic. A session is not tied to one agent vendor.
 
 A runtime is where the session executes.
 
-Current runtimes:
+Sessions run on `tmux` — a native, long-lived terminal session.
 
-- `tmux`: native long-lived terminal session
-- `docker`: containerized execution with the session workdir mounted into the container
-
-The important design point is that the lifecycle model is shared across runtimes.
+The important design point is that the lifecycle model is decoupled from the backend behind a `Backend` trait, so the runtime can evolve without changing the session model.
 
 ## 4. Lifecycle
 

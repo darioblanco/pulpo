@@ -35,7 +35,7 @@ Bind modes:
 
 ## Inks
 
-Inks are reusable command templates with optional runtime and secret defaults:
+Inks are reusable command templates with optional secret defaults:
 
 ```toml
 [inks.reviewer]
@@ -46,10 +46,9 @@ command = "claude -p 'review this code for correctness, security, and performanc
 description = "Quick fix with Codex"
 command = "codex --quiet 'Fix the issue quickly with minimal changes.'"
 
-[inks.docker-coder]
-description = "Docker-isolated coder with secrets"
+[inks.work-coder]
+description = "Coder with secrets"
 command = "claude --dangerously-skip-permissions -p 'Implement the changes'"
-runtime = "docker"
 secrets = ["GH_WORK", "ANTHROPIC_KEY"]
 ```
 
@@ -57,7 +56,6 @@ secrets = ["GH_WORK", "ANTHROPIC_KEY"]
 |-------|------|-------------|
 | `description` | string | Human-readable description |
 | `command` | string | Command template to run |
-| `runtime` | string | Default runtime: `tmux` or `docker` (overridden by `--runtime` on spawn) |
 | `secrets` | string[] | Default secrets to inject (merged with `--secret` on spawn) |
 
 Use with: `pulpo spawn auth-review --ink reviewer`
@@ -181,27 +179,6 @@ token = "node-token-issued-by-controller"
 Restart `pulpod` on the managed node after updating the token. The controller will then show that node in `pulpo nodes enrolled` with its last seen timestamp and address.
 
 See [Controller + Node Setup](/guides/controller-node-setup) for a step-by-step walkthrough and troubleshooting tips.
-
-## Docker Runtime
-
-Run agents in Docker containers for isolation:
-
-```toml
-[docker]
-image = "my-agents-image:latest"   # Docker image with agent tools installed
-volumes = [
-  "~/.claude:/root/.claude:ro",
-  "~/.codex:/root/.codex:ro",
-]
-```
-
-Use with `--runtime docker` flag:
-
-```bash
-pulpo spawn risky --runtime docker -- claude --dangerously-skip-permissions -p "refactor"
-```
-
-The workdir is mounted at `/workspace` inside the container. The agent can read and write the session repo, plus any extra host paths you mount with `volumes`.
 
 ## Full Reference
 

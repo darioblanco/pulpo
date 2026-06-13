@@ -76,7 +76,7 @@ If you want to understand Pulpo quickly, start with a real workflow:
 - [Nightly Code Review](/guides/nightly-code-review): schedule an overnight review session and inspect the result in the morning
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo): split one repository across multiple concurrent agent sessions
 - [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale): run agents across your own private machines with remote control and node-local secrets
-- [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks): give high-impact tasks a safer runtime boundary without losing Pulpo supervision
+- [Worktrees](/guides/worktrees): give high-impact tasks an isolated git worktree so a risky run cannot disturb your main checkout
 - [Agent Examples](/guides/agent-examples): see how Pulpo wraps Claude Code, Codex, Gemini CLI, Kimi Code, and GLM-5 via OpenCode
 
 ## Where Pulpo Fits
@@ -93,7 +93,7 @@ Pulpo is easiest to understand as four pieces:
 
 1. **`pulpod`** is the daemon that owns session state and backends.
 2. A **session** is one managed command with durable metadata and an explicit lifecycle.
-3. A **runtime backend** is where the session runs: `tmux` or `docker`.
+3. A **runtime backend** is where the session runs: `tmux`.
 4. The **watchdog** observes output and enforces recovery/intervention rules.
 
 Everything else is a control surface or an operational convenience around that core:
@@ -127,7 +127,6 @@ Pulpo is for users who want coding agents to:
 **Optional operational layers**
 
 - multi-node fleet view
-- Docker runtime
 - worktrees
 - schedules
 - secrets
@@ -152,7 +151,7 @@ The project is still experimental overall, but the session/runtime/lifecycle mod
 9. [Nightly Code Review](/guides/nightly-code-review) for a concrete recurring workflow
 10. [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) for a concrete worktree workflow
 11. [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale) for the self-hosted multi-node workflow
-12. [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks) for safer high-permission execution
+12. [Worktrees](/guides/worktrees) for isolating high-permission runs from your main checkout
 13. [Agent Examples](/guides/agent-examples) for tool-specific command examples
 14. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
 
@@ -172,7 +171,7 @@ The project is still experimental overall, but the session/runtime/lifecycle mod
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
 - [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale)
 - [Controller + Node Setup](/guides/controller-node-setup)
-- [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks)
+- [Worktrees](/guides/worktrees)
 - [Agent Examples](/guides/agent-examples)
 - [Recovery Guide](/guides/recovery)
 - [CLI Reference](/reference/cli)

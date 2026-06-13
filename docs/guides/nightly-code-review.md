@@ -70,7 +70,6 @@ Add an ink to `~/.pulpo/config.toml`:
 [inks.nightly-review]
 description = "Nightly review focused on bugs, regressions, and missing tests"
 command = "claude -p 'Review this repository for bugs, regressions, risky changes, and missing tests. Summarize findings clearly.'"
-runtime = "docker"
 secrets = ["GH_WORK", "ANTHROPIC_KEY"]
 ```
 
@@ -86,7 +85,7 @@ Why this version is better:
 
 - the schedule stays short
 - you can refine the review command in one place
-- runtime and secrets travel with the review blueprint
+- the command and secrets travel with the review blueprint
 - the same ink can be reused across multiple repos or schedules
 
 ## Morning Check-In
@@ -107,23 +106,18 @@ In the web UI, you can:
 
 ## Variations
 
-### Run In tmux
+### Isolate The Review In A Worktree
 
-If you do not need container isolation, omit the ink runtime or set:
+If you want the unattended run to work in an isolated checkout (so it cannot disturb your main working tree), add `--worktree` to the schedule:
 
-```toml
-runtime = "tmux"
+```bash
+pulpo schedule add nightly-review "0 3 * * *" \
+  --workdir ~/repos/my-api \
+  --worktree \
+  --ink nightly-review
 ```
 
-### Run In Docker
-
-If the task needs stronger isolation or unrestricted agent permissions, use:
-
-```toml
-runtime = "docker"
-```
-
-This is often the better choice for unattended review or audit tasks.
+Each run gets a fresh git worktree on its own branch, cleaned up when the session is stopped.
 
 ### Review On Another Machine
 

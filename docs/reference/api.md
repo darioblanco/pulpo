@@ -79,7 +79,7 @@ Node enrollment notes:
   "idle_threshold_secs": 120,
   "worktree": true,
   "worktree_base": "main",
-  "runtime": "docker",
+  "runtime": "tmux",
   "secrets": ["GITHUB_TOKEN"]
 }
 ```
@@ -112,7 +112,7 @@ Ink request/response body:
   "description": "Code reviewer focused on correctness",
   "command": "claude -p 'review this code'",
   "secrets": ["GITHUB_TOKEN"],
-  "runtime": "docker"
+  "runtime": "tmux"
 }
 ```
 

@@ -16,7 +16,6 @@ Each example is intentionally simple.
 You can combine the same agent command with Pulpo features such as:
 
 - `--worktree` for isolated git branches
-- `--runtime docker` for stronger execution isolation
 - `--secret` for credentials
 - `pulpo schedule add ...` for recurring runs
 
@@ -95,11 +94,11 @@ pulpo spawn glm-review --workdir ~/repos/my-api -- opencode
 Safer variant:
 
 ```bash
-pulpo spawn glm-risky --workdir ~/repos/my-api --worktree --runtime docker -d -- opencode
+pulpo spawn glm-risky --workdir ~/repos/my-api --worktree -d -- opencode
 ```
 
-If you want the Docker-focused rationale, see
-[Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks).
+If you want the worktree-isolation rationale, see
+[Worktrees](/guides/worktrees).
 
 ## Common Patterns
 
@@ -107,12 +106,6 @@ If you want the Docker-focused rationale, see
 
 ```bash
 pulpo spawn my-task --workdir ~/repos/my-api --worktree -d -- <agent-command>
-```
-
-### Run in Docker
-
-```bash
-pulpo spawn my-task --workdir ~/repos/my-api --runtime docker -- <agent-command>
 ```
 
 ### Schedule it
@@ -127,7 +120,6 @@ pulpo schedule add nightly-task "0 3 * * *" --workdir ~/repos/my-api -- <agent-c
 [inks.agent-review]
 description = "Reusable review workflow"
 command = "claude -p 'Review this repository for bugs, regressions, and missing tests.'"
-runtime = "docker"
 ```
 
 Then:
@@ -152,4 +144,4 @@ It is a practical illustration of Pulpo's command-agnostic model.
 - [Configuration Guide](/guides/configuration)
 - [Nightly Code Review](/guides/nightly-code-review)
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
-- [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks)
+- [Worktrees](/guides/worktrees)

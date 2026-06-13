@@ -3,7 +3,7 @@
 Choose the install path based on where you want the runtime to live:
 
 - laptop or always-on Mac/Linux machine: Homebrew or source install
-- Windows: Docker-based sessions
+- Windows: via WSL2
 - server or team-managed box: service install after binary or source setup
 
 If you are still deciding whether Pulpo fits your workflow, read
@@ -21,26 +21,20 @@ This installs:
 - `pulpo` (CLI)
 - `tmux` (dependency via formula)
 
-## Windows
+## Windows (via WSL2)
 
-Download `pulpod.exe` and `pulpo.exe` from [GitHub Releases](https://github.com/darioblanco/pulpo/releases).
+Sessions run on tmux, which is not available on native Windows — `pulpod` running on native Windows cannot create sessions locally (spawning returns an error). Run Pulpo inside [WSL2](https://learn.microsoft.com/windows/wsl/install) instead, where it runs as a normal Linux install.
 
-Requirements:
+Inside your WSL2 distribution, follow the Linux instructions above (Homebrew or [From Source](#from-source)) to install `pulpod`, `pulpo`, and `tmux`. Sessions you spawn there run under Linux/tmux.
 
-- [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/) (for `--runtime docker` sessions)
-
-On Windows, all sessions use Docker containers (`--runtime docker`). tmux is not available on Windows, so sessions without `--runtime docker` will show an error directing you to use Docker.
+The native Windows `pulpo.exe` client can still talk to a remote `pulpod` (for example one running in WSL2 or on another machine):
 
 ```powershell
-# Start daemon
-.\pulpod.exe
-
-# Spawn a Docker runtime session
-.\pulpo.exe spawn my-task --runtime docker -- claude -p "Fix the bug"
-
-# Open web UI
-start http://localhost:7433
+# Point the CLI at a remote daemon and list its sessions
+.\pulpo.exe --node <remote-host>:7433 ls
 ```
+
+It cannot host sessions on native Windows — use it only as a client.
 
 ## From Source
 

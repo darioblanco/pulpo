@@ -49,7 +49,7 @@ Pulpo gives you:
 - self-hosted execution on infrastructure you control
 - command-agnostic support across agent vendors
 - audit-friendly lifecycle and intervention history
-- policy depth through watchdogs, secrets, Docker, and scheduling
+- policy depth through watchdogs, secrets, worktrees, and scheduling
 
 ### 3. The Operator Running Repeated Agent Work
 

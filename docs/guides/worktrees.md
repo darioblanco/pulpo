@@ -14,8 +14,6 @@ Run multiple agents on the same repository without conflicts. Each agent gets it
 
 If you want the full end-to-end workflow rather than the feature explanation,
 see [Parallel Agents On One Repo](/guides/parallel-agents-one-repo).
-If you want the safer-runtime variant, see
-[Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks).
 
 ## Why worktrees?
 
@@ -116,14 +114,6 @@ git branch
 ```
 
 Create PRs from each branch, or merge directly.
-
-## Docker runtime
-
-Worktrees work with `--runtime docker` too. The worktree directory is mounted into the container instead of the original repo:
-
-```bash
-pulpo spawn risky-fix --workdir ~/repos/my-api --worktree --runtime docker -- claude --dangerously-skip-permissions -p "refactor"
-```
 
 ## CLI indicator
 

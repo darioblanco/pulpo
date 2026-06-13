@@ -33,7 +33,7 @@ state, you are creating a durable session Pulpo can supervise and recover.
 You created one managed session:
 
 - the daemon stored metadata for it
-- the session started on the default runtime (`tmux`)
+- the session started on the `tmux` runtime
 - Pulpo began tracking its lifecycle and output
 
 That is the core product. The rest of the docs mostly explain variations on that theme.
@@ -86,23 +86,17 @@ pulpo schedule list
 For a fuller version of this pattern using reusable inks and a real overnight
 workflow, see [Nightly Code Review](/guides/nightly-code-review).
 
-## 7. Docker runtime
+## 7. Isolated worktree runs
 
-Run agents in isolated containers — safe for unrestricted permissions:
+For higher-risk runs, give the agent an isolated git worktree on its own branch so it cannot disturb your main checkout:
 
 ```bash
-pulpo spawn risky-task --runtime docker -- claude --dangerously-skip-permissions -p "refactor everything"
+pulpo spawn risky-task --workdir ~/repo --worktree -- claude --dangerously-skip-permissions -p "refactor everything"
 ```
 
-The agent runs in a Docker container with the session workdir mounted, plus any configured Docker volumes. Configure the image in `~/.pulpo/config.toml`:
+The session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the session name; the worktree and branch are cleaned up when the session is stopped.
 
-```toml
-[docker]
-image = "my-agents-image:latest"
-```
-
-For the full workflow around higher-risk tasks, see
-[Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks).
+For the full workflow, see [Worktrees](/guides/worktrees).
 
 ## 8. Remote nodes
 
@@ -127,7 +121,7 @@ curl -N http://localhost:7433/api/v1/events  # SSE stream
 - [Why Pulpo](/getting-started/why-pulpo) — ICPs, alternatives, and where Pulpo fits
 - [Nightly Code Review](/guides/nightly-code-review) — a concrete recurring background-agent workflow
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) — a concrete parallel-worktree workflow
-- [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks) — a concrete safer-runtime workflow
+- [Worktrees](/guides/worktrees) — isolate higher-risk runs from your main checkout
 - [Agent Examples](/guides/agent-examples) — concrete examples with Claude Code, Codex, Gemini CLI, Kimi Code, and GLM-5 via OpenCode
 - [Core Concepts](/architecture/core-concepts) — the smallest vocabulary for understanding Pulpo
 - [Architecture Overview](/architecture/overview) — the session/runtime/watchdog mental model

@@ -103,17 +103,6 @@ From there you can:
 - merge selected work
 - resume a session if it is `ready` or `lost`
 
-## Using Docker Too
-
-Worktrees also work with Docker sessions:
-
-```bash
-pulpo spawn risky-refactor --workdir ~/repos/my-api --worktree --runtime docker -d -- claude --dangerously-skip-permissions -p "Refactor the service layer"
-```
-
-In that case, Pulpo mounts the worktree path into the container instead of the
-original repo path.
-
 ## Choosing Good Task Boundaries
 
 Parallel agents work best when tasks are meaningfully separate.

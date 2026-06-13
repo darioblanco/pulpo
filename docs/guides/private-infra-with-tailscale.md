@@ -139,20 +139,20 @@ Or open the controller dashboard and inspect the fleet view. Managed-node dashbo
 This is the practical value of Pulpo's control-plane model: remote execution,
 same control semantics.
 
-## 6. Add Docker Isolation If Needed
+## 6. Add Worktree Isolation If Needed
 
-If the task needs stronger isolation:
+If the task needs an isolated checkout (so a high-permission run cannot disturb the repo's main working tree):
 
 ```bash
 pulpo --node gpu-box spawn risky-audit \
   --workdir ~/repos/backend \
-  --runtime docker \
+  --worktree \
   --secret GH_WORK \
   -- claude --dangerously-skip-permissions -p "Audit this repository and propose fixes."
 ```
 
 That keeps execution on your infrastructure while still isolating the session in
-a container.
+its own git worktree and branch.
 
 ## Optional: Reusable Ink
 
@@ -163,7 +163,6 @@ If you run this kind of task often, define an ink on the target node:
 description = "Private review on internal infrastructure"
 command = "claude -p 'Review this repository for correctness, security issues, and missing tests.'"
 secrets = ["GH_WORK"]
-runtime = "docker"
 ```
 
 Then spawn it through the controller:

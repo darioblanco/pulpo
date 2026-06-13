@@ -1,6 +1,6 @@
 # Controller + Node Setup
 
-Pulpo’s multi-node control plane is intentionally simple: every node runs the same binary, one node becomes the controller, and the controller keeps the canonical session index while managed nodes run the actual tmux/docker backends.
+Pulpo’s multi-node control plane is intentionally simple: every node runs the same binary, one node becomes the controller, and the controller keeps the canonical session index while managed nodes run the actual tmux backends.
 
 This guide walks through the end-to-end flow so you can get a controller and node running together without guessing which config goes where.
 

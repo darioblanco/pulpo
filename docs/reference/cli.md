@@ -39,7 +39,6 @@ By default, `spawn` auto-attaches to the session. Use `--detach` / `-d` to skip 
 | `--idle-threshold <SECS>` | Per-session idle threshold (`0` = never idle) |
 | `--worktree` | Create an isolated git worktree for the session |
 | `--worktree-base <BRANCH>` | Fork worktree from a specific branch (implies `--worktree`) |
-| `--runtime <RUNTIME>` | Session runtime: `tmux` (default) or `docker` |
 | `--secret <NAME>` | Inject a stored secret as an environment variable |
 
 If no name is provided, Pulpo derives one from the workdir/path context. If no command is provided, Pulpo falls back to the ink command, `node.default_command`, or finally `$SHELL`.
@@ -63,7 +62,6 @@ pulpo schedule remove <ID>                                      Remove a job
 | `--node <NAME>` | Target node (omit = local, `auto` = least-loaded) |
 | `--ink <NAME>` | Ink preset from config |
 | `--description <TEXT>` | Human-readable description |
-| `--runtime <RUNTIME>` | Session runtime: `tmux` (default) or `docker` |
 | `--secret <NAME>` | Inject a stored secret (repeatable) |
 | `--worktree` | Create an isolated git worktree for each run |
 | `--worktree-base <BRANCH>` | Fork worktree from a specific branch (implies `--worktree`) |
@@ -86,10 +84,9 @@ pulpo ink remove <NAME>                    Remove an ink preset (alias: rm)
 |------|-------------|
 | `--description <TEXT>` | Human-readable description |
 | `--command <CMD>` | Command template |
-| `--runtime <RUNTIME>` | Default runtime: `tmux` or `docker` |
 | `--secret <NAME>` | Default secrets to inject (repeatable) |
 
-Inks are persisted in `config.toml` and take effect immediately for new sessions. When used with `pulpo spawn --ink <NAME>`, the ink provides defaults for command, description, runtime, and secrets. Explicit spawn flags override ink defaults.
+Inks are persisted in `config.toml` and take effect immediately for new sessions. When used with `pulpo spawn --ink <NAME>`, the ink provides defaults for command, description, and secrets. Explicit spawn flags override ink defaults.
 
 ## Secret Subcommands
 
@@ -173,16 +170,16 @@ pulpo --node mac-mini spawn review-backend \
 
 See [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale) for the complete recipe.
 
-### Docker-isolated risky task
+### Worktree-isolated risky task
 
 ```bash
 pulpo spawn risky-refactor \
   --workdir ~/repos/my-api \
-  --runtime docker \
+  --worktree \
   -- claude --dangerously-skip-permissions -p "Refactor the service layer and simplify the data flow."
 ```
 
-See [Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks) for the complete recipe.
+The `--worktree` flag gives the agent an isolated git worktree on its own branch, so a high-permission run cannot disturb your main checkout. See [Worktrees](/guides/worktrees) for the complete recipe.
 
 ### Follow all sessions in parallel (tmux panes)
 

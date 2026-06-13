@@ -8,14 +8,12 @@ This guide matters most for:
 
 - users running agents against private services or private repos
 - teams keeping runtime execution on infrastructure they control
-- Docker-based sessions that still need agent authentication
+- sessions that need agent authentication tokens
 
 Secrets are environment variables that get injected into agent sessions. They provide a way to pass sensitive values (API keys, tokens, credentials) to your sessions without hardcoding them in commands or inks.
 
 For a full multi-node example, see
 [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale).
-For a higher-risk Docker workflow, see
-[Docker-Isolated Risky Tasks](/guides/docker-isolated-risky-tasks).
 
 ## Overview
 
@@ -80,43 +78,37 @@ pulpo spawn my-task --secret GITHUB_TOKEN --secret NPM_TOKEN -- npm run build
 pulpo spawn my-task --secret GH_WORK -- claude -p "review PRs"
 ```
 
-When injected:
-- **tmux sessions**: Secrets are written to a temporary file (`/tmp/pulpo-secrets-<session-id>.sh`) with `0600` permissions. The session command sources and immediately deletes it — secret values never appear in the command string, `ps` output, or session logs.
-- **Docker sessions**: Secrets are passed as `-e KEY=VALUE` flags to `docker run`.
+When injected, secrets are written to a temporary file (`/tmp/pulpo-secrets-<session-id>.sh`) with `0600` permissions. The session command sources and immediately deletes it — secret values never appear in the command string, `ps` output, or session logs.
 
 ### Validation rules
 
 - Secret values must **not contain newlines or null bytes** (rejected with 400 error)
 - If two `--secret` flags resolve to the **same env var** (e.g., both map to `GITHUB_TOKEN` via `--env`), spawn fails with a clear error — use only one
 
-## Inks with Secrets and Runtime
+## Inks with Secrets
 
-Inks can bundle secrets and runtime, making them reusable session blueprints:
+Inks can bundle a command and its secrets, making them reusable session blueprints:
 
 ```toml
-[inks.docker-coder]
+[inks.work-coder]
 command = "claude --dangerously-skip-permissions -p 'Implement the changes'"
-description = "Docker-isolated coder with work GitHub token"
+description = "Coder with work GitHub token"
 secrets = ["GH_WORK", "ANTHROPIC_KEY"]
-runtime = "docker"
 ```
 
-Then spawn with just the ink — no `--secret` or `--runtime` flags needed:
+Then spawn with just the ink — no `--secret` flags needed:
 
 ```bash
-pulpo spawn my-task --ink docker-coder
+pulpo spawn my-task --ink work-coder
 # Equivalent to:
-# pulpo spawn my-task --runtime docker --secret GH_WORK --secret ANTHROPIC_KEY -- claude ...
+# pulpo spawn my-task --secret GH_WORK --secret ANTHROPIC_KEY -- claude ...
 ```
 
-Spawn flags override ink defaults:
+Spawn flags extend ink defaults:
 
 ```bash
-# Use the ink's command and secrets, but override runtime to tmux
-pulpo spawn my-task --ink docker-coder --runtime tmux
-
 # Add extra secrets beyond what the ink provides
-pulpo spawn my-task --ink docker-coder --secret EXTRA_TOKEN
+pulpo spawn my-task --ink work-coder --secret EXTRA_TOKEN
 ```
 
 Ink secrets and request `--secret` flags are merged (deduplicated).
@@ -153,8 +145,7 @@ pulpo --node mac-mini secret delete GITHUB_TOKEN
 - **File permissions**: Database file is set to mode `0600` (owner read/write only) on Unix systems
 - **API exposure**: The REST API never returns secret values. `GET /api/v1/secrets` returns only names, env mappings, and creation timestamps. `PUT /api/v1/secrets/{name}` accepts a value but never echoes it back
 - **Web UI**: The settings page shows secret names and env mappings but never fetches or displays values. The input field for adding secrets uses `type="password"` with a show/hide toggle
-- **Injection (tmux)**: Secrets are written to a temp file with `0600` permissions, sourced by the shell, and immediately deleted. Secret values never appear in `ps` output, command strings, or session logs.
-- **Injection (Docker)**: Secrets are passed as `-e` flags to `docker run`. They're visible in `docker inspect` but not in pulpo's session logs.
+- **Injection**: Secrets are written to a temp file with `0600` permissions, sourced by the shell, and immediately deleted. Secret values never appear in `ps` output, command strings, or session logs.
 
 ## API Endpoints
 
@@ -166,67 +157,18 @@ pulpo --node mac-mini secret delete GITHUB_TOKEN
 
 All endpoints require authentication (inside the auth middleware).
 
-## Docker Authentication
+## Agent Authentication via Tokens
 
-Docker sessions automatically mount agent authentication directories into containers. This allows agents running inside Docker to authenticate without manual token setup.
-
-### Default Volume Mounts
-
-By default, these directories are mounted read-only into every Docker container:
-
-| Host Path | Container Path | Description |
-|-----------|---------------|-------------|
-| `~/.claude` | `/root/.claude` | Claude Code auth and settings |
-| `~/.codex` | `/root/.codex` | OpenAI Codex auth |
-| `~/.gemini` | `/root/.gemini` | Google Gemini auth |
-
-Volumes are mounted as **read-only** (`:ro`) -- agents can read tokens but cannot modify your local credentials.
-
-If a host directory does not exist (e.g., you do not have Codex installed), that mount is silently skipped.
-
-### macOS Keychain Extraction (Claude Code)
-
-On macOS, Claude Code stores OAuth credentials in the system Keychain rather than on disk. When Docker sessions are created, pulpod automatically:
-
-1. Checks if `~/.claude/.credentials.json` exists on disk
-2. If not, extracts credentials from the macOS Keychain (`security find-generic-password -s "Claude Code-credentials" -w`)
-3. Writes the credentials to a temp file in `~/.pulpo/docker-creds/` by default
-4. Mounts that file as `/root/.claude/.credentials.json:ro` inside the container
-
-This is fully automatic -- no configuration needed.
-
-### Customizing Volume Mounts
-
-Override the default volumes in `config.toml`:
-
-```toml
-[docker]
-# Replace defaults with custom mounts
-volumes = [
-    "~/.claude:/root/.claude:ro",
-    "~/.codex:/root/.codex:ro",
-    "~/.gemini:/root/.gemini:ro",
-    # Add git/ssh access (use with caution -- grants container access to your keys)
-    # "~/.ssh:/root/.ssh:ro",
-    # "~/.gitconfig:/root/.gitconfig:ro",
-]
-```
-
-Set `volumes = []` to disable all default mounts.
-
-### Alternative: Environment Variable Tokens
-
-Instead of mounting auth directories, you can pass tokens via secrets:
+You can authenticate agents by passing their auth tokens as secrets, instead of relying on each agent's on-disk login:
 
 ```bash
 pulpo secret set CLAUDE_TOKEN sk-ant-xxxx --env CLAUDE_CODE_OAUTH_TOKEN
-pulpo spawn my-task --runtime docker --secret CLAUDE_TOKEN -- claude -p "review code"
+pulpo spawn my-task --secret CLAUDE_TOKEN -- claude -p "review code"
 ```
 
-See [Secrets](#injecting-secrets-into-sessions) for details.
+See [Injecting Secrets into Sessions](#injecting-secrets-into-sessions) for details.
 
 ## Known Limitations
 
-- **Docker resume**: When a Docker session is resumed, the container is recreated without the original secrets. The secret names are not stored on the session itself, so they cannot be re-injected. tmux sessions are not affected because the secrets temp file is sourced at session start.
 - **tmux resume**: Secrets are sourced from a temp file that is deleted after the first session start. Resumed tmux sessions do not re-inject secrets — the running shell already has them in its environment from the original start.
 - **Env var collision**: If two secrets in a `--secret` list map to the same env var (via `--env`), spawn is rejected. Use only one secret per env var per session.

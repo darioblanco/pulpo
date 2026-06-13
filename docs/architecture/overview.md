@@ -6,7 +6,7 @@ Architecturally, the shortest accurate description is:
 
 - `pulpod` runs and tracks sessions
 - each session is a command plus durable state
-- sessions run on a backend: `tmux` or `docker`
+- sessions run on a `tmux` backend
 - the watchdog drives lifecycle transitions and interventions
 
 Everything else in the project exists to operate that core more conveniently.
@@ -73,12 +73,9 @@ A session is one managed command plus metadata:
 
 ### Runtime
 
-A runtime is where that command executes:
+A runtime is where that command executes. Sessions run on `tmux` — native, long-lived terminal sessions.
 
-- `tmux` for native long-lived terminal sessions
-- `docker` for containerized execution
-
-The lifecycle model is shared across runtimes. That is the important abstraction.
+The lifecycle model is decoupled from the backend behind the `Backend` trait. That is the important abstraction.
 
 ### Lifecycle
 
@@ -192,29 +189,6 @@ Session spawn → resolve_ink → build_command → tmux create
 
 ## Runtime Details
 
-### Docker Runtime
-
-`--runtime docker` runs sessions in Docker containers instead of tmux. The workdir is mounted at `/workspace`, and any configured Docker volumes are mounted too.
-
-```bash
-# Safe for unrestricted agent execution
-pulpo spawn risky-task --runtime docker -- claude --dangerously-skip-permissions -p "refactor"
-```
-
-The `DockerBackend` implements the same `Backend` trait as tmux, using `docker` CLI commands:
-- `create_session` → `docker run -d --name pulpo-<name> -v <workdir>:/workspace ...`
-- `capture_output` → `docker logs --tail N`
-- `is_alive` → `docker inspect --format '{{.State.Running}}'`
-- `kill_session` → `docker stop + docker rm`
-
-Configure the Docker image in `config.toml`:
-```toml
-[docker]
-image = "my-agents-image:latest"  # must have agent tools installed
-```
-
-Sessions are identified by `backend_session_id` prefix: `$N` for tmux, `docker:pulpo-<name>` for Docker. The session manager dispatches to the correct backend automatically.
-
 ### tmux Session Adoption
 
 Pulpo doesn't require you to use `pulpo spawn`. Start tmux however you want — `tmux new-session`, scripts, other tools — and the watchdog discovers and adopts those sessions automatically:
@@ -231,7 +205,7 @@ This is enabled by default (`adopt_tmux = true` in watchdog config).
 The most stable part of the project is:
 
 - daemon-managed sessions
-- tmux/docker runtimes
+- the tmux runtime
 - lifecycle states
 - watchdog supervision
 - CLI/API/web UI access to that state
@@ -254,7 +228,6 @@ All session operations go through a `Backend` trait. The session lifecycle, watc
 | Backend | Use case | Backend ID format |
 |---------|----------|-------------------|
 | **tmux** (default) | Local/remote servers, zero infrastructure | `$0`, `$1`, ... |
-| **Docker** (`--runtime docker`) | Isolated containers, safe for unrestricted agents | `docker:pulpo-<name>` |
 | **Kubernetes** (future) | Cluster scale, team infrastructure | — |
 
 Adding a new backend means implementing ~10 methods (`create_session`, `kill_session`, `is_alive`, `capture_output`, etc.). Everything above the backend layer — lifecycle states, watchdog, scheduler, fleet, web UI — works unchanged.
