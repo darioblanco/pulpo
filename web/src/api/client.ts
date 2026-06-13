@@ -1,5 +1,6 @@
 import type {
   Session,
+  UsageProjectionResponse,
   NodeInfo,
   PeersResponse,
   ListSessionsParams,
@@ -112,6 +113,11 @@ export async function getSessions(params?: ListSessionsParams): Promise<Session[
 
 export async function getFleetSessions(): Promise<FleetSessionsResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/fleet/sessions`);
+  return res.json();
+}
+
+export async function getUsageProjection(): Promise<UsageProjectionResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/usage/projection`);
   return res.json();
 }
 

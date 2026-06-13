@@ -238,3 +238,42 @@ export interface CreateScheduleRequest {
   ink?: string;
   description?: string;
 }
+
+export interface SessionProjection {
+  session_id: string;
+  session_name: string;
+  usage_source: string | null;
+  auth_provider: string | null;
+  auth_plan: string | null;
+  auth_email: string | null;
+  pool: string;
+  total_tokens: number;
+  cost_usd: number | null;
+  elapsed_secs: number;
+  cost_per_hour: number | null;
+  tokens_per_hour: number | null;
+  quota_used_percent: number | null;
+  quota_resets_at: number | null;
+  allowance_tokens: number | null;
+  allowance_used_percent: number | null;
+  secs_to_allowance: number | null;
+}
+
+export interface AccountRollup {
+  provider: string | null;
+  plan: string | null;
+  email: string | null;
+  pool: string;
+  session_count: number;
+  total_tokens: number;
+  total_cost_usd: number | null;
+  cost_per_hour: number | null;
+  max_quota_used_percent: number | null;
+}
+
+export interface UsageProjectionResponse {
+  node_name: string;
+  generated_at: string;
+  sessions: SessionProjection[];
+  accounts: AccountRollup[];
+}

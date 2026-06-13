@@ -1,4 +1,4 @@
-import { Waves, LayoutList, Settings, Clock } from 'lucide-react';
+import { Waves, LayoutList, Settings, Clock, Wallet } from 'lucide-react';
 import { Link, useLocation } from 'react-router';
 import {
   Sidebar,
@@ -17,6 +17,7 @@ const navItems = [
   { to: '/', icon: Waves, label: 'Ocean' },
   { to: '/sessions', icon: LayoutList, label: 'Sessions' },
   { to: '/schedules', icon: Clock, label: 'Schedules' },
+  { to: '/usage', icon: Wallet, label: 'Usage' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
