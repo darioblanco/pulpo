@@ -5,9 +5,16 @@ Strategic direction for Pulpo: the self-hosted meter and breaker box for coding 
 ## Mission
 
 Pulpo runs coding agents as background workers on your machines, **measures exactly what
-every session costs** — across all your agents, accounts, and machines — and **enforces
-budgets and quota-aware placement** so you get the maximum out of your subscriptions
-without ever blowing a limit.
+every session costs** — across all your agents, accounts, and machines — **monitors and
+alerts** on cost/quota/waste, and **optimizes the things it controls** (kills waste, runs
+work on the cheapest pool with headroom, right-sizes defaults) so you get the maximum out
+of your subscriptions without ever blowing a limit.
+
+Scope boundary: Pulpo optimizes the *operation* of agents (when/whether/where a session
+runs, what it launches with, when to stop it, which pool it draws from) — never the
+*inference path* (no prompt caching, per-request routing, or context trimming; that's the
+agent's job, not ours). It can't make a unit of work cheaper; it makes sure you don't pay
+for waste and that you use capacity you've already bought.
 
 It works with any command-line agent: Claude Code, Codex, Aider, Goose, OpenCode, or
 anything that runs in a terminal. It is not an agent framework, not a prompt tool, and
@@ -197,6 +204,45 @@ Controller mode status (carried over): fleet reads, create/stop/resume, schedule
 dispatch, event push + command polling, per-node bearer tokens, persisted session index
 are implemented. Distributed terminal attach stays out of scope. See
 [Controller + Node Setup](/guides/controller-node-setup).
+
+### Phase M — Monitoring, alerting & operational optimization (a first-class pillar)
+
+The measurement (B1/B2) and the blunt breaker (B3 stop-at-budget) are the floor. This
+pillar turns the signals into **real notifications** and into **operational optimizations
+Pulpo controls** — never the inference path. Everything here is alert-first and
+non-destructive by default; any auto-action (stop/pause/defer) is opt-in config.
+
+**M1 — Make alerts real (highest value, builds on B3).** Today the budget 80% "alert" only
+sets a metadata flag and logs. Wire usage signals into the existing notifier channels
+(SSE, web-push, webhook, Discord webhook): a new `UsageAlert` event for budget thresholds,
+burn-rate ceiling, quota-approaching-cap (from B1 projection), and rate-limit hits. Deduped
+(one-shot per crossing). This is the literal "monitor this better, with alerts."
+
+**M2 — Burn-velocity governor (the marquee optimizer).** A configurable `$/hr` (and/or
+tokens/hr) ceiling on the watchdog: crossing it **alerts** by default; **opt-in** to pause
+or stop. Catches the catastrophic runaway/loop ("$90 at 2am") that flat budgets miss
+because they only trip at the total. Smart mode (N× a session's own median) is a follow-up.
+
+**M3 — Waste elimination.** Rate-limit thrash → pause until `resets_at` instead of
+retry-burn (was parked B4); stuck/idle-beyond-threshold reclamation. Direct recovery of
+wall-clock and retry tokens.
+
+**M4 — Cheaper-by-default policy (cheap, do anytime).** Ink fields for a recommended model
+and effort default so routine jobs (nightly lint, triage) don't run on the most expensive
+model; reserve the top tier for hard work. Pulpo templates the launch command — this is
+policy, not per-request routing.
+
+**M5 — Cheapest-pool-first placement (needs Phase C controller).** Spawn on the
+subscription pool that still has headroom before spilling to paid API credits; defer
+non-urgent runs until the quota window resets (exact `resets_at` for Codex, estimated for
+Claude). The optimization only Pulpo can do because only Pulpo sees every pool's headroom.
+
+**Config-overridable rates** (the model-agnostic follow-up from Phase A) belongs here too:
+`[rates.<model>]` so cost/burn math never needs a code change when a model reprices or a
+new one ships — directly serving the "monitor cost accurately for any model" goal.
+
+Sequence: M1 → M2 (+ config rates) → M3/M4 anytime → M5 with the controller. M1+M2 are the
+visible "Pulpo watches your spend and catches runaways" story.
 
 ### Phase D — Reposition + distribution (gates the payoff)
 
