@@ -300,16 +300,7 @@ mod tests {
             auth: AuthConfig {
                 token: token.into(),
             },
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: crate::config::NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let backend = Arc::new(StubBackend);
         let manager =
