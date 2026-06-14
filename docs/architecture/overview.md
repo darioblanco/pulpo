@@ -152,6 +152,15 @@ To target another node reliably, send the schedule request to the controller. Ma
 
 ### Multi-Node Architecture
 
+> **Status (2026-06-14): the cross-node control plane is frozen.** It works and is
+> maintained, but it is not being extended (no controller-side rollups, no quota-aware
+> remote placement). The supported way to get a fleet-wide view is the **event-forwarding
+> backbone** — every node forwards signed events to your own collector via `[[webhooks]]`
+> and exposes `/metrics` + `/usage`, so you aggregate in Grafana/Datadog/a SIEM (or a
+> single designated node). Tailscale stays as secure transport (`bind = "tailscale"`),
+> independent of any fleet. See the [Roadmap](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md)
+> "Phase C — Frozen" for the rationale.
+
 Pulpo supports a controller/node control-plane model for multi-node operation:
 
 - **Standalone**: local sessions only

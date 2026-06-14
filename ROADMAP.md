@@ -88,8 +88,10 @@ unchanged — see git history of this file for the full sovereignty section.)
 | Scheduler | Quota-aware dispatch |
 | Worktree spawning (`--worktree`) + cleanup | Isolation primitive: scheduled/parallel sessions on one repo can't trample each other, agent-agnostically; watchdog sweeps litter |
 | Inks | Attribution + budget + priority unit |
-| Fleet / controller mode | The rollup plane (telemetry + dispatch, not remote terminals) |
-| PWA web UI | The gauge; mobile-first |
+| Event-forwarding backbone (`[[webhooks]]` + `/metrics`) | **The cross-node story**: forward signed events to your own collector; aggregate in Grafana/Datadog/SIEM. Replaces the bespoke controller for fleet visibility |
+| Tailscale transport (`bind = "tailscale"`) | Secure zero-setup remote access to a node's UI/API over the tailnet; standalone, no fleet required |
+| Controller / cross-node control plane | **FROZEN (2026-06-14)** — dormant-but-kept for a future central-governance option; not invested in (see Phase C) |
+| PWA web UI | The gauge; mobile-first; single-node-first with an optional event-fed fleet pane |
 | CLI, secret store, webhook/web-push notifications | Supporting surface |
 
 **Cut — orchestration we're losing at, plus dead weight (Track R):**
@@ -194,16 +196,37 @@ dollars. NOT overdraft prevention on subscriptions.
 - Daily cost digest — cheap (cron + B1 endpoint + existing notifiers) and good for the
   "phone is the gauge" story, but retention not acquisition; post-launch only if cheap
 
-### Phase C — Fleet rollups + placement (the unique part)
+### Phase C — Fleet rollups + placement — FROZEN (2026-06-14)
 
-1. Controller-side rollups: cost/tokens today per node, per account, per ink.
-2. Quota-aware placement: resurrect `--auto` (removed when scoring was naive — now it has
-   real data): spawn on the node/account with most headroom; scheduler defers runs until
-   a window resets.
+**Decision (2026-06-14): do not build this.** Phase C was the cross-node *control* plane —
+controller-side rollups and quota-aware placement (remote spawn on the node with the most
+headroom). It is frozen because:
 
-Controller mode status (carried over): fleet reads, create/stop/resume, scheduled
-dispatch, event push + command polling, per-node bearer tokens, persisted session index
-are implemented. Distributed terminal attach stays out of scope. See
+- It is **orchestration** — the exact thing this roadmap exited because first parties won it
+  (Claude Code Remote Control is a per-machine daemon + mobile push). Competing here is the
+  losing race named in The Bet.
+- The cross-node **aggregation** it was meant to enable is **already delivered by the
+  event-forwarding backbone**: every node forwards signed canonical events to any collector
+  (or a designated node) via universal `[[webhooks]]`, and each node exposes `/metrics` +
+  `/usage`. That is the sovereign, model-agnostic fleet gauge — point Grafana/Datadog/a SIEM
+  at every node (pull) or webhook them to one place (push). No bespoke controller required.
+- For **enterprise**, a custom controller (in-memory command queue, custom enrollment +
+  bearer tokens, eventually-consistent index) is a *liability* in security review, not an
+  asset; forwarding to the buyer's own stack is the stronger play. The one enterprise need
+  the backbone doesn't cover — *central governance / org-wide kill-switch* — is a narrow,
+  deliberate feature to build **only on real demand**, not the current general-purpose
+  remote-spawn controller.
+
+**What stays:** the existing controller code is **frozen, not removed** — kept dormant-but-
+working to preserve the central-governance option without spending now (the maintenance tax
+is the price of that optionality). **Tailscale stays** too, but as *secure transport*
+(`bind = "tailscale"` → `tailscale serve` HTTPS + tailnet identity, reachable from your
+phone with zero setup) — standalone, independent of any fleet. The cross-node story is the
+backbone; the dashboard is single-node-first with an optional fleet pane fed by events.
+
+Controller mode status (carried over, frozen): fleet reads, create/stop/resume, scheduled
+dispatch, event push + command polling, per-node bearer tokens, persisted session index are
+implemented. Distributed terminal attach stays out of scope. See
 [Controller + Node Setup](/guides/controller-node-setup).
 
 ### Phase M — Monitoring, alerting & operational optimization (a first-class pillar)
@@ -323,10 +346,11 @@ and effort default so routine jobs (nightly lint, triage) don't run on the most 
 model; reserve the top tier for hard work. Pulpo templates the launch command — this is
 policy, not per-request routing.
 
-**M5 — Cheapest-pool-first placement (needs Phase C controller).** Spawn on the
-subscription pool that still has headroom before spilling to paid API credits; defer
-non-urgent runs until the quota window resets (exact `resets_at` for Codex, estimated for
-Claude). The optimization only Pulpo can do because only Pulpo sees every pool's headroom.
+**M5 — Cheapest-pool-first placement — FROZEN (2026-06-14).** Depended on the Phase C
+controller (cross-node spawn), which is frozen, so M5 is too. *Single-node* pool awareness
+(prefer the subscription pool with headroom before spilling to paid API credits on the
+machine you're on) can still be revisited later as a local policy — it does not need the
+controller. Cross-node placement is out.
 
 **Config-overridable rates** (the model-agnostic follow-up from Phase A) — **DONE**:
 `[rates.<model>]` so cost/burn math never needs a code change when a model reprices or a
@@ -353,8 +377,9 @@ M1+M2 are the visible "Pulpo watches your spend and catches runaways" story.
   subscription pool" advantage goes in the launch messaging.
 - Homebrew-core once ≥75 stars
 
-**Sequencing:** R + A start now in parallel. B needs A. C needs B + controller work.
-D's launch moment is after B.
+**Sequencing:** R + A + B + M (M1/M2 + config rates) are done. **C is frozen** (cross-node
+control plane — see Phase C). Remaining live work is single-node optimizers (M3/M4) and
+Phase D reposition; D's launch moment is after B (now satisfied).
 
 Also still planned: **agent completion callbacks** (`PULPO_CALLBACK_URL` env var; Claude
 Code hooks can call it) — replaces the 29 waiting-pattern regexes with a reliable signal
