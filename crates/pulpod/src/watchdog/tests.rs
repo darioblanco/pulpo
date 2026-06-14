@@ -194,6 +194,7 @@ fn make_config(
         ready_ttl_secs: 0,
         adopt_tmux: false,
         extra_waiting_patterns: Vec::new(),
+        burn: BurnConfig::default(),
     };
     let (_, rx) = tokio::sync::watch::channel(cfg);
     rx
@@ -216,6 +217,7 @@ fn make_config_with_tx(
         ready_ttl_secs: 0,
         adopt_tmux: false,
         extra_waiting_patterns: Vec::new(),
+        burn: BurnConfig::default(),
     };
     tokio::sync::watch::channel(cfg)
 }
@@ -1954,6 +1956,7 @@ async fn test_watchdog_live_config_reload_threshold() {
             ready_ttl_secs: 0,
             adopt_tmux: false,
             extra_waiting_patterns: Vec::new(),
+            burn: BurnConfig::default(),
         })
         .unwrap();
 
@@ -1984,6 +1987,7 @@ async fn test_watchdog_runtime_config_debug() {
         ready_ttl_secs: 0,
         adopt_tmux: false,
         extra_waiting_patterns: Vec::new(),
+        burn: BurnConfig::default(),
     };
     let debug = format!("{cfg:?}");
     assert!(debug.contains("90"));
@@ -2005,6 +2009,7 @@ async fn test_watchdog_runtime_config_clone() {
         ready_ttl_secs: 0,
         adopt_tmux: false,
         extra_waiting_patterns: Vec::new(),
+        burn: BurnConfig::default(),
     };
     #[allow(clippy::redundant_clone)]
     let cloned = cfg.clone();

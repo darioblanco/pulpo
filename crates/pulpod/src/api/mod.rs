@@ -324,6 +324,7 @@ mod tests {
             ready_ttl_secs: 0,
             adopt_tmux: true,
             extra_waiting_patterns: Vec::new(),
+            burn: crate::watchdog::BurnConfig::default(),
         };
         let (config_tx, _config_rx) = tokio::sync::watch::channel(initial);
         let state = AppState::with_watchdog_tx(

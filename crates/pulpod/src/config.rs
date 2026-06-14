@@ -324,6 +324,20 @@ pub struct WatchdogConfig {
     /// Appended to the built-in defaults.
     #[serde(default)]
     pub waiting_patterns: Vec<String>,
+    /// Burn-velocity governor: alert when a session's lifetime-average cost rate
+    /// (USD/hour) exceeds this ceiling. `None` disables the cost-rate check.
+    #[serde(default)]
+    pub burn_ceiling_usd_per_hour: Option<f64>,
+    /// Burn-velocity governor: alert when a session's lifetime-average token rate
+    /// (tokens/hour) exceeds this ceiling. `None` disables the token-rate check.
+    /// Covers agents with no cost signal (e.g. Codex).
+    #[serde(default)]
+    pub burn_ceiling_tokens_per_hour: Option<u64>,
+    /// What to do when a session crosses a burn ceiling: `"alert"` (default,
+    /// emit a `usage_alert.burn_ceiling` event only) or `"stop"` (also stop the
+    /// session via the intervention path).
+    #[serde(default = "default_burn_action")]
+    pub burn_action: String,
 }
 
 impl WatchdogConfig {
@@ -349,6 +363,12 @@ impl WatchdogConfig {
                 self.idle_action
             );
         }
+        if self.burn_action != "alert" && self.burn_action != "stop" {
+            anyhow::bail!(
+                "watchdog.burn_action must be \"alert\" or \"stop\", got \"{}\"",
+                self.burn_action
+            );
+        }
         Ok(())
     }
 }
@@ -366,8 +386,15 @@ impl Default for WatchdogConfig {
             adopt_tmux: default_adopt_tmux(),
             idle_threshold_secs: default_idle_threshold_secs(),
             waiting_patterns: Vec::new(),
+            burn_ceiling_usd_per_hour: None,
+            burn_ceiling_tokens_per_hour: None,
+            burn_action: default_burn_action(),
         }
     }
+}
+
+fn default_burn_action() -> String {
+    String::from("alert")
 }
 
 const fn default_adopt_tmux() -> bool {
@@ -1554,6 +1581,9 @@ breach_count = 5
                 adopt_tmux: true,
                 idle_threshold_secs: 60,
                 waiting_patterns: Vec::new(),
+                burn_ceiling_usd_per_hour: None,
+                burn_ceiling_tokens_per_hour: None,
+                burn_action: "alert".into(),
             },
             inks: HashMap::new(),
             plans: std::collections::HashMap::new(),
@@ -1699,6 +1729,122 @@ memory_threshold = 0
         };
         let err = wd.validate().unwrap_err();
         assert!(err.to_string().contains("idle_action"));
+    }
+
+    #[test]
+    fn test_watchdog_burn_defaults() {
+        let wd = WatchdogConfig::default();
+        assert_eq!(wd.burn_ceiling_usd_per_hour, None);
+        assert_eq!(wd.burn_ceiling_tokens_per_hour, None);
+        assert_eq!(wd.burn_action, "alert");
+    }
+
+    #[test]
+    fn test_watchdog_validate_burn_action_alert() {
+        let wd = WatchdogConfig {
+            burn_action: "alert".into(),
+            ..WatchdogConfig::default()
+        };
+        assert!(wd.validate().is_ok());
+    }
+
+    #[test]
+    fn test_watchdog_validate_burn_action_stop() {
+        let wd = WatchdogConfig {
+            burn_action: "stop".into(),
+            ..WatchdogConfig::default()
+        };
+        assert!(wd.validate().is_ok());
+    }
+
+    #[test]
+    fn test_watchdog_validate_burn_action_invalid() {
+        let wd = WatchdogConfig {
+            burn_action: "pause".into(),
+            ..WatchdogConfig::default()
+        };
+        let err = wd.validate().unwrap_err();
+        assert!(err.to_string().contains("burn_action"));
+    }
+
+    #[test]
+    fn test_load_config_with_burn_ceilings() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "burn-cfg"
+
+[watchdog]
+burn_ceiling_usd_per_hour = 5.0
+burn_ceiling_tokens_per_hour = 1000000
+burn_action = "stop"
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.watchdog.burn_ceiling_usd_per_hour, Some(5.0));
+        assert_eq!(
+            config.watchdog.burn_ceiling_tokens_per_hour,
+            Some(1_000_000)
+        );
+        assert_eq!(config.watchdog.burn_action, "stop");
+    }
+
+    #[test]
+    fn test_load_config_rejects_invalid_burn_action() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "bad-burn"
+
+[watchdog]
+burn_action = "explode"
+"#
+        )
+        .unwrap();
+
+        let result = load(tmpfile.path().to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("burn_action"));
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip_with_burn_ceilings() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("burn-rt.toml");
+        let config = Config {
+            node: NodeConfig {
+                name: "burn-rt".into(),
+                port: 7433,
+                data_dir: "/tmp".into(),
+                ..NodeConfig::default()
+            },
+            auth: AuthConfig::default(),
+            peers: HashMap::new(),
+            watchdog: WatchdogConfig {
+                burn_ceiling_usd_per_hour: Some(2.5),
+                burn_ceiling_tokens_per_hour: Some(500_000),
+                burn_action: "stop".into(),
+                ..WatchdogConfig::default()
+            },
+            inks: HashMap::new(),
+            plans: std::collections::HashMap::new(),
+            notifications: NotificationsConfig::default(),
+            webhooks: Vec::new(),
+            docker: None,
+            controller: ControllerConfig::default(),
+            metrics: MetricsConfig::default(),
+        };
+        save(&config, &path).unwrap();
+        let loaded = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(loaded.watchdog.burn_ceiling_usd_per_hour, Some(2.5));
+        assert_eq!(loaded.watchdog.burn_ceiling_tokens_per_hour, Some(500_000));
+        assert_eq!(loaded.watchdog.burn_action, "stop");
     }
 
     #[test]

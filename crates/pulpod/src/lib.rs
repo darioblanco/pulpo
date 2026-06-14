@@ -372,6 +372,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                 ready_ttl_secs: config.watchdog.ready_ttl_secs,
                 adopt_tmux: config.watchdog.adopt_tmux,
                 extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
+                burn: watchdog::BurnConfig::from_watchdog_config(&config.watchdog),
             };
             let (wd_config_tx, wd_config_rx) = watch::channel(wd_runtime.clone());
             let (wd_shutdown_tx, wd_shutdown_rx) = watch::channel(false);
