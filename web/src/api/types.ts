@@ -261,6 +261,8 @@ export interface AccountRollup {
   total_cost_usd: number | null;
   cost_per_hour: number | null;
   max_quota_used_percent: number | null;
+  /** True when every cost-bearing session had an exact (structured-reader) source. */
+  cost_is_exact: boolean;
 }
 
 export interface UsageProjectionResponse {

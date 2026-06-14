@@ -15,8 +15,10 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-function fmtCost(c: number | null): string {
-  return c == null ? '—' : `$${c.toFixed(2)}`;
+/** Estimated (output-scraped) costs get a `~`; exact reader-derived costs are plain. */
+function fmtCost(c: number | null, exact = true): string {
+  if (c == null) return '—';
+  return `${exact ? '' : '~'}$${c.toFixed(2)}`;
 }
 
 function fmtRate(c: number | null): string {
@@ -81,7 +83,9 @@ export function UsagePage() {
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="space-y-1">
-                      <div className="text-2xl font-semibold">{fmtCost(a.total_cost_usd)}</div>
+                      <div className="text-2xl font-semibold">
+                        {fmtCost(a.total_cost_usd, a.cost_is_exact)}
+                      </div>
                       <div className="text-xs text-muted-foreground">
                         {fmtTokens(a.total_tokens)} tokens · {a.session_count} session
                         {a.session_count === 1 ? '' : 's'}
@@ -129,7 +133,7 @@ export function UsagePage() {
                         {fmtTokens(s.total_tokens)}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-xs">
-                        {fmtCost(s.cost_usd)}
+                        {fmtCost(s.cost_usd, s.usage_source != null)}
                       </td>
                       <td className="hidden px-4 py-3 text-right font-mono text-xs sm:table-cell">
                         {fmtRate(s.cost_per_hour)}

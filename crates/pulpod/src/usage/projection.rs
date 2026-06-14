@@ -120,6 +120,8 @@ pub fn build_rollups(projections: &[SessionProjection]) -> Vec<AccountRollup> {
         total_cost_usd: Option<f64>,
         cost_per_hour: Option<f64>,
         max_quota_used_percent: Option<f64>,
+        /// Stays true only while every cost-bearing session has an exact source.
+        cost_exact: bool,
     }
 
     let mut groups: BTreeMap<AccountKey, Acc> = BTreeMap::new();
@@ -141,11 +143,14 @@ pub fn build_rollups(projections: &[SessionProjection]) -> Vec<AccountRollup> {
             total_cost_usd: None,
             cost_per_hour: None,
             max_quota_used_percent: None,
+            cost_exact: true,
         });
         acc.session_count += 1;
         acc.total_tokens += p.total_tokens;
         if let Some(cost) = p.cost_usd {
             acc.total_cost_usd = Some(acc.total_cost_usd.unwrap_or(0.0) + cost);
+            // A cost-bearing session with no structured source is scraped → estimated.
+            acc.cost_exact = acc.cost_exact && p.usage_source.is_some();
         }
         if let Some(rate) = p.cost_per_hour {
             acc.cost_per_hour = Some(acc.cost_per_hour.unwrap_or(0.0) + rate);
@@ -168,6 +173,7 @@ pub fn build_rollups(projections: &[SessionProjection]) -> Vec<AccountRollup> {
             total_cost_usd: a.total_cost_usd,
             cost_per_hour: a.cost_per_hour,
             max_quota_used_percent: a.max_quota_used_percent,
+            cost_is_exact: a.total_cost_usd.is_some() && a.cost_exact,
         })
         .collect()
 }
@@ -359,6 +365,8 @@ mod tests {
         assert!((claude.total_cost_usd.unwrap() - 3.0).abs() < 1e-9);
         assert!((claude.cost_per_hour.unwrap() - 3.0).abs() < 1e-9);
         assert_eq!(claude.max_quota_used_percent, None);
+        // proj() leaves usage_source None (scraped) → cost is estimated.
+        assert!(!claude.cost_is_exact);
 
         let codex = rollups
             .iter()
@@ -367,6 +375,34 @@ mod tests {
         assert_eq!(codex.session_count, 1);
         assert_eq!(codex.total_cost_usd, None);
         assert_eq!(codex.max_quota_used_percent, Some(30.0));
+        // No cost at all → not "exact" (nothing to assert exactness over).
+        assert!(!codex.cost_is_exact);
+    }
+
+    #[test]
+    fn test_build_rollups_cost_is_exact() {
+        let with_src = |source: Option<&str>, cost: Option<f64>| SessionProjection {
+            usage_source: source.map(str::to_owned),
+            ..proj("claude.ai", "a@x.com", 100, cost, None)
+        };
+
+        // All cost-bearing sessions have a structured source → exact.
+        let exact = build_rollups(&[
+            with_src(Some("claude-jsonl"), Some(1.0)),
+            with_src(Some("claude-jsonl"), Some(2.0)),
+        ]);
+        assert!(exact[0].cost_is_exact);
+
+        // A single scraped (sourceless) cost contaminates the total → estimated.
+        let mixed = build_rollups(&[
+            with_src(Some("claude-jsonl"), Some(1.0)),
+            with_src(None, Some(2.0)),
+        ]);
+        assert!(!mixed[0].cost_is_exact);
+
+        // An exact session with NO cost doesn't make the account exact.
+        let no_cost = build_rollups(&[with_src(Some("claude-jsonl"), None)]);
+        assert!(!no_cost[0].cost_is_exact);
     }
 
     #[test]

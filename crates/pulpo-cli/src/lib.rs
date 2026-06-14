@@ -633,9 +633,19 @@ fn fmt_tokens(n: u64) -> String {
     }
 }
 
-/// Format an optional dollar amount, or "-" when absent.
-fn fmt_cost(c: Option<f64>) -> String {
-    c.map_or_else(|| "-".into(), |v| format!("${v:.2}"))
+/// Format an optional dollar amount, or "-" when absent. Estimated (output-scraped)
+/// costs are prefixed with `~`; exact costs from a structured reader are shown plainly.
+fn fmt_cost(c: Option<f64>, exact: bool) -> String {
+    c.map_or_else(
+        || "-".into(),
+        |v| {
+            if exact {
+                format!("${v:.2}")
+            } else {
+                format!("~${v:.2}")
+            }
+        },
+    )
 }
 
 /// Format a per-hour dollar rate, or "-" when absent.
@@ -673,7 +683,7 @@ fn format_usage_projection(p: &UsageProjectionResponse) -> String {
             truncate(&s.session_name, 20),
             source,
             fmt_tokens(s.total_tokens),
-            fmt_cost(s.cost_usd),
+            fmt_cost(s.cost_usd, s.usage_source.is_some()),
             fmt_rate(s.cost_per_hour),
             fmt_quota(s),
         ));
@@ -694,7 +704,7 @@ fn format_usage_projection(p: &UsageProjectionResponse) -> String {
                 a.pool,
                 a.session_count,
                 fmt_tokens(a.total_tokens),
-                fmt_cost(a.total_cost_usd),
+                fmt_cost(a.total_cost_usd, a.cost_is_exact),
             ));
         }
     }
@@ -4022,8 +4032,10 @@ mod tests {
 
     #[test]
     fn test_fmt_cost_and_rate() {
-        assert_eq!(fmt_cost(None), "-");
-        assert_eq!(fmt_cost(Some(1.234)), "$1.23");
+        assert_eq!(fmt_cost(None, true), "-");
+        assert_eq!(fmt_cost(None, false), "-");
+        assert_eq!(fmt_cost(Some(1.234), true), "$1.23"); // exact → plain
+        assert_eq!(fmt_cost(Some(1.234), false), "~$1.23"); // scraped → estimated marker
         assert_eq!(fmt_rate(None), "-");
         assert_eq!(fmt_rate(Some(2.0)), "$2.00/h");
     }
@@ -4068,6 +4080,7 @@ mod tests {
                 total_cost_usd: Some(2.5),
                 cost_per_hour: Some(2.5),
                 max_quota_used_percent: None,
+                cost_is_exact: true,
             }],
         };
         let out = format_usage_projection(&resp);
@@ -4076,9 +4089,36 @@ mod tests {
         assert!(out.contains("claude")); // source suffix stripped
         assert!(out.contains("1.2M"));
         assert!(out.contains("$2.50"));
+        assert!(!out.contains("~$2.50")); // exact source → no estimate marker
         assert!(out.contains("Accounts:"));
         assert!(out.contains("a@x.com"));
         assert!(out.contains("subscription")); // pool shown
+    }
+
+    #[test]
+    fn test_format_usage_projection_marks_scraped_cost_estimated() {
+        let mut s = sample_projection();
+        s.usage_source = None; // scraped → estimated
+        let resp = UsageProjectionResponse {
+            node_name: "n".into(),
+            generated_at: "t".into(),
+            sessions: vec![s],
+            accounts: vec![pulpo_common::api::AccountRollup {
+                provider: Some("gemini".into()),
+                plan: None,
+                email: None,
+                pool: "subscription".into(),
+                session_count: 1,
+                total_tokens: 1_234_000,
+                total_cost_usd: Some(2.5),
+                cost_per_hour: Some(2.5),
+                max_quota_used_percent: None,
+                cost_is_exact: false,
+            }],
+        };
+        let out = format_usage_projection(&resp);
+        assert!(out.contains("scraped")); // source column
+        assert!(out.contains("~$2.50")); // both session and account cost marked estimated
     }
 
     #[test]

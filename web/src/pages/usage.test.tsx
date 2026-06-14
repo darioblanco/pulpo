@@ -76,6 +76,7 @@ function sample(): UsageProjectionResponse {
         total_cost_usd: 2.5,
         cost_per_hour: 2.5,
         max_quota_used_percent: null,
+        cost_is_exact: true,
       },
       {
         provider: 'openai',
@@ -87,6 +88,7 @@ function sample(): UsageProjectionResponse {
         total_cost_usd: null,
         cost_per_hour: null,
         max_quota_used_percent: 42,
+        cost_is_exact: false,
       },
     ],
   };
@@ -120,6 +122,18 @@ describe('UsagePage', () => {
     expect(screen.getAllByText('headless').length).toBeGreaterThan(0);
     // token compaction
     expect(screen.getAllByText('1.2M').length).toBeGreaterThan(0);
+  });
+
+  it('marks scraped (estimated) cost with a ~ and exact cost without', async () => {
+    const data = sample();
+    data.sessions[0].usage_source = null; // fix-auth becomes scraped → estimated
+    data.accounts[0].cost_is_exact = false;
+    vi.mocked(api.getUsageProjection).mockResolvedValue(data);
+    renderPage();
+
+    await waitFor(() => expect(screen.getByTestId('usage-table')).toBeInTheDocument());
+    // Both the scraped session row and its account card show the estimate marker.
+    expect(screen.getAllByText('~$2.50').length).toBeGreaterThan(0);
   });
 
   it('shows empty state when no sessions', async () => {
