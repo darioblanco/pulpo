@@ -622,6 +622,9 @@ mod tests {
                 adopt_tmux: true,
                 idle_threshold_secs: 60,
                 waiting_patterns: Vec::new(),
+                burn_ceiling_usd_per_hour: None,
+                burn_ceiling_tokens_per_hour: None,
+                burn_action: "alert".into(),
             },
             inks: {
                 let mut m = HashMap::new();

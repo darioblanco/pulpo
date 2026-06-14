@@ -55,6 +55,8 @@ pub enum InterventionCode {
     UserStop,
     /// Stopped because the session exceeded its configured cost budget.
     BudgetExceeded,
+    /// Stopped because the session's spend rate exceeded the configured burn ceiling.
+    BurnRate,
 }
 
 impl fmt::Display for InterventionCode {
@@ -64,6 +66,7 @@ impl fmt::Display for InterventionCode {
             Self::IdleTimeout => write!(f, "idle_timeout"),
             Self::UserStop => write!(f, "user_stop"),
             Self::BudgetExceeded => write!(f, "budget_exceeded"),
+            Self::BurnRate => write!(f, "burn_rate"),
         }
     }
 }
@@ -77,6 +80,7 @@ impl FromStr for InterventionCode {
             "idle_timeout" => Ok(Self::IdleTimeout),
             "user_stop" | "user_kill" => Ok(Self::UserStop),
             "budget_exceeded" => Ok(Self::BudgetExceeded),
+            "burn_rate" => Ok(Self::BurnRate),
             other => Err(format!("unknown intervention code: {other}")),
         }
     }
@@ -241,6 +245,9 @@ pub mod meta {
     // Cost budget (resolved at spawn: spawn flag > ink). Watchdog alerts at 80%, stops at 100%.
     pub const BUDGET_COST_USD: &str = "budget_cost_usd";
     pub const BUDGET_ALERTED_AT: &str = "budget_alerted_at";
+    // Burn-velocity governor: one-shot timestamp recorded when the lifetime-average spend
+    // rate first crosses the configured ceiling, so the alert fires only once per session.
+    pub const BURN_ALERTED_AT: &str = "burn_alerted_at";
 }
 
 impl Session {
@@ -495,6 +502,14 @@ mod tests {
             serde_json::to_string(&InterventionCode::UserStop).unwrap(),
             "\"user_stop\""
         );
+        assert_eq!(
+            serde_json::to_string(&InterventionCode::BudgetExceeded).unwrap(),
+            "\"budget_exceeded\""
+        );
+        assert_eq!(
+            serde_json::to_string(&InterventionCode::BurnRate).unwrap(),
+            "\"burn_rate\""
+        );
     }
 
     #[test]
@@ -511,6 +526,10 @@ mod tests {
             serde_json::from_str::<InterventionCode>("\"user_stop\"").unwrap(),
             InterventionCode::UserStop
         );
+        assert_eq!(
+            serde_json::from_str::<InterventionCode>("\"burn_rate\"").unwrap(),
+            InterventionCode::BurnRate
+        );
     }
 
     #[test]
@@ -526,6 +545,11 @@ mod tests {
         );
         assert_eq!(InterventionCode::IdleTimeout.to_string(), "idle_timeout");
         assert_eq!(InterventionCode::UserStop.to_string(), "user_stop");
+        assert_eq!(
+            InterventionCode::BudgetExceeded.to_string(),
+            "budget_exceeded"
+        );
+        assert_eq!(InterventionCode::BurnRate.to_string(), "burn_rate");
     }
 
     #[test]
@@ -541,6 +565,14 @@ mod tests {
         assert_eq!(
             "user_stop".parse::<InterventionCode>().unwrap(),
             InterventionCode::UserStop
+        );
+        assert_eq!(
+            "budget_exceeded".parse::<InterventionCode>().unwrap(),
+            InterventionCode::BudgetExceeded
+        );
+        assert_eq!(
+            "burn_rate".parse::<InterventionCode>().unwrap(),
+            InterventionCode::BurnRate
         );
     }
 

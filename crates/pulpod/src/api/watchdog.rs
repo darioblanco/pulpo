@@ -111,6 +111,7 @@ pub async fn update_watchdog(
             ready_ttl_secs: config.watchdog.ready_ttl_secs,
             adopt_tmux: config.watchdog.adopt_tmux,
             extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
+            burn: crate::watchdog::BurnConfig::from_watchdog_config(&config.watchdog),
         };
         // Ignore send error — watchdog may have shut down
         let _ = tx.send(runtime_cfg);
@@ -384,6 +385,7 @@ mod tests {
             ready_ttl_secs: 0,
             adopt_tmux: true,
             extra_waiting_patterns: Vec::new(),
+            burn: crate::watchdog::BurnConfig::default(),
         };
         let (config_tx, config_rx) = tokio::sync::watch::channel(initial);
         let (event_tx, _) = tokio::sync::broadcast::channel(16);

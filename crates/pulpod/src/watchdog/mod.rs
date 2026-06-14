@@ -1,5 +1,6 @@
 mod adopt;
 mod budget;
+mod burn;
 mod git;
 mod idle;
 mod intervention;
@@ -55,6 +56,56 @@ pub enum IdleAction {
     Kill,
 }
 
+/// Action to take when a session crosses a burn-velocity ceiling.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum BurnAction {
+    /// Emit a `usage_alert.burn_ceiling` event only (default).
+    #[default]
+    Alert,
+    /// Emit the alert and stop the session via the intervention path.
+    Stop,
+}
+
+impl BurnAction {
+    /// Map a config `burn_action` string to the parsed action. Anything other
+    /// than `"stop"` is treated as the safe default (`Alert`); the config layer
+    /// validates the string up front, so this only ever sees `alert`/`stop`.
+    #[must_use]
+    pub fn from_config_str(action: &str) -> Self {
+        if action == "stop" {
+            Self::Stop
+        } else {
+            Self::Alert
+        }
+    }
+}
+
+/// Configuration for the burn-velocity governor.
+///
+/// A session is over-ceiling when its lifetime-average cost rate exceeds
+/// `ceiling_usd_per_hour` (when set) **or** its token rate exceeds
+/// `ceiling_tokens_per_hour` (when set). The check is skipped entirely when both
+/// ceilings are `None`. The ceiling is global by design — a runaway/loop detector
+/// is naturally fleet-wide, not per-session.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct BurnConfig {
+    pub ceiling_usd_per_hour: Option<f64>,
+    pub ceiling_tokens_per_hour: Option<u64>,
+    pub action: BurnAction,
+}
+
+impl BurnConfig {
+    /// Build a runtime [`BurnConfig`] from the persisted watchdog config fields.
+    #[must_use]
+    pub fn from_watchdog_config(cfg: &crate::config::WatchdogConfig) -> Self {
+        Self {
+            ceiling_usd_per_hour: cfg.burn_ceiling_usd_per_hour,
+            ceiling_tokens_per_hour: cfg.burn_ceiling_tokens_per_hour,
+            action: BurnAction::from_config_str(&cfg.burn_action),
+        }
+    }
+}
+
 /// Configuration for idle session detection.
 #[derive(Debug, Clone)]
 pub struct IdleConfig {
@@ -89,6 +140,8 @@ pub struct WatchdogRuntimeConfig {
     pub adopt_tmux: bool,
     /// Extra user-configured patterns for waiting-for-input detection.
     pub extra_waiting_patterns: Vec<String>,
+    /// Burn-velocity governor settings (cost/token rate ceilings + action).
+    pub burn: BurnConfig,
 }
 
 /// Context for handling agent-ready transitions (status update + events).
@@ -183,6 +236,8 @@ async fn run_watchdog_tick(
     run_memory_check(backend, store, reader, cfg, consecutive_breaches).await;
 
     budget::enforce_budgets(backend, store, ready_ctx).await;
+
+    burn::enforce_burn_ceiling(backend, store, ready_ctx, &cfg.burn).await;
 
     if cfg.idle.enabled {
         check_idle_sessions(
