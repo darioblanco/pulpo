@@ -527,6 +527,11 @@ pub struct AccountRollup {
     pub cost_per_hour: Option<f64>,
     /// Highest exact quota % seen across the account's Codex sessions.
     pub max_quota_used_percent: Option<f64>,
+    /// `true` when every cost-bearing session in the account had an exact usage source
+    /// (a structured reader), so `total_cost_usd` is exact rather than output-scraped.
+    /// `#[serde(default)]` keeps older payloads (which omit it) deserializable.
+    #[serde(default)]
+    pub cost_is_exact: bool,
 }
 
 /// `GET /api/v1/usage/projection` — per-session projections plus account rollups.
