@@ -77,17 +77,7 @@ mod tests {
                     data_dir: tmpdir.path().to_str().unwrap().into(),
                     ..NodeConfig::default()
                 },
-                auth: crate::config::AuthConfig::default(),
-                peers: HashMap::new(),
-                watchdog: crate::config::WatchdogConfig::default(),
-                inks: HashMap::new(),
-                plans: HashMap::new(),
-                notifications: crate::config::NotificationsConfig::default(),
-                webhooks: Vec::new(),
-                docker: None,
-                controller: crate::config::ControllerConfig::default(),
-                metrics: crate::config::MetricsConfig::default(),
-                rates: ::std::collections::HashMap::new(),
+                ..Default::default()
             },
             manager,
             peer_registry,

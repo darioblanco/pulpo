@@ -211,18 +211,7 @@ mod tests {
                     data_dir: tmpdir.path().to_str().unwrap().into(),
                     ..NodeConfig::default()
                 },
-                auth: crate::config::AuthConfig::default(),
-                peers: HashMap::new(),
-
-                watchdog: crate::config::WatchdogConfig::default(),
-                inks: HashMap::new(),
-                plans: std::collections::HashMap::new(),
-                notifications: crate::config::NotificationsConfig::default(),
-                webhooks: Vec::new(),
-                docker: None,
-                controller: crate::config::ControllerConfig::default(),
-                metrics: crate::config::MetricsConfig::default(),
-                rates: ::std::collections::HashMap::new(),
+                ..Default::default()
             },
             manager,
             peer_registry,
@@ -249,18 +238,7 @@ mod tests {
                     data_dir: tmpdir.path().to_str().unwrap().into(),
                     ..NodeConfig::default()
                 },
-                auth: crate::config::AuthConfig::default(),
-                peers: HashMap::new(),
-
-                watchdog: crate::config::WatchdogConfig::default(),
-                inks: HashMap::new(),
-                plans: std::collections::HashMap::new(),
-                notifications: crate::config::NotificationsConfig::default(),
-                webhooks: Vec::new(),
-                docker: None,
-                controller: crate::config::ControllerConfig::default(),
-                metrics: crate::config::MetricsConfig::default(),
-                rates: ::std::collections::HashMap::new(),
+                ..Default::default()
             },
             config_path,
             manager,
@@ -440,17 +418,7 @@ mod tests {
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: crate::config::AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: crate::config::NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let resp = config_to_response(&config);
         assert_eq!(resp.node.name, "test");
@@ -611,9 +579,6 @@ mod tests {
                 discovery_interval_secs: 120,
                 ..NodeConfig::default()
             },
-            auth: crate::config::AuthConfig::default(),
-            peers: HashMap::new(),
-
             watchdog: crate::config::WatchdogConfig {
                 enabled: true,
                 memory_threshold: 85,
@@ -641,7 +606,6 @@ mod tests {
                 );
                 m
             },
-            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig {
                 webhooks: vec![crate::config::WebhookEndpointConfig {
                     name: "primary".into(),
@@ -652,11 +616,7 @@ mod tests {
                 }],
                 ..Default::default()
             },
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let resp = config_to_response(&config);
         // Node fields
@@ -689,11 +649,6 @@ mod tests {
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: crate::config::AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig {
                 webhooks: vec![
                     crate::config::WebhookEndpointConfig {
@@ -713,11 +668,7 @@ mod tests {
                 ],
                 ..Default::default()
             },
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let resp = config_to_response(&config);
         assert_eq!(resp.notifications.webhooks.len(), 2);
@@ -847,18 +798,7 @@ mod tests {
                     data_dir: tmpdir.path().to_str().unwrap().into(),
                     ..NodeConfig::default()
                 },
-                auth: crate::config::AuthConfig::default(),
-                peers: HashMap::new(),
-
-                watchdog: crate::config::WatchdogConfig::default(),
-                inks: HashMap::new(),
-                plans: std::collections::HashMap::new(),
-                notifications: crate::config::NotificationsConfig::default(),
-                webhooks: Vec::new(),
-                docker: None,
-                controller: crate::config::ControllerConfig::default(),
-                metrics: crate::config::MetricsConfig::default(),
-                rates: ::std::collections::HashMap::new(),
+                ..Default::default()
             },
             std::path::PathBuf::from("/dev/null/impossible/config.toml"),
             manager,

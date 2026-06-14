@@ -194,17 +194,7 @@ mod tests {
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
             },
-            auth: crate::config::AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: crate::config::NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -256,17 +246,8 @@ mod tests {
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
             },
-            auth: crate::config::AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
             inks: inks.clone(),
-            plans: std::collections::HashMap::new(),
-            notifications: crate::config::NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), inks, None).with_no_stale_grace();
@@ -660,16 +641,7 @@ mod tests {
             auth: crate::config::AuthConfig {
                 token: "test-token".into(),
             },
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: crate::config::NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -852,17 +824,7 @@ mod tests {
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
             },
-            auth: crate::config::AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: crate::config::NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -985,17 +947,7 @@ mod tests {
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
             },
-            auth: crate::config::AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: crate::config::NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let backend = Arc::new(FailIsAliveBackend);
         let manager =
@@ -1224,16 +1176,7 @@ mod tests {
             auth: crate::config::AuthConfig {
                 token: TEST_TOKEN.into(),
             },
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: crate::config::NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1407,16 +1350,7 @@ mod tests {
             auth: crate::config::AuthConfig {
                 token: TEST_TOKEN.into(),
             },
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: crate::config::NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1511,17 +1445,7 @@ mod tests {
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
             },
-            auth: crate::config::AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: crate::config::NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1660,11 +1584,6 @@ mod tests {
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
             },
-            auth: crate::config::AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
             notifications: crate::config::NotificationsConfig {
                 vapid: crate::config::VapidConfig {
                     private_key: "test-priv-key".into(),
@@ -1672,11 +1591,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
-            metrics: crate::config::MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1804,17 +1719,8 @@ mod tests {
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
             },
-            auth: crate::config::AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: crate::config::WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: crate::config::NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig { enabled: true },
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let backend = Arc::new(StubBackend);
         let manager =

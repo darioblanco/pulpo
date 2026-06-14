@@ -7,7 +7,7 @@ use pulpo_common::auth::BindMode;
 use pulpo_common::peer::PeerEntry;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub node: NodeConfig,
@@ -724,17 +724,8 @@ pub fn load(path: &str) -> Result<Config> {
                 log_retain_days: default_log_retain_days(),
                 capture_session_output: default_capture_session_output(),
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
             inks: built_in_inks(),
-            plans: HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         })
     }
 }
@@ -891,18 +882,7 @@ finished_ttl_secs = 60
                 data_dir: "~/test-pulpo".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let expanded = config.data_dir();
         assert!(
@@ -921,18 +901,7 @@ finished_ttl_secs = 60
                 data_dir: "/absolute/path".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         assert_eq!(config.data_dir(), "/absolute/path");
     }
@@ -1059,18 +1028,8 @@ name = "test"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
             peers,
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let debug = format!("{config:?}");
         assert!(debug.contains("node-a"));
@@ -1087,18 +1046,7 @@ name = "test"
                 data_dir: "/tmp/data".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -1120,18 +1068,8 @@ name = "test"
                 data_dir: "/tmp/rt".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
             peers,
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1154,18 +1092,7 @@ name = "test"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -1182,18 +1109,7 @@ name = "test"
                     data_dir: "/tmp".into(),
                     ..NodeConfig::default()
                 },
-                auth: AuthConfig::default(),
-                peers: HashMap::new(),
-
-                watchdog: WatchdogConfig::default(),
-                inks: HashMap::new(),
-                plans: std::collections::HashMap::new(),
-                notifications: NotificationsConfig::default(),
-                webhooks: Vec::new(),
-                docker: None,
-                controller: ControllerConfig::default(),
-                metrics: MetricsConfig::default(),
-                rates: ::std::collections::HashMap::new(),
+                ..Default::default()
             },
             Path::new("/dev/null/impossible/config.toml"),
         );
@@ -1212,18 +1128,7 @@ name = "test"
                     data_dir: "/tmp".into(),
                     ..NodeConfig::default()
                 },
-                auth: AuthConfig::default(),
-                peers: HashMap::new(),
-
-                watchdog: WatchdogConfig::default(),
-                inks: HashMap::new(),
-                plans: std::collections::HashMap::new(),
-                notifications: NotificationsConfig::default(),
-                webhooks: Vec::new(),
-                docker: None,
-                controller: ControllerConfig::default(),
-                metrics: MetricsConfig::default(),
-                rates: ::std::collections::HashMap::new(),
+                ..Default::default()
             },
             Path::new(""),
         );
@@ -1246,18 +1151,7 @@ name = "test"
                     data_dir: "/tmp".into(),
                     ..NodeConfig::default()
                 },
-                auth: AuthConfig::default(),
-                peers: HashMap::new(),
-
-                watchdog: WatchdogConfig::default(),
-                inks: HashMap::new(),
-                plans: std::collections::HashMap::new(),
-                notifications: NotificationsConfig::default(),
-                webhooks: Vec::new(),
-                docker: None,
-                controller: ControllerConfig::default(),
-                metrics: MetricsConfig::default(),
-                rates: ::std::collections::HashMap::new(),
+                ..Default::default()
             },
             &dir_target,
         );
@@ -1275,18 +1169,7 @@ name = "test"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         #[allow(clippy::redundant_clone)]
         let cloned = config.clone();
@@ -1315,18 +1198,7 @@ name = "test"
                 data_dir: "/d".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("ser"));
@@ -1391,18 +1263,7 @@ name = "test"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         assert!(config.auth.token.is_empty());
         let generated = ensure_auth_token(&mut config);
@@ -1423,17 +1284,7 @@ name = "test"
             auth: AuthConfig {
                 token: "existing-token".into(),
             },
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let generated = ensure_auth_token(&mut config);
         assert!(!generated);
@@ -1496,17 +1347,7 @@ token = "my-secret-token"
             auth: AuthConfig {
                 token: "roundtrip-token".into(),
             },
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1569,18 +1410,8 @@ token = "peer-secret"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
             peers,
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1675,9 +1506,6 @@ breach_count = 5
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
             watchdog: WatchdogConfig {
                 enabled: false,
                 memory_threshold: 75,
@@ -1693,14 +1521,7 @@ breach_count = 5
                 burn_ceiling_tokens_per_hour: None,
                 burn_action: "alert".into(),
             },
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1933,22 +1754,13 @@ burn_action = "explode"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
             watchdog: WatchdogConfig {
                 burn_ceiling_usd_per_hour: Some(2.5),
                 burn_ceiling_tokens_per_hour: Some(500_000),
                 burn_action: "stop".into(),
                 ..WatchdogConfig::default()
             },
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2016,22 +1828,12 @@ idle_action = "pause"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
             watchdog: WatchdogConfig {
                 idle_timeout_secs: 120,
                 idle_action: "kill".into(),
                 ..WatchdogConfig::default()
             },
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2143,18 +1945,8 @@ command = "codex -p 'Do it'"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
             inks,
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2206,12 +1998,6 @@ data_dir = "/tmp/test"
                 data_dir: "/tmp/test".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig {
                 webhooks: vec![WebhookEndpointConfig {
                     name: "ci".into(),
@@ -2222,11 +2008,7 @@ data_dir = "/tmp/test"
                 }],
                 ..Default::default()
             },
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2314,12 +2096,6 @@ url = "https://example.com"
         let path = tmpdir.path().join("config.toml");
         let config = Config {
             node: NodeConfig::default(),
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig {
                 webhooks: vec![WebhookEndpointConfig {
                     name: "test-hook".into(),
@@ -2330,11 +2106,7 @@ url = "https://example.com"
                 }],
                 ..Default::default()
             },
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2409,18 +2181,7 @@ name = "test"
                 tag: Some("my-tag".into()),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2627,17 +2388,7 @@ command = "codex -p 'review'"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         assert!(config.notifications.vapid.private_key.is_empty());
         assert!(config.notifications.vapid.public_key.is_empty());
@@ -2657,17 +2408,7 @@ command = "codex -p 'review'"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         ensure_vapid_keys(&mut config);
 
@@ -2686,17 +2427,7 @@ command = "codex -p 'review'"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         ensure_vapid_keys(&mut config);
 
@@ -2721,11 +2452,6 @@ command = "codex -p 'review'"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig {
                 vapid: VapidConfig {
                     private_key: "existing-private".into(),
@@ -2733,11 +2459,7 @@ command = "codex -p 'review'"
                 },
                 ..Default::default()
             },
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let generated = ensure_vapid_keys(&mut config);
         assert!(!generated);
@@ -2749,17 +2471,7 @@ command = "codex -p 'review'"
     fn test_ensure_vapid_keys_uniqueness() {
         let mut config1 = Config {
             node: NodeConfig::default(),
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let mut config2 = config1.clone();
         ensure_vapid_keys(&mut config1);
@@ -2781,17 +2493,7 @@ command = "codex -p 'review'"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         ensure_vapid_keys(&mut config);
         let private_key = config.notifications.vapid.private_key.clone();
@@ -2855,17 +2557,7 @@ name = "test"
                 default_command: Some("claude".into()),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2883,17 +2575,7 @@ name = "test"
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -2991,17 +2673,8 @@ port = 7433
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
             inks,
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -3203,21 +2876,13 @@ enabled = true
             auth: AuthConfig {
                 token: "controller-auth-token".into(),
             },
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
             controller: ControllerConfig {
                 enabled: true,
                 address: None,
                 token: Some("controller-token".into()),
                 stale_timeout_secs: 120,
             },
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -3250,17 +2915,7 @@ enabled = true
     fn test_validate_controller_standalone_ok() {
         let config = Config {
             node: NodeConfig::default(),
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         assert!(config.validate_controller().is_ok());
     }
@@ -3272,20 +2927,12 @@ enabled = true
             auth: AuthConfig {
                 token: "secret-token".into(),
             },
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
             controller: ControllerConfig {
                 enabled: true,
                 address: None,
                 ..ControllerConfig::default()
             },
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         assert!(config.validate_controller().is_ok());
     }
@@ -3294,22 +2941,13 @@ enabled = true
     fn test_validate_controller_node_ok() {
         let config = Config {
             node: NodeConfig::default(),
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
             controller: ControllerConfig {
                 enabled: false,
                 address: Some("http://controller:7433".into()),
                 token: Some("node-token".into()),
                 ..ControllerConfig::default()
             },
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         assert!(config.validate_controller().is_ok());
     }
@@ -3321,20 +2959,12 @@ enabled = true
             auth: AuthConfig {
                 token: "secret-token".into(),
             },
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
             controller: ControllerConfig {
                 enabled: true,
                 address: Some("http://controller:7433".into()),
                 ..ControllerConfig::default()
             },
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("mutually exclusive"));
@@ -3347,21 +2977,12 @@ enabled = true
                 bind: BindMode::Public,
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(), // token is empty
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
             controller: ControllerConfig {
                 enabled: true,
                 address: None,
                 ..ControllerConfig::default()
             },
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("auth.token"));
@@ -3374,21 +2995,12 @@ enabled = true
                 bind: BindMode::Tailscale,
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
             controller: ControllerConfig {
                 enabled: true,
                 address: None,
                 ..ControllerConfig::default()
             },
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         assert!(config.validate_controller().is_ok());
     }
@@ -3400,22 +3012,13 @@ enabled = true
                 bind: BindMode::Public,
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
             controller: ControllerConfig {
                 enabled: false,
                 address: Some("http://controller:7433".into()),
                 token: None, // missing
                 ..ControllerConfig::default()
             },
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("controller.token"));
@@ -3428,22 +3031,13 @@ enabled = true
                 bind: BindMode::Tailscale,
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
             controller: ControllerConfig {
                 enabled: false,
                 address: Some("https://controller.tailnet.ts.net".into()),
                 token: None,
                 ..ControllerConfig::default()
             },
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("controller.token"));
@@ -3456,22 +3050,13 @@ enabled = true
                 bind: BindMode::Public,
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
             controller: ControllerConfig {
                 enabled: false,
                 address: Some("http://controller:7433".into()),
                 token: Some(String::new()), // empty string
                 ..ControllerConfig::default()
             },
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("controller.token"));
@@ -3537,20 +3122,11 @@ events = ["ready", "killed"]
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
             notifications: NotificationsConfig {
                 discord: Some(toml::Value::String("legacy".into())),
                 ..NotificationsConfig::default()
             },
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -3646,17 +3222,8 @@ bogus = 1
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
-            webhooks: Vec::new(),
-            docker: None,
-            controller: ControllerConfig::default(),
             metrics: MetricsConfig { enabled: true },
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -3884,12 +3451,6 @@ bogus_field = true
                 data_dir: "/tmp".into(),
                 ..NodeConfig::default()
             },
-            auth: AuthConfig::default(),
-            peers: HashMap::new(),
-            watchdog: WatchdogConfig::default(),
-            inks: HashMap::new(),
-            plans: std::collections::HashMap::new(),
-            notifications: NotificationsConfig::default(),
             webhooks: vec![WebhookEndpointConfig {
                 name: "ops".into(),
                 url: "https://example.com/ops".into(),
@@ -3897,10 +3458,7 @@ bogus_field = true
                 min_severity: Some("warn".into()),
                 secret: Some("k".into()),
             }],
-            docker: None,
-            controller: ControllerConfig::default(),
-            metrics: MetricsConfig::default(),
-            rates: ::std::collections::HashMap::new(),
+            ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
