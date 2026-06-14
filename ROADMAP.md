@@ -293,11 +293,20 @@ with exponential backoff; receivers dedupe on `event_id` and verify `X-Pulpo-Sig
 The `X-Pulpo-Event` header lets a receiver route/drop without parsing the body.
 
 Build order (non-breaking; existing `[notifications.webhooks]` maps onto the new model):
-**0)** descope Discord · **1)** canonical event model + `EventSink` trait + dispatcher
-(fold webhook/web-push in; session lifecycle + usage alerts both flow to webhooks) ·
-**2)** durable SQLite outbox + retry/backoff + HMAC + idempotency · **3)** universal
-`[[webhooks]]` config + `type.subtype`/severity routing · **4)** `/metrics` toggle ·
-**5)** controller aggregation + fleet event feed.
+**0)** descope Discord ✅ (#56) · **1)** canonical event model + `EventSink` dispatcher ✅
+(#57; session lifecycle + usage alerts both flow to webhooks) · **2)** durable SQLite
+outbox + retry/backoff + HMAC + idempotency ✅ (#58) · **3)** universal `[[webhooks]]`
+config + `type.subtype`/severity routing ✅ (#60) · **4)** `/metrics` toggle ✅ (#59) ·
+**5)** controller aggregation + fleet event feed ✅ **already satisfied** by existing
+machinery: managed nodes' event-push loop forwards *all* events to the controller, the
+controller re-broadcasts them onto its bus (`event_push.rs`), and the step-1 dispatcher
+fans them out to the controller's `[[webhooks]]` (durable outbox) and its SSE feed. The
+controller's SSE `/api/v1/events` is the live fleet feed.
+
+**Backbone status: COMPLETE.** Optional additive polish, parked (not core; build on demand):
+a *persistent/queryable* fleet event log (`GET /events?since=` history vs the live SSE);
+fleet-wide `/metrics` aggregated from the controller session index (today `/metrics` is
+per-node). Pre-existing M2 (burn-velocity governor, alert-only) remains the open optimizer.
 
 **M2 — Burn-velocity governor (the marquee optimizer).** A configurable `$/hr` (and/or
 tokens/hr) ceiling on the watchdog: crossing it **alerts** by default; **opt-in** to pause
