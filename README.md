@@ -4,14 +4,15 @@
 <h1 align="center">Pulpo</h1>
 
 <p align="center">
-  <strong>The self-hosted control plane for background coding agents.</strong><br />
-  Run Claude Code, Codex, Gemini CLI, Aider, and any terminal agent on your own machines with durable sessions, watchdog supervision, and remote control.
+  <strong>The self-hosted meter and breaker box for coding agents.</strong><br />
+  See — and control — what every coding agent costs, across all your machines and accounts.
+  Run Claude Code, Codex, Gemini CLI, Aider, or any terminal agent on infrastructure you own,
+  with exact usage metering, budget enforcement, and monitoring that forwards to your own stack.
 </p>
 
 <p align="center">
   <a href="https://github.com/darioblanco/pulpo/actions/workflows/ci.yml"><img src="https://github.com/darioblanco/pulpo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/darioblanco/pulpo/releases"><img src="https://img.shields.io/github/v/release/darioblanco/pulpo?display_name=tag" alt="Latest Release"></a>
-  <a href="https://hub.docker.com/r/darioblanco/pulpo-agents"><img src="https://img.shields.io/docker/pulls/darioblanco/pulpo-agents" alt="Docker Hub"></a>
   <a href="https://github.com/darioblanco/pulpo#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg" alt="License"></a>
 </p>
 
@@ -47,137 +48,158 @@ Download binaries from [GitHub Releases](https://github.com/darioblanco/pulpo/re
 ## Quick Start
 
 ```bash
-# Spawn an agent on infrastructure you control
+# Run an agent as a durable session on infrastructure you control
 pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests"
 
-# Check status
-pulpo ls
+# See what every agent is costing — across accounts, machines, and agents
+pulpo usage
 
-# Open the dashboard (installable as PWA on your phone)
+# Put a hard budget on a run: alert at 80%, stop at 100%
+pulpo spawn nightly-review --budget-cost 5 -- claude -p "review today's diff"
+
+# Open the dashboard (installable as a PWA on your phone)
 pulpo ui
 ```
 
 ```
-ID        NAME          STATUS    BRANCH                    COMMAND
-a1b2c3d4  my-api [PR]   idle      fix-auth +42/-7 ↑1        claude -p "Fix failing auth tests"
+SESSION          SOURCE   TOKENS     COST      $/HR   QUOTA
+my-api           claude     1.2M    $2.41   $2.41/h     ~3%
+nightly-review   claude     310K    $0.74   $0.74/h     ~1%
 ```
 
 ## Why This Exists
 
-Coding agents are turning into background workers.
+Coding agents have become background workers — and a **quota-and-cost multiplier**.
+Run a few in parallel and a weekly subscription allowance can vanish in an afternoon.
 
-That creates an infrastructure problem:
+The tools that could tell you what's happening won't:
 
-- your laptop is a bad place for long-running agent work
-- SSH + tmux is not a control plane
-- when a machine reboots, the session state should not disappear
-- when an agent is waiting, stuck, finished, or lost, you should know without attaching
-- when multiple agents work on one repo, they should not step on each other
+- A vendor's `/usage` is **one account, one machine, one vendor**, and you have to go look at it.
+  No vendor will ever aggregate spend across *your* accounts — that would help you arbitrage
+  their own rate limits.
+- Vendors tell you that you *overspent*. Only the thing actually running the session can
+  **prevent** it — stop a runaway, alert before the wall, refuse to start over budget.
+- Your code and your usage data are exactly what you'd least want flowing through a third-party
+  relay.
 
-Pulpo is built for that gap. It runs agents on your own machines, keeps session
-state durable, supervises execution, and gives you CLI, API, and phone-friendly
-web control over the same underlying sessions.
+Pulpo fills that gap. It runs your agents as durable sessions on machines you own, reads
+**exact** token and cost numbers from each agent's own session files, enforces budgets, and
+forwards alerts and events to whatever observability stack *you* run. Sovereign by
+architecture: usage and account data never leave your infrastructure.
 
 ## What Pulpo Does
 
-Pulpo treats every agent run as a managed session:
-
-1. You start a command as a session
-2. `pulpod` runs it in a tmux session on a machine you control
-3. Pulpo tracks lifecycle, output, git state, and intervention history
-4. You inspect, resume, stop, schedule, or redirect it from anywhere
-
-That model works for Claude Code, Codex, Gemini CLI, Aider, shell scripts, and
-other terminal tools.
+**Meter — exactly, everywhere.** Pulpo parses the session files Claude Code and Codex write
+themselves, so token and cost numbers are exact (not scraped), attributed per session, per
+ink, per repo, and rolled up per account and pool — across every machine and agent you run.
+Unknown models still report tokens; `[rates.<model>]` config prices a new or repriced model
+with no code change.
 
 ```bash
-# Parallel agents on the same repo - each gets its own worktree
-pulpo spawn frontend --workdir ~/repo --worktree -- claude -p "redesign sidebar"
-pulpo spawn backend  --workdir ~/repo --worktree -- codex "optimize queries"
-
-# Spawn on a remote machine by name
-pulpo --node mac-mini spawn review -- claude -p "security audit"
-
-# Schedule nightly runs on the right machine
-pulpo schedule add nightly "0 3 * * *" --workdir ~/repo -- claude -p "review code"
+pulpo usage                     # burn rate ($/hr, tokens/hr), projected spend, quota
 ```
 
-## Who It Is For
-
-Pulpo is for developers and small teams who:
-
-- want coding agents to run on servers or always-on machines, not laptops
-- need private-network access, self-hosting, or vendor independence
-- use more than one agent tool and do not want to standardize on one vendor
-- care about recovery, auditability, and remote supervision
-
-## Why Pulpo Instead Of The Alternatives
-
-Hosted agent products are improving quickly, but they optimize for vendor-owned
-cloud workflows.
-
-Pulpo is the opposite bet:
+**Control — pull the plug before the wall.** Per-session and per-ink cost caps that alert at
+80% and stop at 100%, plus a burn-velocity governor that catches the catastrophic 2 a.m.
+runaway a flat budget misses. Alert-only by default; opt in to auto-stop.
 
 ```bash
-# your machines
-# your network access
-# your sessions
-# your policies
+pulpo spawn fix --budget-cost 10 -- claude -p "..."   # hard $10 cap, recorded as an intervention
+```
+
+**Monitor — forward to your own stack.** Every lifecycle change, intervention, and usage
+alert becomes a signed canonical event delivered to any number of `[[webhooks]]` (durable
+outbox, exponential backoff, HMAC, idempotency), plus an optional Prometheus `/metrics`
+endpoint. Pulpo is the event plane; your Grafana / Datadog / SIEM / Slack is the dashboard.
+
+**Run — durable and unattended.** Each agent runs in a `tmux` session with explicit lifecycle
+states that survive reboots, a watchdog for idle / memory / error / completion detection, and
+per-session git worktrees so parallel agents on one repo never collide.
+
+That model works for Claude Code, Codex, Gemini CLI, Aider, shell scripts, and any other
+terminal command — Pulpo is not tied to one vendor or one model.
+
+## Sovereign & Self-Hosted
+
+```bash
+# your machines      — runs where you put it, no vendor cloud
+# your accounts      — usage + identity read from local files, never relayed
+# your budgets       — enforcement runs in the session, not after the invoice
+# your observability — events forwarded to your collector, not a SaaS
 # your choice of agent
 ```
 
-It is strongest when you need:
+Reach a node's dashboard or API from your phone over your private network with
+**Tailscale transport** (`bind = "tailscale"` → HTTPS via `tailscale serve`, zero setup,
+no ports exposed to the public internet).
 
-- self-hosted execution (sovereign by architecture, not by contract)
-- remote supervision across multiple machines
-- explicit recovery semantics after failure or reboot
-- worktree isolation for parallel agent work
-- command-agnostic support instead of one vendor workflow
+## Who It Is For
+
+Developers and teams who:
+
+- run coding agents on servers or always-on machines and want to know what they cost
+- run more than one agent, account, or machine and want **one** gauge for all of them
+- need budgets and alerts that actually intervene, not a post-hoc invoice
+- require self-hosting, private-network access, and vendor independence
+
+## Multi-machine
+
+Pulpo is **single-node-first**. Each node meters and governs its own sessions independently —
+no central server required, and nothing breaks if you only ever run one machine.
+
+For a fleet-wide view, point every node's **event forwarding** (`[[webhooks]]` + `/metrics`)
+at a collector you already run, and aggregate there. This is the supported cross-node story:
+it adds no single point of failure and integrates with your existing observability. A
+controller/node control plane also exists but is **frozen** (maintained, not extended) — see
+the [Roadmap](ROADMAP.md) for the rationale.
 
 ## Core Capabilities
 
-- **Durable sessions**: explicit lifecycle states (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output.
-- **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error patterns, token tracking, and git telemetry.
-- **Multi-node fleet control**: Tailscale discovery + manual peer config. Manage sessions across machines from one dashboard or CLI.
-- **Execution isolation**: use worktrees for parallel repo work.
-- **Operational surfaces**: CLI, web UI/PWA, REST API, SSE, and notifications.
-- **Command-agnostic execution**: Claude Code, Codex, Gemini CLI, Aider, shell scripts, and other terminal commands.
+- **Exact usage metering**: structured readers for Claude Code & Codex (tokens, cost, cache, quota), cross-account / cross-agent rollups, `[rates.<model>]` config, output-scraping fallback for other agents.
+- **Cost control**: per-session / per-ink budget caps (alert 80%, stop 100%) and a burn-velocity ($/hr) governor — alert-first, opt-in stop.
+- **Monitoring backbone**: signed canonical events to multiple webhooks with a durable outbox + backoff; toggleable Prometheus `/metrics`; SSE stream; web push.
+- **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots; adopts external tmux sessions.
+- **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error/completion patterns, git telemetry (branch, diff, PR).
+- **Execution isolation**: per-session git worktrees for parallel work on one repo.
+- **Sovereign access**: single binary with embedded web UI/PWA, CLI, REST API; Tailscale transport for private remote access.
+- **Command-agnostic**: any terminal agent or command.
 
 ## How It Works
 
-The product contract is simple:
+```text
+command → session → tmux backend → lifecycle → metering + control + events
+```
 
-1. A session is a first-class object with durable state
-2. A runtime backend executes that session on infrastructure you control
-3. Lifecycle transitions are explicit and inspectable
-4. Recovery and intervention behavior are daemon-owned, not ad hoc shell state
+1. You start a command as a managed **session**.
+2. `pulpod` runs it on a `tmux` backend on a machine you control.
+3. The watchdog drives lifecycle, reads exact usage, enforces budgets, and emits events.
+4. You inspect, meter, budget, and supervise it from the CLI, API, web UI, or your own stack.
 
-Everything else builds on top of that core.
+The daemon owns the truth; every surface reflects or operates on the same sessions.
 
 ## Comparison
 
-| | Pulpo | agent-deck | cmux | NTM |
-|---|---|---|---|---|
-| Multi-node fleet | Yes | No | No | No |
-| Session lifecycle + resume | 6 states | TUI only | No | Status only |
-| Watchdog (memory, idle, errors) | Yes | No | No | No |
-| Git tracking (branch, diff, ahead) | Yes | No | No | No |
-| Worktrees | Any agent | Yes | Claude only | No |
-| Scheduling | Built-in cron | No | No | No |
-| Adopts external tmux | Yes | No | No | No |
-| Command-agnostic | Any command | Generic | Claude only | 3 agents |
-| Web UI + mobile PWA | Yes | Web | No | Dashboard |
+|  | Pulpo | vendor `/usage` | ccusage |
+|---|---|---|---|
+| Cross-account, cross-machine cost | Yes | One account / machine | Single machine |
+| Cross-agent (Claude + Codex + …) | Yes | One vendor | Claude only |
+| Live burn rate + projection | Yes | No | Post-hoc |
+| Budget enforcement (auto-stop) | Yes | No | No |
+| Alerts before the wall | Yes | No | No |
+| Forward events to your stack | Webhooks + `/metrics` | No | No |
+| Self-hosted, data stays local | Yes | n/a | Yes |
+| Runs the sessions | Yes | n/a | No (reads logs) |
 
-Hosted coding agents are a different category. They generally win on managed
-cloud convenience. Pulpo is for cases where the runtime itself needs to live on
-infrastructure you control.
+ccusage proves the demand for the gauge; it's read-only and single-machine because it doesn't
+run your sessions. Vendor dashboards show one account after the fact. Pulpo is live,
+cross-everything, and — because it runs the sessions — it can also pull the plug.
 
 <h3 align="center">
   <a href="https://pulpo.darioblanco.com/getting-started/quickstart">Quickstart</a>
   <span> · </span>
   <a href="https://pulpo.darioblanco.com">Documentation</a>
   <span> · </span>
-  <a href="POSITIONING.md">Positioning Memo</a>
+  <a href="ROADMAP.md">Roadmap</a>
   <span> · </span>
   <a href="CONTRIBUTING.md">Contributing</a>
 </h3>

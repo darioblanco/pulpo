@@ -141,7 +141,8 @@ Replace terminal-scraping with structured readers of the agents' own session fil
    operators add or reprice models without a code change — case-insensitive substring
    match, most-specific key wins, overrides beat built-ins, unknown models still report
    tokens with cost withheld. The concrete embodiment of "don't depend on a built-in
-   model list." Remaining: upgrade CLI USAGE column and UI badges from estimated to exact.
+   model list." **Done:** the CLI USAGE column and web badges now mark cost exact (from a
+   structured reader) vs estimated (`~`, output-scraped) via `AccountRollup.cost_is_exact`.
 
 ### Phase B — Visibility first; enforcement as a thin credibility proof
 
@@ -337,14 +338,16 @@ tokens/hr) ceiling on the watchdog: crossing it **alerts** by default; **opt-in*
 or stop. Catches the catastrophic runaway/loop ("$90 at 2am") that flat budgets miss
 because they only trip at the total. Smart mode (N× a session's own median) is a follow-up.
 
-**M3 — Waste elimination.** Rate-limit thrash → pause until `resets_at` instead of
-retry-burn (was parked B4); stuck/idle-beyond-threshold reclamation. Direct recovery of
-wall-clock and retry tokens.
+**M3 — Waste elimination — SKIPPED for now (2026-06-14, owner's call).** Rate-limit thrash →
+pause until `resets_at`; stuck/idle reclamation. High complexity (new session state +
+scheduling interplay), narrow benefit; revisit on real demand.
 
-**M4 — Cheaper-by-default policy (cheap, do anytime).** Ink fields for a recommended model
-and effort default so routine jobs (nightly lint, triage) don't run on the most expensive
-model; reserve the top tier for hard work. Pulpo templates the launch command — this is
-policy, not per-request routing.
+**M4 — Cheaper-by-default policy — DROPPED (2026-06-14).** The idea was ink fields for a
+recommended model/effort default. Dropped because an ink's `command` field *already* lets you
+pin a cheaper model per ink (`claude --model sonnet -p …`, a codex model). The only versions
+that add a separate knob are either incomplete (env-vars: effort doesn't map, the Codex model
+env is uncertain) or reintroduce per-agent flag coupling — the command-agnostic principle the
+controller freeze reaffirmed. Marginal machinery for something inks already cover.
 
 **M5 — Cheapest-pool-first placement — FROZEN (2026-06-14).** Depended on the Phase C
 controller (cross-node spawn), which is frozen, so M5 is too. *Single-node* pool awareness
@@ -362,7 +365,10 @@ M1+M2 are the visible "Pulpo watches your spend and catches runaways" story.
 
 ### Phase D — Reposition + distribution (gates the payoff)
 
-- README/SPEC rewrite around the vision
+- ~~README/SPEC rewrite around the vision~~ — **DONE (2026-06-14)**: README repositioned
+  around meter/breaker/monitor + sovereignty (was orchestration/remote-control); SPEC
+  header/problem/goals/non-goals reframed, controller freeze noted. Landing page + demo
+  video still pending (not code).
 - Landing page + demo video: phone → spawn on remote node → budget cap intervenes
   overnight → wake to a PR and an exact cost number
 - PR to `andyrewlee/awesome-agent-orchestrators` — submitted 2026-06-12 (PR #61)

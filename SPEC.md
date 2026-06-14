@@ -1,41 +1,56 @@
-# Pulpo — Agent Session Orchestrator
+# Pulpo — the self-hosted meter and breaker box for coding agents
 
-> _Eight arms, one brain — orchestrating agents across your network._
+> _Eight arms, one brain — see and control what every agent costs, on infrastructure you own._
 >
-> Last verified against code: 2026-03-30
+> Last verified against code: 2026-06-14
 
-Pulpo is a lightweight daemon that manages coding agent sessions across multiple
-machines on a trusted network (LAN, VPN, or Tailscale).
-It abstracts tmux management behind a clean API, and provides a mobile-friendly
-web UI for orchestrating agents from your phone or laptop.
+Pulpo is a lightweight daemon that runs coding-agent sessions as durable background
+workers, **measures exactly what each one costs** (across agents, accounts, and
+machines), **enforces budgets**, and **forwards alerts and events to your own
+observability stack**. It abstracts `tmux` behind a clean API and ships a
+mobile-friendly web UI. Sovereign by architecture: usage and account data are read
+from local files and never relayed to a vendor.
+
+It is **not** an agent framework, a prompt tool, or a terminal-orchestration UX —
+modern agents handle interactive worktrees, sandboxing, and guardrails themselves.
+Pulpo is the layer they lack: usage telemetry, cost control, and monitoring on
+infrastructure you own. See [ROADMAP.md](ROADMAP.md) for the full positioning.
 
 ## Problem
 
-You have multiple machines (Macs, Linux servers) connected via Tailscale. You want
-to spawn, monitor, and manage coding agents on any of them from your phone or
-laptop. Today this requires: Termius -> SSH -> tmux attach -> navigate windows.
-Too many layers. And if a machine reboots, you lose your session state.
+Coding agents have become background workers — and a quota-and-cost multiplier. A
+few in parallel can burn a weekly subscription allowance in an afternoon. The tools
+that could warn you won't: a vendor's `/usage` is one account, one machine, one
+vendor, shown after the fact; no vendor will aggregate spend across *your* accounts
+(it would help you arbitrage their limits); and only the thing actually running the
+session can stop a runaway before the wall. Meanwhile your usage and account data are
+exactly what you'd least want flowing through a third-party relay.
 
 ## Goals
 
-1. **Single binary** (`pulpod`) runs on each machine as a daemon
-2. **Abstracts tmux** (macOS/Linux) behind a unified session API
-3. **Web UI** served by the daemon — mobile-first, works great on iPhone Safari
-4. **Multi-node** — discover and manage sessions across all your Tailscale machines
-   from one dashboard
-5. **Session persistence** — survive reboots by storing conversation IDs, prompts,
-   output snapshots, and git state in a local database
-6. **Open source** — MIT or Apache 2.0
+1. **Single binary** (`pulpod`) runs on each machine as a daemon (embedded web UI)
+2. **Exact usage metering** — read tokens/cost from each agent's own session files,
+   attributed per session/ink/repo and rolled up per account/pool
+3. **Cost control** — per-session/ink budget caps (alert 80%, stop 100%) and a
+   burn-velocity governor; alert-first, opt-in auto-stop
+4. **Monitoring backbone** — signed canonical events to multiple webhooks (durable
+   outbox + backoff + HMAC) and a toggleable Prometheus `/metrics` endpoint
+5. **Durable sessions** — explicit lifecycle that survives reboots; `tmux` backend;
+   per-session git worktrees; watchdog supervision
+6. **Sovereign** — self-hosted, local-only account data, Tailscale transport for
+   private remote access; **open source** (MIT or Apache 2.0)
 
-## Non-Goals (for now)
+## Non-Goals
 
-- Agent-to-agent communication
-- Custom AI model hosting/serving
-- CI/CD integration (use GitHub Actions separately)
-- Multi-user / team features (single-user, your Tailnet)
+- **Cross-node agent orchestration** — the controller/node control plane is frozen
+  (see Roadmap "Phase C — Frozen"). Cross-node visibility is the event backbone
+  (forward to your own collector), not a bespoke controller.
+- Optimizing the **inference path** (prompt caching, per-request routing, context
+  trimming) — that's the agent's job; Pulpo optimizes the *operation* of agents
+- Agent-to-agent communication; custom model hosting/serving
+- Multi-user / team features (single-user, your tailnet)
 - Defining the "best" ink catalog or prompting methodology
-- Replacing specialized local agent UX tools
-- Becoming a monolithic all-in-one agent platform
+- Replacing specialized local agent UX tools, or becoming an all-in-one platform
 
 ---
 
