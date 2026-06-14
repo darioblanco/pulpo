@@ -283,6 +283,10 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let store = store::Store::new(&config.data_dir()).await?;
     store.migrate().await?;
 
+    // Install per-model cost rate overrides from `[rates.<model>]` config so the usage
+    // readers price new or repriced models without a code change. No-op under coverage.
+    usage::set_rate_overrides(config.rate_overrides());
+
     #[cfg(all(not(coverage), not(target_os = "windows")))]
     let backend: Arc<dyn backend::Backend> = Arc::new(TmuxBackend::new());
 

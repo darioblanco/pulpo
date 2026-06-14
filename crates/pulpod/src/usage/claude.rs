@@ -9,7 +9,7 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 
-use super::{ExactUsage, SOURCE_CLAUDE, rates_for_model};
+use super::{ExactUsage, RateOverrides, SOURCE_CLAUDE, resolve_rates};
 
 /// Sanitize a working directory into Claude Code's project-directory name.
 /// Claude Code replaces every non-alphanumeric character with `-`
@@ -51,6 +51,7 @@ fn apply_transcript_line(
     since: DateTime<Utc>,
     seen: &mut HashSet<String>,
     totals: &mut Totals,
+    rates: &RateOverrides,
 ) {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return;
@@ -105,7 +106,7 @@ fn apply_transcript_line(
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     #[allow(clippy::cast_precision_loss)]
-    match rates_for_model(model) {
+    match resolve_rates(model, rates) {
         Some(rates) => {
             totals.cost_usd += (input as f64).mul_add(
                 rates.input,
@@ -134,7 +135,12 @@ fn apply_transcript_line(
 /// Sums usage records with timestamps at or after `since` across every transcript in
 /// the project directory whose mtime is at or after `since`. Returns `None` when the
 /// directory does not exist or no matching records are found.
-pub fn read_usage(claude_dir: &Path, workdir: &str, since: DateTime<Utc>) -> Option<ExactUsage> {
+pub fn read_usage(
+    claude_dir: &Path,
+    workdir: &str,
+    since: DateTime<Utc>,
+    rates: &RateOverrides,
+) -> Option<ExactUsage> {
     let project_dir = claude_dir.join("projects").join(sanitize_workdir(workdir));
     let entries = std::fs::read_dir(&project_dir).ok()?;
 
@@ -157,7 +163,7 @@ pub fn read_usage(claude_dir: &Path, workdir: &str, since: DateTime<Utc>) -> Opt
             continue;
         };
         for line in content.lines() {
-            apply_transcript_line(line, since, &mut seen, &mut totals);
+            apply_transcript_line(line, since, &mut seen, &mut totals, rates);
         }
     }
 
@@ -217,7 +223,15 @@ mod tests {
     #[test]
     fn test_read_usage_missing_project_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        assert!(read_usage(tmp.path(), "/tmp/repo", Utc::now()).is_none());
+        assert!(
+            read_usage(
+                tmp.path(),
+                "/tmp/repo",
+                Utc::now(),
+                &RateOverrides::default()
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -232,7 +246,7 @@ mod tests {
         );
         write_project_file(tmp.path(), "/tmp/repo", "abc.jsonl", &content);
 
-        let usage = read_usage(tmp.path(), "/tmp/repo", since).unwrap();
+        let usage = read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).unwrap();
         assert_eq!(usage.source, SOURCE_CLAUDE);
         assert_eq!(usage.input_tokens, 2000);
         assert_eq!(usage.output_tokens, 1000);
@@ -256,7 +270,7 @@ mod tests {
             &format!("{line}\n{line}\n"),
         );
 
-        let usage = read_usage(tmp.path(), "/tmp/repo", since).unwrap();
+        let usage = read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).unwrap();
         assert_eq!(usage.input_tokens, 1000);
         assert_eq!(usage.output_tokens, 500);
     }
@@ -274,7 +288,7 @@ mod tests {
         );
         write_project_file(tmp.path(), "/tmp/repo", "abc.jsonl", &content);
 
-        let usage = read_usage(tmp.path(), "/tmp/repo", since).unwrap();
+        let usage = read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).unwrap();
         assert_eq!(usage.input_tokens, 1000);
     }
 
@@ -286,7 +300,7 @@ mod tests {
         write_project_file(tmp.path(), "/tmp/repo", "abc.jsonl", &content);
 
         let since = Utc::now() - TimeDelta::hours(1);
-        assert!(read_usage(tmp.path(), "/tmp/repo", since).is_none());
+        assert!(read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).is_none());
     }
 
     #[test]
@@ -301,9 +315,62 @@ mod tests {
         );
         write_project_file(tmp.path(), "/tmp/repo", "abc.jsonl", &content);
 
-        let usage = read_usage(tmp.path(), "/tmp/repo", since).unwrap();
+        let usage = read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).unwrap();
         assert_eq!(usage.input_tokens, 2000);
         assert!(usage.cost_usd.is_none());
+    }
+
+    #[test]
+    fn test_read_usage_config_override_prices_unknown_model() {
+        let tmp = tempfile::tempdir().unwrap();
+        let since = Utc::now() - TimeDelta::hours(1);
+        let ts = Utc::now().to_rfc3339();
+        let content = transcript_line(&ts, "msg_1", "req_1", "brand-new-model");
+        write_project_file(tmp.path(), "/tmp/repo", "abc.jsonl", &content);
+
+        // No override → unknown model, cost withheld.
+        let bare = read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).unwrap();
+        assert!(bare.cost_usd.is_none());
+
+        // With a [rates.brand-new-model] override, cost is computed (no code change).
+        let overrides = RateOverrides::new([(
+            "brand-new-model".to_owned(),
+            crate::usage::ModelRates {
+                input: 2.0,
+                output: 8.0,
+                cache_read: 0.0,
+                cache_write_5m: 0.0,
+                cache_write_1h: 0.0,
+            },
+        )]);
+        let usage = read_usage(tmp.path(), "/tmp/repo", since, &overrides).unwrap();
+        // input 1000×$2 + output 500×$8 (cache priced at $0) = 6000 / 1M
+        let expected = (1000.0f64).mul_add(2.0, 500.0 * 8.0) / 1_000_000.0;
+        assert!((usage.cost_usd.unwrap() - expected).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_read_usage_config_override_reprices_known_model() {
+        let tmp = tempfile::tempdir().unwrap();
+        let since = Utc::now() - TimeDelta::hours(1);
+        let ts = Utc::now().to_rfc3339();
+        let content = transcript_line(&ts, "msg_1", "req_1", "claude-opus-4-8");
+        write_project_file(tmp.path(), "/tmp/repo", "abc.jsonl", &content);
+
+        // Exact-ID override beats the built-in opus rate.
+        let overrides = RateOverrides::new([(
+            "claude-opus-4-8".to_owned(),
+            crate::usage::ModelRates {
+                input: 99.0,
+                output: 0.0,
+                cache_read: 0.0,
+                cache_write_5m: 0.0,
+                cache_write_1h: 0.0,
+            },
+        )]);
+        let usage = read_usage(tmp.path(), "/tmp/repo", since, &overrides).unwrap();
+        let expected = 1000.0 * 99.0 / 1_000_000.0;
+        assert!((usage.cost_usd.unwrap() - expected).abs() < 1e-9);
     }
 
     #[test]
@@ -316,7 +383,7 @@ mod tests {
         );
         write_project_file(tmp.path(), "/tmp/repo", "abc.jsonl", &line);
 
-        let usage = read_usage(tmp.path(), "/tmp/repo", since).unwrap();
+        let usage = read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).unwrap();
         assert_eq!(usage.cache_write_tokens, 1_000_000);
         assert!((usage.cost_usd.unwrap() - 20.0).abs() < 1e-9);
     }
@@ -331,7 +398,7 @@ mod tests {
         );
         write_project_file(tmp.path(), "/tmp/repo", "abc.jsonl", &line);
 
-        let usage = read_usage(tmp.path(), "/tmp/repo", since).unwrap();
+        let usage = read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).unwrap();
         assert_eq!(usage.cache_write_tokens, 400);
         assert_eq!(usage.cache_read_tokens, 0);
     }
@@ -347,7 +414,7 @@ mod tests {
         );
         write_project_file(tmp.path(), "/tmp/repo", "abc.jsonl", &content);
 
-        let usage = read_usage(tmp.path(), "/tmp/repo", since).unwrap();
+        let usage = read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).unwrap();
         assert_eq!(usage.input_tokens, 1000);
     }
 
@@ -367,7 +434,7 @@ mod tests {
             &format!("{line}\n{line}\n"),
         );
 
-        let usage = read_usage(tmp.path(), "/tmp/repo", since).unwrap();
+        let usage = read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).unwrap();
         assert_eq!(usage.input_tokens, 20);
     }
 
@@ -383,7 +450,7 @@ mod tests {
             &transcript_line(&ts, "msg_1", "req_1", "claude-fable-5"),
         );
 
-        assert!(read_usage(tmp.path(), "/tmp/repo", since).is_none());
+        assert!(read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).is_none());
     }
 
     #[test]
@@ -406,7 +473,7 @@ mod tests {
         file.set_modified(old_mtime).unwrap();
 
         let since = Utc::now() - TimeDelta::hours(1);
-        assert!(read_usage(tmp.path(), "/tmp/repo", since).is_none());
+        assert!(read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).is_none());
     }
 
     #[test]
@@ -427,7 +494,7 @@ mod tests {
             &transcript_line(&ts, "msg_2", "req_2", "claude-fable-5"),
         );
 
-        let usage = read_usage(tmp.path(), "/tmp/repo", since).unwrap();
+        let usage = read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).unwrap();
         assert_eq!(usage.input_tokens, 2000);
     }
 }

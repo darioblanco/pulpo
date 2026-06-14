@@ -204,6 +204,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -265,6 +266,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), inks, None).with_no_stale_grace();
@@ -667,6 +669,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -859,6 +862,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -991,6 +995,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let backend = Arc::new(FailIsAliveBackend);
         let manager =
@@ -1228,6 +1233,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1410,6 +1416,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1514,6 +1521,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1668,6 +1676,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let backend = Arc::new(StubBackend);
         let manager =
@@ -1805,6 +1814,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig { enabled: true },
+            rates: ::std::collections::HashMap::new(),
         };
         let backend = Arc::new(StubBackend);
         let manager =

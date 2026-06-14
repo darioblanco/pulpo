@@ -92,6 +92,37 @@ Codex quota is read exactly from the agent and needs no configuration.
 weekly_token_allowance = 500_000_000
 ```
 
+## `[rates.<model>]`
+
+Per-model cost rates in **USD per million tokens**, used to turn exact token counts into
+cost. Pulpo ships a built-in table (Opus / Sonnet / Haiku), but it stays model-agnostic: a
+model with no built-in rate still reports exact tokens with **cost withheld** rather than
+guessed. Add a `[rates.<model>]` section to price a new model — or to reprice an existing
+one — without waiting for a code change.
+
+The `<model>` key is matched **case-insensitively as a substring** of the model ID, so
+`[rates."claude-opus-4-9"]` matches that exact ID while `[rates.opus]` reprices the whole
+family. The **most specific (longest) matching key wins**, and any override beats the
+built-in table. Restart `pulpod` after editing rates.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `input` | float | — | USD per 1M uncached input tokens (required) |
+| `output` | float | — | USD per 1M output tokens (required) |
+| `cache_read` | float | `0.0` | USD per 1M cache-read tokens |
+| `cache_write_5m` | float | `0.0` | USD per 1M 5-minute cache-write tokens |
+| `cache_write_1h` | float | `0.0` | USD per 1M 1-hour cache-write tokens |
+
+```toml
+# Price a brand-new model the built-in table doesn't know yet.
+[rates."claude-opus-4-9"]
+input = 5.0
+output = 25.0
+cache_read = 0.5
+cache_write_5m = 6.25
+cache_write_1h = 10.0
+```
+
 ## `[peers]` / `[peers.<name>]`
 
 Short form:

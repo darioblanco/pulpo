@@ -135,10 +135,11 @@ Replace terminal-scraping with structured readers of the agents' own session fil
 5. Cost = tokens × per-model rates. **Shipped:** a built-in rate table (Opus/Sonnet/Haiku;
    a now-inert Fable row is retained only so historical sessions priced before the
    worldwide withdrawal still resolve), unknown models emit tokens without a misleading
-   cost. **Model-agnostic follow-up (next):** a `[rates.<model>]` config section so
-   operators add or reprice models without a code change — the concrete embodiment of
-   "don't depend on a built-in model list." Upgrade CLI USAGE column and UI badges from
-   estimated to exact.
+   cost. **Model-agnostic follow-up (DONE):** a `[rates.<model>]` config section lets
+   operators add or reprice models without a code change — case-insensitive substring
+   match, most-specific key wins, overrides beat built-ins, unknown models still report
+   tokens with cost withheld. The concrete embodiment of "don't depend on a built-in
+   model list." Remaining: upgrade CLI USAGE column and UI badges from estimated to exact.
 
 ### Phase B — Visibility first; enforcement as a thin credibility proof
 
@@ -327,12 +328,13 @@ subscription pool that still has headroom before spilling to paid API credits; d
 non-urgent runs until the quota window resets (exact `resets_at` for Codex, estimated for
 Claude). The optimization only Pulpo can do because only Pulpo sees every pool's headroom.
 
-**Config-overridable rates** (the model-agnostic follow-up from Phase A) belongs here too:
+**Config-overridable rates** (the model-agnostic follow-up from Phase A) — **DONE**:
 `[rates.<model>]` so cost/burn math never needs a code change when a model reprices or a
-new one ships — directly serving the "monitor cost accurately for any model" goal.
+new one ships, directly serving the "monitor cost accurately for any model" goal. Built
+into the usage readers via `RateOverrides`/`resolve_rates`, installed once at startup.
 
-Sequence: M1 → M2 (+ config rates) → M3/M4 anytime → M5 with the controller. M1+M2 are the
-visible "Pulpo watches your spend and catches runaways" story.
+Sequence: M1 ✅ → M2 ✅ (+ config rates ✅) → M3/M4 anytime → M5 with the controller.
+M1+M2 are the visible "Pulpo watches your spend and catches runaways" story.
 
 ### Phase D — Reposition + distribution (gates the payoff)
 

@@ -222,6 +222,7 @@ mod tests {
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
                 metrics: crate::config::MetricsConfig::default(),
+                rates: ::std::collections::HashMap::new(),
             },
             manager,
             peer_registry,
@@ -259,6 +260,7 @@ mod tests {
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
                 metrics: crate::config::MetricsConfig::default(),
+                rates: ::std::collections::HashMap::new(),
             },
             config_path,
             manager,
@@ -448,6 +450,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let resp = config_to_response(&config);
         assert_eq!(resp.node.name, "test");
@@ -653,6 +656,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let resp = config_to_response(&config);
         // Node fields
@@ -713,6 +717,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let resp = config_to_response(&config);
         assert_eq!(resp.notifications.webhooks.len(), 2);
@@ -853,6 +858,7 @@ mod tests {
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
                 metrics: crate::config::MetricsConfig::default(),
+                rates: ::std::collections::HashMap::new(),
             },
             std::path::PathBuf::from("/dev/null/impossible/config.toml"),
             manager,
