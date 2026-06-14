@@ -80,16 +80,27 @@ add-tests            add-tests            idle       /home/user/.pulpo/worktrees
 
 ## Cleanup
 
-Worktrees are removed automatically when you stop the session:
+A worktree is reclaimed when its session is **purged** — either by stopping with
+`--purge`, or by `pulpo cleanup`. A plain `pulpo stop` marks the session `stopped` but
+leaves the worktree on disk so you can still inspect it; it is reclaimed on the next purge.
 
 ```bash
-pulpo stop fix-auth    # removes worktree dir, prunes git refs, deletes branch
+pulpo stop fix-auth --purge   # stop + remove worktree dir, prune git refs, delete branch
+pulpo cleanup                 # reclaim every stopped/lost session's worktree, plus a safe sweep
 ```
 
-The cleanup:
+Per-session reclamation (purge) does three things:
+
 1. Removes the worktree directory
 2. Runs `git worktree prune` on the parent repo
 3. Deletes the worktree branch (`git branch -D <session-name>`)
+
+`pulpo cleanup` additionally runs a **safe orphan sweep**: it removes worktree directories
+under `~/.pulpo/worktrees/` that are no longer referenced by *any* session (left behind by
+sessions deleted long ago) and deletes leftover per-session output logs. It never touches a
+directory still owned by a live session — to reclaim a finished session that is still
+`active`/`idle`/`ready` (its tmux pane lingers), stop it first. `pulpo cleanup` reports how
+many sessions, worktrees, and log files it removed.
 
 If a stale branch is found when creating a new worktree with the same name, it is automatically cleaned up.
 

@@ -1399,14 +1399,21 @@ async fn execute_worktree(
 
 /// Format worktree sessions as a table.
 #[cfg_attr(coverage, allow(dead_code))]
-fn format_cleanup_message(sessions: u64, worktrees: u64) -> String {
-    if sessions == 0 {
-        "No stopped or lost sessions to clean up.".into()
-    } else if worktrees > 0 {
-        format!("Cleaned up {sessions} session(s). Removed {worktrees} worktree(s).")
-    } else {
-        format!("Cleaned up {sessions} session(s).")
+fn format_cleanup_message(sessions: u64, worktrees: u64, logs: u64) -> String {
+    if sessions == 0 && worktrees == 0 && logs == 0 {
+        return "Nothing to clean up.".into();
     }
+    let mut parts = Vec::new();
+    if sessions > 0 {
+        parts.push(format!("{sessions} session(s)"));
+    }
+    if worktrees > 0 {
+        parts.push(format!("{worktrees} worktree(s)"));
+    }
+    if logs > 0 {
+        parts.push(format!("{logs} log file(s)"));
+    }
+    format!("Cleaned up {}.", parts.join(", "))
 }
 
 fn format_worktree_sessions(sessions: &[&Session]) -> String {
@@ -2016,6 +2023,7 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             Ok(format_cleanup_message(
                 result.sessions_deleted,
                 result.worktrees_cleaned,
+                result.logs_cleaned,
             ))
         }
         Commands::Logs {
@@ -5742,30 +5750,36 @@ mod tests {
 
     #[test]
     fn test_cleanup_format_none_deleted() {
-        assert_eq!(
-            format_cleanup_message(0, 0),
-            "No stopped or lost sessions to clean up."
-        );
+        assert_eq!(format_cleanup_message(0, 0, 0), "Nothing to clean up.");
     }
 
     #[test]
-    fn test_cleanup_format_sessions_no_worktrees() {
-        assert_eq!(format_cleanup_message(3, 0), "Cleaned up 3 session(s).");
+    fn test_cleanup_format_sessions_only() {
+        assert_eq!(format_cleanup_message(3, 0, 0), "Cleaned up 3 session(s).");
     }
 
     #[test]
     fn test_cleanup_format_sessions_with_worktrees() {
         assert_eq!(
-            format_cleanup_message(2, 2),
-            "Cleaned up 2 session(s). Removed 2 worktree(s)."
+            format_cleanup_message(2, 2, 0),
+            "Cleaned up 2 session(s), 2 worktree(s)."
         );
     }
 
     #[test]
-    fn test_cleanup_format_partial_worktrees() {
+    fn test_cleanup_format_all_three() {
         assert_eq!(
-            format_cleanup_message(5, 3),
-            "Cleaned up 5 session(s). Removed 3 worktree(s)."
+            format_cleanup_message(5, 3, 4),
+            "Cleaned up 5 session(s), 3 worktree(s), 4 log file(s)."
+        );
+    }
+
+    #[test]
+    fn test_cleanup_format_orphans_only_no_dead_sessions() {
+        // Orphan sweep can clean worktrees/logs even with zero dead sessions.
+        assert_eq!(
+            format_cleanup_message(0, 1, 2),
+            "Cleaned up 1 worktree(s), 2 log file(s)."
         );
     }
 }

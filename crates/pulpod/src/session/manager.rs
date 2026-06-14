@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
@@ -15,8 +15,9 @@ use crate::config::InkConfig;
 #[cfg(not(coverage))]
 use crate::session::utils::create_worktree;
 use crate::session::utils::{
-    DOCKER_RUNTIME_REMOVED, validate_runtime, validate_session_name, validate_workdir,
-    wrap_command, write_secrets_file,
+    DOCKER_RUNTIME_REMOVED, find_orphan_session_logs, find_orphan_worktree_dirs,
+    remove_session_log, session_log_path, validate_runtime, validate_session_name,
+    validate_workdir, worktrees_dir, wrap_command, write_secrets_file,
 };
 use crate::store::Store;
 
@@ -36,6 +37,10 @@ pub struct SessionManager {
     /// Grace period (seconds) after session creation before staleness checks apply.
     /// Prevents race where `is_alive()` returns false before tmux is fully ready.
     stale_grace_secs: i64,
+    /// When true, mirror each session's full terminal output to a per-session log
+    /// file via `tmux pipe-pane`. Off by default — the capture is unbounded and
+    /// fills the disk; enable only for debugging.
+    capture_session_output: bool,
 }
 
 /// Result of resolving an ink: command, description, and optional defaults for
@@ -72,6 +77,7 @@ impl SessionManager {
             event_tx: None,
             node_name: String::new(),
             stale_grace_secs: 5,
+            capture_session_output: false,
         }
     }
 
@@ -79,6 +85,15 @@ impl SessionManager {
     #[must_use]
     pub const fn with_no_stale_grace(mut self) -> Self {
         self.stale_grace_secs = 0;
+        self
+    }
+
+    /// Enable per-session full-output capture (`tmux pipe-pane` → `{id}.log`).
+    /// Off by default; the daemon turns it on only when `capture_session_output`
+    /// is set in config.
+    #[must_use]
+    pub const fn with_capture_session_output(mut self, enabled: bool) -> Self {
+        self.capture_session_output = enabled;
         self
     }
 
@@ -160,6 +175,7 @@ impl SessionManager {
         Ok(plan.session)
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn build_create_plan(&self, req: CreateSessionRequest) -> Result<SessionCreatePlan> {
         // Validate session name: must be kebab-case (lowercase alphanumeric + hyphens).
         // This prevents shell injection via wrap_command where the name is interpolated
@@ -187,7 +203,9 @@ impl SessionManager {
         let (effective_workdir, worktree_path, worktree_branch) = if wants_worktree {
             #[cfg(not(coverage))]
             {
-                let wt_path = create_worktree(&workdir, &req.name, req.worktree_base.as_deref())?;
+                let wt_dir = worktrees_dir(self.store.data_dir());
+                let wt_path =
+                    create_worktree(&wt_dir, &workdir, &req.name, req.worktree_base.as_deref())?;
                 (wt_path.clone(), Some(wt_path), Some(req.name.clone()))
             }
             #[cfg(coverage)]
@@ -323,11 +341,20 @@ impl SessionManager {
             .update_session_status(&id.to_string(), SessionStatus::Active)
             .await?;
 
-        // Set up output logging
-        let log_dir = format!("{}/logs", self.store.data_dir());
-        let _ = std::fs::create_dir_all(&log_dir);
-        let log_path = format!("{log_dir}/{id}.log");
-        let _ = self.backend.setup_logging(backend_id, &log_path);
+        // Set up full per-session output capture only when explicitly enabled.
+        // It is off by default: `tmux pipe-pane` mirrors every byte the agent
+        // prints to disk unboundedly. The watchdog reads the live tail from tmux
+        // scrollback, and the last output snapshot is persisted in the database,
+        // so the daemon does not depend on this file for normal operation.
+        if self.capture_session_output {
+            let log_path = session_log_path(self.store.data_dir(), &id.to_string());
+            if let Some(parent) = log_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = self
+                .backend
+                .setup_logging(backend_id, &log_path.to_string_lossy());
+        }
 
         // Detect auth info from agent credentials and store in metadata
         #[cfg(not(coverage))]
@@ -481,6 +508,7 @@ impl SessionManager {
             );
             cleanup_worktree(wt_path, &session.workdir);
         }
+        remove_session_log(self.store.data_dir(), &session_id);
         self.store.delete_session(&session_id).await?;
         self.emit_session_deleted(session);
         Ok(())
@@ -635,28 +663,62 @@ impl SessionManager {
     }
 
     pub async fn cleanup_dead_sessions(&self) -> Result<CleanupResponse> {
+        let data_dir = self.store.data_dir().to_owned();
         let dead_sessions = self.store.fetch_dead_sessions().await?;
-        if dead_sessions.is_empty() {
-            return Ok(CleanupResponse {
-                sessions_deleted: 0,
-                worktrees_cleaned: 0,
-            });
-        }
+
         let mut worktrees_cleaned = 0u64;
+        let mut logs_cleaned = 0u64;
+
+        // 1. Reclaim worktrees + per-session log files for dead (stopped/lost) sessions.
         for session in &dead_sessions {
             if let Some(ref wt_path) = session.worktree_path {
                 cleanup_worktree(wt_path, &session.workdir);
                 worktrees_cleaned += 1;
             }
+            if remove_session_log(&data_dir, &session.id.to_string()) {
+                logs_cleaned += 1;
+            }
         }
         let ids: Vec<String> = dead_sessions.iter().map(|s| s.id.to_string()).collect();
-        self.store.delete_sessions_bulk(&ids).await?;
-        for session in &dead_sessions {
-            self.emit_session_deleted(session);
+        if !ids.is_empty() {
+            self.store.delete_sessions_bulk(&ids).await?;
+            for session in &dead_sessions {
+                self.emit_session_deleted(session);
+            }
         }
+
+        // 2. Safe orphan sweep: directories and log files left behind by sessions that
+        //    are no longer in the database at all. A still-referenced session (any
+        //    status, including active/idle/ready) is never touched.
+        let remaining = self.store.list_sessions().await.unwrap_or_default();
+        let referenced_worktrees: HashSet<String> = remaining
+            .iter()
+            .filter_map(|s| s.worktree_path.clone())
+            .collect();
+        let known_ids: HashSet<String> = remaining.iter().map(|s| s.id.to_string()).collect();
+
+        for dir in find_orphan_worktree_dirs(&worktrees_dir(&data_dir), &referenced_worktrees) {
+            match std::fs::remove_dir_all(&dir) {
+                Ok(()) => {
+                    tracing::info!(path = %dir.display(), "Removed orphaned worktree directory");
+                    worktrees_cleaned += 1;
+                }
+                Err(e) => {
+                    tracing::warn!(path = %dir.display(), error = %e, "Failed to remove orphaned worktree");
+                }
+            }
+        }
+        let logs_dir = std::path::Path::new(&data_dir).join("logs");
+        for log in find_orphan_session_logs(&logs_dir, &known_ids) {
+            if std::fs::remove_file(&log).is_ok() {
+                logs_cleaned += 1;
+            }
+        }
+
         Ok(CleanupResponse {
             sessions_deleted: dead_sessions.len() as u64,
             worktrees_cleaned,
+            logs_cleaned,
         })
     }
 
@@ -667,7 +729,7 @@ impl SessionManager {
     }
 
     fn read_log_tail(&self, id: &str, lines: usize) -> String {
-        let log_path = format!("{}/logs/{id}.log", self.store.data_dir());
+        let log_path = session_log_path(self.store.data_dir(), id);
         let content = std::fs::read_to_string(&log_path).unwrap_or_default();
         let mut tail: Vec<&str> = content.lines().rev().take(lines).collect();
         tail.reverse();
@@ -964,8 +1026,9 @@ mod tests {
         // All commands wrapped in bash -l -c for session survival
         assert!(calls[0].contains("-l -c"));
         assert!(calls[0].contains("echo hello"));
-        assert!(calls[1].starts_with("setup_logging:fix-the-bug:"));
-        assert_eq!(calls.len(), 2);
+        // Output capture is off by default, so no setup_logging call is made.
+        assert!(!calls.iter().any(|c| c.starts_with("setup_logging:")));
+        assert_eq!(calls.len(), 1);
         drop(calls);
     }
 
@@ -1192,8 +1255,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_session_calls_setup_logging() {
+    async fn test_create_session_calls_setup_logging_when_capture_enabled() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let mgr = mgr.with_capture_session_output(true);
         let _session = mgr.create_session(make_req("test")).await.unwrap();
 
         let calls = backend.calls.lock().unwrap();
@@ -3155,6 +3219,114 @@ mod tests {
         let resp = mgr.cleanup_dead_sessions().await.unwrap();
         assert_eq!(resp.sessions_deleted, 1);
         assert_eq!(resp.worktrees_cleaned, 1);
+    }
+
+    #[tokio::test]
+    async fn test_capture_off_by_default_skips_setup_logging() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        mgr.create_session(make_req("no-capture")).await.unwrap();
+        let has_setup = backend
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.starts_with("setup_logging:"));
+        assert!(!has_setup);
+        // The logs directory is not even created when capture is off.
+        let logs = std::path::Path::new(mgr.store().data_dir()).join("logs");
+        assert!(!logs.exists());
+    }
+
+    #[tokio::test]
+    async fn test_capture_on_sets_up_logging() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let mgr = mgr.with_capture_session_output(true);
+        mgr.create_session(make_req("with-capture")).await.unwrap();
+        let has_setup = backend
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.starts_with("setup_logging:"));
+        assert!(has_setup);
+        let logs = std::path::Path::new(mgr.store().data_dir()).join("logs");
+        assert!(logs.exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_removes_dead_session_log_file() {
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+        let s = mgr.create_session(make_req("with-log")).await.unwrap();
+        // Simulate a captured log file for the session.
+        let log_path = session_log_path(mgr.store().data_dir(), &s.id.to_string());
+        std::fs::create_dir_all(log_path.parent().unwrap()).unwrap();
+        std::fs::write(&log_path, b"agent output").unwrap();
+        sqlx::query("UPDATE sessions SET status = 'lost' WHERE id = ?")
+            .bind(s.id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let resp = mgr.cleanup_dead_sessions().await.unwrap();
+        assert_eq!(resp.sessions_deleted, 1);
+        assert_eq!(resp.logs_cleaned, 1);
+        assert!(!log_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_sweeps_orphan_worktree_and_preserves_referenced() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let wt_base = worktrees_dir(mgr.store().data_dir());
+        let orphan = wt_base.join("orphan-task");
+        std::fs::create_dir_all(&orphan).unwrap();
+        std::fs::write(orphan.join("big.bin"), b"node_modules").unwrap();
+
+        // An active session that still references its worktree dir must be preserved.
+        let kept_dir = wt_base.join("keep-active");
+        std::fs::create_dir_all(&kept_dir).unwrap();
+        let active = mgr.create_session(make_req("keep-active")).await.unwrap();
+        sqlx::query("UPDATE sessions SET worktree_path = ? WHERE id = ?")
+            .bind(kept_dir.to_string_lossy().into_owned())
+            .bind(active.id.to_string())
+            .execute(mgr.store().pool())
+            .await
+            .unwrap();
+
+        let resp = mgr.cleanup_dead_sessions().await.unwrap();
+        assert_eq!(resp.worktrees_cleaned, 1);
+        assert!(!orphan.exists(), "orphan worktree should be removed");
+        assert!(kept_dir.exists(), "referenced worktree must be preserved");
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_sweeps_orphan_session_log() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let logs_dir = std::path::Path::new(mgr.store().data_dir()).join("logs");
+        std::fs::create_dir_all(&logs_dir).unwrap();
+        // A {uuid}.log with no matching session row is an orphan.
+        let orphan_log = logs_dir.join("44444444-4444-4444-4444-444444444444.log");
+        std::fs::write(&orphan_log, b"stale").unwrap();
+        // The rolling daemon log must never be swept.
+        let daemon_log = logs_dir.join("pulpod.log.2026-06-07-12");
+        std::fs::write(&daemon_log, b"keep").unwrap();
+
+        let resp = mgr.cleanup_dead_sessions().await.unwrap();
+        assert_eq!(resp.logs_cleaned, 1);
+        assert!(!orphan_log.exists());
+        assert!(daemon_log.exists());
+    }
+
+    #[tokio::test]
+    async fn test_purge_session_removes_log_file() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let s = mgr.create_session(make_req("purge-log")).await.unwrap();
+        let log_path = session_log_path(mgr.store().data_dir(), &s.id.to_string());
+        std::fs::create_dir_all(log_path.parent().unwrap()).unwrap();
+        std::fs::write(&log_path, b"out").unwrap();
+
+        mgr.stop_session(&s.id.to_string(), true).await.unwrap();
+        assert!(!log_path.exists());
+        assert!(mgr.get_session(&s.id.to_string()).await.unwrap().is_none());
     }
 
     #[tokio::test]

@@ -48,6 +48,10 @@ pub struct CreateSessionResponse {
 pub struct CleanupResponse {
     pub sessions_deleted: u64,
     pub worktrees_cleaned: u64,
+    /// Per-session output log files (`{id}.log`) removed during cleanup.
+    /// `#[serde(default)]` keeps older clients/nodes that omit the field readable.
+    #[serde(default)]
+    pub logs_cleaned: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2139,18 +2143,22 @@ mod tests {
         let resp = CleanupResponse {
             sessions_deleted: 3,
             worktrees_cleaned: 2,
+            logs_cleaned: 4,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"sessions_deleted\":3"));
         assert!(json.contains("\"worktrees_cleaned\":2"));
+        assert!(json.contains("\"logs_cleaned\":4"));
     }
 
     #[test]
     fn test_cleanup_response_deserialize() {
+        // Older payloads without `logs_cleaned` must still deserialize (defaults to 0).
         let json = r#"{"sessions_deleted":5,"worktrees_cleaned":1}"#;
         let resp: CleanupResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.sessions_deleted, 5);
         assert_eq!(resp.worktrees_cleaned, 1);
+        assert_eq!(resp.logs_cleaned, 0);
     }
 
     #[test]
@@ -2158,6 +2166,7 @@ mod tests {
         let resp = CleanupResponse {
             sessions_deleted: 0,
             worktrees_cleaned: 0,
+            logs_cleaned: 0,
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("sessions_deleted"));

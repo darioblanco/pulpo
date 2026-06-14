@@ -453,6 +453,13 @@ pub struct NodeConfig {
     /// Number of days to retain log files. Defaults to 7.
     #[serde(default = "default_log_retain_days")]
     pub log_retain_days: u32,
+    /// Capture each session's full terminal output to `{data_dir}/logs/{id}.log`
+    /// via `tmux pipe-pane`. Off by default: the capture is unbounded and writes
+    /// every byte an agent prints, which fills the disk on long/chatty sessions.
+    /// Enable only for debugging — the watchdog uses tmux scrollback for the live
+    /// tail, and the last output snapshot is persisted in the database regardless.
+    #[serde(default = "default_capture_session_output")]
+    pub capture_session_output: bool,
 }
 
 impl Default for NodeConfig {
@@ -466,6 +473,7 @@ impl Default for NodeConfig {
             discovery_interval_secs: default_discovery_interval_secs(),
             default_command: None,
             log_retain_days: default_log_retain_days(),
+            capture_session_output: default_capture_session_output(),
         }
     }
 }
@@ -485,6 +493,10 @@ const fn default_port() -> u16 {
 
 const fn default_log_retain_days() -> u32 {
     7
+}
+
+const fn default_capture_session_output() -> bool {
+    false
 }
 
 fn default_data_dir() -> String {
@@ -667,6 +679,7 @@ pub fn load(path: &str) -> Result<Config> {
                 discovery_interval_secs: default_discovery_interval_secs(),
                 default_command: None,
                 log_retain_days: default_log_retain_days(),
+                capture_session_output: default_capture_session_output(),
             },
             auth: AuthConfig::default(),
             peers: HashMap::new(),
@@ -2324,6 +2337,7 @@ name = "test"
             discovery_interval_secs: 30,
             default_command: None,
             log_retain_days: 7,
+            capture_session_output: false,
         };
         let toml_str = toml::to_string(&config).unwrap();
         // tag should be skipped (None + skip_serializing_if)

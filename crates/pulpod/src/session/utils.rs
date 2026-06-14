@@ -1,4 +1,5 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use anyhow::{Result, anyhow, bail};
@@ -58,34 +59,35 @@ pub fn is_shell_command(command: &str) -> bool {
 }
 
 /// Create a git worktree for a session.
-/// Worktrees are created under `~/.pulpo/worktrees/<session-name>` to avoid
+/// Worktrees are created under `<worktrees_dir>/<session-name>` (the daemon passes
+/// `{data_dir}/worktrees`, which is `~/.pulpo/worktrees` by default) to avoid
 /// polluting the project repository with a `.pulpo/` directory.
+/// `base_ref`, when set, is the git ref to branch the worktree from.
 /// Returns the worktree path on success.
 #[cfg_attr(coverage, allow(dead_code))]
 pub fn create_worktree(
+    worktrees_dir: &Path,
     repo_dir: &str,
     session_name: &str,
-    worktree_base: Option<&str>,
+    base_ref: Option<&str>,
 ) -> Result<String> {
-    let home = dirs::home_dir().context("cannot determine home directory")?;
-    let wt_base_dir = home.join(".pulpo").join("worktrees");
-    let worktree_dir = wt_base_dir.join(session_name);
-    let worktree_dir_str = worktree_dir
+    let target_dir = worktrees_dir.join(session_name);
+    let target_dir_str = target_dir
         .to_str()
         .context("worktree path contains invalid UTF-8")?
         .to_owned();
     let branch_name = session_name.to_owned();
 
-    std::fs::create_dir_all(&wt_base_dir)?;
+    std::fs::create_dir_all(worktrees_dir)?;
 
     let mut args = vec![
         "worktree".to_owned(),
         "add".to_owned(),
         "-b".to_owned(),
         branch_name.clone(),
-        worktree_dir_str.clone(),
+        target_dir_str.clone(),
     ];
-    if let Some(base) = worktree_base {
+    if let Some(base) = base_ref {
         args.push(base.to_owned());
     }
     let args_ref: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -121,7 +123,7 @@ pub fn create_worktree(
         }
     }
 
-    Ok(worktree_dir_str)
+    Ok(target_dir_str)
 }
 
 /// Remove a git worktree, prune stale entries, and delete the associated branch.
@@ -171,6 +173,74 @@ pub fn cleanup_worktree(worktree_path: &str, repo_dir: &str) {
             }
         }
     }
+}
+
+/// Path to a session's captured-output log file: `{data_dir}/logs/{id}.log`.
+pub fn session_log_path(data_dir: &str, id: &str) -> PathBuf {
+    Path::new(data_dir).join("logs").join(format!("{id}.log"))
+}
+
+/// Remove a session's captured-output log file if it exists.
+/// Returns `true` when a file was actually removed.
+pub fn remove_session_log(data_dir: &str, id: &str) -> bool {
+    let path = session_log_path(data_dir, id);
+    path.exists() && std::fs::remove_file(&path).is_ok()
+}
+
+/// Directory holding per-session worktrees (`{data_dir}/worktrees`).
+pub fn worktrees_dir(data_dir: &str) -> PathBuf {
+    Path::new(data_dir).join("worktrees")
+}
+
+/// Find orphaned worktree directories: immediate subdirectories of `worktrees_dir`
+/// whose absolute path is not referenced by any live session. These belong to
+/// sessions that were already deleted from the database but whose directory leaked.
+/// Safe by construction — a directory still referenced by any session is never returned.
+pub fn find_orphan_worktree_dirs(
+    worktrees_dir: &Path,
+    referenced: &HashSet<String>,
+) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(worktrees_dir) else {
+        return Vec::new();
+    };
+    let mut orphans = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if !referenced.contains(&path.to_string_lossy().into_owned()) {
+            orphans.push(path);
+        }
+    }
+    orphans
+}
+
+/// Find orphaned per-session log files: `{uuid}.log` files in `logs_dir` whose UUID
+/// is not a known session id. The rolling daemon log (`pulpod.log.*`) is never
+/// returned — only files whose stem parses as a UUID are considered session logs.
+pub fn find_orphan_session_logs(logs_dir: &Path, known_ids: &HashSet<String>) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(logs_dir) else {
+        return Vec::new();
+    };
+    let mut orphans = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(stem) = name.strip_suffix(".log") else {
+            continue;
+        };
+        // Only treat `{uuid}.log` as a session log; skip `pulpod.log` and rotations.
+        if uuid::Uuid::parse_str(stem).is_err() {
+            continue;
+        }
+        if !known_ids.contains(stem) {
+            orphans.push(path);
+        }
+    }
+    orphans
 }
 
 /// Write secrets to a sourced-and-deleted file under the pulpo data dir.
@@ -262,4 +332,91 @@ pub fn wrap_command(
     format!(
         "{shell} -l -c '{env}{escaped}; echo '\\''[pulpo] Agent exited (session: {safe_name}). Run: pulpo resume {safe_name}'\\''; exec {shell} -l'"
     )
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::*;
+
+    #[test]
+    fn test_session_log_path_format() {
+        let p = session_log_path("/data", "abc");
+        assert_eq!(p, Path::new("/data/logs/abc.log"));
+    }
+
+    #[test]
+    fn test_worktrees_dir_format() {
+        assert_eq!(worktrees_dir("/data"), Path::new("/data/worktrees"));
+    }
+
+    #[test]
+    fn test_remove_session_log_removes_existing_and_reports_false_when_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().to_str().unwrap();
+        let id = "11111111-1111-1111-1111-111111111111";
+        // Absent → false.
+        assert!(!remove_session_log(data_dir, id));
+        // Create then remove → true, file gone.
+        let path = session_log_path(data_dir, id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"output").unwrap();
+        assert!(remove_session_log(data_dir, id));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_find_orphan_worktree_dirs_returns_unreferenced_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        let kept = base.join("kept");
+        let orphan = base.join("orphan");
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::create_dir_all(&orphan).unwrap();
+        // A stray file (not a dir) must be ignored.
+        std::fs::write(base.join("stray.txt"), b"x").unwrap();
+
+        let mut referenced = HashSet::new();
+        referenced.insert(kept.to_string_lossy().into_owned());
+
+        let orphans = find_orphan_worktree_dirs(base, &referenced);
+        assert_eq!(orphans, vec![orphan]);
+    }
+
+    #[test]
+    fn test_find_orphan_worktree_dirs_missing_base_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nope");
+        assert!(find_orphan_worktree_dirs(&missing, &HashSet::new()).is_empty());
+    }
+
+    #[test]
+    fn test_find_orphan_session_logs_skips_known_and_non_uuid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let logs = tmp.path();
+        let known = "22222222-2222-2222-2222-222222222222";
+        let orphan = "33333333-3333-3333-3333-333333333333";
+        std::fs::write(logs.join(format!("{known}.log")), b"a").unwrap();
+        std::fs::write(logs.join(format!("{orphan}.log")), b"b").unwrap();
+        // Rolling daemon log + a rotation + a non-uuid file: all must be ignored.
+        std::fs::write(logs.join("pulpod.log"), b"c").unwrap();
+        std::fs::write(logs.join("pulpod.log.2026-06-07-12"), b"d").unwrap();
+        std::fs::write(logs.join("notes.txt"), b"e").unwrap();
+
+        let mut known_ids = HashSet::new();
+        known_ids.insert(known.to_owned());
+
+        let orphans = find_orphan_session_logs(logs, &known_ids);
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(
+            orphans[0].file_name().unwrap(),
+            format!("{orphan}.log").as_str()
+        );
+    }
+
+    #[test]
+    fn test_find_orphan_session_logs_missing_dir_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nope");
+        assert!(find_orphan_session_logs(&missing, &HashSet::new()).is_empty());
+    }
 }

@@ -19,6 +19,8 @@ delete `~/.pulpo/state.db` and restart.
 | `tag` | string | — | Tailscale ACL tag for filtering (e.g. `"pulpo"`) |
 | `discovery_interval_secs` | u64 | `30` | How often to run peer discovery |
 | `default_command` | string | — | Default command when spawn has no explicit command or ink command |
+| `log_retain_days` | u32 | `7` | Days of rotated daemon logs (`logs/pulpod.log.*`) to keep (hourly rotation) |
+| `capture_session_output` | bool | `false` | Mirror each session's full terminal output to `logs/<id>.log` via `tmux pipe-pane`. Off by default — the capture is unbounded and fills the disk on long/chatty sessions. Enable only for debugging; the watchdog reads the live tail from tmux scrollback and persists the last snapshot in the database regardless. |
 
 ## `[auth]`
 

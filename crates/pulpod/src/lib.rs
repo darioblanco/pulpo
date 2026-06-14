@@ -311,6 +311,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         config.inks.clone(),
         config.node.default_command.clone(),
     )
+    .with_capture_session_output(config.node.capture_session_output)
     .with_event_tx(event_tx.clone(), node_name.clone());
 
     // Auto-resume sessions that were active before a restart
