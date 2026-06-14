@@ -173,6 +173,36 @@ Important limits:
 - distributed terminal attach is intentionally out of scope; remote detail remains HTTP/log-oriented
 - see [Controller + Node Setup](/guides/controller-node-setup) for the recommended enrollment workflow, token troubleshooting hints, and validation commands for controllers and nodes.
 
+### Monitoring & event topology (local-first invariant)
+
+Event forwarding is **local-first, not orchestrator-routed**. Every node — controller or
+node — runs its own event dispatcher and durable webhook outbox, so the events and alerts
+it emits are delivered to *its own* configured `[[webhooks]]` (and web-push / SSE)
+regardless of role. A managed node additionally pushes events to the controller for the
+aggregated fleet view, but that is an *extra* path, not the primary one.
+
+Consequences, by design:
+
+- A node's own webhooks keep firing **even if the controller is down** — the dispatcher and
+  the durable outbox are node-local. The controller is **not** a single point of failure for
+  per-node alerting; it only aggregates the fleet pane.
+- The controller's job is **aggregation + control plane** (fleet view, session index,
+  cross-node commands), *not* a mandatory hop every event must pass through.
+
+**Recommended topology:** configure **critical alerts (budget / burn-rate / lost)
+node-local**, so they survive a controller outage. Use the controller's central
+`[[webhooks]]` for the aggregated fleet pane and non-critical events. Configuring webhooks
+*only* on the controller turns it into a SPOF for alerting — avoid that for anything you
+must not miss.
+
+**Agent callbacks point at the local node (locked invariant).** When agent-side hooks /
+completion callbacks land (e.g. an injected callback URL), they target the **local
+`pulpod`**, never the controller. The local daemon owns the session lifecycle and forwards
+upward; routing agent processes at the controller would couple every agent to the
+controller's address and uptime, add a hop, break standalone operation, and make the
+controller a SPOF for completion detection. Same principle as events: **local-first, then
+aggregate.**
+
 ## Data Flow
 
 ```

@@ -359,6 +359,16 @@ Code hooks can call it) — replaces the 29 waiting-pattern regexes with a relia
 and powers fast "agent blocked on permission prompt" push alerts. Babysitting wastes
 wall-clock and tokens; this serves the vision and stays.
 
+**Locked invariant — agent callbacks point at the local node, never the controller.**
+Hooks and completion callbacks injected into an agent process target the **local
+`pulpod`** that spawned the session. The local daemon owns the session lifecycle and
+forwards upward to the controller; it is never the agent's job to reach the controller.
+Routing agents at the controller would couple every agent process to the controller's
+address and uptime, add a hop, break standalone operation, and make the controller a SPOF
+for completion detection. Same principle as event forwarding: **local-first, then
+aggregate.** See [architecture/overview](docs/architecture/overview.md) → "Monitoring &
+event topology."
+
 ## Shipped (reference)
 
 Core infrastructure:
@@ -393,6 +403,13 @@ Revisit only on real demand:
   adoption materializes
 - Multi-user auth, Kubernetes backend, cloud VM backend
 - Agent-to-agent communication — orchestration frameworks' job, never Pulpo's
+- **Decoupled dashboard as a reference webhook consumer.** Feasible and on-brand: the
+  canonical event envelope + universal `[[webhooks]]` + REST/SSE/`/metrics` are exactly
+  the substrate a standalone dashboard would consume — it is just a richer version of
+  `contrib/examples/webhook-discord`. Ship it as a separate example project that ingests
+  Pulpo events and renders a fleet view, so others can fork it for their own collectors.
+  **Keep the embedded single-binary UI** as the zero-setup default — the decoupled one is
+  an *example of the pattern*, not a replacement. Build on demand, not for launch.
 
 ## Removed
 
