@@ -41,6 +41,33 @@ pub struct Config {
     pub controller: ControllerConfig,
     #[serde(default)]
     pub metrics: MetricsConfig,
+    /// Per-model cost rates, keyed by a model-ID substring (`[rates.<model>]`).
+    ///
+    /// Overrides — or adds — entries in the built-in rate table so a new or repriced
+    /// model is metered correctly without a code change. Keys match the model ID
+    /// case-insensitively by substring; the most specific (longest) match wins and
+    /// any override beats the built-in table. Pulpo stays model-agnostic: a model
+    /// with neither a built-in rate nor an override still reports exact tokens, with
+    /// cost withheld rather than guessed.
+    #[serde(default)]
+    pub rates: HashMap<String, RateConfig>,
+}
+
+/// One `[rates.<model>]` entry: USD per million tokens.
+///
+/// `input` and `output` are required; the cache fields default to `0.0` when omitted
+/// (correct for models without prompt caching, and a safe under-count for a quick reprice).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RateConfig {
+    pub input: f64,
+    pub output: f64,
+    #[serde(default)]
+    pub cache_read: f64,
+    #[serde(default)]
+    pub cache_write_5m: f64,
+    #[serde(default)]
+    pub cache_write_1h: f64,
 }
 
 /// Prometheus `/metrics` endpoint configuration.
@@ -507,6 +534,22 @@ fn default_data_dir() -> String {
 }
 
 impl Config {
+    /// Build the usage rate overrides from `[rates.<model>]` config entries.
+    pub fn rate_overrides(&self) -> crate::usage::RateOverrides {
+        crate::usage::RateOverrides::new(self.rates.iter().map(|(model, r)| {
+            (
+                model.clone(),
+                crate::usage::ModelRates {
+                    input: r.input,
+                    output: r.output,
+                    cache_read: r.cache_read,
+                    cache_write_5m: r.cache_write_5m,
+                    cache_write_1h: r.cache_write_1h,
+                },
+            )
+        }))
+    }
+
     pub fn data_dir(&self) -> String {
         shellexpand::tilde(&self.node.data_dir).into_owned()
     }
@@ -691,6 +734,7 @@ pub fn load(path: &str) -> Result<Config> {
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         })
     }
 }
@@ -703,6 +747,42 @@ mod tests {
     #[test]
     fn test_default_port() {
         assert_eq!(default_port(), 7433);
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn test_config_parses_rates_section_with_cache_defaults() {
+        let toml_str = r#"
+[node]
+name = "test"
+
+[rates."claude-opus-4-9"]
+input = 5.0
+output = 25.0
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let r = &config.rates["claude-opus-4-9"];
+        assert_eq!(r.input, 5.0);
+        assert_eq!(r.output, 25.0);
+        // Omitted cache fields default to 0.0.
+        assert_eq!(r.cache_read, 0.0);
+        assert_eq!(r.cache_write_5m, 0.0);
+        assert_eq!(r.cache_write_1h, 0.0);
+
+        // The override is usable and prices a model the built-in table doesn't know.
+        let overrides = config.rate_overrides();
+        assert_eq!(
+            crate::usage::resolve_rates("claude-opus-4-9", &overrides)
+                .unwrap()
+                .input,
+            5.0
+        );
+    }
+
+    #[test]
+    fn test_rate_overrides_empty_when_unconfigured() {
+        let config: Config = toml::from_str("[node]\nname = \"test\"\n").unwrap();
+        assert!(config.rate_overrides().is_empty());
     }
 
     #[test]
@@ -822,6 +902,7 @@ finished_ttl_secs = 60
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let expanded = config.data_dir();
         assert!(
@@ -851,6 +932,7 @@ finished_ttl_secs = 60
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         assert_eq!(config.data_dir(), "/absolute/path");
     }
@@ -988,6 +1070,7 @@ name = "test"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let debug = format!("{config:?}");
         assert!(debug.contains("node-a"));
@@ -1015,6 +1098,7 @@ name = "test"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -1047,6 +1131,7 @@ name = "test"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1080,6 +1165,7 @@ name = "test"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         assert!(path.exists());
@@ -1107,6 +1193,7 @@ name = "test"
                 docker: None,
                 controller: ControllerConfig::default(),
                 metrics: MetricsConfig::default(),
+                rates: ::std::collections::HashMap::new(),
             },
             Path::new("/dev/null/impossible/config.toml"),
         );
@@ -1136,6 +1223,7 @@ name = "test"
                 docker: None,
                 controller: ControllerConfig::default(),
                 metrics: MetricsConfig::default(),
+                rates: ::std::collections::HashMap::new(),
             },
             Path::new(""),
         );
@@ -1169,6 +1257,7 @@ name = "test"
                 docker: None,
                 controller: ControllerConfig::default(),
                 metrics: MetricsConfig::default(),
+                rates: ::std::collections::HashMap::new(),
             },
             &dir_target,
         );
@@ -1197,6 +1286,7 @@ name = "test"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         #[allow(clippy::redundant_clone)]
         let cloned = config.clone();
@@ -1236,6 +1326,7 @@ name = "test"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         assert!(toml_str.contains("ser"));
@@ -1311,6 +1402,7 @@ name = "test"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         assert!(config.auth.token.is_empty());
         let generated = ensure_auth_token(&mut config);
@@ -1341,6 +1433,7 @@ name = "test"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let generated = ensure_auth_token(&mut config);
         assert!(!generated);
@@ -1413,6 +1506,7 @@ token = "my-secret-token"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1486,6 +1580,7 @@ token = "peer-secret"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1605,6 +1700,7 @@ breach_count = 5
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1852,6 +1948,7 @@ burn_action = "explode"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -1934,6 +2031,7 @@ idle_action = "pause"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2056,6 +2154,7 @@ command = "codex -p 'Do it'"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2127,6 +2226,7 @@ data_dir = "/tmp/test"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2234,6 +2334,7 @@ url = "https://example.com"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2319,6 +2420,7 @@ name = "test"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2535,6 +2637,7 @@ command = "codex -p 'review'"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         assert!(config.notifications.vapid.private_key.is_empty());
         assert!(config.notifications.vapid.public_key.is_empty());
@@ -2564,6 +2667,7 @@ command = "codex -p 'review'"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         ensure_vapid_keys(&mut config);
 
@@ -2592,6 +2696,7 @@ command = "codex -p 'review'"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         ensure_vapid_keys(&mut config);
 
@@ -2632,6 +2737,7 @@ command = "codex -p 'review'"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let generated = ensure_vapid_keys(&mut config);
         assert!(!generated);
@@ -2653,6 +2759,7 @@ command = "codex -p 'review'"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let mut config2 = config1.clone();
         ensure_vapid_keys(&mut config1);
@@ -2684,6 +2791,7 @@ command = "codex -p 'review'"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         ensure_vapid_keys(&mut config);
         let private_key = config.notifications.vapid.private_key.clone();
@@ -2757,6 +2865,7 @@ name = "test"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -2784,6 +2893,7 @@ name = "test"
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -2891,6 +3001,7 @@ port = 7433
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -3106,6 +3217,7 @@ enabled = true
                 stale_timeout_secs: 120,
             },
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -3148,6 +3260,7 @@ enabled = true
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         assert!(config.validate_controller().is_ok());
     }
@@ -3172,6 +3285,7 @@ enabled = true
                 ..ControllerConfig::default()
             },
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         assert!(config.validate_controller().is_ok());
     }
@@ -3195,6 +3309,7 @@ enabled = true
                 ..ControllerConfig::default()
             },
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         assert!(config.validate_controller().is_ok());
     }
@@ -3219,6 +3334,7 @@ enabled = true
                 ..ControllerConfig::default()
             },
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("mutually exclusive"));
@@ -3245,6 +3361,7 @@ enabled = true
                 ..ControllerConfig::default()
             },
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("auth.token"));
@@ -3271,6 +3388,7 @@ enabled = true
                 ..ControllerConfig::default()
             },
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         assert!(config.validate_controller().is_ok());
     }
@@ -3297,6 +3415,7 @@ enabled = true
                 ..ControllerConfig::default()
             },
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("controller.token"));
@@ -3324,6 +3443,7 @@ enabled = true
                 ..ControllerConfig::default()
             },
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("controller.token"));
@@ -3351,6 +3471,7 @@ enabled = true
                 ..ControllerConfig::default()
             },
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let err = config.validate_controller().unwrap_err();
         assert!(err.to_string().contains("controller.token"));
@@ -3429,6 +3550,7 @@ events = ["ready", "killed"]
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -3534,6 +3656,7 @@ bogus = 1
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig { enabled: true },
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
@@ -3777,6 +3900,7 @@ bogus_field = true
             docker: None,
             controller: ControllerConfig::default(),
             metrics: MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();

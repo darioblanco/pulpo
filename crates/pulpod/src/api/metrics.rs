@@ -386,6 +386,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: MetricsConfig { enabled },
+            rates: ::std::collections::HashMap::new(),
         };
         let backend = Arc::new(StubBackend);
         let manager =

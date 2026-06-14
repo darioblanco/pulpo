@@ -118,6 +118,7 @@ mod tests {
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
                 metrics: crate::config::MetricsConfig::default(),
+                rates: ::std::collections::HashMap::new(),
             },
             manager,
             peer_registry,
@@ -154,6 +155,7 @@ mod tests {
                 docker: None,
                 controller: crate::config::ControllerConfig::default(),
                 metrics: crate::config::MetricsConfig::default(),
+                rates: ::std::collections::HashMap::new(),
             },
             config_path,
             manager,
@@ -320,6 +322,7 @@ mod tests {
             docker: None,
             controller: crate::config::ControllerConfig::default(),
             metrics: crate::config::MetricsConfig::default(),
+            rates: ::std::collections::HashMap::new(),
         };
         let resp = to_response(&config);
         assert_eq!(resp.webhooks.len(), 2);

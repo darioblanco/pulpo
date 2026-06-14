@@ -16,6 +16,9 @@ pub mod codex;
 pub mod pool;
 pub mod projection;
 
+#[cfg(not(coverage))]
+use std::sync::OnceLock;
+
 use chrono::{DateTime, TimeDelta, Utc};
 use pulpo_common::session::Session;
 
@@ -130,6 +133,76 @@ pub fn rates_for_model(model: &str) -> Option<ModelRates> {
     }
 }
 
+/// User-supplied per-model rate overrides from `[rates.<model>]` config.
+///
+/// Each key is matched as a case-insensitive substring of the model ID, so a new or
+/// repriced model can be priced without a code change — `[rates."claude-opus-4-9"]`
+/// matches that exact ID, while `[rates.opus]` reprices the whole family. The most
+/// specific (longest) matching key wins, and any override beats the built-in table.
+#[derive(Debug, Clone, Default)]
+pub struct RateOverrides {
+    /// `(lowercased key, rates)`, sorted by key length descending for deterministic
+    /// "most specific wins" resolution.
+    entries: Vec<(String, ModelRates)>,
+}
+
+impl RateOverrides {
+    /// Build from `(key, rates)` pairs. Keys are lowercased; order is normalized so
+    /// the longest matching key always wins regardless of input order.
+    pub fn new(pairs: impl IntoIterator<Item = (String, ModelRates)>) -> Self {
+        let mut entries: Vec<(String, ModelRates)> = pairs
+            .into_iter()
+            .map(|(k, v)| (k.to_lowercase(), v))
+            .filter(|(k, _)| !k.is_empty())
+            .collect();
+        entries.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+        Self { entries }
+    }
+
+    /// Whether any overrides are configured.
+    pub const fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Return the rates for the first (most specific) key contained in `model_lower`.
+    fn lookup(&self, model_lower: &str) -> Option<ModelRates> {
+        self.entries
+            .iter()
+            .find(|(key, _)| model_lower.contains(key.as_str()))
+            .map(|(_, rates)| *rates)
+    }
+}
+
+/// Resolve rates for a model, preferring config overrides over the built-in table.
+/// Returns `None` only when neither knows the model (cost is then withheld).
+pub fn resolve_rates(model: &str, overrides: &RateOverrides) -> Option<ModelRates> {
+    overrides
+        .lookup(&model.to_lowercase())
+        .or_else(|| rates_for_model(model))
+}
+
+/// Process-wide rate overrides, installed once at startup from config. Read only by
+/// the real (filesystem-touching) session reader below, which is coverage-excluded;
+/// all pure resolution logic takes an explicit `&RateOverrides` and is fully tested.
+#[cfg(not(coverage))]
+static RATE_OVERRIDES: OnceLock<RateOverrides> = OnceLock::new();
+
+/// Install the process-wide rate overrides. Call once at daemon startup, before the
+/// watchdog begins reading usage. Later calls are ignored.
+#[cfg(not(coverage))]
+pub fn set_rate_overrides(overrides: RateOverrides) {
+    let _ = RATE_OVERRIDES.set(overrides);
+}
+
+/// No-op under coverage builds (the global is unused there).
+#[cfg(coverage)]
+pub fn set_rate_overrides(_overrides: RateOverrides) {}
+
+#[cfg(not(coverage))]
+fn active_rate_overrides() -> &'static RateOverrides {
+    RATE_OVERRIDES.get_or_init(RateOverrides::default)
+}
+
 /// Read exact usage for a session command running in `workdir`, spawned at `since`.
 ///
 /// Dispatches to the reader matching the agent in `command`. Returns `None` when no
@@ -141,10 +214,12 @@ pub fn read_exact_usage(
     now: DateTime<Utc>,
     claude_dir: &std::path::Path,
     codex_dir: &std::path::Path,
+    rates: &RateOverrides,
 ) -> Option<ExactUsage> {
     let since = since - TimeDelta::seconds(SINCE_GRACE_SECS);
     match agent_provider_for_command(command)? {
-        "claude.ai" => claude::read_usage(claude_dir, workdir, since),
+        "claude.ai" => claude::read_usage(claude_dir, workdir, since, rates),
+        // Codex reports exact quota rather than a rate-derived cost, so it ignores rates.
         "openai" => codex::read_usage(codex_dir, workdir, since, now),
         _ => None,
     }
@@ -165,6 +240,7 @@ pub fn read_exact_usage_for_session(session: &Session) -> Option<ExactUsage> {
         Utc::now(),
         &home.join(".claude"),
         &home.join(".codex"),
+        active_rate_overrides(),
     )
 }
 
@@ -195,6 +271,61 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
+    fn test_resolve_rates_falls_back_to_builtin() {
+        let empty = RateOverrides::default();
+        assert!(empty.is_empty());
+        assert_eq!(resolve_rates("claude-opus-4-8", &empty).unwrap().input, 5.0);
+        assert!(resolve_rates("gpt-5", &empty).is_none());
+        assert!(resolve_rates("", &empty).is_none());
+    }
+
+    #[test]
+    #[allow(clippy::float_cmp)]
+    fn test_resolve_rates_override_beats_builtin_and_most_specific_wins() {
+        let rate = |input: f64| ModelRates {
+            input,
+            output: 0.0,
+            cache_read: 0.0,
+            cache_write_5m: 0.0,
+            cache_write_1h: 0.0,
+        };
+        let overrides = RateOverrides::new([
+            ("opus".to_owned(), rate(1.0)),
+            ("claude-opus-4-8".to_owned(), rate(7.0)),
+        ]);
+        // Longest matching key wins, regardless of insertion order.
+        assert_eq!(
+            resolve_rates("claude-opus-4-8", &overrides).unwrap().input,
+            7.0
+        );
+        // The family key still applies to other opus models.
+        assert_eq!(
+            resolve_rates("claude-opus-4-9", &overrides).unwrap().input,
+            1.0
+        );
+        // No matching key and no built-in → withheld.
+        assert!(resolve_rates("gpt-5", &overrides).is_none());
+    }
+
+    #[test]
+    fn test_rate_overrides_new_drops_empty_keys_and_lowercases() {
+        let overrides = RateOverrides::new([
+            (String::new(), HAIKU_RATES),
+            ("GPT-6".to_owned(), HAIKU_RATES),
+        ]);
+        assert!(!overrides.is_empty());
+        // Empty key was dropped; non-empty key matches case-insensitively.
+        assert!(resolve_rates("gpt-6-turbo", &overrides).is_some());
+    }
+
+    #[test]
+    fn test_set_rate_overrides_is_callable() {
+        // Smoke test for the public setter (no-op under coverage builds).
+        set_rate_overrides(RateOverrides::new([("zzz-smoke".to_owned(), HAIKU_RATES)]));
+    }
+
+    #[test]
     fn test_read_exact_usage_unknown_agent() {
         let tmp = tempfile::tempdir().unwrap();
         let result = read_exact_usage(
@@ -204,6 +335,7 @@ mod tests {
             Utc::now(),
             tmp.path(),
             tmp.path(),
+            &RateOverrides::default(),
         );
         assert!(result.is_none());
     }
@@ -218,6 +350,7 @@ mod tests {
             Utc::now(),
             tmp.path(),
             tmp.path(),
+            &RateOverrides::default(),
         );
         assert!(result.is_none());
     }
@@ -232,6 +365,7 @@ mod tests {
             Utc::now(),
             tmp.path(),
             tmp.path(),
+            &RateOverrides::default(),
         );
         assert!(result.is_none());
     }
@@ -246,6 +380,7 @@ mod tests {
             Utc::now(),
             tmp.path(),
             tmp.path(),
+            &RateOverrides::default(),
         );
         assert!(result.is_none());
     }
