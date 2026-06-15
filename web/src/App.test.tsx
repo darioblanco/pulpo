@@ -23,6 +23,20 @@ vi.stubGlobal('localStorage', {
 // Mock fetch
 vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ json: () => Promise.resolve([]) }));
 
+// The home route now redirects to the sessions dashboard, which fetches peers + fleet
+// sessions on mount. Give those calls well-shaped empty responses so the smoke test
+// renders cleanly (the raw fetch mock above returns `[]` for everything, which would
+// make `resp.peers` undefined).
+vi.mock('@/api/client', async () => {
+  const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
+  return {
+    ...actual,
+    getPeers: vi.fn().mockResolvedValue({ peers: [] }),
+    getFleetSessions: vi.fn().mockResolvedValue({ sessions: [] }),
+    getSessions: vi.fn().mockResolvedValue([]),
+  };
+});
+
 // Mock canvas for ocean page
 HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue({
   save: vi.fn(),
@@ -76,10 +90,10 @@ vi.mock('@/components/ocean/engine/sprites', () => ({
 }));
 
 describe('App', () => {
-  it('renders the ocean page as home', async () => {
+  it('redirects home to the sessions dashboard (Ocean is no longer the default)', async () => {
     render(<App />);
     await waitFor(() => {
-      expect(screen.getByTestId('ocean-page')).toBeInTheDocument();
+      expect(screen.getByTestId('dashboard-page')).toBeInTheDocument();
     });
   });
 });
