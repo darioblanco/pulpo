@@ -159,7 +159,7 @@ pub enum Commands {
         name: String,
     },
 
-    /// Show token/cost burn rate and projected spend for sessions on this node
+    /// Show token/cost burn rate, time-to-cap, and quota for sessions on this node
     Usage,
 
     /// Open the web dashboard in your browser

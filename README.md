@@ -83,20 +83,21 @@ The tools that could tell you what's happening won't:
   relay.
 
 Pulpo fills that gap. It runs your agents as durable sessions on machines you own, reads
-**exact** token and cost numbers from each agent's own session files, enforces budgets, and
-forwards alerts and events to whatever observability stack *you* run. Sovereign by
-architecture: usage and account data never leave your infrastructure.
+**exact token counts** from each agent's own session files (and costs them from your rate
+table), enforces budgets, and forwards alerts and events to whatever observability stack
+*you* run. Sovereign by architecture: usage and account data never leave your infrastructure.
 
 ## What Pulpo Does
 
 **Meter — exactly, everywhere.** Pulpo parses the session files Claude Code and Codex write
-themselves, so token and cost numbers are exact (not scraped), attributed per session, per
-ink, per repo, and rolled up per account and pool — across every machine and agent you run.
-Unknown models still report tokens; `[rates.<model>]` config prices a new or repriced model
-with no code change.
+themselves, so **token counts are exact** (not scraped) and costed from your rate table —
+attributed per session and rolled up per account and billing pool, across every machine and
+agent you run. (Codex reports exact subscription quota rather than a per-token cost.) Unknown
+models still report tokens; `[rates.<model>]` config prices a new or repriced model with no
+code change.
 
 ```bash
-pulpo usage                     # burn rate ($/hr, tokens/hr), projected spend, quota
+pulpo usage                     # burn rate ($/hr, tokens/hr), time-to-cap, quota
 ```
 
 **Control — pull the plug before the wall.** Per-session and per-ink cost caps that alert at
@@ -107,10 +108,11 @@ runaway a flat budget misses. Alert-only by default; opt in to auto-stop.
 pulpo spawn fix --budget-cost 10 -- claude -p "..."   # hard $10 cap, recorded as an intervention
 ```
 
-**Monitor — forward to your own stack.** Every lifecycle change, intervention, and usage
-alert becomes a signed canonical event delivered to any number of `[[webhooks]]` (durable
-outbox, exponential backoff, HMAC, idempotency), plus an optional Prometheus `/metrics`
-endpoint. Pulpo is the event plane; your Grafana / Datadog / SIEM / Slack is the dashboard.
+**Monitor — forward to your own stack.** Every lifecycle change and usage/cost alert becomes
+a signed canonical event delivered to any number of `[[webhooks]]` (durable outbox,
+exponential backoff, HMAC; receivers dedupe on a stable event id), plus an optional Prometheus
+`/metrics` endpoint. Pulpo is the event plane; your Grafana / Datadog / SIEM / Slack is the
+dashboard.
 
 **Run — durable and unattended.** Each agent runs in a `tmux` session with explicit lifecycle
 states that survive reboots, a watchdog for idle / memory / error / completion detection, and
@@ -159,7 +161,7 @@ the [Roadmap](ROADMAP.md) for the rationale.
 - **Cost control**: per-session / per-ink budget caps (alert 80%, stop 100%) and a burn-velocity ($/hr) governor — alert-first, opt-in stop.
 - **Monitoring backbone**: signed canonical events to multiple webhooks with a durable outbox + backoff; toggleable Prometheus `/metrics`; SSE stream; web push.
 - **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots; adopts external tmux sessions.
-- **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error/completion patterns, git telemetry (branch, diff, PR).
+- **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error/completion patterns, git telemetry (branch, diff; PR URL detected from output).
 - **Execution isolation**: per-session git worktrees for parallel work on one repo.
 - **Sovereign access**: single binary with embedded web UI/PWA, CLI, REST API; Tailscale transport for private remote access.
 - **Command-agnostic**: any terminal agent or command.
