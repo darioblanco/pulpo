@@ -39,15 +39,12 @@ pub async fn run_stale_cleanup_loop(
                         debug!(session_id = %entry.session_id, error = %e, "Failed to persist stale session index entry");
                     }
                     debug!(session_id = %entry.session_id, node = %entry.node_name, "Session marked lost (stale node)");
-                    let event = PulpoEvent::Session(SessionEvent {
-                        session_id: entry.session_id,
-                        session_name: entry.session_name,
-                        status: "lost".into(),
-                        previous_status: Some("unknown".into()),
-                        node_name: entry.node_name,
-                        timestamp: chrono::Utc::now().to_rfc3339(),
-                        ..Default::default()
-                    });
+                    let event = build_lost_event(
+                        &entry.session_id,
+                        &entry.session_name,
+                        &entry.node_name,
+                        &chrono::Utc::now().to_rfc3339(),
+                    );
                     // Fire-and-forget: subscribers may have all dropped
                     let _ = event_tx.send(event);
                 }

@@ -14,11 +14,11 @@ import {
 import { useSSE } from '@/hooks/use-sse';
 
 const navItems = [
-  { to: '/', icon: Waves, label: 'Ocean' },
   { to: '/sessions', icon: LayoutList, label: 'Sessions' },
-  { to: '/schedules', icon: Clock, label: 'Schedules' },
   { to: '/usage', icon: Wallet, label: 'Usage' },
+  { to: '/schedules', icon: Clock, label: 'Schedules' },
   { to: '/settings', icon: Settings, label: 'Settings' },
+  { to: '/ocean', icon: Waves, label: 'Ocean' },
 ];
 
 export function AppSidebar() {

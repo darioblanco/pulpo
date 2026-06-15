@@ -104,6 +104,20 @@ impl Store {
         Ok(())
     }
 
+    /// Delete terminal outbox rows (`delivered` or `dead`) created before
+    /// `cutoff_rfc3339`. Keeps the table bounded over time — `pending` rows are never
+    /// removed regardless of age. Returns the number of rows deleted.
+    pub async fn prune_webhook_outbox(&self, cutoff_rfc3339: &str) -> Result<u64> {
+        let result = sqlx::query(
+            "DELETE FROM webhook_outbox \
+             WHERE status IN ('delivered', 'dead') AND created_at < ?",
+        )
+        .bind(cutoff_rfc3339)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
+    }
+
     /// Count outbox rows grouped by status, for observability.
     pub async fn count_webhook_outbox_by_status(&self) -> Result<Vec<(String, i64)>> {
         let rows =

@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
 import { Toaster } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ConnectionProvider } from '@/hooks/use-connection';
@@ -20,12 +20,14 @@ export function App() {
           <BrowserRouter>
             <Routes>
               <Route element={<AppLayout />}>
-                <Route index element={<OceanPage />} />
+                {/* The meter/breaker product lands on Sessions, not the (frozen) Ocean view. */}
+                <Route index element={<Navigate to="/sessions" replace />} />
                 <Route path="sessions" element={<DashboardPage />} />
                 <Route path="sessions/:id" element={<SessionDetailPage />} />
                 <Route path="schedules" element={<SchedulesPage />} />
                 <Route path="usage" element={<UsagePage />} />
                 <Route path="settings" element={<SettingsPage />} />
+                <Route path="ocean" element={<OceanPage />} />
               </Route>
               <Route path="connect" element={<ConnectPage />} />
             </Routes>

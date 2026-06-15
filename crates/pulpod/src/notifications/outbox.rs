@@ -29,6 +29,8 @@ pub const MAX_ATTEMPTS: u32 = 10;
 pub const POLL_INTERVAL: Duration = Duration::from_secs(5);
 /// Maximum due rows drained per tick.
 pub const BATCH_LIMIT: usize = 100;
+/// Delivered/dead outbox rows older than this many days are pruned (table stays bounded).
+pub const OUTBOX_RETENTION_DAYS: i64 = 7;
 
 /// Exponential backoff for the `attempts`-th retry: `min(CAP, BASE * 2^(attempts-1))`.
 ///
@@ -255,6 +257,11 @@ pub async fn run_outbox_worker(
         tokio::select! {
             _ = ticker.tick() => {
                 drain_due(&store, &endpoints, &client).await;
+                // Keep the table bounded: sweep delivered/dead rows past the retention
+                // window. Cheap indexed DELETE (usually removes 0 rows); pending rows
+                // are never touched regardless of age.
+                let cutoff = (Utc::now() - chrono::Duration::days(OUTBOX_RETENTION_DAYS)).to_rfc3339();
+                let _ = store.prune_webhook_outbox(&cutoff).await;
             }
             _ = shutdown.changed() => {
                 info!("Webhook outbox worker shutting down");

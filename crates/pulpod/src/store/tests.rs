@@ -2701,6 +2701,44 @@ async fn test_fetch_due_skips_delivered_and_dead() {
 }
 
 #[tokio::test]
+async fn test_prune_webhook_outbox_removes_terminal_keeps_pending() {
+    let store = test_store().await;
+    store
+        .enqueue_webhook("hook", "evt-del", "{}", "2026-06-13T12:00:00Z")
+        .await
+        .unwrap();
+    store
+        .enqueue_webhook("hook", "evt-dead", "{}", "2026-06-13T12:00:00Z")
+        .await
+        .unwrap();
+    store
+        .enqueue_webhook("hook", "evt-pending", "{}", "2026-06-13T12:00:00Z")
+        .await
+        .unwrap();
+    store
+        .mark_webhook_delivered(1, "2026-06-13T12:00:05Z")
+        .await
+        .unwrap();
+    store.mark_webhook_dead(2, "gave up").await.unwrap();
+
+    // Rows were created "now", so a past cutoff finds nothing old enough — no-op.
+    let pruned_none = store
+        .prune_webhook_outbox("2000-01-01T00:00:00Z")
+        .await
+        .unwrap();
+    assert_eq!(pruned_none, 0);
+
+    // A future cutoff makes delivered + dead "old" → removed; pending always survives.
+    let pruned = store
+        .prune_webhook_outbox("2099-01-01T00:00:00Z")
+        .await
+        .unwrap();
+    assert_eq!(pruned, 2);
+    let counts = store.count_webhook_outbox_by_status().await.unwrap();
+    assert_eq!(counts, vec![("pending".to_owned(), 1)]);
+}
+
+#[tokio::test]
 async fn test_mark_webhook_delivered_sets_status_and_clears_error() {
     let store = test_store().await;
     store

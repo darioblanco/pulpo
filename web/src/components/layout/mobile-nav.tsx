@@ -2,11 +2,11 @@ import { Waves, LayoutList, Clock, Settings, Wallet } from 'lucide-react';
 import { Link, useLocation } from 'react-router';
 
 const navItems = [
-  { to: '/', icon: Waves, label: 'Ocean' },
   { to: '/sessions', icon: LayoutList, label: 'Sessions' },
-  { to: '/schedules', icon: Clock, label: 'Schedules' },
   { to: '/usage', icon: Wallet, label: 'Usage' },
+  { to: '/schedules', icon: Clock, label: 'Schedules' },
   { to: '/settings', icon: Settings, label: 'Settings' },
+  { to: '/ocean', icon: Waves, label: 'Ocean' },
 ];
 
 export function MobileNav() {
