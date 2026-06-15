@@ -30,7 +30,7 @@ exactly what you'd least want flowing through a third-party relay.
 
 1. **Single binary** (`pulpod`) runs on each machine as a daemon (embedded web UI)
 2. **Exact usage metering** — read tokens/cost from each agent's own session files,
-   attributed per session/ink/repo and rolled up per account/pool
+   attributed per session and rolled up per account/pool
 3. **Cost control** — per-session/ink budget caps (alert 80%, stop 100%) and a
    burn-velocity governor; alert-first, opt-in auto-stop
 4. **Monitoring backbone** — signed canonical events to multiple webhooks (durable
@@ -68,7 +68,7 @@ exactly what you'd least want flowing through a third-party relay.
      ┌──────────────────┼──────────────────────────┐
      │                  │                           │
   ┌──▼─────────┐  ┌────▼───────┐  ┌────────────────▼──────────────┐
-  │  mac-mini  │  │  macbook   │  │  Docker (container worker)    │
+  │  mac-mini  │  │  macbook   │  │  Docker (container deploy)    │
   │  pulpod    │  │  pulpod    │  │  ┌───────────┐ ┌───────────┐  │
   │  ┌──────┐  │  │  ┌──────┐  │  │  │ tailscale │ │  pulpod   │  │
   │  │ tmux │  │  │  │ tmux │  │  │  │ sidecar   │ │  agents   │  │
@@ -123,11 +123,12 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 
 **Views:**
 
-- **Dashboard**: all nodes, all sessions, at a glance
-- **Session detail**: live terminal output, input field, metadata
-- **History**: session history with search/filter
-- **Ocean**: gamified canvas view with animated session octopuses and node landmarks
+- **Dashboard**: sessions at a glance, with status filtering
+- **Session detail**: live terminal output, input field, metadata (incl. per-session cost/tokens)
+- **Usage**: cost/burn gauge — account cards + per-session table (the meter)
+- **Schedules**: cron schedule management
 - **Settings**: node config, peer management
+- **Ocean**: gamified canvas view (frozen — no new investment)
 
 ---
 
