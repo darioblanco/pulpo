@@ -35,7 +35,8 @@ pub async fn push_events(
 
     for event in &req.events {
         match event {
-            PulpoEvent::UsageAlert(_) => {}
+            // Non-lifecycle events don't update the session index; they're re-broadcast below.
+            PulpoEvent::UsageAlert(_) | PulpoEvent::Intervention(_) => {}
             PulpoEvent::Session(se) => {
                 let node_address = state
                     .peer_registry
@@ -331,7 +332,9 @@ mod tests {
                 assert_eq!(se.session_id, "s1");
                 assert_eq!(se.status, "active");
             }
-            PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+            PulpoEvent::SessionDeleted(_)
+            | PulpoEvent::UsageAlert(_)
+            | PulpoEvent::Intervention(_) => {
                 panic!("expected session event")
             }
         }

@@ -14,16 +14,19 @@ use pulpo_common::session::{Session, SessionStatus};
 #[command(
     name = "pulpo",
     about = "Manage agent sessions across your machines",
-    version = env!("PULPO_VERSION"),
-    args_conflicts_with_subcommands = true
+    version = env!("PULPO_VERSION")
 )]
 pub struct Cli {
     /// Target node (default: localhost)
-    #[arg(long, default_value = "localhost:7433")]
+    ///
+    /// `global = true` so it parses before or after a subcommand
+    /// (`pulpo --node X ui` and `pulpo ui --node X` both work) without
+    /// `args_conflicts_with_subcommands` mistaking the subcommand for the quick-spawn path.
+    #[arg(long, global = true, default_value = "localhost:7433")]
     pub node: String,
 
     /// Auth token (auto-discovered from local daemon if omitted)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub token: Option<String>,
 
     #[command(subcommand)]
@@ -2216,10 +2219,29 @@ mod tests {
 
     #[test]
     fn test_cli_parse_ui_custom_node() {
+        // `--node` is global, so a subcommand after it parses as the subcommand
+        // (not swallowed as the quick-spawn path).
         let cli = Cli::try_parse_from(["pulpo", "--node", "mac-mini:7433", "ui"]).unwrap();
-        // With args_conflicts_with_subcommands, "ui" is parsed as path when --node is explicit
         assert_eq!(cli.node, "mac-mini:7433");
-        assert_eq!(cli.path.as_deref(), Some("ui"));
+        assert!(cli.path.is_none());
+        assert!(matches!(cli.command, Some(Commands::Ui)));
+    }
+
+    #[test]
+    fn test_cli_parse_node_after_subcommand() {
+        // Global `--node` also works *after* the subcommand.
+        let cli = Cli::try_parse_from(["pulpo", "ui", "--node", "mac-mini:7433"]).unwrap();
+        assert_eq!(cli.node, "mac-mini:7433");
+        assert!(matches!(cli.command, Some(Commands::Ui)));
+    }
+
+    #[test]
+    fn test_cli_parse_node_with_quick_spawn_path() {
+        // A real path after `--node` is still the quick-spawn positional (not a subcommand).
+        let cli = Cli::try_parse_from(["pulpo", "--node", "box:7433", "/tmp/repo"]).unwrap();
+        assert_eq!(cli.node, "box:7433");
+        assert!(cli.command.is_none());
+        assert_eq!(cli.path.as_deref(), Some("/tmp/repo"));
     }
 
     #[test]
@@ -2636,10 +2658,11 @@ mod tests {
 
     #[test]
     fn test_cli_parse_custom_node() {
+        // `--node` is global → `list` parses as the List subcommand, not the quick-spawn path.
         let cli = Cli::try_parse_from(["pulpo", "--node", "win-pc:8080", "list"]).unwrap();
         assert_eq!(cli.node, "win-pc:8080");
-        // With args_conflicts_with_subcommands, "list" is parsed as path when --node is explicit
-        assert_eq!(cli.path.as_deref(), Some("list"));
+        assert!(cli.path.is_none());
+        assert!(matches!(cli.command, Some(Commands::List { .. })));
     }
 
     #[test]

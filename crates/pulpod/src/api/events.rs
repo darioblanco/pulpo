@@ -15,6 +15,7 @@ fn event_to_sse(event: &PulpoEvent) -> Option<Result<Event, Infallible>> {
         PulpoEvent::Session(se) => ("session", serde_json::to_string(se).ok()?),
         PulpoEvent::SessionDeleted(se) => ("session_deleted", serde_json::to_string(se).ok()?),
         PulpoEvent::UsageAlert(a) => ("usage_alert", serde_json::to_string(a).ok()?),
+        PulpoEvent::Intervention(iv) => ("intervention", serde_json::to_string(iv).ok()?),
     };
     Some(Ok(Event::default().event(event_type).data(json)))
 }
@@ -125,6 +126,19 @@ mod tests {
             message: "Cost $0.85 reached 80% of $1.00 budget".into(),
             cost_usd: Some(0.85),
             budget_usd: Some(1.0),
+            timestamp: "2026-01-01T00:00:00Z".into(),
+        });
+        assert!(event_to_sse(&event).is_some());
+    }
+
+    #[test]
+    fn test_event_to_sse_intervention() {
+        let event = PulpoEvent::Intervention(pulpo_common::event::SessionInterventionEvent {
+            session_id: "id-1".into(),
+            session_name: "s".into(),
+            node_name: "n".into(),
+            code: "budget_exceeded".into(),
+            reason: "over budget".into(),
             timestamp: "2026-01-01T00:00:00Z".into(),
         });
         assert!(event_to_sse(&event).is_some());

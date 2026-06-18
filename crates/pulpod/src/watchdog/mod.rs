@@ -190,6 +190,7 @@ async fn run_memory_check(
     reader: &dyn MemoryReader,
     cfg: &WatchdogRuntimeConfig,
     consecutive_breaches: &mut u32,
+    ready_ctx: &ReadyContext,
 ) {
     match reader.read_memory() {
         Ok(snapshot) => {
@@ -213,7 +214,7 @@ async fn run_memory_check(
                 );
 
                 if *consecutive_breaches >= cfg.breach_count {
-                    intervene(backend, store, &snapshot).await;
+                    intervene(backend, store, &snapshot, ready_ctx).await;
                     *consecutive_breaches = 0;
                 }
             }
@@ -233,7 +234,7 @@ async fn run_watchdog_tick(
     ready_ctx: &ReadyContext,
     consecutive_breaches: &mut u32,
 ) {
-    run_memory_check(backend, store, reader, cfg, consecutive_breaches).await;
+    run_memory_check(backend, store, reader, cfg, consecutive_breaches, ready_ctx).await;
 
     budget::enforce_budgets(backend, store, ready_ctx).await;
 
