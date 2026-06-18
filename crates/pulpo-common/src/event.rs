@@ -64,6 +64,22 @@ pub struct UsageAlertEvent {
     pub timestamp: String,
 }
 
+/// A watchdog intervention: the daemon forcibly acted on a session.
+///
+/// Typically a forced stop. Unlike a [`UsageAlertEvent`] (which only informs), this records
+/// a destructive action so receivers can alert on "Pulpo pulled the plug".
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SessionInterventionEvent {
+    pub session_id: String,
+    pub session_name: String,
+    pub node_name: String,
+    /// `memory_pressure` | `idle_timeout` | `budget_exceeded` | `burn_rate` | `user_stop`
+    /// (the `InterventionCode` `Display` form).
+    pub code: String,
+    pub reason: String,
+    pub timestamp: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
@@ -71,6 +87,7 @@ pub enum PulpoEvent {
     Session(SessionEvent),
     SessionDeleted(SessionDeletedEvent),
     UsageAlert(UsageAlertEvent),
+    Intervention(SessionInterventionEvent),
 }
 
 /// Session reference embedded in the canonical [`Event`] envelope.
@@ -140,6 +157,16 @@ fn lifecycle_severity(status: &str) -> &'static str {
     }
 }
 
+/// Severity for an intervention subtype (`InterventionCode` `Display` form).
+fn intervention_severity(code: &str) -> &'static str {
+    match code {
+        // Forced stops that cost money or lose work.
+        "budget_exceeded" | "burn_rate" | "memory_pressure" => "critical",
+        // Routine reclamation / user-initiated.
+        _ => "warn",
+    }
+}
+
 /// Sum two optional token counts, yielding `None` only when both are absent.
 fn sum_tokens(a: Option<u64>, b: Option<u64>) -> Option<u64> {
     match (a, b) {
@@ -198,6 +225,26 @@ impl Event {
                         id: a.session_id.clone(),
                         name: a.session_name.clone(),
                         status: String::new(),
+                        ..Default::default()
+                    }),
+                    payload: serde_json::Value::Object(payload),
+                })
+            }
+            PulpoEvent::Intervention(iv) => {
+                let mut payload = serde_json::Map::new();
+                payload.insert("intervention_reason".into(), serde_json::json!(iv.reason));
+                Some(Self {
+                    schema_version: 1,
+                    event_id: Uuid::new_v4().to_string(),
+                    event_type: "intervention".into(),
+                    subtype: iv.code.clone(),
+                    severity: intervention_severity(&iv.code).into(),
+                    occurred_at: rfc3339_or_now(&iv.timestamp),
+                    node: node.to_string(),
+                    session: Some(EventSessionRef {
+                        id: iv.session_id.clone(),
+                        name: iv.session_name.clone(),
+                        status: "stopped".into(),
                         ..Default::default()
                     }),
                     payload: serde_json::Value::Object(payload),
@@ -331,6 +378,55 @@ mod tests {
         let json = r#"{"kind":"unknown","data":"test"}"#;
         let result = serde_json::from_str::<PulpoEvent>(json);
         assert!(result.is_err());
+    }
+
+    fn intervention(code: &str) -> PulpoEvent {
+        PulpoEvent::Intervention(SessionInterventionEvent {
+            session_id: "s1".into(),
+            session_name: "fix-auth".into(),
+            node_name: "ignored".into(),
+            code: code.into(),
+            reason: "Cost $10.00 reached budget $10.00".into(),
+            timestamp: "2026-06-15T12:00:00Z".into(),
+        })
+    }
+
+    #[test]
+    fn test_from_pulpo_event_intervention_critical() {
+        let ev = Event::from_pulpo_event(&intervention("budget_exceeded"), "mac-mini").unwrap();
+        assert_eq!(ev.event_type, "intervention");
+        assert_eq!(ev.subtype, "budget_exceeded");
+        assert_eq!(ev.severity, "critical");
+        assert_eq!(ev.node, "mac-mini");
+        assert_eq!(ev.session.as_ref().unwrap().id, "s1");
+        assert_eq!(ev.session.as_ref().unwrap().status, "stopped");
+        assert_eq!(
+            ev.payload.get("intervention_reason").unwrap(),
+            "Cost $10.00 reached budget $10.00"
+        );
+    }
+
+    #[test]
+    fn test_from_pulpo_event_intervention_severity_split() {
+        // burn_rate + memory_pressure are critical; idle_timeout/user_stop are warn.
+        assert_eq!(
+            Event::from_pulpo_event(&intervention("burn_rate"), "n")
+                .unwrap()
+                .severity,
+            "critical"
+        );
+        assert_eq!(
+            Event::from_pulpo_event(&intervention("idle_timeout"), "n")
+                .unwrap()
+                .severity,
+            "warn"
+        );
+        assert_eq!(
+            Event::from_pulpo_event(&intervention("user_stop"), "n")
+                .unwrap()
+                .severity,
+            "warn"
+        );
     }
 
     #[test]

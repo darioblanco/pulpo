@@ -23,7 +23,7 @@ features:
   - title: 2. Control — before the wall
     details: "Per-session and per-ink cost caps that alert at 80% and stop at 100%, plus a burn-velocity ($/hr) governor that catches the 2 a.m. runaway a flat budget misses. Alert-first; opt in to auto-stop."
   - title: 3. Monitor — to your own stack
-    details: "Signed canonical events (lifecycle changes, usage/cost alerts) delivered to any number of webhooks with a durable outbox, plus a toggleable Prometheus `/metrics` endpoint. Pulpo is the event plane; your Grafana/Datadog/SIEM is the dashboard."
+    details: "Signed canonical events (lifecycle changes, interventions, usage/cost alerts) delivered to any number of webhooks with a durable outbox, plus a toggleable Prometheus `/metrics` endpoint. Pulpo is the event plane; your Grafana/Datadog/SIEM is the dashboard."
   - title: 4. Run — durable & unattended
     details: "Each agent runs in a `tmux` session with an explicit lifecycle that survives reboots, a watchdog for idle/memory/error/completion, and per-session git worktrees so parallel agents never collide. Command-agnostic."
 ---

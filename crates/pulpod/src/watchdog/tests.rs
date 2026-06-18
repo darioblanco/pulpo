@@ -810,7 +810,7 @@ async fn test_intervene_snapshot_save_failure() {
         total_mb: 8192,
     };
     let dyn_backend: Arc<dyn Backend> = backend.clone();
-    intervene(&dyn_backend, &store, &snapshot).await;
+    intervene(&dyn_backend, &store, &snapshot, &test_ready_ctx()).await;
 
     // Kill should still have been called despite snapshot save failure
     assert!(
@@ -842,7 +842,7 @@ async fn test_intervene_record_failure() {
         total_mb: 8192,
     };
     let dyn_backend: Arc<dyn Backend> = backend.clone();
-    intervene(&dyn_backend, &store, &snapshot).await;
+    intervene(&dyn_backend, &store, &snapshot, &test_ready_ctx()).await;
 
     // Kill should still have been called
     assert!(
@@ -1525,7 +1525,7 @@ async fn test_idle_transition_emits_sse_event() {
             assert_eq!(se.session_name, "idle-sse");
             assert!(se.output_snippet.is_some());
         }
-        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) | PulpoEvent::Intervention(_) => {
             panic!("expected session event")
         }
     }
@@ -1579,7 +1579,7 @@ async fn test_active_transition_emits_sse_event() {
             assert_eq!(se.previous_status, Some("idle".into()));
             assert_eq!(se.session_name, "active-sse");
         }
-        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) | PulpoEvent::Intervention(_) => {
             panic!("expected session event")
         }
     }
@@ -1628,6 +1628,7 @@ async fn test_handle_idle_session_alert_update_fails() {
         "alert-fail",
         now,
         timeout,
+        &test_ready_ctx(),
     )
     .await;
 }
@@ -1675,6 +1676,7 @@ async fn test_handle_idle_session_kill_intervention_record_fails() {
         "kill-record-fail",
         now,
         timeout,
+        &test_ready_ctx(),
     )
     .await;
 }
@@ -1789,7 +1791,13 @@ async fn test_intervene_partial_kill_failure() {
         total_mb: 8192,
     };
 
-    intervene(&(backend.clone() as Arc<dyn Backend>), &store, &snapshot).await;
+    intervene(
+        &(backend.clone() as Arc<dyn Backend>),
+        &store,
+        &snapshot,
+        &test_ready_ctx(),
+    )
+    .await;
 
     // Both sessions should have been attempted
     let call_count = backend.kill_calls.lock().unwrap().len();
@@ -1824,7 +1832,13 @@ async fn test_intervene_skips_non_running_sessions() {
         total_mb: 8192,
     };
 
-    intervene(&(backend.clone() as Arc<dyn Backend>), &store, &snapshot).await;
+    intervene(
+        &(backend.clone() as Arc<dyn Backend>),
+        &store,
+        &snapshot,
+        &test_ready_ctx(),
+    )
+    .await;
 
     // Only running-one should be stopped
     let kills: Vec<String> = backend.kill_calls.lock().unwrap().clone();
@@ -1889,6 +1903,7 @@ async fn test_idle_kill_succeeds_but_session_disappears() {
         "vanishing",
         now,
         timeout,
+        &test_ready_ctx(),
     )
     .await;
 }
@@ -2336,7 +2351,7 @@ async fn test_ready_transition_emits_event() {
             assert_eq!(se.previous_status, Some("active".into()));
             assert_eq!(se.node_name, "test-node");
         }
-        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) | PulpoEvent::Intervention(_) => {
             panic!("expected session event")
         }
     }
@@ -2438,7 +2453,7 @@ async fn test_ready_from_idle_state() {
         PulpoEvent::Session(se) => {
             assert_eq!(se.previous_status, Some("idle".into()));
         }
-        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) | PulpoEvent::Intervention(_) => {
             panic!("expected session event")
         }
     }
@@ -2754,7 +2769,7 @@ async fn test_adopt_emits_sse_event() {
             assert!(se.previous_status.is_none());
             assert_eq!(se.node_name, "test-node");
         }
-        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) => {
+        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) | PulpoEvent::Intervention(_) => {
             panic!("expected session event")
         }
     }

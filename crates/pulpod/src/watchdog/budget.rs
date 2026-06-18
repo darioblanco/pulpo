@@ -46,7 +46,7 @@ pub(super) async fn enforce_budgets(
         };
 
         if cost >= budget {
-            stop_over_budget(backend, store, &session, cost, budget).await;
+            stop_over_budget(backend, store, &session, cost, budget, ready_ctx).await;
         } else if cost >= budget * ALERT_FRACTION
             && session.meta_str(meta::BUDGET_ALERTED_AT).is_none()
         {
@@ -96,6 +96,7 @@ async fn stop_over_budget(
     session: &pulpo_common::session::Session,
     cost: f64,
     budget: f64,
+    ready_ctx: &ReadyContext,
 ) {
     let bid = resolve_backend_id(session, backend.as_ref());
     if let Ok(output) = backend.capture_output(&bid, 500) {
@@ -126,6 +127,12 @@ async fn stop_over_budget(
             "Failed to record budget intervention: {error}"
         );
     }
+    super::intervention::emit_intervention(
+        ready_ctx,
+        session,
+        InterventionCode::BudgetExceeded,
+        &reason,
+    );
     if let Some(ref wt_path) = session.worktree_path {
         crate::session::manager::cleanup_worktree(wt_path, &session.workdir);
     }

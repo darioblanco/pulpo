@@ -148,6 +148,7 @@ pub(super) async fn check_session_idle(
         &backend_id,
         now,
         timeout,
+        ready_ctx,
     )
     .await;
 }
@@ -241,6 +242,7 @@ pub(super) async fn handle_idle_session(
     backend_id: &str,
     now: chrono::DateTime<chrono::Utc>,
     timeout: chrono::Duration,
+    ready_ctx: &ReadyContext,
 ) {
     let last_activity = session.last_output_at.unwrap_or(session.created_at);
     let idle_duration = now - last_activity;
@@ -295,6 +297,12 @@ pub(super) async fn handle_idle_session(
                     session.name
                 );
             }
+            super::intervention::emit_intervention(
+                ready_ctx,
+                session,
+                InterventionCode::IdleTimeout,
+                &reason,
+            );
             if let Some(worktree_path) = &session.worktree_path {
                 crate::session::manager::cleanup_worktree(worktree_path, &session.workdir);
             }

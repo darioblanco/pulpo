@@ -133,7 +133,7 @@ pub(super) async fn enforce_burn_ceiling(
         }
 
         if cfg.action == BurnAction::Stop {
-            stop_over_ceiling(backend, store, &session, &message).await;
+            stop_over_ceiling(backend, store, &session, &message, ready_ctx).await;
         }
     }
 }
@@ -170,6 +170,7 @@ async fn stop_over_ceiling(
     store: &Store,
     session: &pulpo_common::session::Session,
     reason: &str,
+    ready_ctx: &ReadyContext,
 ) {
     let bid = resolve_backend_id(session, backend.as_ref());
     if let Ok(output) = backend.capture_output(&bid, 500) {
@@ -195,6 +196,7 @@ async fn stop_over_ceiling(
             "Failed to record burn intervention: {error}"
         );
     }
+    super::intervention::emit_intervention(ready_ctx, session, InterventionCode::BurnRate, reason);
     if let Some(ref wt_path) = session.worktree_path {
         crate::session::manager::cleanup_worktree(wt_path, &session.workdir);
     }
