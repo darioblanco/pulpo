@@ -258,6 +258,34 @@ mod tests {
     }
 
     #[test]
+    fn test_read_usage_sums_across_multiple_files_in_project_dir() {
+        // The reader sums every transcript in the project dir. This is correct for one
+        // session whose history spans multiple files — and is also the documented
+        // over-count: a second agent run in the same workdir during the window is
+        // attributed here too (session→file mapping is dir+time, not per-session-id).
+        let tmp = tempfile::tempdir().unwrap();
+        let since = Utc::now() - TimeDelta::hours(1);
+        let ts = Utc::now().to_rfc3339();
+        write_project_file(
+            tmp.path(),
+            "/tmp/repo",
+            "first.jsonl",
+            &transcript_line(&ts, "m1", "r1", "claude-opus-4-8"),
+        );
+        write_project_file(
+            tmp.path(),
+            "/tmp/repo",
+            "second.jsonl",
+            &transcript_line(&ts, "m2", "r2", "claude-opus-4-8"),
+        );
+
+        let usage = read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).unwrap();
+        // Both files counted: 2 × 1000 input, 2 × 500 output.
+        assert_eq!(usage.input_tokens, 2000);
+        assert_eq!(usage.output_tokens, 1000);
+    }
+
+    #[test]
     fn test_read_usage_dedupes_repeated_message_and_request_id() {
         let tmp = tempfile::tempdir().unwrap();
         let since = Utc::now() - TimeDelta::hours(1);

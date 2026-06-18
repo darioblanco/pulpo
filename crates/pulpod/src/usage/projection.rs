@@ -380,6 +380,24 @@ mod tests {
     }
 
     #[test]
+    fn test_build_rollups_unattributed_sessions_group_together() {
+        // Sessions with no detected account (no provider/plan/email) collapse into one
+        // (None, None, None, pool) rollup rather than vanishing — the API-key / no-creds case.
+        let unattributed = |tokens: u64| SessionProjection {
+            auth_provider: None,
+            auth_plan: None,
+            auth_email: None,
+            ..proj("x", "y", tokens, None, None)
+        };
+        let rollups = build_rollups(&[unattributed(100), unattributed(50)]);
+        assert_eq!(rollups.len(), 1);
+        assert_eq!(rollups[0].session_count, 2);
+        assert_eq!(rollups[0].total_tokens, 150);
+        assert!(rollups[0].provider.is_none());
+        assert!(rollups[0].email.is_none());
+    }
+
+    #[test]
     fn test_build_rollups_cost_is_exact() {
         let with_src = |source: Option<&str>, cost: Option<f64>| SessionProjection {
             usage_source: source.map(str::to_owned),

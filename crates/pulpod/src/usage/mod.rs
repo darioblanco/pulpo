@@ -225,17 +225,25 @@ pub fn read_exact_usage(
     }
 }
 
+/// The directory an agent actually ran in, used to locate its session files.
+///
+/// Worktree sessions run inside the worktree, so prefer `worktree_path` when set;
+/// otherwise the workdir. This must match the cwd the agent records, or usage reads as
+/// zero (the readers key project files off the cwd) — hence kept as a small, tested unit.
+pub fn effective_usage_dir(session: &Session) -> &str {
+    session.worktree_path.as_deref().unwrap_or(&session.workdir)
+}
+
 /// Read exact usage for a session using the real home-directory agent paths.
 ///
 /// Gated with `cfg(not(coverage))` because it reads the developer's real `~/.claude`
-/// and `~/.codex` directories; the inner readers are fully covered via temp dirs.
+/// and `~/.codex` directories; the inner readers and [`effective_usage_dir`] are covered.
 #[cfg(not(coverage))]
 pub fn read_exact_usage_for_session(session: &Session) -> Option<ExactUsage> {
     let home = dirs::home_dir()?;
-    let effective_dir = session.worktree_path.as_deref().unwrap_or(&session.workdir);
     read_exact_usage(
         &session.command,
-        effective_dir,
+        effective_usage_dir(session),
         session.created_at,
         Utc::now(),
         &home.join(".claude"),
@@ -323,6 +331,28 @@ mod tests {
     fn test_set_rate_overrides_is_callable() {
         // Smoke test for the public setter (no-op under coverage builds).
         set_rate_overrides(RateOverrides::new([("zzz-smoke".to_owned(), HAIKU_RATES)]));
+    }
+
+    #[test]
+    fn test_effective_usage_dir_prefers_worktree() {
+        // A worktree session's agent runs inside the worktree → read usage from there.
+        let session = Session {
+            workdir: "/repo".into(),
+            worktree_path: Some("/home/u/.pulpo/worktrees/fix".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            effective_usage_dir(&session),
+            "/home/u/.pulpo/worktrees/fix"
+        );
+
+        // No worktree → the plain workdir.
+        let plain = Session {
+            workdir: "/repo".into(),
+            worktree_path: None,
+            ..Default::default()
+        };
+        assert_eq!(effective_usage_dir(&plain), "/repo");
     }
 
     #[test]
