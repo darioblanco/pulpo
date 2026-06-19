@@ -420,3 +420,90 @@ mod cleanup_tests {
         assert!(find_orphan_session_logs(&missing, &HashSet::new()).is_empty());
     }
 }
+
+/// Real-`git` integration tests for the worktree lifecycle. Gated `not(coverage)` (like
+/// the real-tmux tests): they run in the CI `Test` job, which has git, and are excluded
+/// from the coverage build, which has no real repos.
+#[cfg(all(test, not(coverage)))]
+mod git_integration_tests {
+    use super::*;
+    use std::process::Command;
+
+    fn git(repo: &Path, args: &[&str]) -> std::process::Output {
+        Command::new("git")
+            .args(args)
+            .current_dir(repo)
+            .output()
+            .expect("git should run")
+    }
+
+    fn init_repo(repo: &Path) {
+        std::fs::create_dir_all(repo).unwrap();
+        git(repo, &["init", "-q"]);
+        git(repo, &["config", "user.email", "qa@pulpo.test"]);
+        git(repo, &["config", "user.name", "pulpo-qa"]);
+        std::fs::write(repo.join("README.md"), "seed").unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-q", "-m", "init"]);
+    }
+
+    fn contains(out: &std::process::Output, needle: &str) -> bool {
+        String::from_utf8_lossy(&out.stdout).contains(needle)
+    }
+
+    #[test]
+    fn test_worktree_create_then_cleanup_lifecycle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        init_repo(&repo);
+        let wt_base = tmp.path().join("worktrees");
+        let repo_str = repo.to_str().unwrap();
+
+        // Create: directory exists, branch exists, registered as a worktree.
+        let wt_path = create_worktree(&wt_base, repo_str, "fix-auth", None).unwrap();
+        assert!(Path::new(&wt_path).exists(), "worktree dir should exist");
+        assert!(
+            contains(&git(&repo, &["branch", "--list", "fix-auth"]), "fix-auth"),
+            "branch should be created"
+        );
+        assert!(
+            contains(&git(&repo, &["worktree", "list"]), "fix-auth"),
+            "worktree should be registered"
+        );
+
+        // Cleanup: directory removed, branch deleted, worktree pruned.
+        cleanup_worktree(&wt_path, repo_str);
+        assert!(
+            !Path::new(&wt_path).exists(),
+            "worktree dir should be removed"
+        );
+        assert!(
+            !contains(&git(&repo, &["branch", "--list", "fix-auth"]), "fix-auth"),
+            "branch should be deleted"
+        );
+        assert!(
+            !contains(&git(&repo, &["worktree", "list"]), "fix-auth"),
+            "worktree should be pruned"
+        );
+    }
+
+    #[test]
+    fn test_create_worktree_recovers_from_stale_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        init_repo(&repo);
+        let wt_base = tmp.path().join("worktrees");
+        let repo_str = repo.to_str().unwrap();
+
+        // Pre-create a branch with the session's name (no worktree) → "already exists".
+        git(&repo, &["branch", "reuse-me"]);
+        // create_worktree should delete the stale branch and retry successfully.
+        let wt_path = create_worktree(&wt_base, repo_str, "reuse-me", None).unwrap();
+        assert!(
+            Path::new(&wt_path).exists(),
+            "worktree created after stale-branch recovery"
+        );
+
+        cleanup_worktree(&wt_path, repo_str);
+    }
+}
