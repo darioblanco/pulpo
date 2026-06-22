@@ -29,6 +29,8 @@ function sample(): UsageProjectionResponse {
       {
         session_id: 'id-1',
         session_name: 'fix-auth',
+        ink: 'coder',
+        workdir: '/repos/api',
         usage_source: 'claude-jsonl',
         auth_provider: 'claude.ai',
         auth_plan: 'max',
@@ -48,6 +50,8 @@ function sample(): UsageProjectionResponse {
       {
         session_id: 'id-2',
         session_name: 'codex-refactor',
+        ink: null,
+        workdir: '/repos/web',
         usage_source: 'codex-jsonl',
         auth_provider: 'openai',
         auth_plan: null,
@@ -91,6 +95,26 @@ function sample(): UsageProjectionResponse {
         cost_is_exact: false,
       },
     ],
+    inks: [
+      {
+        label: 'coder',
+        session_count: 1,
+        total_tokens: 1_234_000,
+        total_cost_usd: 2.5,
+        cost_per_hour: 2.5,
+        cost_is_exact: true,
+      },
+    ],
+    repos: [
+      {
+        label: '/repos/api',
+        session_count: 1,
+        total_tokens: 1_234_000,
+        total_cost_usd: 2.5,
+        cost_per_hour: 2.5,
+        cost_is_exact: true,
+      },
+    ],
   };
 }
 
@@ -124,6 +148,16 @@ describe('UsagePage', () => {
     expect(screen.getAllByText('1.2M').length).toBeGreaterThan(0);
   });
 
+  it('renders per-ink and per-repo cost rollups', async () => {
+    vi.mocked(api.getUsageProjection).mockResolvedValue(sample());
+    renderPage();
+
+    await waitFor(() => expect(screen.getByTestId('dimension-By ink')).toBeInTheDocument());
+    expect(screen.getByTestId('dimension-By repo')).toBeInTheDocument();
+    expect(screen.getByText('coder')).toBeInTheDocument();
+    expect(screen.getByText('/repos/api')).toBeInTheDocument();
+  });
+
   it('marks scraped (estimated) cost with a ~ and exact cost without', async () => {
     const data = sample();
     data.sessions[0].usage_source = null; // fix-auth becomes scraped → estimated
@@ -142,6 +176,8 @@ describe('UsagePage', () => {
       generated_at: 't',
       sessions: [],
       accounts: [],
+      inks: [],
+      repos: [],
     });
     renderPage();
     await waitFor(() => expect(screen.getByTestId('usage-empty')).toBeInTheDocument());

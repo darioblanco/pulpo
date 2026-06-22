@@ -234,6 +234,8 @@ export interface CreateScheduleRequest {
 export interface SessionProjection {
   session_id: string;
   session_name: string;
+  ink: string | null;
+  workdir: string;
   usage_source: string | null;
   auth_provider: string | null;
   auth_plan: string | null;
@@ -265,9 +267,21 @@ export interface AccountRollup {
   cost_is_exact: boolean;
 }
 
+/** Cost/token rollup for one attribution dimension value (an ink, or a repo). */
+export interface DimensionRollup {
+  label: string;
+  session_count: number;
+  total_tokens: number;
+  total_cost_usd: number | null;
+  cost_per_hour: number | null;
+  cost_is_exact: boolean;
+}
+
 export interface UsageProjectionResponse {
   node_name: string;
   generated_at: string;
   sessions: SessionProjection[];
   accounts: AccountRollup[];
+  inks: DimensionRollup[];
+  repos: DimensionRollup[];
 }

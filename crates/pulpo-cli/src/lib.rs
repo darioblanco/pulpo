@@ -2,9 +2,9 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 #[cfg_attr(coverage, allow(unused_imports))]
 use pulpo_common::api::{
-    AuthTokenResponse, CleanupResponse, ConfigResponse, CreateSessionResponse, EnrollNodeRequest,
-    EnrollNodeResponse, EnrolledNodesResponse, InterventionEventResponse, PeersResponse,
-    SessionProjection, UsageProjectionResponse,
+    AuthTokenResponse, CleanupResponse, ConfigResponse, CreateSessionResponse, DimensionRollup,
+    EnrollNodeRequest, EnrollNodeResponse, EnrolledNodesResponse, InterventionEventResponse,
+    PeersResponse, SessionProjection, UsageProjectionResponse,
 };
 #[cfg(test)]
 use pulpo_common::session::Runtime;
@@ -667,6 +667,24 @@ fn fmt_quota(s: &SessionProjection) -> String {
     )
 }
 
+/// Append a labeled cost-rollup section (per-ink / per-repo), most expensive first.
+fn append_dimension_rollups(lines: &mut Vec<String>, heading: &str, rollups: &[DimensionRollup]) {
+    if rollups.is_empty() {
+        return;
+    }
+    lines.push(String::new());
+    lines.push(heading.to_owned());
+    for r in rollups {
+        lines.push(format!(
+            "  {:<28} {} sessions  {} tokens  {}",
+            truncate(&r.label, 28),
+            r.session_count,
+            fmt_tokens(r.total_tokens),
+            fmt_cost(r.total_cost_usd, r.cost_is_exact),
+        ));
+    }
+}
+
 /// Format the usage projection as session and account tables.
 fn format_usage_projection(p: &UsageProjectionResponse) -> String {
     if p.sessions.is_empty() {
@@ -711,6 +729,10 @@ fn format_usage_projection(p: &UsageProjectionResponse) -> String {
             ));
         }
     }
+
+    append_dimension_rollups(&mut lines, "By ink:", &p.inks);
+    append_dimension_rollups(&mut lines, "By repo:", &p.repos);
+
     lines.join(
         "
 ",
@@ -4028,6 +4050,8 @@ mod tests {
         SessionProjection {
             session_id: "id".into(),
             session_name: "my-task".into(),
+            ink: Some("coder".into()),
+            workdir: "/repo".into(),
             usage_source: Some("claude-jsonl".into()),
             auth_provider: Some("claude.ai".into()),
             auth_plan: Some("max".into()),
@@ -4080,6 +4104,8 @@ mod tests {
             generated_at: "t".into(),
             sessions: vec![],
             accounts: vec![],
+            inks: vec![],
+            repos: vec![],
         };
         assert_eq!(
             format_usage_projection(&resp),
@@ -4105,6 +4131,8 @@ mod tests {
                 max_quota_used_percent: None,
                 cost_is_exact: true,
             }],
+            inks: vec![],
+            repos: vec![],
         };
         let out = format_usage_projection(&resp);
         assert!(out.contains("SESSION"));
@@ -4138,10 +4166,45 @@ mod tests {
                 max_quota_used_percent: None,
                 cost_is_exact: false,
             }],
+            inks: vec![],
+            repos: vec![],
         };
         let out = format_usage_projection(&resp);
         assert!(out.contains("scraped")); // source column
         assert!(out.contains("~$2.50")); // both session and account cost marked estimated
+    }
+
+    #[test]
+    fn test_format_usage_projection_shows_ink_and_repo_rollups() {
+        let resp = UsageProjectionResponse {
+            node_name: "n".into(),
+            generated_at: "t".into(),
+            sessions: vec![sample_projection()],
+            accounts: vec![],
+            inks: vec![DimensionRollup {
+                label: "nightly".into(),
+                session_count: 2,
+                total_tokens: 1_000_000,
+                total_cost_usd: Some(11.0),
+                cost_per_hour: Some(1.0),
+                cost_is_exact: true,
+            }],
+            repos: vec![DimensionRollup {
+                label: "/repos/api".into(),
+                session_count: 3,
+                total_tokens: 2_000_000,
+                total_cost_usd: Some(40.0),
+                cost_per_hour: None,
+                cost_is_exact: false,
+            }],
+        };
+        let out = format_usage_projection(&resp);
+        assert!(out.contains("By ink:"));
+        assert!(out.contains("nightly"));
+        assert!(out.contains("$11.00")); // exact ink cost, no ~
+        assert!(out.contains("By repo:"));
+        assert!(out.contains("/repos/api"));
+        assert!(out.contains("~$40.00")); // scraped repo cost → estimated marker
     }
 
     #[test]

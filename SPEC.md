@@ -30,7 +30,7 @@ exactly what you'd least want flowing through a third-party relay.
 
 1. **Single binary** (`pulpod`) runs on each machine as a daemon (embedded web UI)
 2. **Exact usage metering** — read tokens/cost from each agent's own session files,
-   attributed per session and rolled up per account/pool
+   attributed per session and rolled up per account/pool, per ink, and per repo
 3. **Cost control** — per-session/ink budget caps (alert 80%, stop 100%) and a
    burn-velocity governor; alert-first, opt-in auto-stop
 4. **Monitoring backbone** — signed canonical events to multiple webhooks (durable
