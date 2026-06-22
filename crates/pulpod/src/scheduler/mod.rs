@@ -373,6 +373,106 @@ mod tests {
         assert!(is_due_at(&schedule, now_local));
     }
 
+    #[cfg(not(coverage))]
+    fn due_schedule(id: &str, name: &str, workdir: &str) -> Schedule {
+        Schedule {
+            id: id.into(),
+            name: name.into(),
+            cron: "* * * * *".into(),
+            command: "echo hi".into(),
+            workdir: workdir.into(),
+            target_node: None,
+            ink: None,
+            description: None,
+            runtime: None,
+            secrets: vec![],
+            worktree: None,
+            worktree_base: None,
+            enabled: true,
+            last_run_at: None,
+            last_session_id: None,
+            last_attempted_at: None,
+            last_error: None,
+            created_at: (Utc::now() - ChronoDuration::hours(2)).to_rfc3339(),
+        }
+    }
+
+    #[cfg(not(coverage))]
+    async fn scheduler_test_manager()
+    -> (crate::session::manager::SessionManager, crate::store::Store) {
+        let tmp = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        let store = crate::store::Store::new(tmp.path().to_str().unwrap())
+            .await
+            .unwrap();
+        store.migrate().await.unwrap();
+        let manager = crate::session::manager::SessionManager::new(
+            std::sync::Arc::new(crate::backend::StubBackend),
+            store.clone(),
+            HashMap::new(),
+            None,
+        )
+        .with_no_stale_grace();
+        (manager, store)
+    }
+
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_fire_due_schedules_creates_session_and_records_last_run() {
+        let (manager, store) = scheduler_test_manager().await;
+        let peers = PeerRegistry::new(&HashMap::new());
+        store
+            .insert_schedule(&due_schedule("sched-1", "nightly", "/tmp"))
+            .await
+            .unwrap();
+
+        fire_due_schedules(
+            &manager,
+            &store,
+            NodeRole::Standalone,
+            "local",
+            &peers,
+            None,
+        )
+        .await;
+
+        // A session was created from the due schedule.
+        let sessions = store.list_sessions().await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions[0].name.starts_with("nightly-"));
+        assert_eq!(sessions[0].command, "echo hi");
+
+        // last_run was recorded on the schedule.
+        let after = store.get_schedule("sched-1").await.unwrap().unwrap();
+        assert!(after.last_session_id.is_some());
+    }
+
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_fire_due_schedules_records_failure_on_bad_workdir() {
+        let (manager, store) = scheduler_test_manager().await;
+        let peers = PeerRegistry::new(&HashMap::new());
+        // A non-existent workdir makes session creation fail (validate_workdir).
+        store
+            .insert_schedule(&due_schedule("sched-2", "broken", "/no/such/dir-xyz"))
+            .await
+            .unwrap();
+
+        fire_due_schedules(
+            &manager,
+            &store,
+            NodeRole::Standalone,
+            "local",
+            &peers,
+            None,
+        )
+        .await;
+
+        assert!(store.list_sessions().await.unwrap().is_empty());
+        let after = store.get_schedule("sched-2").await.unwrap().unwrap();
+        assert!(after.last_error.is_some(), "failure should be recorded");
+        assert!(after.last_session_id.is_none());
+    }
+
     #[test]
     fn test_is_due_recently_run() {
         // Last run 10 seconds ago with "every hour" cron — should NOT be due
