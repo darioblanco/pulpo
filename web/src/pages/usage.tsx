@@ -6,7 +6,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { getUsageProjection } from '@/api/client';
 import { toast } from 'sonner';
 import { Wallet } from 'lucide-react';
-import type { UsageProjectionResponse, SessionProjection, AccountRollup } from '@/api/types';
+import type {
+  UsageProjectionResponse,
+  SessionProjection,
+  AccountRollup,
+  DimensionRollup,
+} from '@/api/types';
 
 /** Compact a token count: 1234 → "1.2K", 4_500_000 → "4.5M". */
 function fmtTokens(n: number): string {
@@ -34,6 +39,36 @@ function fmtQuota(s: SessionProjection): string {
 
 function accountLabel(a: AccountRollup): string {
   return a.email ?? a.provider ?? 'unknown';
+}
+
+/** A cost-attribution breakdown by ink or repo (most expensive first). */
+function DimensionTable({ title, rows }: { title: string; rows: DimensionRollup[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-border" data-testid={`dimension-${title}`}>
+      <div className="border-b border-border bg-muted/50 px-4 py-2 text-xs font-medium text-muted-foreground">
+        {title}
+      </div>
+      <table className="w-full text-sm">
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label} className="border-b border-border last:border-0">
+              <td className="px-4 py-2 font-medium">{r.label}</td>
+              <td className="px-4 py-2 text-right text-xs text-muted-foreground">
+                {r.session_count} session{r.session_count === 1 ? '' : 's'}
+              </td>
+              <td className="px-4 py-2 text-right font-mono text-xs text-muted-foreground">
+                {fmtTokens(r.total_tokens)}
+              </td>
+              <td className="px-4 py-2 text-right font-mono text-xs font-medium">
+                {fmtCost(r.total_cost_usd, r.cost_is_exact)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 export function UsagePage() {
@@ -99,6 +134,13 @@ export function UsagePage() {
                     </CardContent>
                   </Card>
                 ))}
+              </div>
+            )}
+
+            {(data.inks.length > 0 || data.repos.length > 0) && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <DimensionTable title="By ink" rows={data.inks} />
+                <DimensionTable title="By repo" rows={data.repos} />
               </div>
             )}
 

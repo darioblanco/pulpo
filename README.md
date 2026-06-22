@@ -91,8 +91,9 @@ table), enforces budgets, and forwards alerts and events to whatever observabili
 
 **Meter — exactly, everywhere.** Pulpo parses the session files Claude Code and Codex write
 themselves, so **token counts are exact** (not scraped) and costed from your rate table —
-attributed per session and rolled up per account and billing pool, across every machine and
-agent you run. (Codex reports exact subscription quota rather than a per-token cost.) Unknown
+attributed per session and rolled up per account, billing pool, **ink, and repo** ("the
+nightly-review ink cost €11"), across every machine and agent you run. (Codex reports exact
+subscription quota rather than a per-token cost.) Unknown
 models still report tokens; `[rates.<model>]` config prices a new or repriced model with no
 code change.
 

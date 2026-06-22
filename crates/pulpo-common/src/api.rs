@@ -493,6 +493,12 @@ pub struct ListSessionsQuery {
 pub struct SessionProjection {
     pub session_id: String,
     pub session_name: String,
+    /// Ink the session was spawned from, if any (for per-ink attribution).
+    #[serde(default)]
+    pub ink: Option<String>,
+    /// Working directory (repo) the session ran in (for per-repo attribution).
+    #[serde(default)]
+    pub workdir: String,
     /// `claude-jsonl` / `codex-jsonl`, or `None` when totals came from output scraping.
     pub usage_source: Option<String>,
     pub auth_provider: Option<String>,
@@ -534,6 +540,23 @@ pub struct AccountRollup {
     pub cost_is_exact: bool,
 }
 
+/// Cost/token rollup for one attribution dimension value (an ink, or a repo).
+///
+/// The differentiator vendors can't do: tie spend to *tasks*, not just accounts —
+/// "the nightly-review ink cost €11" / "work in ~/repos/api cost $40".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DimensionRollup {
+    /// The ink name or repo path this rollup aggregates.
+    pub label: String,
+    pub session_count: u32,
+    pub total_tokens: u64,
+    pub total_cost_usd: Option<f64>,
+    pub cost_per_hour: Option<f64>,
+    /// `true` when every cost-bearing session in the group had an exact usage source.
+    #[serde(default)]
+    pub cost_is_exact: bool,
+}
+
 /// `GET /api/v1/usage/projection` — per-session projections plus account rollups.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UsageProjectionResponse {
@@ -541,6 +564,13 @@ pub struct UsageProjectionResponse {
     pub generated_at: String,
     pub sessions: Vec<SessionProjection>,
     pub accounts: Vec<AccountRollup>,
+    /// Per-ink cost rollups (only sessions spawned from an ink). `#[serde(default)]`
+    /// keeps older clients deserializable.
+    #[serde(default)]
+    pub inks: Vec<DimensionRollup>,
+    /// Per-repo (workdir) cost rollups.
+    #[serde(default)]
+    pub repos: Vec<DimensionRollup>,
 }
 
 #[cfg(test)]

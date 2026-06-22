@@ -14,7 +14,7 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use pulpo_common::api::{AccountRollup, SessionProjection};
+use pulpo_common::api::{AccountRollup, DimensionRollup, SessionProjection};
 
 use super::pool::detect_pool;
 use pulpo_common::session::{Session, meta};
@@ -83,6 +83,8 @@ pub fn project_session(
     SessionProjection {
         session_id: session.id.to_string(),
         session_name: session.name.clone(),
+        ink: session.ink.clone(),
+        workdir: session.workdir.clone(),
         usage_source: session.meta_str(meta::USAGE_SOURCE).map(str::to_owned),
         auth_provider: session.meta_str(meta::AUTH_PROVIDER).map(str::to_owned),
         auth_plan: session.meta_str(meta::AUTH_PLAN).map(str::to_owned),
@@ -176,6 +178,81 @@ pub fn build_rollups(projections: &[SessionProjection]) -> Vec<AccountRollup> {
             cost_is_exact: a.total_cost_usd.is_some() && a.cost_exact,
         })
         .collect()
+}
+
+/// Group projections into per-dimension cost rollups, keyed by `key_fn` (returning
+/// `None` skips a session). Sorted by total cost descending, then label. This is the
+/// task-level attribution vendors can't do — spend tied to an ink or a repo, not just
+/// an account.
+fn build_dimension_rollups(
+    projections: &[SessionProjection],
+    key_fn: impl Fn(&SessionProjection) -> Option<String>,
+) -> Vec<DimensionRollup> {
+    struct Acc {
+        session_count: u32,
+        total_tokens: u64,
+        total_cost_usd: Option<f64>,
+        cost_per_hour: Option<f64>,
+        cost_exact: bool,
+    }
+
+    let mut groups: BTreeMap<String, Acc> = BTreeMap::new();
+    for p in projections {
+        let Some(key) = key_fn(p) else {
+            continue;
+        };
+        let acc = groups.entry(key).or_insert_with(|| Acc {
+            session_count: 0,
+            total_tokens: 0,
+            total_cost_usd: None,
+            cost_per_hour: None,
+            cost_exact: true,
+        });
+        acc.session_count += 1;
+        acc.total_tokens += p.total_tokens;
+        if let Some(cost) = p.cost_usd {
+            acc.total_cost_usd = Some(acc.total_cost_usd.unwrap_or(0.0) + cost);
+            acc.cost_exact = acc.cost_exact && p.usage_source.is_some();
+        }
+        if let Some(rate) = p.cost_per_hour {
+            acc.cost_per_hour = Some(acc.cost_per_hour.unwrap_or(0.0) + rate);
+        }
+    }
+
+    let mut rollups: Vec<DimensionRollup> = groups
+        .into_iter()
+        .map(|(label, a)| DimensionRollup {
+            label,
+            session_count: a.session_count,
+            total_tokens: a.total_tokens,
+            total_cost_usd: a.total_cost_usd,
+            cost_per_hour: a.cost_per_hour,
+            cost_is_exact: a.total_cost_usd.is_some() && a.cost_exact,
+        })
+        .collect();
+    // Most expensive first; stable tie-break by label.
+    rollups.sort_by(|a, b| {
+        let (ac, bc) = (
+            a.total_cost_usd.unwrap_or(0.0),
+            b.total_cost_usd.unwrap_or(0.0),
+        );
+        bc.partial_cmp(&ac)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.label.cmp(&b.label))
+    });
+    rollups
+}
+
+/// Per-ink rollups — only sessions spawned from an ink are included.
+pub fn build_ink_rollups(projections: &[SessionProjection]) -> Vec<DimensionRollup> {
+    build_dimension_rollups(projections, |p| p.ink.clone())
+}
+
+/// Per-repo rollups — grouped by the session's workdir (sessions with no workdir skipped).
+pub fn build_repo_rollups(projections: &[SessionProjection]) -> Vec<DimensionRollup> {
+    build_dimension_rollups(projections, |p| {
+        (!p.workdir.is_empty()).then(|| p.workdir.clone())
+    })
 }
 
 #[cfg(test)]
@@ -330,6 +407,8 @@ mod tests {
         SessionProjection {
             session_id: "id".into(),
             session_name: "s".into(),
+            ink: None,
+            workdir: "/repo".into(),
             usage_source: None,
             auth_provider: Some(provider.into()),
             auth_plan: Some("max".into()),
@@ -438,6 +517,57 @@ mod tests {
     #[test]
     fn test_build_rollups_empty() {
         assert!(build_rollups(&[]).is_empty());
+    }
+
+    #[test]
+    fn test_build_ink_rollups_groups_skips_no_ink_and_sorts_by_cost() {
+        let with_ink = |ink: Option<&str>, cost: f64| SessionProjection {
+            ink: ink.map(str::to_owned),
+            usage_source: Some("claude-jsonl".into()),
+            ..proj("claude.ai", "a@x.com", 100, Some(cost), None)
+        };
+        let rollups = build_ink_rollups(&[
+            with_ink(Some("nightly"), 1.0),
+            with_ink(Some("nightly"), 2.0),
+            with_ink(Some("triage"), 0.5),
+            with_ink(None, 9.0), // no ink → excluded from per-ink attribution
+        ]);
+        assert_eq!(rollups.len(), 2);
+        // Most expensive ink first: nightly ($3.00) before triage ($0.50).
+        assert_eq!(rollups[0].label, "nightly");
+        assert_eq!(rollups[0].session_count, 2);
+        assert!((rollups[0].total_cost_usd.unwrap() - 3.0).abs() < 1e-9);
+        assert!(rollups[0].cost_is_exact);
+        assert_eq!(rollups[1].label, "triage");
+    }
+
+    #[test]
+    fn test_build_repo_rollups_groups_by_workdir() {
+        let in_repo = |dir: &str, cost: f64| SessionProjection {
+            workdir: dir.into(),
+            usage_source: None, // scraped → estimated
+            ..proj("claude.ai", "a@x.com", 50, Some(cost), None)
+        };
+        let rollups = build_repo_rollups(&[
+            in_repo("/repos/api", 4.0),
+            in_repo("/repos/api", 1.0),
+            in_repo("/repos/web", 2.0),
+        ]);
+        assert_eq!(rollups.len(), 2);
+        assert_eq!(rollups[0].label, "/repos/api");
+        assert_eq!(rollups[0].session_count, 2);
+        assert!((rollups[0].total_cost_usd.unwrap() - 5.0).abs() < 1e-9);
+        assert!(!rollups[0].cost_is_exact); // scraped costs → estimated
+        assert_eq!(rollups[1].label, "/repos/web");
+    }
+
+    #[test]
+    fn test_build_repo_rollups_skips_empty_workdir() {
+        let p = SessionProjection {
+            workdir: String::new(),
+            ..proj("x", "y", 10, Some(1.0), None)
+        };
+        assert!(build_repo_rollups(&[p]).is_empty());
     }
 
     #[test]

@@ -69,10 +69,10 @@ unchanged — see git history of this file for the full sovereignty section.)
 
 ## Gauge vs. Control System — what Pulpo answers that `/usage` can't
 
-1. **Attribution** — "the nightly review ink costs €11/week". Per-session and per-account/pool
-   ship today; **per-ink and per-repo rollups are planned** (sessions already carry the ink and
-   workdir, so it's a `build_rollups` grouping addition). Only the thing managing sessions can
-   tie spend to tasks.
+1. **Attribution** — "the nightly review ink costs €11/week". Per-session, per-account/pool,
+   **per-ink, and per-repo** rollups all ship today (`build_ink_rollups`/`build_repo_rollups`,
+   surfaced in `pulpo usage` and the web gauge). Only the thing managing sessions can tie spend
+   to tasks.
 2. **Fleet gauge** — all accounts, machines, and agents on one phone screen.
 3. **Projection** — "at this burn rate you hit the weekly cap Thursday 15:00."
 4. **Placement** — spawn where there's headroom.
