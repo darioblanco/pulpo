@@ -330,4 +330,79 @@ mod tests {
         // Under coverage, deliver is a no-op stub; otherwise no subscriptions -> no-op.
         sink.deliver(&lifecycle_event("active")).await;
     }
+
+    /// End-to-end web-push delivery against a mock gateway: real VAPID signing + ECE
+    /// encryption (valid keys) → HTTP → a 410 prunes the stale subscription while a 2xx
+    /// keeps it. Gated `not(coverage)` (real HTTP via the web-push/isahc client).
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_deliver_prunes_stale_subscription_on_410_keeps_delivered() {
+        use base64::Engine;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use p256::elliptic_curve::sec1::ToEncodedPoint;
+
+        // Mock push gateway: /gone → 410 Gone (stale), /ok → 201 Created (delivered).
+        let app = axum::Router::new()
+            .route(
+                "/gone",
+                axum::routing::post(|| async { axum::http::StatusCode::GONE }),
+            )
+            .route(
+                "/ok",
+                axum::routing::post(|| async { axum::http::StatusCode::CREATED }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let tmpdir = Box::leak(Box::new(tempfile::tempdir().unwrap()));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+
+        // A valid VAPID private key, in the exact format the daemon generates.
+        let mut cfg = crate::config::Config::default();
+        crate::config::ensure_vapid_keys(&mut cfg);
+        let vapid = cfg.notifications.vapid.private_key.clone();
+
+        // Two subscriptions backed by real P-256 recipient keypairs so ECE encryption
+        // actually succeeds (the part that needs valid keys).
+        let make_sub = |path: &str| {
+            let recip = p256::SecretKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+            let p256dh =
+                URL_SAFE_NO_PAD.encode(recip.public_key().to_encoded_point(false).as_bytes());
+            let auth = URL_SAFE_NO_PAD.encode([7u8; 16]); // 16-byte auth secret
+            (format!("http://{addr}{path}"), p256dh, auth)
+        };
+        let (gone_ep, gp, ga) = make_sub("/gone");
+        let (ok_ep, op, oa) = make_sub("/ok");
+        store
+            .save_push_subscription(&gone_ep, &gp, &ga)
+            .await
+            .unwrap();
+        store
+            .save_push_subscription(&ok_ep, &op, &oa)
+            .await
+            .unwrap();
+
+        let sink = WebPushSink::new(store.clone(), vapid);
+        sink.deliver(&lifecycle_event("active")).await;
+
+        let remaining: Vec<String> = store
+            .list_push_subscriptions()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.endpoint)
+            .collect();
+        assert!(
+            !remaining.contains(&gone_ep),
+            "410 (Gone) subscription should be pruned, remaining={remaining:?}"
+        );
+        assert!(
+            remaining.contains(&ok_ep),
+            "successfully-delivered subscription should be kept, remaining={remaining:?}"
+        );
+    }
 }
