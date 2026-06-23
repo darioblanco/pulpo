@@ -1006,6 +1006,55 @@ mod tests {
 
     #[cfg(not(coverage))]
     #[test]
+    fn test_setup_logging_captures_session_output_to_file() {
+        use crate::backend::Backend;
+        use std::time::Duration;
+
+        let backend = TmuxBackend::new();
+        let name = "pulpo-pipepane-integ";
+        let _ = backend.kill_session(name); // best-effort leftover cleanup
+        let dir = tempfile::tempdir().unwrap();
+        let logpath = dir.path().join("session.log");
+
+        backend
+            .create_session(
+                name,
+                "/tmp",
+                "sh -c 'while true; do echo PIPE_OK; sleep 1; done'",
+            )
+            .expect("create real tmux session");
+        let mut bid = String::new();
+        for _ in 0..50 {
+            if let Ok(id) = backend.query_backend_id(name) {
+                bid = id;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(!bid.is_empty(), "session id should resolve");
+
+        backend
+            .setup_logging(&bid, logpath.to_str().unwrap())
+            .expect("pipe-pane logging");
+
+        // pipe-pane captures output produced *after* it attaches; wait for a few echoes.
+        let mut got = false;
+        for _ in 0..50 {
+            std::thread::sleep(Duration::from_millis(200));
+            if std::fs::read_to_string(&logpath)
+                .map(|c| c.contains("PIPE_OK"))
+                .unwrap_or(false)
+            {
+                got = true;
+                break;
+            }
+        }
+        let _ = backend.kill_session(&bid);
+        assert!(got, "pipe-pane should write session output to the log file");
+    }
+
+    #[cfg(not(coverage))]
+    #[test]
     fn test_check_tmux_version_succeeds_if_installed() {
         let backend = TmuxBackend::new();
         let result = check_tmux_version(&backend.tmux_path);
