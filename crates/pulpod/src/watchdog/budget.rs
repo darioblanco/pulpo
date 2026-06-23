@@ -292,4 +292,76 @@ mod tests {
             other => panic!("unexpected event: {other:?}"),
         }
     }
+
+    /// End-to-end breaker proof against a real tmux session: an over-budget session is
+    /// actually killed. Gated `not(coverage)` (runs in the CI Test job, which has tmux).
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_enforce_budgets_kills_real_tmux_session_over_budget() {
+        use crate::backend::tmux::TmuxBackend;
+        use std::time::Duration;
+
+        let backend: Arc<dyn Backend> = Arc::new(TmuxBackend::new());
+        let name = "pulpo-budget-kill-integ";
+        let _ = backend.kill_session(name); // best-effort leftover cleanup
+
+        backend
+            .create_session(name, "/tmp", "sh -c 'sleep 60'")
+            .expect("create real tmux session");
+
+        // Wait for tmux to register the session and resolve its $N id.
+        let mut bid = String::new();
+        for _ in 0..50 {
+            if let Ok(id) = backend.query_backend_id(name) {
+                bid = id;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(
+            !bid.is_empty() && backend.is_alive(&bid).unwrap_or(false),
+            "session should be alive before the breaker runs (bid={bid:?})"
+        );
+
+        let store = test_store().await;
+        let mut metadata = HashMap::new();
+        metadata.insert(meta::BUDGET_COST_USD.to_owned(), "1.0".to_owned());
+        metadata.insert(meta::SESSION_COST_USD.to_owned(), "2.0".to_owned());
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            workdir: "/tmp".into(),
+            command: "sh".into(),
+            status: SessionStatus::Active,
+            runtime: Runtime::Tmux,
+            backend_session_id: Some(bid.clone()),
+            metadata: Some(metadata),
+            ..Default::default()
+        };
+        store.insert_session(&session).await.unwrap();
+
+        enforce_budgets(&backend, &store, &ready_ctx()).await;
+
+        // The breaker pulled the plug — the real tmux session is gone.
+        let mut killed = false;
+        for _ in 0..50 {
+            if !backend.is_alive(&bid).unwrap_or(false) {
+                killed = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let _ = backend.kill_session(&bid); // cleanup if somehow still alive
+        assert!(
+            killed,
+            "over-budget session should have been killed by the watchdog"
+        );
+
+        // And the intervention was recorded in the DB.
+        let after = store.get_session(&session.id.to_string()).await.unwrap();
+        assert_eq!(
+            after.and_then(|s| s.intervention_code),
+            Some(InterventionCode::BudgetExceeded)
+        );
+    }
 }
