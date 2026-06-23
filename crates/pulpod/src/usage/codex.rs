@@ -106,18 +106,32 @@ fn read_rollout_file(
     workdir: &str,
     since: DateTime<Utc>,
 ) -> Option<(FileTotals, Option<QuotaSnapshot>)> {
+    let rollout = parse_rollout(path)?;
+    if normalize_dir(&rollout.cwd) != workdir || rollout.started_at < since {
+        return None;
+    }
+    Some((rollout.totals, rollout.quota))
+}
+
+/// One parsed Codex rollout file: its `cwd`, start time, last cumulative totals, and
+/// latest quota snapshot — with no workdir/time filtering. [`read_rollout_file`] adds the
+/// filter; the usage scan groups by `cwd` instead.
+struct Rollout {
+    cwd: String,
+    started_at: DateTime<Utc>,
+    totals: FileTotals,
+    quota: Option<QuotaSnapshot>,
+}
+
+fn parse_rollout(path: &Path) -> Option<Rollout> {
     let content = std::fs::read_to_string(path).ok()?;
     let mut lines = content.lines();
 
-    let meta = lines
+    let (cwd, started_at) = lines
         .by_ref()
         .take(META_SCAN_LINES)
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
         .find_map(|value| parse_session_meta(&value))?;
-    let (cwd, started_at) = meta;
-    if normalize_dir(&cwd) != workdir || started_at < since {
-        return None;
-    }
 
     let mut last_totals = FileTotals::default();
     let mut last_quota = None;
@@ -133,7 +147,60 @@ fn read_rollout_file(
             last_quota = quota;
         }
     }
-    Some((last_totals, last_quota))
+    Some(Rollout {
+        cwd,
+        started_at,
+        totals: last_totals,
+        quota: last_quota,
+    })
+}
+
+/// Total Codex tokens per repo across *all* rollout files, keyed by normalized `cwd`.
+/// Token total matches the `ExactUsage` convention: `(input − cached) + output + cached`.
+/// Used by the usage scan (which groups by repo rather than matching one workdir).
+pub(crate) fn scan_by_cwd(codex_dir: &Path) -> std::collections::HashMap<String, u64> {
+    let mut by_cwd: std::collections::HashMap<String, FileTotals> =
+        std::collections::HashMap::new();
+    for path in collect_rollout_files(codex_dir) {
+        if let Some(rollout) = parse_rollout(&path) {
+            let entry = by_cwd
+                .entry(normalize_dir(&rollout.cwd).to_owned())
+                .or_default();
+            // Each rollout file is one agent process; sum their last cumulative totals.
+            entry.input += rollout.totals.input;
+            entry.cached += rollout.totals.cached;
+            entry.output += rollout.totals.output;
+        }
+    }
+    by_cwd
+        .into_iter()
+        .map(|(cwd, t)| (cwd, t.input.saturating_sub(t.cached) + t.output + t.cached))
+        .collect()
+}
+
+/// Recursively collect `rollout-*.jsonl` files under `<codex_dir>/sessions`.
+fn collect_rollout_files(codex_dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![codex_dir.join("sessions")];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("rollout-"))
+            {
+                out.push(path);
+            }
+        }
+    }
+    out
 }
 
 /// Read exact usage for a Codex session running in `workdir`, started at `since`.

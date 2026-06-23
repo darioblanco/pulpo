@@ -62,6 +62,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/health", get(health::check))
         .route("/api/v1/metrics", get(metrics::metrics))
         .route("/api/v1/usage/projection", get(usage::projection))
+        .route("/api/v1/usage/scan", get(usage::scan))
         .route("/api/v1/auth/token", get(auth::get_token))
         .route("/api/v1/auth/pairing-url", get(auth::get_pairing_url))
         .route("/api/v1/node", get(node::get_info))

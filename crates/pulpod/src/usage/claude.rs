@@ -142,10 +142,32 @@ pub fn read_usage(
     rates: &RateOverrides,
 ) -> Option<ExactUsage> {
     let project_dir = claude_dir.join("projects").join(sanitize_workdir(workdir));
-    let entries = std::fs::read_dir(&project_dir).ok()?;
+    read_usage_dir(&project_dir, since, rates).map(|d| d.usage)
+}
+
+/// Usage for one Claude project directory, plus the agent's recorded `cwd`.
+///
+/// The `cwd` is read from the transcript (Claude records it per line) so callers like the
+/// usage scan can label by the real repo path and merge with other agents — not the
+/// lossy sanitized directory name.
+pub(crate) struct DirUsage {
+    pub usage: ExactUsage,
+    pub cwd: Option<String>,
+}
+
+/// Sum usage across every transcript in a single Claude project directory (already
+/// resolved — no workdir sanitization). Returns `None` when the dir is missing or has no
+/// matching records. Used by both [`read_usage`] and the usage scan.
+pub(crate) fn read_usage_dir(
+    project_dir: &Path,
+    since: DateTime<Utc>,
+    rates: &RateOverrides,
+) -> Option<DirUsage> {
+    let entries = std::fs::read_dir(project_dir).ok()?;
 
     let mut totals = Totals::default();
     let mut seen = HashSet::new();
+    let mut cwd: Option<String> = None;
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
@@ -164,20 +186,31 @@ pub fn read_usage(
         };
         for line in content.lines() {
             apply_transcript_line(line, since, &mut seen, &mut totals, rates);
+            if cwd.is_none()
+                && let Ok(value) = serde_json::from_str::<serde_json::Value>(line)
+            {
+                cwd = value
+                    .get("cwd")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+            }
         }
     }
 
     if totals.records == 0 {
         return None;
     }
-    Some(ExactUsage {
-        source: SOURCE_CLAUDE,
-        input_tokens: totals.input,
-        output_tokens: totals.output,
-        cache_write_tokens: totals.cache_write,
-        cache_read_tokens: totals.cache_read,
-        cost_usd: (!totals.unknown_model).then_some(totals.cost_usd),
-        quota: None,
+    Some(DirUsage {
+        usage: ExactUsage {
+            source: SOURCE_CLAUDE,
+            input_tokens: totals.input,
+            output_tokens: totals.output,
+            cache_write_tokens: totals.cache_write,
+            cache_read_tokens: totals.cache_read,
+            cost_usd: (!totals.unknown_model).then_some(totals.cost_usd),
+            quota: None,
+        },
+        cwd,
     })
 }
 
