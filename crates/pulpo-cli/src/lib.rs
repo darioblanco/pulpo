@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use pulpo_common::api::{
     AuthTokenResponse, CleanupResponse, ConfigResponse, CreateSessionResponse, DimensionRollup,
     EnrollNodeRequest, EnrollNodeResponse, EnrolledNodesResponse, InterventionEventResponse,
-    PeersResponse, SessionProjection, UsageProjectionResponse,
+    PeersResponse, SessionProjection, UsageProjectionResponse, UsageScanResponse,
 };
 #[cfg(test)]
 use pulpo_common::session::Runtime;
@@ -163,7 +163,12 @@ pub enum Commands {
     },
 
     /// Show token/cost burn rate, time-to-cap, and quota for sessions on this node
-    Usage,
+    Usage {
+        /// Scan ALL local agent history (Claude + Codex) instead of pulpo-managed
+        /// sessions — total spend by agent and repo, no sessions routed through pulpo.
+        #[arg(long)]
+        scan: bool,
+    },
 
     /// Open the web dashboard in your browser
     Ui,
@@ -737,6 +742,46 @@ fn format_usage_projection(p: &UsageProjectionResponse) -> String {
         "
 ",
     )
+}
+
+/// Format the read-only usage *scan* (all local agent history, by agent and repo).
+fn format_usage_scan(r: &UsageScanResponse) -> String {
+    if r.by_agent.is_empty() {
+        return "No local agent history found (looked in ~/.claude and ~/.codex).".into();
+    }
+    let total_cost = r
+        .total_cost_usd
+        .map(|c| format!("  ({})", fmt_cost(Some(c), true)))
+        .unwrap_or_default();
+    let mut lines = vec![
+        format!(
+            "Local agent spend on {} — {} tokens{}",
+            r.node_name,
+            fmt_tokens(r.total_tokens),
+            total_cost
+        ),
+        String::new(),
+        "By agent:".into(),
+    ];
+    for a in &r.by_agent {
+        lines.push(format!(
+            "  {:<10} {:>9} tokens  {}",
+            a.label,
+            fmt_tokens(a.total_tokens),
+            fmt_cost(a.total_cost_usd, true),
+        ));
+    }
+    lines.push(String::new());
+    lines.push("By repo:".into());
+    for repo in &r.by_repo {
+        lines.push(format!(
+            "  {:<40} {:>9} tokens  {}",
+            truncate(&repo.label, 40),
+            fmt_tokens(repo.total_tokens),
+            fmt_cost(repo.total_cost_usd, true),
+        ));
+    }
+    lines.join("\n")
 }
 
 /// Build the command to open a URL in the default browser.
@@ -2101,18 +2146,32 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let events: Vec<InterventionEventResponse> = serde_json::from_str(&text)?;
             Ok(format_interventions(&events))
         }
-        Commands::Usage => {
-            let resp = authed_get(
-                &client,
-                format!("{url}/api/v1/usage/projection"),
-                token.as_deref(),
-            )
-            .send()
-            .await
-            .map_err(|e| friendly_error(&e, node))?;
-            let text = ok_or_api_error(resp).await?;
-            let projection: UsageProjectionResponse = serde_json::from_str(&text)?;
-            Ok(format_usage_projection(&projection))
+        Commands::Usage { scan } => {
+            if *scan {
+                let resp = authed_get(
+                    &client,
+                    format!("{url}/api/v1/usage/scan"),
+                    token.as_deref(),
+                )
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+                let text = ok_or_api_error(resp).await?;
+                let report: UsageScanResponse = serde_json::from_str(&text)?;
+                Ok(format_usage_scan(&report))
+            } else {
+                let resp = authed_get(
+                    &client,
+                    format!("{url}/api/v1/usage/projection"),
+                    token.as_deref(),
+                )
+                .send()
+                .await
+                .map_err(|e| friendly_error(&e, node))?;
+                let text = ok_or_api_error(resp).await?;
+                let projection: UsageProjectionResponse = serde_json::from_str(&text)?;
+                Ok(format_usage_projection(&projection))
+            }
         }
         Commands::Ui => {
             let dashboard = base_url(node);
@@ -4210,7 +4269,65 @@ mod tests {
     #[test]
     fn test_cli_parse_usage() {
         let cli = Cli::try_parse_from(["pulpo", "usage"]).unwrap();
-        assert!(matches!(&cli.command, Some(Commands::Usage)));
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Usage { scan: false })
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_usage_scan() {
+        let cli = Cli::try_parse_from(["pulpo", "usage", "--scan"]).unwrap();
+        assert!(matches!(&cli.command, Some(Commands::Usage { scan: true })));
+    }
+
+    #[test]
+    fn test_format_usage_scan_report() {
+        use pulpo_common::api::ScanRollup;
+        let r = UsageScanResponse {
+            node_name: "mac-mini".into(),
+            generated_at: "t".into(),
+            total_tokens: 2_500_000,
+            total_cost_usd: Some(12.0),
+            by_agent: vec![
+                ScanRollup {
+                    label: "claude".into(),
+                    total_tokens: 1_500_000,
+                    total_cost_usd: Some(12.0),
+                },
+                ScanRollup {
+                    label: "codex".into(),
+                    total_tokens: 1_000_000,
+                    total_cost_usd: None,
+                },
+            ],
+            by_repo: vec![ScanRollup {
+                label: "/repos/api".into(),
+                total_tokens: 2_000_000,
+                total_cost_usd: Some(10.0),
+            }],
+        };
+        let out = format_usage_scan(&r);
+        assert!(out.contains("By agent:"));
+        assert!(out.contains("claude"));
+        assert!(out.contains("codex"));
+        assert!(out.contains("By repo:"));
+        assert!(out.contains("/repos/api"));
+        assert!(out.contains("$12.00")); // total + claude cost
+        assert!(out.contains("2.5M")); // total tokens compaction
+    }
+
+    #[test]
+    fn test_format_usage_scan_empty() {
+        let r = UsageScanResponse {
+            node_name: "n".into(),
+            generated_at: "t".into(),
+            total_tokens: 0,
+            total_cost_usd: None,
+            by_agent: vec![],
+            by_repo: vec![],
+        };
+        assert!(format_usage_scan(&r).contains("No local agent history"));
     }
 
     #[test]

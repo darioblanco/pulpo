@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{Json, extract::State};
-use pulpo_common::api::UsageProjectionResponse;
+use pulpo_common::api::{UsageProjectionResponse, UsageScanResponse};
 use pulpo_common::session::meta;
 
 use crate::api::session_remote::{ApiError, internal_error};
@@ -50,6 +50,25 @@ pub async fn projection(
         inks,
         repos,
     }))
+}
+
+/// `GET /api/v1/usage/scan` — read-only sweep of all local Claude/Codex history.
+///
+/// Reports total spend by agent and by repo from the agents' own on-disk session files —
+/// no pulpo-managed sessions required. The low-friction "what did my agents cost?" view.
+pub async fn scan(
+    State(state): State<Arc<super::AppState>>,
+) -> Result<Json<UsageScanResponse>, ApiError> {
+    let node_name = state.config.read().await.node.name.clone();
+    let resp = crate::usage::scan_local_usage(&node_name).unwrap_or_else(|| UsageScanResponse {
+        node_name,
+        generated_at: chrono::Utc::now().to_rfc3339(),
+        total_tokens: 0,
+        total_cost_usd: None,
+        by_agent: Vec::new(),
+        by_repo: Vec::new(),
+    });
+    Ok(Json(resp))
 }
 
 #[cfg(test)]
@@ -175,6 +194,16 @@ mod tests {
         assert!(resp.inks[0].cost_is_exact);
         assert_eq!(resp.repos.len(), 1);
         assert_eq!(resp.repos[0].label, "/repos/api");
+    }
+
+    #[tokio::test]
+    async fn test_scan_endpoint_returns_node_name() {
+        // Under coverage the scan is a no-op stub → empty report; under normal builds it
+        // reads the (likely-absent in CI) real home dirs. Either way the node name is set
+        // and the call succeeds, which exercises the handler wiring.
+        let state = test_state().await;
+        let resp = super::scan(State(state)).await.unwrap();
+        assert_eq!(resp.node_name, "test-node");
     }
 
     #[tokio::test]

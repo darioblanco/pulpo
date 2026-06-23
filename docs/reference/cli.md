@@ -13,6 +13,9 @@ pulpo cleanup                             Remove all stopped and lost sessions
 pulpo resume <NAME>                       Resume a lost or ready session (auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions
 pulpo usage                               Show token/cost burn rate, time-to-cap, and quota
+pulpo usage --scan                        Scan ALL local agent history (Claude + Codex):
+                                          total spend by agent and repo, no daemon-managed
+                                          sessions required
 pulpo nodes                               List known nodes/peers
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
 pulpo ink <SUBCOMMAND>                    Manage ink presets (reusable command templates)

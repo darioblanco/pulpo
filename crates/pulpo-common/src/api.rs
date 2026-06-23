@@ -557,6 +557,34 @@ pub struct DimensionRollup {
     pub cost_is_exact: bool,
 }
 
+/// One row of the usage *scan* — total cost/tokens for an agent or a repo, read from
+/// agents' own on-disk history (not tied to any pulpo-managed session).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScanRollup {
+    /// Agent name (`claude` / `codex`) or repo path.
+    pub label: String,
+    pub total_tokens: u64,
+    /// `None` when cost can't be priced (Codex, or an unknown model).
+    pub total_cost_usd: Option<f64>,
+}
+
+/// `GET /api/v1/usage/scan` — read-only sweep of *all* local agent history.
+///
+/// Unlike the projection (pulpo-managed sessions), the scan reads every Claude/Codex
+/// session file on the machine and reports total spend by agent and by repo — the
+/// low-friction "what did my agents cost?" view, across agents, with no behavior change.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsageScanResponse {
+    pub node_name: String,
+    pub generated_at: String,
+    pub total_tokens: u64,
+    pub total_cost_usd: Option<f64>,
+    /// Per-agent totals (`claude`, `codex`).
+    pub by_agent: Vec<ScanRollup>,
+    /// Per-repo totals, merged across agents, most expensive first.
+    pub by_repo: Vec<ScanRollup>,
+}
+
 /// `GET /api/v1/usage/projection` — per-session projections plus account rollups.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UsageProjectionResponse {

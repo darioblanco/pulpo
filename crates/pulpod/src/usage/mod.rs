@@ -15,6 +15,7 @@ pub mod claude;
 pub mod codex;
 pub mod pool;
 pub mod projection;
+pub mod scan;
 
 #[cfg(not(coverage))]
 use std::sync::OnceLock;
@@ -255,6 +256,29 @@ pub fn read_exact_usage_for_session(session: &Session) -> Option<ExactUsage> {
 /// No-op stub under coverage builds (no real filesystem access).
 #[cfg(coverage)]
 pub fn read_exact_usage_for_session(_session: &Session) -> Option<ExactUsage> {
+    None
+}
+
+/// Scan all local agent history using the real home-dir paths (`~/.claude`, `~/.codex`).
+///
+/// Coverage-excluded (reads the developer's real home dirs); the scan logic itself is
+/// covered via temp dirs in `scan` tests. Returns `None` only when the home dir is
+/// unknown — the API handler renders that as an empty scan.
+#[cfg(not(coverage))]
+pub fn scan_local_usage(node_name: &str) -> Option<pulpo_common::api::UsageScanResponse> {
+    let home = dirs::home_dir()?;
+    Some(scan::scan_usage(
+        &home.join(".claude"),
+        &home.join(".codex"),
+        active_rate_overrides(),
+        node_name,
+        Utc::now(),
+    ))
+}
+
+/// No-op stub under coverage builds (no real filesystem access).
+#[cfg(coverage)]
+pub fn scan_local_usage(_node_name: &str) -> Option<pulpo_common::api::UsageScanResponse> {
     None
 }
 
