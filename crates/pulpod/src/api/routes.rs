@@ -897,6 +897,61 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // Successful WS upgrade + byte round-trip. Under the coverage build `handle_stream`
+    // uses its echo fallback (no real PTY/tmux), so this exercises the full
+    // route → stream() validation → on_upgrade → handle_stream plumbing that the
+    // rejection tests above never reach.
+    #[cfg(coverage)]
+    #[tokio::test]
+    async fn test_ws_stream_echo_round_trip() {
+        use futures::{SinkExt, StreamExt};
+        use tokio_tungstenite::tungstenite::Message;
+
+        let (addr, state) = ws_test_server().await;
+        let req = pulpo_common::api::CreateSessionRequest {
+            name: "ws-echo".into(),
+            workdir: Some("/tmp".into()),
+            metadata: None,
+            command: Some("echo test".into()),
+            description: None,
+            ink: None,
+            idle_threshold_secs: None,
+            worktree: None,
+            worktree_base: None,
+            runtime: None,
+            secrets: None,
+            target_node: None,
+            term_program: None,
+            budget_cost_usd: None,
+        };
+        let session = state.session_manager.create_session(req).await.unwrap();
+
+        let (mut ws, _resp) = tokio_tungstenite::connect_async(format!(
+            "ws://{addr}/api/v1/sessions/{}/stream",
+            session.id
+        ))
+        .await
+        .expect("WS upgrade should succeed for a running session");
+
+        // Text is echoed back as "echo:<text>".
+        ws.send(Message::Text("hello".into())).await.unwrap();
+        match ws.next().await.unwrap().unwrap() {
+            Message::Text(t) => assert_eq!(t.as_str(), "echo:hello"),
+            other => panic!("expected text echo, got {other:?}"),
+        }
+
+        // Binary is echoed back verbatim.
+        ws.send(Message::Binary(vec![1, 2, 3].into()))
+            .await
+            .unwrap();
+        match ws.next().await.unwrap().unwrap() {
+            Message::Binary(b) => assert_eq!(b.as_ref(), &[1u8, 2, 3]),
+            other => panic!("expected binary echo, got {other:?}"),
+        }
+
+        ws.close(None).await.ok();
+    }
+
     /// Backend where `is_alive` fails — causes `get_session` to return an error.
     struct FailIsAliveBackend;
 
