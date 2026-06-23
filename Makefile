@@ -1,4 +1,4 @@
-.PHONY: all check fmt lint test coverage coverage-rust coverage-web build build-web-if-missing clean setup hooks install release release-tarball service-install service-uninstall service-install-linux service-uninstall-linux deploy-server dev dev-stop dev-web test-web-watch ci
+.PHONY: all check fmt lint test test-rust e2e coverage coverage-rust coverage-web build build-web-if-missing clean setup hooks install release release-tarball service-install service-uninstall service-install-linux service-uninstall-linux deploy-server dev dev-stop dev-web test-web-watch ci
 
 # Run all checks (what pre-commit runs)
 all: fmt lint test
@@ -89,6 +89,12 @@ test: test-rust test-web
 
 test-rust:
 	cargo test --workspace
+
+# Isolated end-to-end smoke test: boots a real pulpod on a temp config/port, spawns a
+# trivial agent, verifies capture + usage, stops it. Manual (not part of `make ci`) —
+# needs tmux and builds debug binaries. Catches packaging/wiring breakage units can't.
+e2e:
+	@bash scripts/e2e.sh
 
 test-web:
 	cd web && PATH=/usr/local/bin:$$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor npx vitest run

@@ -474,14 +474,35 @@ fn find_number_at(line: &str, start: usize) -> Option<(usize, u64, usize)> {
     Some((num_start, value, pos))
 }
 
+/// Largest char boundary `<= i`. Keeps window slicing from splitting a multi-byte char.
+const fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Smallest char boundary `>= i`, clamped to `s.len()`.
+const fn ceil_char_boundary(s: &str, i: usize) -> usize {
+    let len = s.len();
+    let mut i = if i > len { len } else { i };
+    while i < len && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
 /// Classify a number on a line by finding the nearest keyword within range.
 /// Returns the category of the closest matching keyword.
 fn classify_number(line_lower: &str, num_start: usize, num_end: usize) -> Option<TokenCategory> {
     let mut best: Option<(TokenCategory, usize)> = None; // (category, distance)
 
     for rule in KEYWORD_RULES {
-        // Check window before the number
-        let win_start = num_start.saturating_sub(rule.max_distance);
+        // Check window before the number. `num_start - max_distance` can land inside a
+        // multi-byte char (e.g. a box-drawing `│` in an agent TUI), so floor it to a
+        // char boundary before slicing — otherwise this panics on non-ASCII output.
+        let win_start =
+            floor_char_boundary(line_lower, num_start.saturating_sub(rule.max_distance));
         let before = &line_lower[win_start..num_start];
         if let Some(pos) = before.rfind(rule.keyword) {
             // Distance = gap between keyword end and number start
@@ -492,8 +513,8 @@ fn classify_number(line_lower: &str, num_start: usize, num_end: usize) -> Option
             }
         }
 
-        // Check window after the number
-        let win_end = (num_end + rule.max_distance).min(line_lower.len());
+        // Check window after the number (ceil to a char boundary, same reason).
+        let win_end = ceil_char_boundary(line_lower, num_end + rule.max_distance);
         let after = &line_lower[num_end..win_end];
         if let Some(pos) = after.find(rule.keyword) {
             // Distance = gap between number end and keyword start
@@ -1269,6 +1290,20 @@ mod tests {
     }
 
     // -- extract_agent_usage integration tests --
+
+    #[test]
+    fn test_agent_usage_survives_multibyte_box_chars() {
+        // Regression: box-drawing chars (3 bytes each, common in agent TUIs) near a
+        // number made classify_number's keyword window slice land mid-char and panic.
+        // Caught by the e2e smoke test against a real Claude Code session.
+        let output = "│   opus 4.7 (1m context) · claude max ·   │ 12,345 tokens sent │\n";
+        // Must not panic; and it still scrapes the keyword'd token count.
+        let usage = extract_agent_usage(output);
+        assert!(
+            usage.is_some(),
+            "should scrape without panicking on box chars"
+        );
+    }
 
     #[test]
     fn test_agent_usage_aider_basic() {
