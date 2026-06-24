@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
-use axum::{Json, extract::State};
+use axum::{
+    Json,
+    extract::{Query, State},
+};
 use pulpo_common::api::{UsageProjectionResponse, UsageScanResponse};
 use pulpo_common::session::meta;
+use serde::Deserialize;
 
 use crate::api::session_remote::{ApiError, internal_error};
 use crate::usage::projection::{
@@ -52,22 +56,37 @@ pub async fn projection(
     }))
 }
 
+/// Query parameters for [`scan`].
+#[derive(Debug, Default, Deserialize)]
+pub struct ScanParams {
+    /// Keep every directory distinct instead of collapsing worktrees/subdirectories onto
+    /// their origin repository (the default).
+    #[serde(default)]
+    pub by_worktree: bool,
+}
+
 /// `GET /api/v1/usage/scan` — read-only sweep of all local Claude/Codex history.
 ///
 /// Reports total spend by agent and by repo from the agents' own on-disk session files —
 /// no pulpo-managed sessions required. The low-friction "what did my agents cost?" view.
+/// By default worktrees and subdirectories roll up to their origin repo; `?by_worktree=true`
+/// keeps each checkout separate.
 pub async fn scan(
     State(state): State<Arc<super::AppState>>,
+    Query(params): Query<ScanParams>,
 ) -> Result<Json<UsageScanResponse>, ApiError> {
     let node_name = state.config.read().await.node.name.clone();
-    let resp = crate::usage::scan_local_usage(&node_name).unwrap_or_else(|| UsageScanResponse {
-        node_name,
-        generated_at: chrono::Utc::now().to_rfc3339(),
-        total_tokens: 0,
-        total_cost_usd: None,
-        by_agent: Vec::new(),
-        by_repo: Vec::new(),
-    });
+    let resp =
+        crate::usage::scan_local_usage(&node_name, params.by_worktree).unwrap_or_else(|| {
+            UsageScanResponse {
+                node_name,
+                generated_at: chrono::Utc::now().to_rfc3339(),
+                total_tokens: 0,
+                total_cost_usd: None,
+                by_agent: Vec::new(),
+                by_repo: Vec::new(),
+            }
+        });
     Ok(Json(resp))
 }
 
@@ -202,7 +221,24 @@ mod tests {
         // reads the (likely-absent in CI) real home dirs. Either way the node name is set
         // and the call succeeds, which exercises the handler wiring.
         let state = test_state().await;
-        let resp = super::scan(State(state)).await.unwrap();
+        let resp = super::scan(
+            State(state),
+            axum::extract::Query(super::ScanParams::default()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.node_name, "test-node");
+    }
+
+    #[tokio::test]
+    async fn test_scan_endpoint_accepts_by_worktree() {
+        let state = test_state().await;
+        let resp = super::scan(
+            State(state),
+            axum::extract::Query(super::ScanParams { by_worktree: true }),
+        )
+        .await
+        .unwrap();
         assert_eq!(resp.node_name, "test-node");
     }
 

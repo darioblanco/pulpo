@@ -168,6 +168,10 @@ pub enum Commands {
         /// sessions — total spend by agent and repo, no sessions routed through pulpo.
         #[arg(long)]
         scan: bool,
+        /// With --scan: keep each git worktree/subdirectory as its own row instead of
+        /// collapsing them onto their origin repository.
+        #[arg(long, requires = "scan")]
+        by_worktree: bool,
     },
 
     /// Open the web dashboard in your browser
@@ -2146,16 +2150,17 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let events: Vec<InterventionEventResponse> = serde_json::from_str(&text)?;
             Ok(format_interventions(&events))
         }
-        Commands::Usage { scan } => {
+        Commands::Usage { scan, by_worktree } => {
             if *scan {
-                let resp = authed_get(
-                    &client,
-                    format!("{url}/api/v1/usage/scan"),
-                    token.as_deref(),
-                )
-                .send()
-                .await
-                .map_err(|e| friendly_error(&e, node))?;
+                let scan_url = if *by_worktree {
+                    format!("{url}/api/v1/usage/scan?by_worktree=true")
+                } else {
+                    format!("{url}/api/v1/usage/scan")
+                };
+                let resp = authed_get(&client, scan_url, token.as_deref())
+                    .send()
+                    .await
+                    .map_err(|e| friendly_error(&e, node))?;
                 let text = ok_or_api_error(resp).await?;
                 let report: UsageScanResponse = serde_json::from_str(&text)?;
                 Ok(format_usage_scan(&report))
@@ -4271,14 +4276,41 @@ mod tests {
         let cli = Cli::try_parse_from(["pulpo", "usage"]).unwrap();
         assert!(matches!(
             &cli.command,
-            Some(Commands::Usage { scan: false })
+            Some(Commands::Usage {
+                scan: false,
+                by_worktree: false
+            })
         ));
     }
 
     #[test]
     fn test_cli_parse_usage_scan() {
         let cli = Cli::try_parse_from(["pulpo", "usage", "--scan"]).unwrap();
-        assert!(matches!(&cli.command, Some(Commands::Usage { scan: true })));
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Usage {
+                scan: true,
+                by_worktree: false
+            })
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_usage_scan_by_worktree() {
+        let cli = Cli::try_parse_from(["pulpo", "usage", "--scan", "--by-worktree"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Usage {
+                scan: true,
+                by_worktree: true
+            })
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_usage_by_worktree_requires_scan() {
+        // --by-worktree without --scan is rejected by clap (requires = "scan").
+        assert!(Cli::try_parse_from(["pulpo", "usage", "--by-worktree"]).is_err());
     }
 
     #[test]
