@@ -217,6 +217,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_usage_scan_route_parses_by_worktree() {
+        // Exercises the full router path including ScanParams query-string deserialization.
+        // The scan reads real home dirs (empty/absent in CI) → an empty-but-valid report.
+        let server = test_server().await;
+        for path in [
+            "/api/v1/usage/scan",
+            "/api/v1/usage/scan?by_worktree=true",
+            "/api/v1/usage/scan?by_worktree=false",
+        ] {
+            let resp = server.get(path).await;
+            resp.assert_status_ok();
+            assert!(resp.text().contains("\"node_name\""));
+        }
+    }
+
+    #[tokio::test]
     async fn test_inks_empty() {
         let server = test_server().await;
         let resp = server.get("/api/v1/inks").await;

@@ -261,24 +261,50 @@ pub fn read_exact_usage_for_session(_session: &Session) -> Option<ExactUsage> {
 
 /// Scan all local agent history using the real home-dir paths (`~/.claude`, `~/.codex`).
 ///
+/// `by_worktree` keeps every directory distinct; the default (`false`) collapses git
+/// worktrees and subdirectories onto their origin repo via [`scan::canonical_repo`].
+///
 /// Coverage-excluded (reads the developer's real home dirs); the scan logic itself is
 /// covered via temp dirs in `scan` tests. Returns `None` only when the home dir is
 /// unknown — the API handler renders that as an empty scan.
 #[cfg(not(coverage))]
-pub fn scan_local_usage(node_name: &str) -> Option<pulpo_common::api::UsageScanResponse> {
+pub fn scan_local_usage(
+    node_name: &str,
+    by_worktree: bool,
+) -> Option<pulpo_common::api::UsageScanResponse> {
     let home = dirs::home_dir()?;
-    Some(scan::scan_usage(
-        &home.join(".claude"),
-        &home.join(".codex"),
-        active_rate_overrides(),
-        node_name,
-        Utc::now(),
-    ))
+    let claude_dir = home.join(".claude");
+    let codex_dir = home.join(".codex");
+    let rates = active_rate_overrides();
+    let now = Utc::now();
+    let resp = if by_worktree {
+        scan::scan_usage(
+            &claude_dir,
+            &codex_dir,
+            rates,
+            node_name,
+            now,
+            |cwd: &str| cwd.to_owned(),
+        )
+    } else {
+        scan::scan_usage(
+            &claude_dir,
+            &codex_dir,
+            rates,
+            node_name,
+            now,
+            scan::canonical_repo,
+        )
+    };
+    Some(resp)
 }
 
 /// No-op stub under coverage builds (no real filesystem access).
 #[cfg(coverage)]
-pub fn scan_local_usage(_node_name: &str) -> Option<pulpo_common::api::UsageScanResponse> {
+pub fn scan_local_usage(
+    _node_name: &str,
+    _by_worktree: bool,
+) -> Option<pulpo_common::api::UsageScanResponse> {
     None
 }
 
