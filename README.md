@@ -98,15 +98,15 @@ models still report tokens; `[rates.<model>]` config prices a new or repriced mo
 code change.
 
 ```bash
-pulpo usage --scan              # zero-setup: scan ALL local Claude + Codex history →
+pulpo usage --scan              # zero-setup: scan ALL local Claude + Codex + pi history →
                                 # total spend by agent and repo (no sessions routed through pulpo)
 pulpo usage                     # live burn rate ($/hr, tokens/hr), time-to-cap, quota
 ```
 
 `pulpo usage --scan` is the fastest way in: it reads the agents' *own* session files and
-shows what every agent has cost you, **unified across Claude and Codex, broken down by
-agent, model, and repo** — the cross-agent view a single-vendor `/usage` (or ccusage)
-can't give. Nothing has to run through Pulpo first. It's **worktree-aware**: a repo's git
+shows what every agent has cost you, **unified across Claude, Codex, and pi, broken down
+by agent, model, and repo** — the cross-agent view a single-vendor `/usage` (or ccusage)
+can't give. (pi sessions carry the exact dollar cost the agent recorded itself.) Nothing has to run through Pulpo first. It's **worktree-aware**: a repo's git
 worktrees and subdirectories roll up to the origin repo, so per-repo spend means *this repo*
 and not *this checkout* (add `--by-worktree` to keep each checkout separate). Narrow to a
 window with `--since <days>`, or pipe the raw numbers somewhere with `--json`.
@@ -168,7 +168,7 @@ the [Roadmap](ROADMAP.md) for the rationale.
 
 ## Core Capabilities
 
-- **Exact usage metering**: structured readers for Claude Code & Codex (tokens, cost, cache, quota), cross-account / cross-agent rollups, `[rates.<model>]` config, output-scraping fallback for other agents.
+- **Exact usage metering**: structured readers for Claude Code, Codex & pi (tokens, cost, cache, quota; pi in `--scan` only for now), cross-account / cross-agent rollups, `[rates.<model>]` config, output-scraping fallback for other agents.
 - **Cost control**: per-session / per-ink budget caps (alert 80%, stop 100%) and a burn-velocity ($/hr) governor — alert-first, opt-in stop.
 - **Monitoring backbone**: signed canonical events to multiple webhooks with a durable outbox + backoff; toggleable Prometheus `/metrics`; SSE stream; web push.
 - **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots; adopts external tmux sessions.
