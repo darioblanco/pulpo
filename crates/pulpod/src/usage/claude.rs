@@ -4,7 +4,7 @@
 //! `<claude_dir>/projects/<sanitized-workdir>/<session-uuid>.jsonl`. Each assistant
 //! record carries a `message.usage` block with exact token counts and the model ID.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
@@ -31,6 +31,17 @@ struct Totals {
     cost_usd: f64,
     unknown_model: bool,
     records: u64,
+    /// Per-model breakdown, for the usage scan's by-model rollup.
+    by_model: HashMap<String, ModelAgg>,
+}
+
+/// Tokens and cost accumulated for a single model.
+#[derive(Debug, Default)]
+struct ModelAgg {
+    tokens: u64,
+    cost_usd: f64,
+    /// Set when a record used a model with no known rate — cost is then withheld.
+    unknown: bool,
 }
 
 /// Read a `u64` token count from a usage field, defaulting to 0.
@@ -101,14 +112,17 @@ fn apply_transcript_line(
     totals.cache_write += five_min + one_hour;
     totals.records += 1;
 
+    let tokens = input + output + cache_read + five_min + one_hour;
     let model = message
         .get("model")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
+    let agg = totals.by_model.entry(model.to_owned()).or_default();
+    agg.tokens += tokens;
     #[allow(clippy::cast_precision_loss)]
     match resolve_rates(model, rates) {
         Some(rates) => {
-            totals.cost_usd += (input as f64).mul_add(
+            let cost = (input as f64).mul_add(
                 rates.input,
                 (output as f64).mul_add(
                     rates.output,
@@ -121,10 +135,13 @@ fn apply_transcript_line(
                     ),
                 ),
             ) / 1_000_000.0;
+            totals.cost_usd += cost;
+            agg.cost_usd += cost;
         }
         None => {
-            if input + output + cache_read + five_min + one_hour > 0 {
+            if tokens > 0 {
                 totals.unknown_model = true;
+                agg.unknown = true;
             }
         }
     }
@@ -153,6 +170,15 @@ pub fn read_usage(
 pub(crate) struct DirUsage {
     pub usage: ExactUsage,
     pub cwd: Option<String>,
+    /// Per-model `(model, tokens, cost)` — cost is `None` when the model has no known rate.
+    pub by_model: Vec<ModelUsage>,
+}
+
+/// One model's tokens and (optional) cost within a project directory.
+pub(crate) struct ModelUsage {
+    pub model: String,
+    pub tokens: u64,
+    pub cost_usd: Option<f64>,
 }
 
 /// Sum usage across every transcript in a single Claude project directory (already
@@ -200,6 +226,15 @@ pub(crate) fn read_usage_dir(
     if totals.records == 0 {
         return None;
     }
+    let by_model = totals
+        .by_model
+        .into_iter()
+        .map(|(model, agg)| ModelUsage {
+            model,
+            tokens: agg.tokens,
+            cost_usd: (!agg.unknown).then_some(agg.cost_usd),
+        })
+        .collect();
     Some(DirUsage {
         usage: ExactUsage {
             source: SOURCE_CLAUDE,
@@ -211,6 +246,7 @@ pub(crate) fn read_usage_dir(
             quota: None,
         },
         cwd,
+        by_model,
     })
 }
 
@@ -535,6 +571,65 @@ mod tests {
 
         let since = Utc::now() - TimeDelta::hours(1);
         assert!(read_usage(tmp.path(), "/tmp/repo", since, &RateOverrides::default()).is_none());
+    }
+
+    #[test]
+    fn test_read_usage_dir_breaks_down_by_model() {
+        let tmp = tempfile::tempdir().unwrap();
+        let since = Utc::now() - TimeDelta::hours(1);
+        let ts = Utc::now().to_rfc3339();
+        let content = format!(
+            "{}\n{}\n{}\n",
+            transcript_line(&ts, "m1", "r1", "claude-opus-4-8"),
+            transcript_line(&ts, "m2", "r2", "claude-opus-4-8"),
+            transcript_line(&ts, "m3", "r3", "claude-haiku-4-5"),
+        );
+        let project_dir = tmp
+            .path()
+            .join("projects")
+            .join(sanitize_workdir("/tmp/repo"));
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::write(project_dir.join("abc.jsonl"), &content).unwrap();
+
+        let d = read_usage_dir(&project_dir, since, &RateOverrides::default()).unwrap();
+        assert_eq!(d.by_model.len(), 2);
+        let opus = d
+            .by_model
+            .iter()
+            .find(|m| m.model == "claude-opus-4-8")
+            .unwrap();
+        // Each transcript line: 1000 in + 500 out + 2000 read + 300 write = 3800 tokens.
+        assert_eq!(opus.tokens, 7600);
+        assert!(opus.cost_usd.unwrap() > 0.0);
+        let haiku = d
+            .by_model
+            .iter()
+            .find(|m| m.model == "claude-haiku-4-5")
+            .unwrap();
+        assert_eq!(haiku.tokens, 3800);
+    }
+
+    #[test]
+    fn test_read_usage_dir_by_model_withholds_unknown_cost() {
+        let tmp = tempfile::tempdir().unwrap();
+        let since = Utc::now() - TimeDelta::hours(1);
+        let ts = Utc::now().to_rfc3339();
+        let content = transcript_line(&ts, "m1", "r1", "experimental-model");
+        let project_dir = tmp
+            .path()
+            .join("projects")
+            .join(sanitize_workdir("/tmp/repo"));
+        fs::create_dir_all(&project_dir).unwrap();
+        fs::write(project_dir.join("abc.jsonl"), &content).unwrap();
+
+        let d = read_usage_dir(&project_dir, since, &RateOverrides::default()).unwrap();
+        let m = d
+            .by_model
+            .iter()
+            .find(|m| m.model == "experimental-model")
+            .unwrap();
+        assert!(m.cost_usd.is_none());
+        assert_eq!(m.tokens, 3800);
     }
 
     #[test]

@@ -105,10 +105,11 @@ pulpo usage                     # live burn rate ($/hr, tokens/hr), time-to-cap,
 
 `pulpo usage --scan` is the fastest way in: it reads the agents' *own* session files and
 shows what every agent has cost you, **unified across Claude and Codex, broken down by
-repo** — the cross-agent view a single-vendor `/usage` (or ccusage) can't give. Nothing has
-to run through Pulpo first. It's **worktree-aware**: a repo's git worktrees and
-subdirectories roll up to the origin repo, so per-repo spend means *this repo* and not
-*this checkout* (add `--by-worktree` to keep each checkout separate).
+agent, model, and repo** — the cross-agent view a single-vendor `/usage` (or ccusage)
+can't give. Nothing has to run through Pulpo first. It's **worktree-aware**: a repo's git
+worktrees and subdirectories roll up to the origin repo, so per-repo spend means *this repo*
+and not *this checkout* (add `--by-worktree` to keep each checkout separate). Narrow to a
+window with `--since <days>`, or pipe the raw numbers somewhere with `--json`.
 
 **Control — pull the plug before the wall.** Per-session and per-ink cost caps that alert at
 80% and stop at 100%, plus a burn-velocity governor that catches the catastrophic 2 a.m.

@@ -113,14 +113,15 @@ fn read_rollout_file(
     Some((rollout.totals, rollout.quota))
 }
 
-/// One parsed Codex rollout file: its `cwd`, start time, last cumulative totals, and
-/// latest quota snapshot — with no workdir/time filtering. [`read_rollout_file`] adds the
-/// filter; the usage scan groups by `cwd` instead.
+/// One parsed Codex rollout file: its `cwd`, start time, last cumulative totals, latest
+/// quota snapshot, and the model it ran — with no workdir/time filtering.
+/// [`read_rollout_file`] adds the filter; the usage scan groups by `cwd`/model instead.
 struct Rollout {
     cwd: String,
     started_at: DateTime<Utc>,
     totals: FileTotals,
     quota: Option<QuotaSnapshot>,
+    model: Option<String>,
 }
 
 fn parse_rollout(path: &Path) -> Option<Rollout> {
@@ -135,6 +136,7 @@ fn parse_rollout(path: &Path) -> Option<Rollout> {
 
     let mut last_totals = FileTotals::default();
     let mut last_quota = None;
+    let mut model = None;
     for line in lines {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
@@ -146,35 +148,50 @@ fn parse_rollout(path: &Path) -> Option<Rollout> {
         if quota.is_some() {
             last_quota = quota;
         }
+        // The model is recorded per turn in `turn_context`; keep the latest seen.
+        if value.get("type").and_then(serde_json::Value::as_str) == Some("turn_context")
+            && let Some(m) = value
+                .get("payload")
+                .and_then(|p| p.get("model"))
+                .and_then(serde_json::Value::as_str)
+        {
+            model = Some(m.to_owned());
+        }
     }
     Some(Rollout {
         cwd,
         started_at,
         totals: last_totals,
         quota: last_quota,
+        model,
     })
 }
 
-/// Total Codex tokens per repo across *all* rollout files, keyed by normalized `cwd`.
+/// One rollout's contribution to the usage scan: its repo, model, and token total.
+pub(crate) struct ScanEntry {
+    pub cwd: String,
+    pub model: Option<String>,
+    pub tokens: u64,
+}
+
+/// Per-rollout Codex token totals across *all* rollout files started at or after `since`.
+///
 /// Token total matches the `ExactUsage` convention: `(input − cached) + output + cached`.
-/// Used by the usage scan (which groups by repo rather than matching one workdir).
-pub(crate) fn scan_by_cwd(codex_dir: &Path) -> std::collections::HashMap<String, u64> {
-    let mut by_cwd: std::collections::HashMap<String, FileTotals> =
-        std::collections::HashMap::new();
-    for path in collect_rollout_files(codex_dir) {
-        if let Some(rollout) = parse_rollout(&path) {
-            let entry = by_cwd
-                .entry(normalize_dir(&rollout.cwd).to_owned())
-                .or_default();
-            // Each rollout file is one agent process; sum their last cumulative totals.
-            entry.input += rollout.totals.input;
-            entry.cached += rollout.totals.cached;
-            entry.output += rollout.totals.output;
-        }
-    }
-    by_cwd
+/// Returns one entry per rollout file (each is one agent process); the usage scan groups
+/// them by repo and by model.
+pub(crate) fn scan_rollouts(codex_dir: &Path, since: DateTime<Utc>) -> Vec<ScanEntry> {
+    collect_rollout_files(codex_dir)
         .into_iter()
-        .map(|(cwd, t)| (cwd, t.input.saturating_sub(t.cached) + t.output + t.cached))
+        .filter_map(|path| parse_rollout(&path))
+        .filter(|r| r.started_at >= since)
+        .map(|r| {
+            let t = r.totals;
+            ScanEntry {
+                cwd: normalize_dir(&r.cwd).to_owned(),
+                model: r.model,
+                tokens: t.input.saturating_sub(t.cached) + t.output + t.cached,
+            }
+        })
         .collect()
 }
 
@@ -540,6 +557,67 @@ mod tests {
         );
 
         assert!(read_usage(tmp.path(), "/repo", since, now).is_none());
+    }
+
+    fn turn_context_line(model: &str) -> String {
+        format!(
+            r#"{{"timestamp":"2026-06-12T10:00:00Z","type":"turn_context","payload":{{"turn_id":"t1","cwd":"/repo","model":"{model}"}}}}"#
+        )
+    }
+
+    #[test]
+    fn test_scan_rollouts_captures_model_and_tokens() {
+        let tmp = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let ts = now.to_rfc3339();
+        let content = format!(
+            "{}\n{}\n{}\n",
+            session_meta_line(&ts, "/repo"),
+            turn_context_line("gpt-5.3-codex"),
+            token_count_line(1000, 200, 50),
+        );
+        write_rollout(tmp.path(), now, "rollout-2026-06-12-a.jsonl", &content);
+
+        let entries = scan_rollouts(tmp.path(), now - TimeDelta::hours(1));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].cwd, "/repo");
+        assert_eq!(entries[0].model.as_deref(), Some("gpt-5.3-codex"));
+        // (1000 − 200) + 50 + 200 = 1050.
+        assert_eq!(entries[0].tokens, 1050);
+    }
+
+    #[test]
+    fn test_scan_rollouts_filters_by_since() {
+        let tmp = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let old = now - TimeDelta::days(10);
+        write_rollout(
+            tmp.path(),
+            old,
+            "rollout-old.jsonl",
+            &format!(
+                "{}\n{}\n",
+                session_meta_line(&old.to_rfc3339(), "/repo"),
+                token_count_line(100, 0, 10)
+            ),
+        );
+        write_rollout(
+            tmp.path(),
+            now,
+            "rollout-new.jsonl",
+            &format!(
+                "{}\n{}\n",
+                session_meta_line(&now.to_rfc3339(), "/repo"),
+                token_count_line(200, 0, 20)
+            ),
+        );
+
+        // Only the recent rollout survives a 3-day window.
+        let entries = scan_rollouts(tmp.path(), now - TimeDelta::days(3));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].tokens, 220);
+        // No model recorded → None (still counted).
+        assert!(entries[0].model.is_none());
     }
 
     #[test]

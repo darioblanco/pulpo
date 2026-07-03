@@ -263,6 +263,7 @@ pub fn read_exact_usage_for_session(_session: &Session) -> Option<ExactUsage> {
 ///
 /// `by_worktree` keeps every directory distinct; the default (`false`) collapses git
 /// worktrees and subdirectories onto their origin repo via [`scan::canonical_repo`].
+/// `since_days` limits the scan to the last N days (`None` = all-time).
 ///
 /// Coverage-excluded (reads the developer's real home dirs); the scan logic itself is
 /// covered via temp dirs in `scan` tests. Returns `None` only when the home dir is
@@ -271,6 +272,7 @@ pub fn read_exact_usage_for_session(_session: &Session) -> Option<ExactUsage> {
 pub fn scan_local_usage(
     node_name: &str,
     by_worktree: bool,
+    since_days: Option<u32>,
 ) -> Option<pulpo_common::api::UsageScanResponse> {
     let home = dirs::home_dir()?;
     let claude_dir = home.join(".claude");
@@ -284,6 +286,7 @@ pub fn scan_local_usage(
             rates,
             node_name,
             now,
+            since_days,
             |cwd: &str| cwd.to_owned(),
         )
     } else {
@@ -293,6 +296,7 @@ pub fn scan_local_usage(
             rates,
             node_name,
             now,
+            since_days,
             scan::canonical_repo,
         )
     };
@@ -304,6 +308,7 @@ pub fn scan_local_usage(
 pub fn scan_local_usage(
     _node_name: &str,
     _by_worktree: bool,
+    _since_days: Option<u32>,
 ) -> Option<pulpo_common::api::UsageScanResponse> {
     None
 }
