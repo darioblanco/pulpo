@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use pulpo_common::api::{ScanRollup, UsageScanResponse};
 
 use super::{ExactUsage, RateOverrides, claude, codex};
@@ -19,23 +19,60 @@ const fn exact_total_tokens(u: &ExactUsage) -> u64 {
     u.input_tokens + u.output_tokens + u.cache_write_tokens + u.cache_read_tokens
 }
 
-/// Scan all local Claude + Codex history into per-agent and per-repo spend rollups.
+/// Fold `(tokens, cost)` into a `label -> (tokens, cost)` accumulator. Costs sum only where
+/// present, so an unpriced (Codex / unknown-model) contribution leaves the total `None`.
+fn accumulate(
+    map: &mut HashMap<String, (u64, Option<f64>)>,
+    label: String,
+    tokens: u64,
+    cost: Option<f64>,
+) {
+    let e = map.entry(label).or_insert((0, None));
+    e.0 += tokens;
+    if let Some(c) = cost {
+        e.1 = Some(e.1.unwrap_or(0.0) + c);
+    }
+}
+
+/// Turn a `label -> (tokens, cost)` map into sorted rollup rows (most expensive first).
 ///
-/// `resolve_repo` maps each recorded working directory to the label it's grouped under.
-/// Pass [`canonical_repo`] to collapse git worktrees and subdirectories onto their origin
-/// repository (the default), or the identity function to keep every directory distinct
-/// (`pulpo usage --scan --by-worktree`). Results are memoized so each distinct directory is
-/// resolved at most once.
+/// Zero-token rows are dropped — agents record synthetic/no-token entries (Claude's
+/// `<synthetic>` messages, model-less Codex rollouts) that would otherwise clutter the report.
+fn into_rollups(map: HashMap<String, (u64, Option<f64>)>) -> Vec<ScanRollup> {
+    let mut rows: Vec<ScanRollup> = map
+        .into_iter()
+        .filter(|(_, (tokens, _))| *tokens > 0)
+        .map(|(label, (total_tokens, total_cost_usd))| ScanRollup {
+            label,
+            total_tokens,
+            total_cost_usd,
+        })
+        .collect();
+    sort_rollups(&mut rows);
+    rows
+}
+
+/// Scan all local Claude + Codex history into per-agent, per-model, and per-repo rollups.
+///
+/// `window_days` limits the scan to the last N days (`None` = all-time). `resolve_repo` maps
+/// each recorded working directory to the label it's grouped under: pass [`canonical_repo`]
+/// to collapse git worktrees and subdirectories onto their origin repository (the default),
+/// or the identity function to keep every directory distinct (`--by-worktree`). Resolution is
+/// memoized so each distinct directory is resolved at most once.
 pub fn scan_usage(
     claude_dir: &Path,
     codex_dir: &Path,
     rates: &RateOverrides,
     node_name: &str,
     now: DateTime<Utc>,
+    window_days: Option<u32>,
     resolve_repo: impl Fn(&str) -> String,
 ) -> UsageScanResponse {
-    // Epoch = no time filter; the scan is all-time.
-    let epoch = DateTime::<Utc>::from_timestamp(0, 0).unwrap_or_else(Utc::now);
+    // Window start: N days back, or the epoch for an all-time scan.
+    let since = window_days.map_or_else(
+        || DateTime::<Utc>::from_timestamp(0, 0).unwrap_or(now),
+        |d| now - TimeDelta::days(i64::from(d)),
+    );
 
     // Memoized directory -> group label, so a repo's worktrees only pay one git call each.
     let mut repo_cache: HashMap<String, String> = HashMap::new();
@@ -48,8 +85,8 @@ pub fn scan_usage(
         label
     };
 
-    // repo path -> (tokens, cost). Merged across agents.
     let mut by_repo: HashMap<String, (u64, Option<f64>)> = HashMap::new();
+    let mut by_model: HashMap<String, (u64, Option<f64>)> = HashMap::new();
     let mut claude_tokens = 0u64;
     let mut claude_cost: Option<f64> = None;
 
@@ -60,12 +97,13 @@ pub fn scan_usage(
             if !dir.is_dir() {
                 continue;
             }
-            let Some(d) = claude::read_usage_dir(&dir, epoch, rates) else {
+            let Some(d) = claude::read_usage_dir(&dir, since, rates) else {
                 continue;
             };
             let tokens = exact_total_tokens(&d.usage);
+            let cost = d.usage.cost_usd;
             claude_tokens += tokens;
-            if let Some(c) = d.usage.cost_usd {
+            if let Some(c) = cost {
                 claude_cost = Some(claude_cost.unwrap_or(0.0) + c);
             }
             let raw = d.cwd.unwrap_or_else(|| {
@@ -75,31 +113,22 @@ pub fn scan_usage(
                     .to_owned()
             });
             let repo = resolve(raw);
-            let e = by_repo.entry(repo).or_insert((0, None));
-            e.0 += tokens;
-            if let Some(c) = d.usage.cost_usd {
-                e.1 = Some(e.1.unwrap_or(0.0) + c);
+            accumulate(&mut by_repo, repo, tokens, cost);
+            for m in d.by_model {
+                accumulate(&mut by_model, m.model, m.tokens, m.cost_usd);
             }
         }
     }
 
-    // Codex: per-repo token totals (no per-token cost).
-    let codex_by_repo = codex::scan_by_cwd(codex_dir);
-    let codex_tokens: u64 = codex_by_repo.values().copied().sum();
-    for (raw, tokens) in codex_by_repo {
-        let repo = resolve(raw);
-        by_repo.entry(repo).or_insert((0, None)).0 += tokens;
+    // Codex: one entry per rollout file; tokens only (no per-token cost), model from turn_context.
+    let mut codex_tokens = 0u64;
+    for entry in codex::scan_rollouts(codex_dir, since) {
+        codex_tokens += entry.tokens;
+        let repo = resolve(entry.cwd);
+        accumulate(&mut by_repo, repo, entry.tokens, None);
+        let model = entry.model.unwrap_or_else(|| "codex".to_owned());
+        accumulate(&mut by_model, model, entry.tokens, None);
     }
-
-    let mut by_repo: Vec<ScanRollup> = by_repo
-        .into_iter()
-        .map(|(label, (total_tokens, total_cost_usd))| ScanRollup {
-            label,
-            total_tokens,
-            total_cost_usd,
-        })
-        .collect();
-    sort_rollups(&mut by_repo);
 
     let mut by_agent = Vec::new();
     if claude_tokens > 0 {
@@ -121,10 +150,12 @@ pub fn scan_usage(
     UsageScanResponse {
         node_name: node_name.to_owned(),
         generated_at: now.to_rfc3339(),
+        window_days,
         total_tokens: claude_tokens + codex_tokens,
         total_cost_usd: claude_cost,
         by_agent,
-        by_repo,
+        by_model: into_rollups(by_model),
+        by_repo: into_rollups(by_repo),
     }
 }
 
@@ -226,6 +257,7 @@ mod tests {
             &RateOverrides::default(),
             "n",
             Utc::now(),
+            None,
             |s: &str| s.to_owned(),
         );
         assert_eq!(r.total_tokens, 0);
@@ -263,6 +295,7 @@ mod tests {
             &RateOverrides::default(),
             "node-x",
             Utc::now(),
+            None,
             |s: &str| s.to_owned(),
         );
 
@@ -280,6 +313,125 @@ mod tests {
         assert_eq!(r.by_repo[0].total_tokens, 2500);
         let web = r.by_repo.iter().find(|x| x.label == "/repos/web").unwrap();
         assert_eq!(web.total_tokens, 300);
+
+        // by_model: Claude opus priced (1800 tokens), Codex bucketed tokens-only (no model).
+        assert_eq!(r.by_model.len(), 2);
+        let opus = r
+            .by_model
+            .iter()
+            .find(|m| m.label == "claude-opus-4-8")
+            .unwrap();
+        assert_eq!(opus.total_tokens, 1800);
+        assert!(opus.total_cost_usd.unwrap() > 0.0);
+        let codex = r.by_model.iter().find(|m| m.label == "codex").unwrap();
+        assert_eq!(codex.total_tokens, 1000);
+        assert!(codex.total_cost_usd.is_none());
+        // Priced model sorts before the unpriced one.
+        assert_eq!(r.by_model[0].label, "claude-opus-4-8");
+    }
+
+    #[test]
+    fn test_scan_window_days_filters_old_records_and_sets_field() {
+        let claude = tempfile::tempdir().unwrap();
+        let codex = tempfile::tempdir().unwrap();
+        // One recent Claude record and one 10 days old, both in the same project dir.
+        let recent = Utc::now().to_rfc3339();
+        let old = (Utc::now() - TimeDelta::days(10)).to_rfc3339();
+        let line = |ts: &str, id: &str| {
+            format!(
+                r#"{{"timestamp":"{ts}","cwd":"/repos/api","requestId":"{id}","type":"assistant","message":{{"id":"{id}","model":"claude-opus-4-8","usage":{{"input_tokens":100,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}}}}"#
+            )
+        };
+        write_claude_project(
+            claude.path(),
+            "proj-api",
+            &format!("{}\n{}\n", line(&recent, "a"), line(&old, "b")),
+        );
+
+        // 3-day window: only the recent record counts.
+        let r = scan_usage(
+            claude.path(),
+            codex.path(),
+            &RateOverrides::default(),
+            "n",
+            Utc::now(),
+            Some(3),
+            |s: &str| s.to_owned(),
+        );
+        assert_eq!(r.window_days, Some(3));
+        assert_eq!(r.total_tokens, 100);
+
+        // All-time: both records count.
+        let all = scan_usage(
+            claude.path(),
+            codex.path(),
+            &RateOverrides::default(),
+            "n",
+            Utc::now(),
+            None,
+            |s: &str| s.to_owned(),
+        );
+        assert_eq!(all.window_days, None);
+        assert_eq!(all.total_tokens, 200);
+    }
+
+    #[test]
+    fn test_scan_skips_non_dir_and_empty_project_entries() {
+        let claude = tempfile::tempdir().unwrap();
+        let codex = tempfile::tempdir().unwrap();
+        let projects = claude.path().join("projects");
+        fs::create_dir_all(&projects).unwrap();
+        // A stray file under projects/ (not a directory) is skipped.
+        fs::write(projects.join("stray.txt"), "x").unwrap();
+        // An empty project dir yields no records → read_usage_dir returns None → skipped.
+        fs::create_dir_all(projects.join("empty-proj")).unwrap();
+
+        let r = scan_usage(
+            claude.path(),
+            codex.path(),
+            &RateOverrides::default(),
+            "n",
+            Utc::now(),
+            None,
+            |s: &str| s.to_owned(),
+        );
+        assert_eq!(r.total_tokens, 0);
+        assert!(r.by_agent.is_empty());
+        assert!(r.by_model.is_empty());
+    }
+
+    #[test]
+    fn test_scan_drops_zero_token_model_rows() {
+        let claude = tempfile::tempdir().unwrap();
+        let codex = tempfile::tempdir().unwrap();
+        let ts = Utc::now().to_rfc3339();
+        // One real record and one synthetic 0-token record (distinct ids → not deduped).
+        let line = |model: &str, id: &str, input: u64| {
+            format!(
+                r#"{{"timestamp":"{ts}","cwd":"/repos/api","requestId":"{id}","type":"assistant","message":{{"id":"{id}","model":"{model}","usage":{{"input_tokens":{input},"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}}}}"#
+            )
+        };
+        write_claude_project(
+            claude.path(),
+            "proj-api",
+            &format!(
+                "{}\n{}\n",
+                line("claude-opus-4-8", "a", 100),
+                line("<synthetic>", "b", 0)
+            ),
+        );
+        let r = scan_usage(
+            claude.path(),
+            codex.path(),
+            &RateOverrides::default(),
+            "n",
+            Utc::now(),
+            None,
+            |s: &str| s.to_owned(),
+        );
+        // The 0-token synthetic model is dropped; only the real model remains.
+        assert_eq!(r.by_model.len(), 1);
+        assert_eq!(r.by_model[0].label, "claude-opus-4-8");
     }
 
     #[test]
@@ -298,6 +450,7 @@ mod tests {
             &RateOverrides::default(),
             "n",
             Utc::now(),
+            None,
             |s: &str| s.to_owned(),
         );
         assert_eq!(r.by_repo.len(), 1);
@@ -340,6 +493,7 @@ mod tests {
             &RateOverrides::default(),
             "n",
             Utc::now(),
+            None,
             resolve,
         );
 

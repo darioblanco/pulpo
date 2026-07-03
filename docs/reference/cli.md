@@ -14,10 +14,12 @@ pulpo resume <NAME>                       Resume a lost or ready session (auto-a
 pulpo interventions <NAME>                Show watchdog interventions
 pulpo usage                               Show token/cost burn rate, time-to-cap, and quota
 pulpo usage --scan                        Scan ALL local agent history (Claude + Codex):
-                                          total spend by agent and repo, no daemon-managed
+                                          total spend by agent, model, and repo, no daemon-managed
                                           sessions required
 pulpo usage --scan --by-worktree          Like --scan, but keep each git worktree/subdir as
                                           its own row instead of rolling them up to the origin repo
+pulpo usage --scan --since <DAYS>         Like --scan, but limited to the last N days
+pulpo usage [--scan] --json               Output raw JSON instead of the formatted report
 pulpo nodes                               List known nodes/peers
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
 pulpo ink <SUBCOMMAND>                    Manage ink presets (reusable command templates)

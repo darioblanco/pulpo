@@ -577,10 +577,16 @@ pub struct ScanRollup {
 pub struct UsageScanResponse {
     pub node_name: String,
     pub generated_at: String,
+    /// The scan window in days, or `None` for all-time.
+    #[serde(default)]
+    pub window_days: Option<u32>,
     pub total_tokens: u64,
     pub total_cost_usd: Option<f64>,
     /// Per-agent totals (`claude`, `codex`).
     pub by_agent: Vec<ScanRollup>,
+    /// Per-model totals across agents (Claude priced, Codex tokens-only), most expensive first.
+    #[serde(default)]
+    pub by_model: Vec<ScanRollup>,
     /// Per-repo totals, merged across agents, most expensive first.
     pub by_repo: Vec<ScanRollup>,
 }

@@ -63,6 +63,9 @@ pub struct ScanParams {
     /// their origin repository (the default).
     #[serde(default)]
     pub by_worktree: bool,
+    /// Limit the scan to the last N days (`None` = all-time).
+    #[serde(default)]
+    pub since_days: Option<u32>,
 }
 
 /// `GET /api/v1/usage/scan` — read-only sweep of all local Claude/Codex history.
@@ -76,16 +79,16 @@ pub async fn scan(
     Query(params): Query<ScanParams>,
 ) -> Result<Json<UsageScanResponse>, ApiError> {
     let node_name = state.config.read().await.node.name.clone();
-    let resp =
-        crate::usage::scan_local_usage(&node_name, params.by_worktree).unwrap_or_else(|| {
-            UsageScanResponse {
-                node_name,
-                generated_at: chrono::Utc::now().to_rfc3339(),
-                total_tokens: 0,
-                total_cost_usd: None,
-                by_agent: Vec::new(),
-                by_repo: Vec::new(),
-            }
+    let resp = crate::usage::scan_local_usage(&node_name, params.by_worktree, params.since_days)
+        .unwrap_or_else(|| UsageScanResponse {
+            node_name,
+            generated_at: chrono::Utc::now().to_rfc3339(),
+            window_days: params.since_days,
+            total_tokens: 0,
+            total_cost_usd: None,
+            by_agent: Vec::new(),
+            by_model: Vec::new(),
+            by_repo: Vec::new(),
         });
     Ok(Json(resp))
 }
@@ -235,7 +238,10 @@ mod tests {
         let state = test_state().await;
         let resp = super::scan(
             State(state),
-            axum::extract::Query(super::ScanParams { by_worktree: true }),
+            axum::extract::Query(super::ScanParams {
+                by_worktree: true,
+                since_days: Some(7),
+            }),
         )
         .await
         .unwrap();
