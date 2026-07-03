@@ -7,58 +7,88 @@
 //! exact dollar cost pi computed from its model catalog — no rate table needed on our
 //! side. pi is BYOK (API-key) only, so recorded cost is real API spend.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
 
-/// How many leading lines to scan for the `session` header record.
-const HEADER_SCAN_LINES: usize = 10;
+use super::{ScanEntry, collect_jsonl_files, token_field};
 
-/// One assistant message's contribution to the usage scan.
-pub(crate) struct ScanEntry {
-    pub cwd: String,
-    pub model: String,
-    pub tokens: u64,
-    /// Exact cost as recorded by pi. `None` when the record predates cost logging.
-    pub cost_usd: Option<f64>,
-}
-
-/// Per-message pi token totals and costs across all session files with an assistant
-/// message at or after `since`. Messages are filtered individually (a long-lived
-/// session contributes only the messages inside the window).
+/// Per-model pi token totals and costs across all session files, from assistant
+/// messages at or after `since`. Messages are filtered individually (a long-lived
+/// session contributes only the messages inside the window), then folded per file
+/// and model, so one entry covers one model's spend in one session.
+///
+/// Branching and forking copy prior assistant messages — original entry id,
+/// timestamp, usage, and cost included — into a *new* session file, so the shared
+/// history is deduplicated across files by `(entry id, timestamp)`: each message's
+/// spend counts exactly once no matter how many branches carry it.
 pub(crate) fn scan_sessions(pi_dir: &Path, since: DateTime<Utc>) -> Vec<ScanEntry> {
     let mut out = Vec::new();
-    for path in collect_session_files(pi_dir) {
-        read_session_file(&path, since, &mut out);
+    let mut seen: HashSet<(String, i64)> = HashSet::new();
+    for path in collect_jsonl_files(pi_dir.join("agent").join("sessions"), |_| true) {
+        read_session_file(&path, since, &mut seen, &mut out);
     }
     out
 }
 
-/// Parse one session file, appending an entry per in-window assistant message.
-fn read_session_file(path: &Path, since: DateTime<Utc>, out: &mut Vec<ScanEntry>) {
+/// Parse one session file, appending an entry per model with in-window usage.
+/// `seen` carries the `(entry id, timestamp)` pairs already counted in other files.
+fn read_session_file(
+    path: &Path,
+    since: DateTime<Utc>,
+    seen: &mut HashSet<(String, i64)>,
+    out: &mut Vec<ScanEntry>,
+) {
     let Ok(content) = std::fs::read_to_string(path) else {
         return;
     };
     let mut lines = content.lines();
 
-    // The header is written first (pi buffers until the first assistant message, then
-    // flushes header-first), but tolerate leading garbage like the Codex reader does.
+    // pi buffers entries until the first assistant message arrives, then flushes
+    // header-first — so the `session` header is always the first line.
     let Some(cwd) = lines
-        .by_ref()
-        .take(HEADER_SCAN_LINES)
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find_map(|value| parse_header_cwd(&value))
+        .next()
+        .and_then(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .and_then(|value| parse_header_cwd(&value))
     else {
         return;
     };
 
+    // Fold in-window assistant messages per model (mid-session switching means a file
+    // can hold several, but rarely more than two — a linear scan beats a map here).
+    let mut models: Vec<(String, u64, Option<f64>)> = Vec::new();
     for line in lines {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        if let Some(entry) = parse_assistant_entry(&value, &cwd, since) {
-            out.push(entry);
+        let Some((model, tokens, cost, ts_millis)) = parse_assistant_message(&value, since) else {
+            continue;
+        };
+        // Skip messages another file already counted (branch/fork copies keep the
+        // original entry id and timestamp). Entries without an id are counted as-is.
+        if let Some(id) = value.get("id").and_then(serde_json::Value::as_str)
+            && !seen.insert((id.to_owned(), ts_millis))
+        {
+            continue;
         }
+        match models.iter_mut().find(|(m, ..)| m == model) {
+            Some(agg) => {
+                agg.1 += tokens;
+                if let Some(c) = cost {
+                    agg.2 = Some(agg.2.unwrap_or(0.0) + c);
+                }
+            }
+            None => models.push((model.to_owned(), tokens, cost)),
+        }
+    }
+    for (model, tokens, cost_usd) in models {
+        out.push(ScanEntry {
+            cwd: cwd.clone(),
+            model: Some(model),
+            tokens,
+            cost_usd,
+        });
     }
 }
 
@@ -73,14 +103,14 @@ fn parse_header_cwd(value: &serde_json::Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Parse a `message` entry wrapping an assistant message into a scan entry.
-/// Returns `None` for non-message entries, non-assistant roles, and messages
-/// before `since` (assistant timestamps are epoch milliseconds).
-fn parse_assistant_entry(
+/// Parse a `message` entry wrapping an assistant message into
+/// `(model, tokens, cost, timestamp-millis)`. Returns `None` for non-message entries,
+/// non-assistant roles, and messages before `since` (assistant timestamps are epoch
+/// milliseconds). Cost is `None` when the record predates pi's cost logging.
+fn parse_assistant_message(
     value: &serde_json::Value,
-    cwd: &str,
     since: DateTime<Utc>,
-) -> Option<ScanEntry> {
+) -> Option<(&str, u64, Option<f64>, i64)> {
     if value.get("type").and_then(serde_json::Value::as_str) != Some("message") {
         return None;
     }
@@ -97,41 +127,15 @@ fn parse_assistant_entry(
     }
     let model = message.get("model").and_then(serde_json::Value::as_str)?;
     let usage = message.get("usage")?;
-    let tok = |key: &str| {
-        usage
-            .get(key)
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0)
-    };
-    Some(ScanEntry {
-        cwd: cwd.to_owned(),
-        model: model.to_owned(),
-        tokens: tok("input") + tok("output") + tok("cacheRead") + tok("cacheWrite"),
-        cost_usd: usage
-            .get("cost")
-            .and_then(|c| c.get("total"))
-            .and_then(serde_json::Value::as_f64),
-    })
-}
-
-/// Recursively collect `*.jsonl` session files under `<pi_dir>/agent/sessions`.
-fn collect_session_files(pi_dir: &Path) -> Vec<std::path::PathBuf> {
-    let mut out = Vec::new();
-    let mut stack = vec![pi_dir.join("agent").join("sessions")];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-                out.push(path);
-            }
-        }
-    }
-    out
+    let tokens = token_field(usage, "input")
+        + token_field(usage, "output")
+        + token_field(usage, "cacheRead")
+        + token_field(usage, "cacheWrite");
+    let cost = usage
+        .get("cost")
+        .and_then(|c| c.get("total"))
+        .and_then(serde_json::Value::as_f64);
+    Some((model, tokens, cost, ts_millis))
 }
 
 #[cfg(test)]
@@ -151,6 +155,7 @@ mod tests {
     }
 
     fn assistant_line(
+        id: &str,
         model: &str,
         ts: DateTime<Utc>,
         input: u64,
@@ -160,7 +165,7 @@ mod tests {
         cost_total: f64,
     ) -> String {
         format!(
-            r#"{{"type":"message","id":"bbbb2222","parentId":"aaaa1111","message":{{"role":"assistant","content":[{{"type":"text","text":"ok"}}],"api":"anthropic-messages","provider":"anthropic","model":"{model}","usage":{{"input":{input},"output":{output},"cacheRead":{cache_read},"cacheWrite":{cache_write},"totalTokens":{},"cost":{{"input":0.0,"output":0.0,"cacheRead":0.0,"cacheWrite":0.0,"total":{cost_total}}}}},"stopReason":"stop","timestamp":{}}}}}"#,
+            r#"{{"type":"message","id":"{id}","parentId":"aaaa1111","message":{{"role":"assistant","content":[{{"type":"text","text":"ok"}}],"api":"anthropic-messages","provider":"anthropic","model":"{model}","usage":{{"input":{input},"output":{output},"cacheRead":{cache_read},"cacheWrite":{cache_write},"totalTokens":{},"cost":{{"input":0.0,"output":0.0,"cacheRead":0.0,"cacheWrite":0.0,"total":{cost_total}}}}},"stopReason":"stop","timestamp":{}}}}}"#,
             input + output + cache_read + cache_write,
             ts.timestamp_millis(),
         )
@@ -186,21 +191,21 @@ mod tests {
             "{}\n{}\n{}\n",
             header_line("/repos/api"),
             user_line(),
-            assistant_line("claude-sonnet-4-5", now, 1000, 200, 5000, 300, 0.0325),
+            assistant_line("b1", "claude-sonnet-4-5", now, 1000, 200, 5000, 300, 0.0325),
         );
         write_session(tmp.path(), "--repos-api--", "0197-abc.jsonl", &content);
 
         let entries = scan_sessions(tmp.path(), now - TimeDelta::hours(1));
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].cwd, "/repos/api");
-        assert_eq!(entries[0].model, "claude-sonnet-4-5");
+        assert_eq!(entries[0].model.as_deref(), Some("claude-sonnet-4-5"));
         // input + output + cacheRead + cacheWrite.
         assert_eq!(entries[0].tokens, 6500);
         assert!((entries[0].cost_usd.unwrap() - 0.0325).abs() < 1e-12);
     }
 
     #[test]
-    fn test_scan_sessions_filters_messages_by_since() {
+    fn test_scan_sessions_filters_messages_by_since_and_folds_per_model() {
         let tmp = tempfile::tempdir().unwrap();
         let now = Utc::now();
         let old = now - TimeDelta::days(10);
@@ -209,38 +214,71 @@ mod tests {
         let content = format!(
             "{}\n{}\n{}\n",
             header_line("/repos/api"),
-            assistant_line("claude-sonnet-4-5", old, 100, 10, 0, 0, 0.001),
-            assistant_line("claude-sonnet-4-5", now, 200, 20, 0, 0, 0.002),
+            assistant_line("b1", "claude-sonnet-4-5", old, 100, 10, 0, 0, 0.001),
+            assistant_line("b2", "claude-sonnet-4-5", now, 200, 20, 0, 0, 0.002),
         );
         write_session(tmp.path(), "--repos-api--", "s.jsonl", &content);
 
         let entries = scan_sessions(tmp.path(), now - TimeDelta::days(3));
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].tokens, 220);
+        assert!((entries[0].cost_usd.unwrap() - 0.002).abs() < 1e-12);
 
-        // All-time (epoch) picks up both.
+        // All-time (epoch): both messages fold into one per-model entry.
         let all = scan_sessions(tmp.path(), DateTime::<Utc>::from_timestamp(0, 0).unwrap());
-        assert_eq!(all.len(), 2);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].tokens, 330);
+        assert!((all[0].cost_usd.unwrap() - 0.003).abs() < 1e-12);
     }
 
     #[test]
     fn test_scan_sessions_multiple_models_per_file() {
-        // Mid-session model switching: each assistant message keeps its own model.
+        // Mid-session model switching: each model gets its own entry.
         let tmp = tempfile::tempdir().unwrap();
         let now = Utc::now();
         let content = format!(
             "{}\n{}\n{}\n",
             header_line("/repos/api"),
-            assistant_line("claude-sonnet-4-5", now, 100, 10, 0, 0, 0.001),
-            assistant_line("gemini-3-pro", now, 200, 20, 0, 0, 0.002),
+            assistant_line("b1", "claude-sonnet-4-5", now, 100, 10, 0, 0, 0.001),
+            assistant_line("b2", "gemini-3-pro", now, 200, 20, 0, 0, 0.002),
         );
         write_session(tmp.path(), "--repos-api--", "s.jsonl", &content);
 
         let entries = scan_sessions(tmp.path(), now - TimeDelta::hours(1));
         assert_eq!(entries.len(), 2);
-        let models: Vec<&str> = entries.iter().map(|e| e.model.as_str()).collect();
-        assert!(models.contains(&"claude-sonnet-4-5"));
-        assert!(models.contains(&"gemini-3-pro"));
+        let models: Vec<Option<&str>> = entries.iter().map(|e| e.model.as_deref()).collect();
+        assert!(models.contains(&Some("claude-sonnet-4-5")));
+        assert!(models.contains(&Some("gemini-3-pro")));
+    }
+
+    #[test]
+    fn test_scan_sessions_dedupes_branched_history_across_files() {
+        // Branch/fork: pi copies the path-to-branch-point into a NEW session file,
+        // original entry ids and timestamps included. The shared prefix must count once.
+        let tmp = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        let shared = assistant_line("b1", "claude-sonnet-4-5", now, 1000, 100, 0, 0, 0.60);
+        let original = format!(
+            "{}\n{shared}\n{}\n",
+            header_line("/repos/api"),
+            assistant_line("b2", "claude-sonnet-4-5", now, 500, 50, 0, 0, 0.40),
+        );
+        // The branched file carries the same shared prefix plus its own new message.
+        let branched = format!(
+            "{}\n{shared}\n{}\n",
+            header_line("/repos/api"),
+            assistant_line("b3", "claude-sonnet-4-5", now, 200, 20, 0, 0, 0.10),
+        );
+        write_session(tmp.path(), "--repos-api--", "orig.jsonl", &original);
+        write_session(tmp.path(), "--repos-api--", "branch.jsonl", &branched);
+
+        let entries = scan_sessions(tmp.path(), now - TimeDelta::hours(1));
+        let tokens: u64 = entries.iter().map(|e| e.tokens).sum();
+        let cost: f64 = entries.iter().filter_map(|e| e.cost_usd).sum();
+        // 1100 (shared, once) + 550 + 220 — not 2970.
+        assert_eq!(tokens, 1870);
+        // 0.60 (shared, once) + 0.40 + 0.10 — not 1.70.
+        assert!((cost - 1.10).abs() < 1e-9);
     }
 
     #[test]
@@ -262,12 +300,14 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_sessions_skips_files_without_header() {
+    fn test_scan_sessions_skips_files_without_leading_header() {
         let tmp = tempfile::tempdir().unwrap();
         let now = Utc::now();
+        // Assistant message first, header missing: pi always flushes the header as
+        // line one, so anything else means the file isn't a pi session.
         let content = format!(
             "{}\n",
-            assistant_line("claude-sonnet-4-5", now, 100, 10, 0, 0, 0.001)
+            assistant_line("b1", "claude-sonnet-4-5", now, 100, 10, 0, 0, 0.001)
         );
         write_session(tmp.path(), "--repos-api--", "s.jsonl", &content);
 
@@ -282,7 +322,7 @@ mod tests {
             "{}\nnot json\n{}\n{}\n",
             header_line("/repos/api"),
             r#"{"type":"message","id":"x","message":{"role":"toolResult","timestamp":1}}"#,
-            assistant_line("claude-sonnet-4-5", now, 100, 10, 0, 0, 0.001),
+            assistant_line("b1", "claude-sonnet-4-5", now, 100, 10, 0, 0, 0.001),
         );
         write_session(tmp.path(), "--repos-api--", "s.jsonl", &content);
         // A stray non-jsonl file in the same dir is ignored.
@@ -294,30 +334,30 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_assistant_entry_rejects_bad_records() {
+    fn test_parse_assistant_message_rejects_bad_records() {
         let since = Utc::now() - TimeDelta::hours(1);
         let ms = Utc::now().timestamp_millis();
-        // Not a message entry.
-        let v: serde_json::Value = serde_json::json!({"type": "compaction"});
-        assert!(parse_assistant_entry(&v, "/r", since).is_none());
+        // Not a message entry (pi also writes model_change / compaction / etc.).
+        let v: serde_json::Value = serde_json::json!({"type": "model_change"});
+        assert!(parse_assistant_message(&v, since).is_none());
         // Message without a model.
         let v = serde_json::json!({
             "type": "message",
             "message": {"role": "assistant", "usage": {"input": 1}, "timestamp": ms}
         });
-        assert!(parse_assistant_entry(&v, "/r", since).is_none());
+        assert!(parse_assistant_message(&v, since).is_none());
         // Message without usage.
         let v = serde_json::json!({
             "type": "message",
             "message": {"role": "assistant", "model": "m", "timestamp": ms}
         });
-        assert!(parse_assistant_entry(&v, "/r", since).is_none());
+        assert!(parse_assistant_message(&v, since).is_none());
         // Message without a timestamp.
         let v = serde_json::json!({
             "type": "message",
             "message": {"role": "assistant", "model": "m", "usage": {"input": 1}}
         });
-        assert!(parse_assistant_entry(&v, "/r", since).is_none());
+        assert!(parse_assistant_message(&v, since).is_none());
     }
 
     #[test]
