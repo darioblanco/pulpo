@@ -9,7 +9,7 @@ use std::path::Path;
 
 use chrono::{DateTime, Datelike, TimeDelta, Utc};
 
-use super::{ExactUsage, QuotaSnapshot, QuotaWindow, SOURCE_CODEX};
+use super::{ExactUsage, QuotaSnapshot, QuotaWindow, SOURCE_CODEX, ScanEntry, collect_jsonl_files};
 
 /// Upper bound on the number of day-directories walked, so a stale session row
 /// can't turn every watchdog tick into a multi-year directory scan.
@@ -167,57 +167,29 @@ fn parse_rollout(path: &Path) -> Option<Rollout> {
     })
 }
 
-/// One rollout's contribution to the usage scan: its repo, model, and token total.
-pub(crate) struct ScanEntry {
-    pub cwd: String,
-    pub model: Option<String>,
-    pub tokens: u64,
-}
-
 /// Per-rollout Codex token totals across *all* rollout files started at or after `since`.
 ///
 /// Token total matches the `ExactUsage` convention: `(input − cached) + output + cached`.
-/// Returns one entry per rollout file (each is one agent process); the usage scan groups
-/// them by repo and by model.
+/// Returns one entry per rollout file (each is one agent process) with no cost — Codex
+/// sessions run on subscription plans with no reliable per-token rate table; the usage
+/// scan groups entries by repo and by model.
 pub(crate) fn scan_rollouts(codex_dir: &Path, since: DateTime<Utc>) -> Vec<ScanEntry> {
-    collect_rollout_files(codex_dir)
-        .into_iter()
-        .filter_map(|path| parse_rollout(&path))
-        .filter(|r| r.started_at >= since)
-        .map(|r| {
-            let t = r.totals;
-            ScanEntry {
-                cwd: normalize_dir(&r.cwd).to_owned(),
-                model: r.model,
-                tokens: t.input.saturating_sub(t.cached) + t.output + t.cached,
-            }
-        })
-        .collect()
-}
-
-/// Recursively collect `rollout-*.jsonl` files under `<codex_dir>/sessions`.
-fn collect_rollout_files(codex_dir: &Path) -> Vec<std::path::PathBuf> {
-    let mut out = Vec::new();
-    let mut stack = vec![codex_dir.join("sessions")];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
-                && path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with("rollout-"))
-            {
-                out.push(path);
-            }
+    collect_jsonl_files(codex_dir.join("sessions"), |name| {
+        name.starts_with("rollout-")
+    })
+    .into_iter()
+    .filter_map(|path| parse_rollout(&path))
+    .filter(|r| r.started_at >= since)
+    .map(|r| {
+        let t = r.totals;
+        ScanEntry {
+            cwd: normalize_dir(&r.cwd).to_owned(),
+            model: r.model,
+            tokens: t.input.saturating_sub(t.cached) + t.output + t.cached,
+            cost_usd: None,
         }
-    }
-    out
+    })
+    .collect()
 }
 
 /// Read exact usage for a Codex session running in `workdir`, started at `since`.

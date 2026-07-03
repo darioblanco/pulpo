@@ -13,7 +13,7 @@ use std::path::Path;
 use chrono::{DateTime, TimeDelta, Utc};
 use pulpo_common::api::{ScanRollup, UsageScanResponse};
 
-use super::{ExactUsage, RateOverrides, claude, codex, pi};
+use super::{ExactUsage, RateOverrides, ScanEntry, claude, codex, pi};
 
 /// Total tokens across every dimension we track (matches the projection convention).
 const fn exact_total_tokens(u: &ExactUsage) -> u64 {
@@ -62,9 +62,7 @@ fn into_rollups(map: HashMap<String, (u64, Option<f64>)>) -> Vec<ScanRollup> {
 /// or the identity function to keep every directory distinct (`--by-worktree`). Resolution is
 /// memoized so each distinct directory is resolved at most once.
 pub fn scan_usage(
-    claude_dir: &Path,
-    codex_dir: &Path,
-    pi_dir: &Path,
+    dirs: &ScanDirs<'_>,
     rates: &RateOverrides,
     node_name: &str,
     now: DateTime<Utc>,
@@ -89,62 +87,66 @@ pub fn scan_usage(
     };
 
     let mut acc = ScanAccumulator::default();
-    let (claude_tokens, claude_cost) =
-        fold_claude(claude_dir, since, rates, &mut resolve, &mut acc);
-    let codex_tokens = fold_codex(codex_dir, since, &mut resolve, &mut acc);
-    let (pi_tokens, pi_cost) = fold_pi(pi_dir, since, &mut resolve, &mut acc);
+    fold_claude(dirs.claude, since, rates, &mut resolve, &mut acc);
+    fold_entries(
+        "codex",
+        codex::scan_rollouts(dirs.codex, since),
+        &mut resolve,
+        &mut acc,
+    );
+    fold_entries(
+        "pi",
+        pi::scan_sessions(dirs.pi, since),
+        &mut resolve,
+        &mut acc,
+    );
 
-    let mut by_agent: Vec<ScanRollup> = [
-        ("claude", claude_tokens, claude_cost),
-        ("codex", codex_tokens, None),
-        ("pi", pi_tokens, pi_cost),
-    ]
-    .into_iter()
-    .filter(|(_, tokens, _)| *tokens > 0)
-    .map(|(label, total_tokens, total_cost_usd)| ScanRollup {
-        label: label.into(),
-        total_tokens,
-        total_cost_usd,
-    })
-    .collect();
-    sort_rollups(&mut by_agent);
-
-    // Costs sum only where present (Codex contributes tokens but never cost).
-    let total_cost_usd = match (claude_cost, pi_cost) {
-        (None, None) => None,
-        (a, b) => Some(a.unwrap_or(0.0) + b.unwrap_or(0.0)),
-    };
+    // Grand totals derive from the per-agent rows, so a new reader can't be forgotten
+    // here; costs sum only where present (Codex contributes tokens but never cost).
+    let total_tokens = acc.agents.values().map(|(tokens, _)| *tokens).sum();
+    let total_cost_usd = acc
+        .agents
+        .values()
+        .filter_map(|(_, cost)| *cost)
+        .reduce(|a, b| a + b);
 
     UsageScanResponse {
         node_name: node_name.to_owned(),
         generated_at: now.to_rfc3339(),
         window_days,
-        total_tokens: claude_tokens + codex_tokens + pi_tokens,
+        total_tokens,
         total_cost_usd,
-        by_agent,
-        by_model: into_rollups(acc.by_model),
-        by_repo: into_rollups(acc.by_repo),
+        by_agent: into_rollups(acc.agents),
+        by_model: into_rollups(acc.models),
+        by_repo: into_rollups(acc.repos),
     }
 }
 
-/// Shared by-repo / by-model accumulators the per-agent folds write into.
+/// The per-agent history directories the scan reads (typically `~/.claude`, `~/.codex`,
+/// `~/.pi`). Named fields, because three same-typed paths are too easy to transpose.
+#[derive(Clone, Copy)]
+pub struct ScanDirs<'a> {
+    pub claude: &'a Path,
+    pub codex: &'a Path,
+    pub pi: &'a Path,
+}
+
+/// Shared by-agent / by-repo / by-model accumulators the per-agent folds write into.
 #[derive(Default)]
 struct ScanAccumulator {
-    by_repo: HashMap<String, (u64, Option<f64>)>,
-    by_model: HashMap<String, (u64, Option<f64>)>,
+    agents: HashMap<String, (u64, Option<f64>)>,
+    repos: HashMap<String, (u64, Option<f64>)>,
+    models: HashMap<String, (u64, Option<f64>)>,
 }
 
 /// Claude: one project directory per repo; label by the recorded cwd when present.
-/// Returns the agent's `(tokens, cost)` totals.
 fn fold_claude(
     claude_dir: &Path,
     since: DateTime<Utc>,
     rates: &RateOverrides,
     resolve: &mut impl FnMut(String) -> String,
     acc: &mut ScanAccumulator,
-) -> (u64, Option<f64>) {
-    let mut total = 0u64;
-    let mut cost_total: Option<f64> = None;
+) {
     if let Ok(entries) = std::fs::read_dir(claude_dir.join("projects")) {
         for entry in entries.flatten() {
             let dir = entry.path();
@@ -156,10 +158,7 @@ fn fold_claude(
             };
             let tokens = exact_total_tokens(&d.usage);
             let cost = d.usage.cost_usd;
-            total += tokens;
-            if let Some(c) = cost {
-                cost_total = Some(cost_total.unwrap_or(0.0) + c);
-            }
+            accumulate(&mut acc.agents, "claude".into(), tokens, cost);
             let raw = d.cwd.unwrap_or_else(|| {
                 dir.file_name()
                     .and_then(|n| n.to_str())
@@ -167,54 +166,34 @@ fn fold_claude(
                     .to_owned()
             });
             let repo = resolve(raw);
-            accumulate(&mut acc.by_repo, repo, tokens, cost);
+            accumulate(&mut acc.repos, repo, tokens, cost);
             for m in d.by_model {
-                accumulate(&mut acc.by_model, m.model, m.tokens, m.cost_usd);
+                accumulate(&mut acc.models, m.model, m.tokens, m.cost_usd);
             }
         }
     }
-    (total, cost_total)
 }
 
-/// Codex: one entry per rollout file; tokens only (no per-token cost), model from
-/// `turn_context`. Returns the agent's token total.
-fn fold_codex(
-    codex_dir: &Path,
-    since: DateTime<Utc>,
+/// Fold one agent's scan entries into the shared accumulators. `agent` labels the
+/// by-agent row and stands in for entries without a model (model-less Codex rollouts).
+fn fold_entries(
+    agent: &str,
+    entries: Vec<ScanEntry>,
     resolve: &mut impl FnMut(String) -> String,
     acc: &mut ScanAccumulator,
-) -> u64 {
-    let mut total = 0u64;
-    for entry in codex::scan_rollouts(codex_dir, since) {
-        total += entry.tokens;
+) {
+    for entry in entries {
+        accumulate(
+            &mut acc.agents,
+            agent.to_owned(),
+            entry.tokens,
+            entry.cost_usd,
+        );
         let repo = resolve(entry.cwd);
-        accumulate(&mut acc.by_repo, repo, entry.tokens, None);
-        let model = entry.model.unwrap_or_else(|| "codex".to_owned());
-        accumulate(&mut acc.by_model, model, entry.tokens, None);
+        accumulate(&mut acc.repos, repo, entry.tokens, entry.cost_usd);
+        let model = entry.model.unwrap_or_else(|| agent.to_owned());
+        accumulate(&mut acc.models, model, entry.tokens, entry.cost_usd);
     }
-    total
-}
-
-/// pi: one entry per assistant message, with the exact cost the agent recorded itself
-/// (BYOK API spend). Returns the agent's `(tokens, cost)` totals.
-fn fold_pi(
-    pi_dir: &Path,
-    since: DateTime<Utc>,
-    resolve: &mut impl FnMut(String) -> String,
-    acc: &mut ScanAccumulator,
-) -> (u64, Option<f64>) {
-    let mut total = 0u64;
-    let mut cost_total: Option<f64> = None;
-    for entry in pi::scan_sessions(pi_dir, since) {
-        total += entry.tokens;
-        if let Some(c) = entry.cost_usd {
-            cost_total = Some(cost_total.unwrap_or(0.0) + c);
-        }
-        let repo = resolve(entry.cwd);
-        accumulate(&mut acc.by_repo, repo, entry.tokens, entry.cost_usd);
-        accumulate(&mut acc.by_model, entry.model, entry.tokens, entry.cost_usd);
-    }
-    (total, cost_total)
 }
 
 /// Sort rollups most-expensive-first (priced before unpriced), then by tokens, then label.
@@ -329,9 +308,11 @@ mod tests {
         let codex = tempfile::tempdir().unwrap();
         let pi_dir = tempfile::tempdir().unwrap();
         let r = scan_usage(
-            claude.path(),
-            codex.path(),
-            pi_dir.path(),
+            &ScanDirs {
+                claude: claude.path(),
+                codex: codex.path(),
+                pi: pi_dir.path(),
+            },
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -369,9 +350,11 @@ mod tests {
         // Identity resolver: each cwd stays its own row, but Claude+Codex /repos/api still
         // merge (same raw key) — this also exercises the resolver memo's cache-hit path.
         let r = scan_usage(
-            claude.path(),
-            codex.path(),
-            pi_dir.path(),
+            &ScanDirs {
+                claude: claude.path(),
+                codex: codex.path(),
+                pi: pi_dir.path(),
+            },
             &RateOverrides::default(),
             "node-x",
             Utc::now(),
@@ -428,9 +411,11 @@ mod tests {
         );
 
         let r = scan_usage(
-            claude.path(),
-            codex.path(),
-            pi_dir.path(),
+            &ScanDirs {
+                claude: claude.path(),
+                codex: codex.path(),
+                pi: pi_dir.path(),
+            },
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -486,9 +471,11 @@ mod tests {
 
         // 3-day window: only the recent record counts.
         let r = scan_usage(
-            claude.path(),
-            codex.path(),
-            pi_dir.path(),
+            &ScanDirs {
+                claude: claude.path(),
+                codex: codex.path(),
+                pi: pi_dir.path(),
+            },
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -500,9 +487,11 @@ mod tests {
 
         // All-time: both records count.
         let all = scan_usage(
-            claude.path(),
-            codex.path(),
-            pi_dir.path(),
+            &ScanDirs {
+                claude: claude.path(),
+                codex: codex.path(),
+                pi: pi_dir.path(),
+            },
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -526,9 +515,11 @@ mod tests {
         fs::create_dir_all(projects.join("empty-proj")).unwrap();
 
         let r = scan_usage(
-            claude.path(),
-            codex.path(),
-            pi_dir.path(),
+            &ScanDirs {
+                claude: claude.path(),
+                codex: codex.path(),
+                pi: pi_dir.path(),
+            },
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -562,9 +553,11 @@ mod tests {
             ),
         );
         let r = scan_usage(
-            claude.path(),
-            codex.path(),
-            pi_dir.path(),
+            &ScanDirs {
+                claude: claude.path(),
+                codex: codex.path(),
+                pi: pi_dir.path(),
+            },
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -588,9 +581,11 @@ mod tests {
             &claude_record(None, "claude-opus-4-8", 10, 5),
         );
         let r = scan_usage(
-            claude.path(),
-            codex.path(),
-            pi_dir.path(),
+            &ScanDirs {
+                claude: claude.path(),
+                codex: codex.path(),
+                pi: pi_dir.path(),
+            },
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -633,9 +628,11 @@ mod tests {
             }
         };
         let r = scan_usage(
-            claude.path(),
-            codex.path(),
-            pi_dir.path(),
+            &ScanDirs {
+                claude: claude.path(),
+                codex: codex.path(),
+                pi: pi_dir.path(),
+            },
             &RateOverrides::default(),
             "n",
             Utc::now(),

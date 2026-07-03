@@ -9,7 +9,7 @@ use std::path::Path;
 
 use chrono::{DateTime, Utc};
 
-use super::{ExactUsage, RateOverrides, SOURCE_CLAUDE, resolve_rates};
+use super::{ExactUsage, RateOverrides, SOURCE_CLAUDE, resolve_rates, token_field};
 
 /// Sanitize a working directory into Claude Code's project-directory name.
 /// Claude Code replaces every non-alphanumeric character with `-`
@@ -42,14 +42,6 @@ struct ModelAgg {
     cost_usd: f64,
     /// Set when a record used a model with no known rate — cost is then withheld.
     unknown: bool,
-}
-
-/// Read a `u64` token count from a usage field, defaulting to 0.
-fn token_field(usage: &serde_json::Value, key: &str) -> u64 {
-    usage
-        .get(key)
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(0)
 }
 
 /// Parse one transcript line and fold its usage into `totals`.

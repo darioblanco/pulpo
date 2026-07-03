@@ -37,6 +37,52 @@ pub const SOURCE_CODEX: &str = "codex-jsonl";
 /// to tolerate small clock differences between pulpod and the agent.
 const SINCE_GRACE_SECS: i64 = 60;
 
+/// One reader entry's contribution to the usage scan: its repo, model, token total,
+/// and — when the agent records one — exact cost. Codex entries carry no cost; pi
+/// entries always carry a model.
+pub(crate) struct ScanEntry {
+    pub cwd: String,
+    pub model: Option<String>,
+    pub tokens: u64,
+    pub cost_usd: Option<f64>,
+}
+
+/// Read a `u64` token field from a usage JSON object, defaulting to 0.
+pub(crate) fn token_field(usage: &serde_json::Value, key: &str) -> u64 {
+    usage
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0)
+}
+
+/// Recursively collect `.jsonl` files under `root` whose file name passes `name_ok`.
+pub(crate) fn collect_jsonl_files(
+    root: std::path::PathBuf,
+    name_ok: impl Fn(&str) -> bool,
+) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(&name_ok)
+            {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
 /// Exact usage totals for one session, read from the agent's own session files.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExactUsage {
@@ -282,24 +328,20 @@ pub fn scan_local_usage(
     let claude_dir = home.join(".claude");
     let codex_dir = home.join(".codex");
     let pi_dir = home.join(".pi");
+    let dirs = scan::ScanDirs {
+        claude: &claude_dir,
+        codex: &codex_dir,
+        pi: &pi_dir,
+    };
     let rates = active_rate_overrides();
     let now = Utc::now();
     let resp = if by_worktree {
-        scan::scan_usage(
-            &claude_dir,
-            &codex_dir,
-            &pi_dir,
-            rates,
-            node_name,
-            now,
-            since_days,
-            |cwd: &str| cwd.to_owned(),
-        )
+        scan::scan_usage(&dirs, rates, node_name, now, since_days, |cwd: &str| {
+            cwd.to_owned()
+        })
     } else {
         scan::scan_usage(
-            &claude_dir,
-            &codex_dir,
-            &pi_dir,
+            &dirs,
             rates,
             node_name,
             now,
