@@ -1,10 +1,11 @@
 //! Read-only usage scan: total agent spend across *all* local history.
 //!
 //! Unlike [`super::projection`] (which covers pulpo-managed sessions), the scan reads every
-//! Claude/Codex session file on the machine and reports spend by agent and by repo — the
+//! Claude/Codex/pi session file on the machine and reports spend by agent and by repo — the
 //! low-friction "what did my agents cost?" view. It needs no behavior change: it meters
 //! sessions you ran however you ran them (raw terminal, another tool, cron), and unifies
-//! Claude + Codex into one report — the cross-agent view a single-vendor `/usage` can't give.
+//! Claude + Codex + pi into one report — the cross-agent view a single-vendor `/usage`
+//! can't give.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,7 +13,7 @@ use std::path::Path;
 use chrono::{DateTime, TimeDelta, Utc};
 use pulpo_common::api::{ScanRollup, UsageScanResponse};
 
-use super::{ExactUsage, RateOverrides, claude, codex};
+use super::{ExactUsage, RateOverrides, claude, codex, pi};
 
 /// Total tokens across every dimension we track (matches the projection convention).
 const fn exact_total_tokens(u: &ExactUsage) -> u64 {
@@ -52,7 +53,8 @@ fn into_rollups(map: HashMap<String, (u64, Option<f64>)>) -> Vec<ScanRollup> {
     rows
 }
 
-/// Scan all local Claude + Codex history into per-agent, per-model, and per-repo rollups.
+/// Scan all local Claude + Codex + pi history into per-agent, per-model, and per-repo
+/// rollups.
 ///
 /// `window_days` limits the scan to the last N days (`None` = all-time). `resolve_repo` maps
 /// each recorded working directory to the label it's grouped under: pass [`canonical_repo`]
@@ -62,6 +64,7 @@ fn into_rollups(map: HashMap<String, (u64, Option<f64>)>) -> Vec<ScanRollup> {
 pub fn scan_usage(
     claude_dir: &Path,
     codex_dir: &Path,
+    pi_dir: &Path,
     rates: &RateOverrides,
     node_name: &str,
     now: DateTime<Utc>,
@@ -85,12 +88,63 @@ pub fn scan_usage(
         label
     };
 
-    let mut by_repo: HashMap<String, (u64, Option<f64>)> = HashMap::new();
-    let mut by_model: HashMap<String, (u64, Option<f64>)> = HashMap::new();
-    let mut claude_tokens = 0u64;
-    let mut claude_cost: Option<f64> = None;
+    let mut acc = ScanAccumulator::default();
+    let (claude_tokens, claude_cost) =
+        fold_claude(claude_dir, since, rates, &mut resolve, &mut acc);
+    let codex_tokens = fold_codex(codex_dir, since, &mut resolve, &mut acc);
+    let (pi_tokens, pi_cost) = fold_pi(pi_dir, since, &mut resolve, &mut acc);
 
-    // Claude: one project directory per repo; label by the recorded cwd when present.
+    let mut by_agent: Vec<ScanRollup> = [
+        ("claude", claude_tokens, claude_cost),
+        ("codex", codex_tokens, None),
+        ("pi", pi_tokens, pi_cost),
+    ]
+    .into_iter()
+    .filter(|(_, tokens, _)| *tokens > 0)
+    .map(|(label, total_tokens, total_cost_usd)| ScanRollup {
+        label: label.into(),
+        total_tokens,
+        total_cost_usd,
+    })
+    .collect();
+    sort_rollups(&mut by_agent);
+
+    // Costs sum only where present (Codex contributes tokens but never cost).
+    let total_cost_usd = match (claude_cost, pi_cost) {
+        (None, None) => None,
+        (a, b) => Some(a.unwrap_or(0.0) + b.unwrap_or(0.0)),
+    };
+
+    UsageScanResponse {
+        node_name: node_name.to_owned(),
+        generated_at: now.to_rfc3339(),
+        window_days,
+        total_tokens: claude_tokens + codex_tokens + pi_tokens,
+        total_cost_usd,
+        by_agent,
+        by_model: into_rollups(acc.by_model),
+        by_repo: into_rollups(acc.by_repo),
+    }
+}
+
+/// Shared by-repo / by-model accumulators the per-agent folds write into.
+#[derive(Default)]
+struct ScanAccumulator {
+    by_repo: HashMap<String, (u64, Option<f64>)>,
+    by_model: HashMap<String, (u64, Option<f64>)>,
+}
+
+/// Claude: one project directory per repo; label by the recorded cwd when present.
+/// Returns the agent's `(tokens, cost)` totals.
+fn fold_claude(
+    claude_dir: &Path,
+    since: DateTime<Utc>,
+    rates: &RateOverrides,
+    resolve: &mut impl FnMut(String) -> String,
+    acc: &mut ScanAccumulator,
+) -> (u64, Option<f64>) {
+    let mut total = 0u64;
+    let mut cost_total: Option<f64> = None;
     if let Ok(entries) = std::fs::read_dir(claude_dir.join("projects")) {
         for entry in entries.flatten() {
             let dir = entry.path();
@@ -102,9 +156,9 @@ pub fn scan_usage(
             };
             let tokens = exact_total_tokens(&d.usage);
             let cost = d.usage.cost_usd;
-            claude_tokens += tokens;
+            total += tokens;
             if let Some(c) = cost {
-                claude_cost = Some(claude_cost.unwrap_or(0.0) + c);
+                cost_total = Some(cost_total.unwrap_or(0.0) + c);
             }
             let raw = d.cwd.unwrap_or_else(|| {
                 dir.file_name()
@@ -113,50 +167,54 @@ pub fn scan_usage(
                     .to_owned()
             });
             let repo = resolve(raw);
-            accumulate(&mut by_repo, repo, tokens, cost);
+            accumulate(&mut acc.by_repo, repo, tokens, cost);
             for m in d.by_model {
-                accumulate(&mut by_model, m.model, m.tokens, m.cost_usd);
+                accumulate(&mut acc.by_model, m.model, m.tokens, m.cost_usd);
             }
         }
     }
+    (total, cost_total)
+}
 
-    // Codex: one entry per rollout file; tokens only (no per-token cost), model from turn_context.
-    let mut codex_tokens = 0u64;
+/// Codex: one entry per rollout file; tokens only (no per-token cost), model from
+/// `turn_context`. Returns the agent's token total.
+fn fold_codex(
+    codex_dir: &Path,
+    since: DateTime<Utc>,
+    resolve: &mut impl FnMut(String) -> String,
+    acc: &mut ScanAccumulator,
+) -> u64 {
+    let mut total = 0u64;
     for entry in codex::scan_rollouts(codex_dir, since) {
-        codex_tokens += entry.tokens;
+        total += entry.tokens;
         let repo = resolve(entry.cwd);
-        accumulate(&mut by_repo, repo, entry.tokens, None);
+        accumulate(&mut acc.by_repo, repo, entry.tokens, None);
         let model = entry.model.unwrap_or_else(|| "codex".to_owned());
-        accumulate(&mut by_model, model, entry.tokens, None);
+        accumulate(&mut acc.by_model, model, entry.tokens, None);
     }
+    total
+}
 
-    let mut by_agent = Vec::new();
-    if claude_tokens > 0 {
-        by_agent.push(ScanRollup {
-            label: "claude".into(),
-            total_tokens: claude_tokens,
-            total_cost_usd: claude_cost,
-        });
+/// pi: one entry per assistant message, with the exact cost the agent recorded itself
+/// (BYOK API spend). Returns the agent's `(tokens, cost)` totals.
+fn fold_pi(
+    pi_dir: &Path,
+    since: DateTime<Utc>,
+    resolve: &mut impl FnMut(String) -> String,
+    acc: &mut ScanAccumulator,
+) -> (u64, Option<f64>) {
+    let mut total = 0u64;
+    let mut cost_total: Option<f64> = None;
+    for entry in pi::scan_sessions(pi_dir, since) {
+        total += entry.tokens;
+        if let Some(c) = entry.cost_usd {
+            cost_total = Some(cost_total.unwrap_or(0.0) + c);
+        }
+        let repo = resolve(entry.cwd);
+        accumulate(&mut acc.by_repo, repo, entry.tokens, entry.cost_usd);
+        accumulate(&mut acc.by_model, entry.model, entry.tokens, entry.cost_usd);
     }
-    if codex_tokens > 0 {
-        by_agent.push(ScanRollup {
-            label: "codex".into(),
-            total_tokens: codex_tokens,
-            total_cost_usd: None,
-        });
-    }
-    sort_rollups(&mut by_agent);
-
-    UsageScanResponse {
-        node_name: node_name.to_owned(),
-        generated_at: now.to_rfc3339(),
-        window_days,
-        total_tokens: claude_tokens + codex_tokens,
-        total_cost_usd: claude_cost,
-        by_agent,
-        by_model: into_rollups(by_model),
-        by_repo: into_rollups(by_repo),
-    }
+    (total, cost_total)
 }
 
 /// Sort rollups most-expensive-first (priced before unpriced), then by tokens, then label.
@@ -237,6 +295,24 @@ mod tests {
         format!("{meta}\n{tc}\n")
     }
 
+    fn pi_session(cwd: &str, model: &str, input: u64, output: u64, cost: f64) -> String {
+        let header = format!(
+            r#"{{"type":"session","version":3,"id":"0197-abc","timestamp":"2026-06-12T10:00:00.000Z","cwd":"{cwd}"}}"#
+        );
+        let msg = format!(
+            r#"{{"type":"message","id":"bbbb2222","parentId":null,"message":{{"role":"assistant","content":[],"model":"{model}","usage":{{"input":{input},"output":{output},"cacheRead":0,"cacheWrite":0,"totalTokens":{},"cost":{{"input":0.0,"output":0.0,"cacheRead":0.0,"cacheWrite":0.0,"total":{cost}}}}},"stopReason":"stop","timestamp":{}}}}}"#,
+            input + output,
+            Utc::now().timestamp_millis(),
+        );
+        format!("{header}\n{msg}\n")
+    }
+
+    fn write_pi_session(pi_dir: &Path, dir_name: &str, content: &str) {
+        let d = pi_dir.join("agent").join("sessions").join(dir_name);
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("0197-abc.jsonl"), content).unwrap();
+    }
+
     fn write_codex_rollout(codex_dir: &Path, name: &str, content: &str) {
         let d = codex_dir
             .join("sessions")
@@ -251,9 +327,11 @@ mod tests {
     fn test_scan_empty_dirs() {
         let claude = tempfile::tempdir().unwrap();
         let codex = tempfile::tempdir().unwrap();
+        let pi_dir = tempfile::tempdir().unwrap();
         let r = scan_usage(
             claude.path(),
             codex.path(),
+            pi_dir.path(),
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -270,6 +348,7 @@ mod tests {
     fn test_scan_merges_agents_by_repo() {
         let claude = tempfile::tempdir().unwrap();
         let codex = tempfile::tempdir().unwrap();
+        let pi_dir = tempfile::tempdir().unwrap();
         write_claude_project(
             claude.path(),
             "proj-api",
@@ -292,6 +371,7 @@ mod tests {
         let r = scan_usage(
             claude.path(),
             codex.path(),
+            pi_dir.path(),
             &RateOverrides::default(),
             "node-x",
             Utc::now(),
@@ -331,9 +411,65 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_includes_pi_with_exact_cost_and_merges_repo() {
+        let claude = tempfile::tempdir().unwrap();
+        let codex = tempfile::tempdir().unwrap();
+        let pi_dir = tempfile::tempdir().unwrap();
+        // Claude and pi both worked in /repos/api → one merged repo row.
+        write_claude_project(
+            claude.path(),
+            "proj-api",
+            &claude_record(Some("/repos/api"), "claude-opus-4-8", 1000, 500),
+        );
+        write_pi_session(
+            pi_dir.path(),
+            "--repos-api--",
+            &pi_session("/repos/api", "gemini-3-pro", 800, 200, 0.05),
+        );
+
+        let r = scan_usage(
+            claude.path(),
+            codex.path(),
+            pi_dir.path(),
+            &RateOverrides::default(),
+            "n",
+            Utc::now(),
+            None,
+            |s: &str| s.to_owned(),
+        );
+
+        // pi appears as its own agent with the exact cost it recorded.
+        let pi_row = r.by_agent.iter().find(|a| a.label == "pi").unwrap();
+        assert_eq!(pi_row.total_tokens, 1000);
+        assert!((pi_row.total_cost_usd.unwrap() - 0.05).abs() < 1e-12);
+
+        // Total cost = Claude's rate-table cost + pi's recorded cost.
+        // Claude opus: 1000·5 + 500·25 = 17500 micro-dollars.
+        let claude_cost = 17_500.0 / 1_000_000.0;
+        assert!((r.total_cost_usd.unwrap() - (claude_cost + 0.05)).abs() < 1e-9);
+        assert_eq!(r.total_tokens, 2500);
+
+        // Both agents merge into the one repo row, cost included.
+        assert_eq!(r.by_repo.len(), 1);
+        assert_eq!(r.by_repo[0].label, "/repos/api");
+        assert_eq!(r.by_repo[0].total_tokens, 2500);
+        assert!((r.by_repo[0].total_cost_usd.unwrap() - (claude_cost + 0.05)).abs() < 1e-9);
+
+        // pi's model shows up in the by-model rollup with its cost.
+        let gem = r
+            .by_model
+            .iter()
+            .find(|m| m.label == "gemini-3-pro")
+            .unwrap();
+        assert_eq!(gem.total_tokens, 1000);
+        assert!((gem.total_cost_usd.unwrap() - 0.05).abs() < 1e-12);
+    }
+
+    #[test]
     fn test_scan_window_days_filters_old_records_and_sets_field() {
         let claude = tempfile::tempdir().unwrap();
         let codex = tempfile::tempdir().unwrap();
+        let pi_dir = tempfile::tempdir().unwrap();
         // One recent Claude record and one 10 days old, both in the same project dir.
         let recent = Utc::now().to_rfc3339();
         let old = (Utc::now() - TimeDelta::days(10)).to_rfc3339();
@@ -352,6 +488,7 @@ mod tests {
         let r = scan_usage(
             claude.path(),
             codex.path(),
+            pi_dir.path(),
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -365,6 +502,7 @@ mod tests {
         let all = scan_usage(
             claude.path(),
             codex.path(),
+            pi_dir.path(),
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -379,6 +517,7 @@ mod tests {
     fn test_scan_skips_non_dir_and_empty_project_entries() {
         let claude = tempfile::tempdir().unwrap();
         let codex = tempfile::tempdir().unwrap();
+        let pi_dir = tempfile::tempdir().unwrap();
         let projects = claude.path().join("projects");
         fs::create_dir_all(&projects).unwrap();
         // A stray file under projects/ (not a directory) is skipped.
@@ -389,6 +528,7 @@ mod tests {
         let r = scan_usage(
             claude.path(),
             codex.path(),
+            pi_dir.path(),
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -404,6 +544,7 @@ mod tests {
     fn test_scan_drops_zero_token_model_rows() {
         let claude = tempfile::tempdir().unwrap();
         let codex = tempfile::tempdir().unwrap();
+        let pi_dir = tempfile::tempdir().unwrap();
         let ts = Utc::now().to_rfc3339();
         // One real record and one synthetic 0-token record (distinct ids → not deduped).
         let line = |model: &str, id: &str, input: u64| {
@@ -423,6 +564,7 @@ mod tests {
         let r = scan_usage(
             claude.path(),
             codex.path(),
+            pi_dir.path(),
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -438,6 +580,7 @@ mod tests {
     fn test_scan_falls_back_to_dir_name_without_cwd() {
         let claude = tempfile::tempdir().unwrap();
         let codex = tempfile::tempdir().unwrap();
+        let pi_dir = tempfile::tempdir().unwrap();
         // No cwd in the record → label is the (sanitized) project dir name.
         write_claude_project(
             claude.path(),
@@ -447,6 +590,7 @@ mod tests {
         let r = scan_usage(
             claude.path(),
             codex.path(),
+            pi_dir.path(),
             &RateOverrides::default(),
             "n",
             Utc::now(),
@@ -461,6 +605,7 @@ mod tests {
     fn test_scan_collapses_worktrees_via_resolver() {
         let claude = tempfile::tempdir().unwrap();
         let codex = tempfile::tempdir().unwrap();
+        let pi_dir = tempfile::tempdir().unwrap();
         // The repo itself and a worktree of it, as two separate Claude project dirs.
         write_claude_project(
             claude.path(),
@@ -490,6 +635,7 @@ mod tests {
         let r = scan_usage(
             claude.path(),
             codex.path(),
+            pi_dir.path(),
             &RateOverrides::default(),
             "n",
             Utc::now(),

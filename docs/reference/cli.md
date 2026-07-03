@@ -13,7 +13,7 @@ pulpo cleanup                             Remove all stopped and lost sessions
 pulpo resume <NAME>                       Resume a lost or ready session (auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions
 pulpo usage                               Show token/cost burn rate, time-to-cap, and quota
-pulpo usage --scan                        Scan ALL local agent history (Claude + Codex):
+pulpo usage --scan                        Scan ALL local agent history (Claude + Codex + pi):
                                           total spend by agent, model, and repo, no daemon-managed
                                           sessions required
 pulpo usage --scan --by-worktree          Like --scan, but keep each git worktree/subdir as

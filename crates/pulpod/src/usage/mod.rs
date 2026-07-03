@@ -2,9 +2,11 @@
 //!
 //! Instead of scraping token counts from terminal output, these readers parse the
 //! session files that agents write to disk themselves (`~/.claude/projects/*.jsonl`
-//! for Claude Code, `~/.codex/sessions/**/rollout-*.jsonl` for Codex). The numbers
-//! are exact: per-message token usage straight from the API responses, plus — for
-//! Codex — the subscription rate-limit snapshot the agent records.
+//! for Claude Code, `~/.codex/sessions/**/rollout-*.jsonl` for Codex, and
+//! `~/.pi/agent/sessions/**/*.jsonl` for pi — scan only). The numbers are exact:
+//! per-message token usage straight from the API responses, plus — for Codex — the
+//! subscription rate-limit snapshot the agent records, and — for pi — the exact
+//! dollar cost the agent computed itself.
 //!
 //! Sessions are mapped to files by working directory and spawn time. The mapping is
 //! a heuristic: a second agent started manually in the same directory during the
@@ -13,6 +15,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod pi;
 pub mod pool;
 pub mod projection;
 pub mod scan;
@@ -259,7 +262,8 @@ pub fn read_exact_usage_for_session(_session: &Session) -> Option<ExactUsage> {
     None
 }
 
-/// Scan all local agent history using the real home-dir paths (`~/.claude`, `~/.codex`).
+/// Scan all local agent history using the real home-dir paths (`~/.claude`, `~/.codex`,
+/// `~/.pi`).
 ///
 /// `by_worktree` keeps every directory distinct; the default (`false`) collapses git
 /// worktrees and subdirectories onto their origin repo via [`scan::canonical_repo`].
@@ -277,12 +281,14 @@ pub fn scan_local_usage(
     let home = dirs::home_dir()?;
     let claude_dir = home.join(".claude");
     let codex_dir = home.join(".codex");
+    let pi_dir = home.join(".pi");
     let rates = active_rate_overrides();
     let now = Utc::now();
     let resp = if by_worktree {
         scan::scan_usage(
             &claude_dir,
             &codex_dir,
+            &pi_dir,
             rates,
             node_name,
             now,
@@ -293,6 +299,7 @@ pub fn scan_local_usage(
         scan::scan_usage(
             &claude_dir,
             &codex_dir,
+            &pi_dir,
             rates,
             node_name,
             now,
