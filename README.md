@@ -105,8 +105,8 @@ pulpo usage                     # live burn rate ($/hr, tokens/hr), time-to-cap,
 
 `pulpo usage --scan` is the fastest way in: it reads the agents' *own* session files and
 shows what every agent has cost you, **unified across Claude, Codex, and pi, broken down
-by agent, model, and repo** — the cross-agent view a single-vendor `/usage` (or ccusage)
-can't give. (pi sessions carry the exact dollar cost the agent recorded itself.) Nothing has to run through Pulpo first. It's **worktree-aware**: a repo's git
+by agent, model, and repo** — the unified view a single-vendor `/usage` page can't give,
+plus the budgets and enforcement a read-only tool can't add. (pi sessions carry the exact dollar cost the agent recorded itself.) Nothing has to run through Pulpo first. It's **worktree-aware**: a repo's git
 worktrees and subdirectories roll up to the origin repo, so per-repo spend means *this repo*
 and not *this checkout* (add `--by-worktree` to keep each checkout separate). Narrow to a
 window with `--since <days>`, or pipe the raw numbers somewhere with `--json`.
@@ -195,7 +195,7 @@ The daemon owns the truth; every surface reflects or operates on the same sessio
 |  | Pulpo | vendor `/usage` | ccusage |
 |---|---|---|---|
 | Cross-account, cross-machine cost | Yes | One account / machine | Single machine |
-| Cross-agent (Claude + Codex + …) | Yes | One vendor | Claude only |
+| Cross-agent (Claude + Codex + …) | Yes | One vendor | Yes (many CLIs) |
 | Live burn rate + projection | Yes | No | Post-hoc |
 | Budget enforcement (auto-stop) | Yes | No | No |
 | Alerts before the wall | Yes | No | No |

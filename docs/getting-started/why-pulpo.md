@@ -116,7 +116,7 @@ is not "which tool has more features?" It is "which layer does each tool own?"
 | Category | Examples | What they are best at | Where Pulpo differs |
 | --- | --- | --- | --- |
 | Vendor `/usage` dashboards | Anthropic, OpenAI account usage pages | One account's spend, after the fact | Pulpo aggregates across accounts, machines, and agents, live |
-| Local cost readers | ccusage and similar | Single-vendor, single-machine, read-only cost display | Pulpo is cross-agent (`--scan`) and, once a session runs through it, also budgets and enforces |
+| Local cost readers | ccusage and similar | Multi-agent, single-machine, read-only cost display | Pulpo also runs the session: cross-machine rollups, budgets, and enforcement |
 | Hosted coding agents | Codex app, GitHub Copilot coding agent, Cursor background agents, Claude cloud sessions, OpenHands Cloud | Managed cloud execution, PR-native workflows, provider integration | Pulpo keeps the runtime, the cost data, and the control on your own machines |
 | Local session managers | Agent Deck, tmux-based command centers | Fast local multi-session UX, terminal-first workflows | Pulpo adds cost metering, budgets, durable recovery, and remote access |
 | Agent orchestration frameworks | Multi-agent planners and task routers | Decomposing work, assigning tasks, coordinating agents | Pulpo is the metering/runtime layer underneath those workflows, not the planner |
