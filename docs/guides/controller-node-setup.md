@@ -1,5 +1,12 @@
 # Controller + Node Setup
 
+::: warning Frozen (June 2026), not the headline workflow
+The cross-node control plane works and is maintained, but it is not being actively
+developed — no controller-side rollups, no quota-aware placement. If you just want durable
+sessions you can reach from anywhere, see [Control Your Agents From
+Anywhere](/guides/remote-control) instead; this page is for the multi-node case.
+:::
+
 Pulpo’s multi-node control plane is intentionally simple: every node runs the same binary, one node becomes the controller, and the controller keeps the canonical session index while managed nodes run the actual tmux backends.
 
 This guide walks through the end-to-end flow so you can get a controller and node running together without guessing which config goes where.

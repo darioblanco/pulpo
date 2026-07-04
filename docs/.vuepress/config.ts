@@ -5,7 +5,7 @@ import { defineUserConfig } from 'vuepress';
 export default defineUserConfig({
   lang: 'en-US',
   title: 'Pulpo Docs',
-  description: 'Self-hosted control plane for coding agents',
+  description: 'Self-hosted meter and breaker box for coding agents',
   base: '/',
   head: [
     [
@@ -41,6 +41,7 @@ export default defineUserConfig({
       ],
       '/architecture/': ['/architecture/core-concepts', '/architecture/overview'],
       '/guides/': [
+        '/guides/remote-control',
         '/guides/nightly-code-review',
         '/guides/parallel-agents-one-repo',
         '/guides/private-infra-with-tailscale',
@@ -50,6 +51,7 @@ export default defineUserConfig({
         '/guides/recovery',
         '/guides/worktrees',
         '/guides/secrets',
+        '/guides/controller-node-setup',
       ],
       '/reference/': ['/reference/cli', '/reference/config', '/reference/api'],
       '/operations/': ['/operations/session-lifecycle', '/operations/release-and-distribution'],

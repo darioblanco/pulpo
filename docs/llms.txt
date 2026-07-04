@@ -3,15 +3,19 @@
 Project: Pulpo
 Repo: https://github.com/darioblanco/pulpo
 Docs: https://pulpo.darioblanco.com
-Purpose: Self-hosted control plane for coding agents across multiple machines.
+Purpose: Self-hosted meter and breaker box for coding agents — cost visibility, budgets, and
+durable remote sessions on machines you own.
 
 Primary docs:
 - /README.md
 - /SPEC.md
 - /ROADMAP.md
 - /CONTRIBUTING.md
+- /docs/getting-started/why-pulpo.md
 - /docs/getting-started/install.md
 - /docs/getting-started/quickstart.md
+- /docs/guides/remote-control.md
+- /docs/guides/agent-examples.md
 - /docs/guides/configuration.md
 - /docs/guides/discovery.md
 - /docs/guides/recovery.md
@@ -29,6 +33,12 @@ Canonical runtime concepts:
 - Inks are reusable command templates with a description and command field.
 - pulpod exposes REST and SSE on port 7433 by default.
 - Config path defaults to ~/.pulpo/config.toml.
+- `pulpo usage --scan` reads Claude Code, Codex, and pi session files directly from disk —
+  cross-agent spend with no daemon routing required.
+- Exact cost is available for Claude Code (token-based, via `[rates.<model>]`) and pi
+  (agent-recorded, scan only). Codex reports exact tokens and quota, never a dollar cost.
+- The controller/node multi-machine control plane is frozen (maintained, not extended);
+  the supported multi-machine path is single-node-first plus the event-forwarding backbone.
 
 Installation:
 - Homebrew: brew install darioblanco/tap/pulpo
