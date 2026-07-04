@@ -180,6 +180,39 @@ async fn create_running_session(store: &Store, name: &str) -> Session {
     session
 }
 
+/// Poll `condition` until it returns `true`, sleeping briefly between checks,
+/// up to a generous deadline.
+///
+/// Several `run_watchdog_loop` tests need `breach_count` consecutive ticks to
+/// elapse before signalling shutdown. A fixed `time::sleep` only works if we
+/// assume the loop's `tokio::select!` gets polled enough times within that
+/// wall-clock window — true in isolation, but not under the full parallel
+/// test suite (~1500+ concurrently scheduled OS threads contending for CPU).
+/// `#[tokio::test]` uses a single-threaded (current-thread) runtime, so a
+/// starved OS thread can resume long after both the interval-tick and the
+/// shutdown-signal branches of `select!` have become ready; `select!` then
+/// picks between them at random, and can pick shutdown before enough ticks
+/// were processed to reach `breach_count` — flaking the test. Waiting for the
+/// actual side effect instead of a fixed sleep removes the race regardless of
+/// scheduling (see fix/watchdog-flaky-tests).
+async fn wait_for<F, Fut>(deadline_secs: u64, condition: F)
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(deadline_secs);
+    loop {
+        if condition().await {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "condition not met within {deadline_secs}s"
+        );
+        time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 fn make_config(
     threshold: u8,
     interval: Duration,
@@ -390,7 +423,14 @@ async fn test_watchdog_intervention_after_breach_count() {
         test_ready_ctx(),
     ));
 
-    time::sleep(Duration::from_millis(80)).await;
+    wait_for(2, || async {
+        store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .is_some_and(|s| s.status == SessionStatus::Stopped)
+    })
+    .await;
     shutdown_tx.send(true).unwrap();
     handle.await.unwrap();
 
@@ -536,7 +576,14 @@ async fn test_watchdog_capture_failure_still_kills() {
         test_ready_ctx(),
     ));
 
-    time::sleep(Duration::from_millis(80)).await;
+    wait_for(2, || async {
+        store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .is_some_and(|s| s.status == SessionStatus::Stopped)
+    })
+    .await;
     shutdown_tx.send(true).unwrap();
     handle.await.unwrap();
 
@@ -668,7 +715,14 @@ async fn test_watchdog_session_without_backend_session_id() {
         test_ready_ctx(),
     ));
 
-    time::sleep(Duration::from_millis(80)).await;
+    wait_for(2, || async {
+        backend
+            .kill_calls
+            .lock()
+            .unwrap()
+            .contains(&"no-tmux".to_owned())
+    })
+    .await;
     shutdown_tx.send(true).unwrap();
     handle.await.unwrap();
 
@@ -1975,7 +2029,14 @@ async fn test_watchdog_live_config_reload_threshold() {
         })
         .unwrap();
 
-    time::sleep(Duration::from_millis(30)).await;
+    wait_for(2, || async {
+        store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .is_some_and(|s| s.status == SessionStatus::Stopped)
+    })
+    .await;
     shutdown_tx.send(true).unwrap();
     handle.await.unwrap();
 
