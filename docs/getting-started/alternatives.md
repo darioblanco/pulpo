@@ -1,236 +1,150 @@
 # Alternatives And Comparisons
 
-This page is intentionally category-based and source-based.
+This page is category-based, not a fake head-to-head. Different tools solve different layers of
+"agents cost money and need somewhere to run" — the question is which layer you actually need.
 
-The goal is not to force unlike products into a fake head-to-head. The goal is
-to help you decide which layer you actually need:
-
-- a hosted coding agent
-- a local session manager
-- an orchestration framework
-- raw infrastructure
-- or Pulpo
-
-All descriptions below are based on public docs, public repositories, or public
-product pages as of 2026-03-30.
+Descriptions below are based on each project's own docs/site as of 2026-07-04, re-checked while
+writing this page. Where a claim from an earlier version of this page couldn't be re-verified, it
+was dropped rather than repeated.
 
 ## Comparison Principles
 
-When comparing Pulpo to other tools, the fairest questions are:
+The fair questions to ask are:
 
-1. Where does the agent runtime live?
-2. Who controls the execution environment?
-3. Is the product built around one agent vendor or many?
-4. Is the main value interactive UX, hosted automation, orchestration, or infrastructure?
-5. What happens when the task runs unattended and something goes wrong?
+1. Does it read usage after the fact, or run the session and enforce a limit while it happens?
+2. Where does the runtime live — a vendor's cloud, your Mac, or a machine you administer?
+3. Is it built around one agent vendor, or does it run whatever CLI you point it at?
+4. What happens when the work is unattended and something goes wrong at 2 a.m.?
 
-## Category 1: Hosted Coding Agents
+## Category 1: Cost Readers (ccusage And Vendor `/usage` Pages)
 
-Examples:
-
-- OpenAI Codex app
-- GitHub Copilot coding agent
-- Cursor background agents
-- Claude Code web, desktop, and cloud surfaces
-- OpenHands Cloud
+**Examples:** [ccusage](https://ccusage.com/), vendor account-usage dashboards.
 
 ### What This Category Is Best At
 
-Hosted coding agents are strongest when you want:
-
-- the fastest path to a working background agent
-- provider-managed infrastructure
-- tight integration with one product ecosystem
-- cloud or PR-native workflows with minimal setup
-
-### Public Positioning Signals
-
-- OpenAI describes the Codex app as "a command center for agents" and says it is
-  designed to manage multiple agents, run work in parallel, and collaborate over
-  long-running tasks.
-- GitHub says Copilot coding agent works independently in the background,
-  completes tasks in a GitHub Actions-powered environment, and opens pull
-  requests for review.
-- Cursor documents background agents as asynchronous remote agents that edit and
-  run code in a remote environment.
-- Anthropic documents Claude Code across terminal, desktop, web, and mobile
-  surfaces, including long-running tasks, cloud sessions, and recurring tasks.
-- OpenHands markets its cloud product as the open platform for cloud coding
-  agents, with cloud, API, and self-hosted deployment options.
+ccusage reads local usage logs and turns them into cost/token reports. It has grown well beyond
+Claude Code: its own docs list Claude Code, Codex, OpenCode, Gemini CLI, GitHub Copilot CLI, and
+close to a dozen other CLIs, all read from local files, offline-capable, free. If you just want a
+report on the machine you're sitting at, it's an excellent, purpose-built tool for exactly that.
 
 ### Where Pulpo Differs
 
-Pulpo is not a hosted coding agent. It is the self-hosted control plane for
-running agent sessions on infrastructure you control.
+Pulpo's `--scan` is the same trick — read-only, zero setup, no data leaves the machine — but for
+fewer agents today (Claude Code, Codex, and pi, with exact tokens and cost where the agent
+exposes them). What Pulpo adds on top:
 
-The main differences are:
+- **It also runs the sessions.** ccusage only reads what already happened; Pulpo can spawn, meter,
+  and enforce a budget on the same session, so a cap actually stops something.
+- **Cross-machine.** ccusage is explicitly local/single-machine, with no aggregation across
+  systems. Pulpo's per-repo rollups and its signed-webhook event backbone are how you get one
+  number across every machine you run, without a hosted aggregator in between.
+- **Lifecycle, not just a report.** ccusage has no concept of a session, a budget, or an alert —
+  Pulpo's watchdog turns "you overspent" into "the session stopped at 100%."
 
-- Pulpo keeps the runtime on your machines instead of a vendor-managed cloud
-  environment.
-- Pulpo is command-agnostic across agent tools instead of centered on one agent
-  product.
-- Pulpo emphasizes daemon-owned session lifecycle, recovery, and intervention
-  semantics across machines you control.
-- Pulpo fits best when private-network access, self-hosting, or bring-your-own
-  agent flexibility matter more than managed-cloud convenience.
+Use ccusage when you want a cost report on this machine, right now, and have no interest in
+running or supervising anything. Use Pulpo when you also want the runtime.
 
-### Where Hosted Coding Agents May Be A Better Fit
+## Category 2: Native Multi-Agent UX Tools
 
-Hosted products may be the better fit when you want:
-
-- the simplest onboarding path
-- a deeply integrated vendor workflow
-- issue- and PR-native delegation out of the box
-- no infrastructure to manage
-
-## Category 2: Local Session Managers
-
-Examples:
-
-- Agent Deck
-- other tmux or terminal-first multi-session tools
+**Examples:** [Conductor](https://www.conductor.build/) (YC-backed Mac app, $22M Series A in
+2026; runs Claude Code, Codex, and Cursor sessions in isolated git worktrees with a review/merge
+UI), [Claude Code's built-in Remote Control](https://code.claude.com/docs/en/remote-control)
+(bridges a local Claude Code session to claude.ai/code or the mobile app for push notifications
+and remote input, outbound-only, no inbound ports), OpenAI's Codex desktop app (a command center
+for running several Codex agents in parallel, with built-in worktrees), and terminal-native
+session managers.
 
 ### What This Category Is Best At
 
-Local session managers are strongest when you want:
-
-- better visibility across many local or terminal sessions
-- fast switching between agents
-- terminal-first workflows
-- convenience features around worktrees, status views, or per-session tooling
-
-### Public Positioning Signals
-
-- Agent Deck describes itself as a "Terminal session manager for AI coding
-  agents" and "Your AI agent command center."
-- Its README emphasizes one terminal, many agents, visibility, quick switching,
-  worktrees, Docker sandboxing, and conductor workflows.
+The nicest available way to run and watch a handful of agents interactively on your own Mac —
+native UI, no daemon to configure, tight integration with one vendor's or one OS's workflow,
+worktree creation built in.
 
 ### Where Pulpo Differs
 
-Pulpo overlaps with this category, but aims at a different operating model.
+Pulpo doesn't compete on interactive UX; these tools are better at that specific job. The
+difference is what each is *for*:
 
-Pulpo centers:
+- **Command- and model-agnostic.** Remote Control only bridges Claude Code; Conductor covers
+  three agents but stays a Mac app. Pulpo runs whatever terminal command you give it.
+- **Self-hostable headless**, on Linux, on a spare box with no display — not tied to a local Mac
+  install.
+- **Cost metering and budget enforcement live in the daemon**, not the terminal app, so a session
+  survives a closed laptop lid because the runtime was never tied to the app that launched it.
+- **No vendor relay.** Remote Control's mobile bridge routes through Anthropic's servers; Pulpo's
+  web UI talks to your own daemon over your own tailnet.
 
-- durable session objects with explicit lifecycle states
-- recovery after reboot or backend loss
-- multi-node control across machines
-- watchdog-driven intervention semantics
-- API, web UI, notifications, and scheduling as first-class surfaces
+Use one of these when your problem really is "I want a nicer way to run a few agents
+interactively on my Mac, right now." That's a real, well-served problem — Pulpo isn't trying to
+win it.
 
-If your main problem is local session sprawl, a local manager may be the better
-fit.
+## Category 3: The Agent CLIs Themselves
 
-If your main problem is that unattended agent work should behave like
-infrastructure, Pulpo is closer to that need.
+Claude Code, Codex, pi, Gemini CLI, Aider, Goose, OpenCode, and any other terminal coding agent
+are not something Pulpo competes with — they're the layer Pulpo runs on top of.
 
-## Category 3: Orchestration Frameworks
+`pulpo spawn` takes any command after `--`. The agent does the actual coding work; Pulpo wraps
+that invocation with a durable lifecycle, exact usage metering (Claude Code, Codex, and pi so
+far), budgets, and remote reachability. Switching agents, or running several at once, doesn't
+change how you use Pulpo — see [Agent Examples](/guides/agent-examples).
 
-Examples:
-
-- multi-agent planners
-- task routers
-- systems that decompose work across agent roles
+## Category 4: Raw Infrastructure (tmux, cron, SSH, Docker Scripts)
 
 ### What This Category Is Best At
 
-These tools are strongest when you want:
-
-- multiple agents collaborating on one higher-level workflow
-- explicit task decomposition
-- routing or assigning work among specialized agents
-- orchestration logic above the execution layer
+Maximum flexibility, no product opinion. If you want to hand-roll exactly the lifecycle behavior
+you need, these primitives will let you build it.
 
 ### Where Pulpo Differs
 
-Pulpo does not decide how agents collaborate.
+This is what Pulpo formalizes, using the same primitives underneath:
 
-Pulpo is the runtime layer underneath that work:
+- explicit session states (`active`, `idle`, `ready`, `lost`, `stopped`) instead of a tmux pane
+  you have to remember the name of
+- `cron`-driven scheduling wired to the same session objects, not a standalone script
+- exact usage metering and budgets on every run, not something you'd script yourself against
+  each agent's log format
+- SSH access formalized into `pulpo attach` plus a web UI, reachable the same way from any node
 
-- where sessions run
-- how they are supervised
-- how they are resumed or stopped
-- how they are observed across machines
+If you're already comfortable maintaining that yourself, you may not need Pulpo. Most people find
+the maintenance cost catches up once there's more than one agent or one machine involved.
 
-These categories are often complementary, not competitive.
+## Where The Runtime Lives: Hosted Clouds Are A Different Question
 
-## Category 4: Raw Infrastructure
-
-Examples:
-
-- tmux
-- SSH
-- cron
-- Docker scripts
-- generic sandbox infrastructure such as Vercel Sandbox
-
-### What This Category Is Best At
-
-Raw infrastructure is strongest when you want:
-
-- maximum flexibility
-- full control over implementation details
-- no product opinion on lifecycle or workflow
-- a primitive you can build your own system on top of
-
-### Public Positioning Signals
-
-- Vercel Sandbox documents itself as an ephemeral compute primitive for running
-  untrusted or user-generated code, including AI agent workloads.
-
-### Where Pulpo Differs
-
-Pulpo is opinionated infrastructure for coding-agent operations.
-
-It adds:
-
-- session lifecycle states
-- stored output and resumability
-- watchdog supervision
-- multi-node control surfaces
-- scheduling, notifications, and worktree-aware session management
-
-If you want building blocks, use building blocks.
-
-If you want a self-hosted control plane for background coding agents, use
-Pulpo.
+Vendor-hosted background agents — [GitHub Copilot's coding
+agent](https://github.com/features/copilot) (spins up a GitHub Actions VM, opens a PR) and
+[Cursor's background agents](https://docs.cursor.com/en/background-agents) (cloud VMs you spin up
+and merge from) — are a different trade entirely: zero infrastructure to run, in exchange for the
+runtime, your repo access, and your usage data all living on the vendor's cloud. Pulpo's whole
+premise runs the other way — runtime, credentials, and cost data stay on hardware you administer.
+If a fully-hosted PR bot is what you want, the rest of this page doesn't apply to you.
 
 ## Quick Decision Guide
 
-Use hosted coding agents when:
+Use a cost reader (ccusage) when you want a report on this machine, right now, and don't need to
+run or supervise anything.
 
-- convenience matters more than runtime control
-- your repos and workflow already live comfortably inside one vendor ecosystem
-- you do not need the runtime on your own machines
+Use a native multi-agent UX tool (Conductor, Remote Control, or similar) when you work on one Mac,
+want the nicest interactive experience, and don't need budgets, remote access from other
+machines, or a headless server.
 
-Use a local session manager when:
+Use a hosted agent cloud when you want zero infrastructure and are fine with the runtime and your
+repo living on a vendor's servers.
 
-- you mostly need better local multi-session UX
-- your sessions are still primarily terminal-centric and interactive
+Use raw tmux/cron/SSH when you want to assemble exactly what you need yourself and are willing to
+maintain it.
 
-Use orchestration frameworks when:
-
-- your main problem is coordination between multiple agents
-
-Use raw infrastructure when:
-
-- you want to assemble your own platform from primitives
-
-Use Pulpo when:
-
-- the runtime needs to stay on infrastructure you control
-- you want to run any coding agent, not standardize on one vendor
-- you need durable sessions, recovery semantics, and remote supervision
-- you want one control model across multiple machines
+Use Pulpo when you want to know what every agent, on every machine, is costing you; you want a
+budget that actually stops a session; and you want the runtime to stay on infrastructure you
+administer.
 
 ## Sources
 
-- OpenAI Codex app: <https://openai.com/index/introducing-the-codex-app>
-- GitHub Copilot coding agent: <https://docs.github.com/en/copilot/concepts/agents/coding-agent/about-coding-agent>
+- ccusage: <https://ccusage.com/> · <https://github.com/ryoppippi/ccusage>
+- Conductor: <https://www.conductor.build/> · <https://docs.conductor.build/>
+- Claude Code Remote Control: <https://code.claude.com/docs/en/remote-control>
+- OpenAI Codex app: <https://openai.com/index/introducing-the-codex-app/>
+- GitHub Copilot coding agent: <https://github.com/features/copilot>
 - Cursor background agents: <https://docs.cursor.com/en/background-agents>
-- Claude Code overview: <https://code.claude.com/docs/en/overview>
-- Claude Code analytics: <https://code.claude.com/docs/en/analytics>
-- OpenHands homepage: <https://openhands.dev/>
-- OpenHands Cloud docs: <https://docs.openhands.dev/usage/cloud/openhands-cloud>
-- Agent Deck repository: <https://github.com/asheshgoplani/agent-deck>
-- Vercel Sandbox docs: <https://vercel.com/docs/vercel-sandbox/>
+
+Checked 2026-07-04.

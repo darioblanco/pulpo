@@ -1,150 +1,157 @@
 # Use Cases
 
-This page maps Pulpo's features to concrete users and jobs.
+Pulpo's value shows up differently depending on what's actually bothering you. These are the
+concrete jobs it does today, roughly in the order you'll run into them.
 
-If "self-hosted control plane for background coding agents" sounds right but you
-want to know whether it matches your workflow, start here.
+## 1. "How Much Are My Agents Actually Costing Me?"
 
-## 1. Solo Developer With A Home Server Or Mac Mini
+You run Claude Code, Codex, or pi across a few repos and maybe more than one account, and the
+only cost picture you have is a vendor's `/usage` page — one account, one vendor, checked after
+the fact.
 
-You already use coding agents heavily and want them to keep working after you
-close the laptop.
+```bash
+pulpo usage --scan
+```
 
-Typical setup:
-
-- one always-on Mac mini or Linux box
-- one or more local repos
-- Claude Code, Codex, Gemini CLI, Aider, or shell automation
-
-What Pulpo is doing for you:
-
-- keeping agent sessions durable
-- letting you check progress from your phone
-- making reboot and crash recovery explicit
-- enabling multiple parallel agents with worktrees
+This reads each agent's own on-disk history (`~/.claude`, `~/.codex`, `~/.pi`) and reports spend
+and tokens by agent, model, and repo, unified across vendors — no daemon, nothing routed through
+Pulpo first. Git worktrees and subdirectories roll up to their origin repo, so "this repo" means
+the whole thing, not one checkout.
 
 Best docs to read next:
 
 - [Quickstart](/getting-started/quickstart)
+- [Why Pulpo](/getting-started/why-pulpo)
+- [CLI Reference](/reference/cli)
+
+## 2. The Daily Driver: An Agent That Survives Your Laptop Lid
+
+You want an agent to keep working after wifi drops, an SSH session dies, or you just close the
+lid — then check back in from wherever you are.
+
+```bash
+pulpo spawn fix --workdir ~/repos/api -- claude -p "Fix the failing auth tests"
+# Ctrl-b d to detach — the session keeps running
+pulpo attach fix
+```
+
+The session runs in `tmux` on a machine you leave on, independent of your terminal or laptop's
+power state. Reattach over SSH from a laptop, or check status from a phone through the web UI
+(installable as a PWA).
+
+Best docs to read next:
+
+- [Control Your Agents From Anywhere](/guides/remote-control)
+- [Session Lifecycle](/operations/session-lifecycle)
+- [Quickstart](/getting-started/quickstart)
+
+## 3. Parallel Agents On One Repo, Without Collisions
+
+You want two or three agents working the same repo at once — one on the frontend, one on the
+backend — without them clobbering each other's working tree.
+
+```bash
+pulpo spawn frontend --workdir ~/repo --worktree -- claude -p "redesign the sidebar"
+pulpo spawn backend  --workdir ~/repo --worktree -- codex "optimize the query path"
+```
+
+Each session gets its own git worktree and branch. This isn't orchestration — the agents don't
+coordinate or hand off work to each other — it's isolation plus metering: every session is still
+a durable, cost-tracked object you can inspect independently.
+
+Best docs to read next:
+
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
 - [Worktrees Guide](/guides/worktrees)
-- [Session Lifecycle](/operations/session-lifecycle)
 
-## 2. Small Team With Private Infrastructure
+## 4. Unattended, Scheduled Jobs That Can't Run Away
 
-Your repos, services, or credentials are not a clean fit for hosted sandboxes.
-You want agents to run near internal systems and stay under your control.
+You want a nightly review, a weekly dependency scan, or a recurring migration rehearsal — run
+unattended, with a ceiling so a run with nobody watching can't quietly burn a chunk of your
+weekly quota by morning.
 
-Typical setup:
+Give the recurring job a budget by attaching it to an ink:
 
-- private repos or internal APIs
-- VPN-only or Tailscale-only network access
-- multiple machines with different capabilities
-- more than one agent vendor in active use
+```toml
+[inks.nightly-review]
+command = "claude -p 'Review this repository for bugs, regressions, and missing tests.'"
+budget_cost_usd = 5.0
+```
 
-What Pulpo is doing for you:
+```bash
+pulpo schedule add nightly-review "0 3 * * *" --workdir ~/repo --ink nightly-review
+```
 
-- keeping the runtime on infrastructure you control
-- providing one control surface across machines
-- supporting secrets, worktree isolation, and explicit recovery behavior
-- allowing teams to adopt agent workflows without committing to one vendor
+The watchdog alerts at 80% of the ink's `budget_cost_usd` and stops the session at 100% — you
+find a `stopped` session with a clear reason in the morning, not a surprise on the invoice.
+
+Best docs to read next:
+
+- [Nightly Code Review](/guides/nightly-code-review)
+- [Configuration Guide](/guides/configuration)
+
+## 5. The 2 A.M. Runaway
+
+An agent gets stuck in a retry loop, or a job with no budget set starts burning tokens fast, and
+nobody is watching.
+
+A flat cost cap (case 4) still catches sessions that have one. For the ones that don't, or where
+the danger is the *rate* rather than the total, the burn-velocity governor watches that instead:
+
+```toml
+[watchdog]
+burn_ceiling_usd_per_hour = 20.0
+burn_action = "alert"   # "stop" to opt into auto-kill
+```
+
+Point a webhook at the alert so it reaches you, not just the dashboard:
+
+```toml
+[[webhooks]]
+name = "phone"
+url = "https://example.com/hooks/pulpo"
+events = ["usage_alert.*", "intervention.*"]
+min_severity = "warn"
+```
+
+Alerting is on by default; auto-stop is opt-in. Combined with `--budget-cost` on the spawn
+itself, this is the closest thing to a breaker an unattended agent gets.
+
+Best docs to read next:
+
+- [Configuration Guide](/guides/configuration)
+- [Config Reference](/reference/config)
+
+## 6. Sovereign Infrastructure: Private Repos, Private Data
+
+Your repos, internal APIs, or credentials aren't a fit for a vendor-managed cloud sandbox — the
+agent has to run on your network, and so does your usage data.
+
+```toml
+[node]
+name = "mac-mini"
+bind = "tailscale"
+```
+
+Pulpo runs as a single binary on a box you own, reachable only over your tailnet. Usage and cost
+data are read from local files and never leave that machine unless you point `[[webhooks]]`
+somewhere yourself. Secrets are stored per-node, injected into the session's own process
+environment, and never returned by the API.
 
 Best docs to read next:
 
 - [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale)
-- [Worktrees](/guides/worktrees)
-- [Discovery Guide](/guides/discovery)
 - [Secrets](/guides/secrets)
-- [Alternatives And Comparisons](/getting-started/alternatives)
-
-## 3. Operator Running Recurring Agent Work
-
-You are past ad hoc prompting. You want repeatable, unattended jobs such as
-nightly review, weekly security scans, documentation sweeps, or migration
-rehearsals.
-
-Typical setup:
-
-- scheduled work on one or more repos
-- long-running sessions
-- need for notifications, status checks, and quick intervention
-
-What Pulpo is doing for you:
-
-- turning each run into a managed session instead of a disposable command
-- exposing lifecycle state and output over CLI, UI, and API
-- making scheduled background work visible and debuggable
-
-Best docs to read next:
-
-- [Quickstart](/getting-started/quickstart)
-- [Configuration Guide](/guides/configuration)
-- [Nightly Code Review](/guides/nightly-code-review)
-- [Architecture Overview](/architecture/overview)
-
-## 4. User Evaluating Pulpo Against Hosted Agents
-
-You are comparing Pulpo with Codex app, Copilot coding agent, Cursor background
-agents, Claude cloud sessions, or OpenHands Cloud.
-
-The key decision is not "which tool is more advanced?" It is "where should the
-runtime live, and who should control it?"
-
-Choose Pulpo if you need:
-
-- self-hosted execution
-- private-network access
-- command-agnostic agent support
-- fleet-style supervision across your own machines
-
-Choose hosted products if you need:
-
-- the fastest path to a managed cloud workflow
-- deep integration with one provider's product surface
-- minimal operational setup
-
-Best docs to read next:
-
-- [Why Pulpo](/getting-started/why-pulpo)
-- [Alternatives And Comparisons](/getting-started/alternatives)
-
-## 5. User Evaluating Pulpo Against Local Session Managers
-
-You may already have a good terminal workflow and want to know whether Pulpo is
-an upgrade or just a different shape of tool.
-
-If your problem is mostly:
-
-- too many local sessions
-- awkward terminal navigation
-- wanting a better session dashboard
-
-then a local session manager may be enough.
-
-If your problem is:
-
-- agents should run remotely or across machines
-- sessions should survive failure with explicit semantics
-- watchdog and intervention behavior should be daemon-owned
-- a phone or web UI should be a real control surface
-
-then Pulpo is aimed more directly at that problem.
-
-Best docs to read next:
-
-- [Alternatives And Comparisons](/getting-started/alternatives)
-- [Architecture Overview](/architecture/overview)
+- [Discovery Guide](/guides/discovery)
 
 ## Quick Decision Table
 
 | If you need... | Start here |
 | --- | --- |
-| One agent running on your own server tonight | [Quickstart](/getting-started/quickstart) |
-| A recurring overnight review workflow | [Nightly Code Review](/guides/nightly-code-review) |
-| Parallel agents on the same repository | [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) |
-| A private multi-node setup with remote execution | [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale) |
-| Isolating higher-risk runs from your main checkout | [Worktrees Guide](/guides/worktrees) |
-| Multiple agents on one repo safely | [Worktrees Guide](/guides/worktrees) |
-| Multi-node control over Tailscale or LAN | [Discovery Guide](/guides/discovery) |
-| Secrets for authenticated agent runs | [Secrets](/guides/secrets) |
-| Objective comparison with alternatives | [Alternatives And Comparisons](/getting-started/alternatives) |
+| An instant answer to "what are my agents costing me" | [Quickstart](/getting-started/quickstart) |
+| An agent that survives a closed laptop lid | [Control Your Agents From Anywhere](/guides/remote-control) |
+| Multiple agents on one repo without collisions | [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) |
+| A recurring job that can't overspend | [Nightly Code Review](/guides/nightly-code-review) |
+| Alerts before a runaway session gets expensive | [Configuration Guide](/guides/configuration) |
+| Agents near private repos or internal APIs | [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale) |
+| An objective comparison with alternatives | [Alternatives And Comparisons](/getting-started/alternatives) |
