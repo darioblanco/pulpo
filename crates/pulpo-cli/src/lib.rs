@@ -772,7 +772,7 @@ fn append_scan_rollups(lines: &mut Vec<String>, title: &str, rows: &[ScanRollup]
 /// Format the read-only usage *scan* (all local agent history, by agent, model, and repo).
 fn format_usage_scan(r: &UsageScanResponse) -> String {
     if r.by_agent.is_empty() {
-        return "No local agent history found (looked in ~/.claude and ~/.codex).".into();
+        return "No local agent history found (looked in ~/.claude, ~/.codex, and ~/.pi).".into();
     }
     let total_cost = r
         .total_cost_usd
