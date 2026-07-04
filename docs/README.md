@@ -67,6 +67,7 @@ See [Why Pulpo](/getting-started/why-pulpo) for the full ICP and competitor view
 
 ## Example Workflows
 
+- [Control Your Agents From Anywhere](/guides/remote-control): spawn, detach, and reattach from a laptop or phone over Tailscale
 - [Nightly Code Review](/guides/nightly-code-review): schedule an overnight review with a budget cap and wake to the result + an exact cost
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo): split one repository across concurrent sessions, each in its own worktree
 - [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale): run agents across your own machines, reachable from your phone over the tailnet
@@ -122,6 +123,7 @@ server required. For a fleet-wide view, point every node's event forwarding (`[[
 - [Session Lifecycle](/operations/session-lifecycle)
 - [Configuration Guide](/guides/configuration)
 - [Discovery Guide](/guides/discovery)
+- [Control Your Agents From Anywhere](/guides/remote-control)
 - [Nightly Code Review](/guides/nightly-code-review)
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
 - [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale)

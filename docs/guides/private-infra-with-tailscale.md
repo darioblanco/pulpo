@@ -1,162 +1,92 @@
 # Private Infrastructure With Tailscale And Secrets
 
-This recipe shows how to run Pulpo across your own private machines and keep
-agent execution close to private repos, VPN-only services, or internal systems.
+Hosted coding agents run on someone else's machine, which is a problem the moment an agent
+needs a private repo, an internal API, or a VPN-only service — the runtime simply can't reach
+them. Pulpo keeps the runtime, the credentials, and the reachability entirely on machines you
+own: one daemon on a box on your tailnet, reachable from anywhere on that tailnet, with
+secrets that never leave the machine that uses them.
 
-It combines:
-
-- Tailscale-based node discovery
-- controller/node control-plane routing
-- per-node secret management
-- one control plane across multiple machines you own
-
-## What Problem This Solves
-
-Hosted coding agents are often inconvenient when:
-
-- the runtime needs private-network access
-- your repos or services live behind VPN or Tailscale
-- you want agents to run on machines you control
-- different machines have different capabilities
-
-Pulpo fits that model by keeping the runtime on your infrastructure while
-keeping the control model consistent across nodes.
+If you haven't set up the daily-driver loop yet (spawn, detach, reattach from elsewhere), see
+[Control Your Agents From Anywhere](/guides/remote-control) first — this guide adds secrets
+on top of that same single-node setup.
 
 ## Example Setup
 
 Assume:
 
-- `mac-mini` is an always-on machine that will act as the Pulpo controller
-- `gpu-box` is a node with access to private repos and internal services
-- `laptop` is where you are currently working
-- all three machines are already on the same Tailnet
+- `mac-mini` is an always-on machine with access to a private repo and an internal API
+- `laptop` is where you're currently working
+- both are already on the same Tailnet
 
-## 1. Configure The Controller
+## 1. Put The Node On Your Tailnet
 
-On `mac-mini`, enable controller mode over Tailscale:
+On `mac-mini`:
 
 ```toml
 [node]
 name = "mac-mini"
 bind = "tailscale"
 tag = "pulpo"
-discovery_interval_secs = 30
-
-[controller]
-enabled = true
 ```
 
-Then start or restart `pulpod`.
+Start (or restart) `pulpod`. `bind = "tailscale"` binds locally and serves HTTPS over the
+tailnet via `tailscale serve` — no public IP, no port-forwarding, no separate `pulpo` auth
+token to manage. Tailscale's own ACLs are the reachability boundary.
 
-This makes the node:
+## 2. Store The Secret On The Node That Will Use It
 
-- bind to the local loopback interface and expose itself over the tailnet with `tailscale serve`
-- discover peer Pulpo nodes via the local Tailscale API
-- act as the canonical fleet control plane
-- issue and verify enrolled node identities for fleet membership
-
-Before configuring a managed node, enroll it on the controller and mint its node token:
+Secrets are stored per-node — in plaintext SQLite with `0600` file permissions, never
+returned by the API, never transmitted anywhere except injected into the session's own
+process environment on that machine. Store it where the work actually happens:
 
 ```bash
-pulpo --node mac-mini nodes enroll gpu-box
-pulpo --node mac-mini nodes enrolled
+pulpo secret set GH_WORK ghp_work_xxxxxxxxxxxx --env GITHUB_TOKEN
+pulpo secret list
 ```
 
-## 2. Configure A Managed Node
+See [Secrets](/guides/secrets) for the full security model.
 
-On `gpu-box`, point Pulpo at the controller:
-
-```toml
-[node]
-name = "gpu-box"
-bind = "tailscale"
-tag = "pulpo"
-discovery_interval_secs = 30
-
-[controller]
-address = "https://mac-mini.tailnet-name.ts.net"
-token = "node-token-issued-by-controller"
-```
-
-Even in tailscale mode, `controller.token` is required. Tailscale protects network reachability; the node token identifies the enrolled node inside the fleet.
-
-Once both nodes are running, the controller should discover the managed node and start receiving node events.
-
-Check from your laptop against the controller:
+## 3. Spawn The Session
 
 ```bash
-pulpo --node mac-mini nodes
-pulpo --node mac-mini nodes enrolled
-```
-
-## 3. Store Secrets On The Node That Will Execute The Work
-
-Secrets are stored per-node, which is usually what you want for private
-infrastructure.
-
-For example, if `gpu-box` has access to the private repo and should run the
-session, store the secret there:
-
-```bash
-pulpo --node gpu-box secret set GH_WORK ghp_work_xxxxxxxxxxxx --env GITHUB_TOKEN
-pulpo --node gpu-box secret list
-```
-
-This keeps the secret associated with the node that will actually execute the
-session.
-
-## 4. Run A Session On The Node
-
-For cross-node work, target the controller and tell it which node should execute the session:
-
-```bash
-pulpo --node mac-mini spawn review-backend \
+pulpo spawn review-backend \
   --workdir ~/repos/backend \
-  --node gpu-box \
   --secret GH_WORK \
   -- claude -p "Review this service for correctness, security issues, and missing tests."
 ```
 
-From your laptop, you are still in control, but the runtime lives on `gpu-box`. The controller is the canonical fleet view and the cross-node write path.
+The agent runs on `mac-mini`, with `GITHUB_TOKEN` injected from the stored secret, against a
+repo and network that only `mac-mini` can reach.
 
-That means:
+## 4. Check Progress From Your Laptop
 
-- the agent executes near the private repo and services
-- the fleet-wide session lifecycle is still visible from the controller
-- you can inspect status, logs, and recovery through the same Pulpo interface
-
-## 5. Check Progress Remotely
-
-From your laptop:
+SSH in over the tailnet and attach directly, or open the web UI at the node's tailnet
+address — both covered in
+[Control Your Agents From Anywhere](/guides/remote-control):
 
 ```bash
-pulpo --node mac-mini ls
-pulpo --node mac-mini logs review-backend --follow
+ssh mac-mini
+pulpo attach review-backend
 ```
 
-Or open the controller dashboard and inspect the fleet view. Managed-node dashboards stay local-first and link you back to the controller for fleet control.
+## 5. Add Worktree Isolation If Needed
 
-This is the practical value of Pulpo's control-plane model: remote execution,
-same control semantics.
-
-## 6. Add Worktree Isolation If Needed
-
-If the task needs an isolated checkout (so a high-permission run cannot disturb the repo's main working tree):
+For a higher-permission run that shouldn't touch the repo's main working tree:
 
 ```bash
-pulpo --node gpu-box spawn risky-audit \
+pulpo spawn risky-audit \
   --workdir ~/repos/backend \
   --worktree \
   --secret GH_WORK \
   -- claude --dangerously-skip-permissions -p "Audit this repository and propose fixes."
 ```
 
-That keeps execution on your infrastructure while still isolating the session in
-its own git worktree and branch.
+See [Worktrees](/guides/worktrees) for the full isolation model.
 
 ## Optional: Reusable Ink
 
-If you run this kind of task often, define an ink on the target node:
+If you run this kind of task often, define an ink so the command and its secrets travel
+together:
 
 ```toml
 [inks.private-review]
@@ -165,34 +95,38 @@ command = "claude -p 'Review this repository for correctness, security issues, a
 secrets = ["GH_WORK"]
 ```
 
-Then spawn it through the controller:
-
 ```bash
-pulpo --node mac-mini spawn review-backend --workdir ~/repos/backend --node gpu-box --ink private-review
+pulpo spawn review-backend --workdir ~/repos/backend --ink private-review
 ```
 
 ## Operational Notes
 
-- Tailscale discovery is recommended when you want Pulpo across your own private machines.
-- Discovery and enrollment are separate: discovery finds node addresses, enrollment authorizes fleet membership.
-- Secrets are per-node, so manage them on the node that will execute the work.
-- Remote `--workdir` paths must exist on the target node, not just on your local machine.
-- If multiple nodes use different repo paths, prefer node-specific operational conventions rather than assuming one universal path layout.
-- Fleet state on the controller is eventually consistent. Sessions keep running on managed nodes even if the controller restarts.
-- The controller session index survives restart, but pending queued node commands do not.
+- Tailscale is the recommended `bind` mode for reaching a node outside your LAN; use manual
+  `[peers]` entries instead if a machine isn't on your tailnet.
+- Secrets are per-node — set them on the node that will actually execute the work, not on
+  whichever machine you happen to be typing from.
+- `--workdir` (and any secret-backed path) must exist on the node that runs the session, not
+  just on your laptop.
 
 ## Related Docs
 
-- [Discovery Guide](/guides/discovery)
+- [Control Your Agents From Anywhere](/guides/remote-control)
 - [Secrets](/guides/secrets)
-- [Nightly Code Review](/guides/nightly-code-review)
+- [Discovery Guide](/guides/discovery)
+- [Worktrees](/guides/worktrees)
 - [Use Cases](/getting-started/use-cases)
 
-## Summary
+## Advanced: Multi-Node Control Plane (Experimental, Not Actively Developed)
 
-This workflow shows Pulpo's strongest wedge clearly:
+Everything above is one node. Pulpo also has a controller/node control plane for fleet-wide
+visibility and cross-node spawning from a single machine — but as of June 2026 it is
+**frozen**: it works and is maintained, but it is not being extended (no controller-side
+rollups, no quota-aware placement). For a fleet-wide view today, point every node's event
+forwarding (`[[webhooks]]`, `/metrics`) at a collector you already run instead — see the
+"Monitoring & event topology" section of the
+[Architecture Overview](/architecture/overview).
 
-- the runtime stays on infrastructure you control
-- private-network access stays private
-- sessions remain durable and observable
-- one laptop can supervise work happening on another machine through a dedicated controller
+If you still want the controller/node setup — for example to drive remote spawns from one
+laptop across several enrolled machines — see
+[Controller + Node Setup](/guides/controller-node-setup), which carries the same frozen-status
+caveat up front.
