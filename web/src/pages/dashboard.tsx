@@ -6,23 +6,15 @@ import { NodeCard } from '@/components/dashboard/node-card';
 import { NewSessionDialog } from '@/components/dashboard/new-session-dialog';
 import { SessionFilter } from '@/components/history/session-filter';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import {
-  getPeers,
-  getFleetSessions,
-  getSessions,
-  cleanupSessions,
-  stopSession,
-} from '@/api/client';
+import { getPeers, getSessions, cleanupSessions, stopSession } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { Trash2, CheckSquare } from 'lucide-react';
-import { PeerStatusDot } from '@/components/shared/peer-status-dot';
 import { useSSE } from '@/hooks/use-sse';
 import { useConnection } from '@/hooks/use-connection';
 import { detectStatusChanges, showDesktopNotification } from '@/lib/notifications';
-import { formatMemory, statusColors } from '@/lib/utils';
+
 import { toast } from 'sonner';
-import type { NodeInfo, PeerInfo, Session, FleetSession } from '@/api/types';
+import type { NodeInfo, Session } from '@/api/types';
 
 const DEFAULT_STATUSES = new Set(['active', 'idle', 'ready']);
 
@@ -31,11 +23,6 @@ export function DashboardPage() {
   const { isConnected } = useConnection();
   const { sessions, setSessions, connected } = useSSE();
   const [localNode, setLocalNode] = useState<NodeInfo | null>(null);
-  const [peers, setPeers] = useState<PeerInfo[]>([]);
-  const [fleetSessions, setFleetSessions] = useState<FleetSession[]>([]);
-  const [nodeRole, setNodeRole] = useState<'standalone' | 'controller' | 'node'>('standalone');
-  const [controllerName, setControllerName] = useState<string | null>(null);
-  const [controllerAddress, setControllerAddress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const previousSessionsRef = useRef<Session[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<Set<string>>(DEFAULT_STATUSES);
@@ -48,18 +35,6 @@ export function DashboardPage() {
     try {
       const resp = await getPeers();
       setLocalNode(resp.local);
-      setPeers(resp.peers);
-      setNodeRole((resp.role as 'standalone' | 'controller' | 'node') ?? 'standalone');
-      setControllerName(resp.controller_name ?? null);
-      setControllerAddress(resp.controller_address ?? null);
-
-      if (resp.role === 'controller') {
-        await getFleetSessions()
-          .then((r) => setFleetSessions(r.sessions))
-          .catch(() => setFleetSessions([]));
-      } else {
-        setFleetSessions([]);
-      }
       setError(null);
     } catch {
       if (!isConnected) {
@@ -206,11 +181,6 @@ export function DashboardPage() {
     [selectedIds, handleRefresh],
   );
 
-  const hasMultipleNodes = peers.length > 0;
-  const isControllerNode = nodeRole === 'controller';
-  const isManagedNode = nodeRole === 'node';
-  const allowRemoteActions = isControllerNode;
-
   return (
     <div data-testid="dashboard-page">
       <AppHeader title="Sessions" />
@@ -249,43 +219,9 @@ export function DashboardPage() {
                     Cleanup
                   </Button>
                 )}
-                <NewSessionDialog
-                  peers={allowRemoteActions ? peers : []}
-                  onCreated={handleSessionCreated}
-                />
+                <NewSessionDialog onCreated={handleSessionCreated} />
               </div>
             </div>
-
-            {isManagedNode && (
-              <div
-                data-testid="node-controller-banner"
-                className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">This node is managed by a controller.</p>
-                  <p className="text-sm text-muted-foreground">
-                    Fleet-wide view and cross-node control live on the controller.
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {controllerName
-                      ? `Controller: ${controllerName}`
-                      : 'Controller node configured'}
-                    {controllerAddress ? ` · ${controllerAddress}` : ''}
-                  </p>
-                </div>
-                {controllerAddress && (
-                  <Button
-                    data-testid="connect-controller-button"
-                    variant="outline"
-                    onClick={() =>
-                      navigate(`/connect?url=${encodeURIComponent(controllerAddress)}`)
-                    }
-                  >
-                    Connect to controller
-                  </Button>
-                )}
-              </div>
-            )}
 
             <div className="flex items-center gap-3">
               <div className="flex-1">
@@ -310,209 +246,18 @@ export function DashboardPage() {
               )}
             </div>
 
-            {isControllerNode && hasMultipleNodes ? (
-              <Tabs defaultValue="all" data-testid="node-tabs">
-                <TabsList className="h-auto min-h-12 w-auto max-w-full justify-start overflow-x-auto py-1.5">
-                  <TabsTrigger value="all" data-testid="tab-all">
-                    <div className="flex items-center">
-                      <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-primary" />
-                      All
-                      <span className="ml-1.5 text-xs text-muted-foreground">
-                        ({fleetSessions.filter((s) => visibleStatuses.has(s.status)).length})
-                      </span>
-                    </div>
-                  </TabsTrigger>
-                  <TabsTrigger value="local" data-testid="tab-local">
-                    <div className="flex flex-col items-start leading-tight">
-                      <div className="flex items-center">
-                        <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-status-ready" />
-                        {localNode?.name ?? 'local'}
-                        <span className="ml-1.5 text-xs text-muted-foreground">
-                          ({filteredSessions.length})
-                        </span>
-                      </div>
-                      {localNode && (
-                        <span
-                          className="ml-3.5 text-[0.625rem] text-muted-foreground"
-                          data-testid="tab-local-subtitle"
-                        >
-                          {localNode.os} · {localNode.cpus} CPU ·{' '}
-                          {formatMemory(localNode.memory_mb)}
-                        </span>
-                      )}
-                    </div>
-                  </TabsTrigger>
-                  {peers.map((peer) => (
-                    <TabsTrigger key={peer.name} value={peer.name} data-testid={`tab-${peer.name}`}>
-                      <div className="flex flex-col items-start leading-tight">
-                        <div className="flex items-center">
-                          <span className="mr-1.5">
-                            <PeerStatusDot
-                              name={peer.name}
-                              address={peer.address}
-                              status={peer.status}
-                              testId={`peer-dot-${peer.name}`}
-                            />
-                          </span>
-                          {peer.name}
-                          <span className="ml-1.5 text-xs text-muted-foreground">
-                            (
-                            {
-                              fleetSessions.filter(
-                                (s) => s.node_name === peer.name && visibleStatuses.has(s.status),
-                              ).length
-                            }
-                            )
-                          </span>
-                        </div>
-                        {peer.node_info && (
-                          <span
-                            className="ml-3.5 text-[0.625rem] text-muted-foreground"
-                            data-testid={`tab-${peer.name}-subtitle`}
-                          >
-                            {peer.node_info.os} · {peer.node_info.cpus} CPU ·{' '}
-                            {formatMemory(peer.node_info.memory_mb)}
-                          </span>
-                        )}
-                      </div>
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-
-                <TabsContent value="all">
-                  <div className="space-y-1">
-                    {fleetSessions.filter((s) => visibleStatuses.has(s.status)).length === 0 ? (
-                      <p className="py-8 text-center text-muted-foreground">
-                        No matching sessions across the fleet.
-                      </p>
-                    ) : (
-                      <div className="rounded-lg border">
-                        <table className="w-full text-sm" data-testid="fleet-table">
-                          <thead>
-                            <tr className="border-b text-left text-muted-foreground">
-                              <th className="px-3 py-2 font-medium">Node</th>
-                              <th className="px-3 py-2 font-medium">Session</th>
-                              <th className="px-3 py-2 font-medium">Status</th>
-                              <th className="hidden px-3 py-2 font-medium sm:table-cell">
-                                Command
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {fleetSessions
-                              .filter((s) => visibleStatuses.has(s.status))
-                              .map((s) => {
-                                const isLocal = s.node_name === localNode?.name;
-                                return (
-                                  <tr
-                                    key={`${s.node_name}-${s.id}`}
-                                    className={`border-b last:border-0 ${isLocal ? 'cursor-pointer hover:bg-muted/30' : ''}`}
-                                    onClick={
-                                      isLocal ? () => navigate(`/sessions/${s.id}`) : undefined
-                                    }
-                                  >
-                                    <td className="px-3 py-2 text-muted-foreground">
-                                      {s.node_name}
-                                    </td>
-                                    <td className="px-3 py-2 font-medium">{s.name}</td>
-                                    <td className="px-3 py-2">
-                                      <span className="inline-flex items-center gap-1.5 text-xs">
-                                        <span
-                                          className={`h-1.5 w-1.5 rounded-full ${statusColors[s.status] ?? 'bg-muted-foreground'}`}
-                                        />
-                                        {s.status}
-                                      </span>
-                                    </td>
-                                    <td className="hidden max-w-xs truncate px-3 py-2 text-muted-foreground sm:table-cell">
-                                      {s.command}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="local">
-                  {localNode && (
-                    <NodeCard
-                      name={localNode.name}
-                      nodeInfo={localNode}
-                      status="online"
-                      sessions={filteredSessions}
-                      isLocal
-                      onRefresh={handleRefresh}
-                      selectionMode={selectionMode}
-                      selectedIds={selectedIds}
-                      onToggleSelect={toggleSelect}
-                    />
-                  )}
-                </TabsContent>
-
-                {peers.map((peer) => {
-                  const peerFleetSessions = fleetSessions.filter(
-                    (s) => s.node_name === peer.name && visibleStatuses.has(s.status),
-                  );
-                  return (
-                    <TabsContent key={peer.name} value={peer.name}>
-                      {peerFleetSessions.length === 0 ? (
-                        <p className="py-8 text-center text-muted-foreground">
-                          No matching sessions on this node.
-                        </p>
-                      ) : (
-                        <div className="rounded-lg border">
-                          <table className="w-full text-sm" data-testid={`peer-table-${peer.name}`}>
-                            <thead>
-                              <tr className="border-b text-left text-muted-foreground">
-                                <th className="px-3 py-2 font-medium">Session</th>
-                                <th className="px-3 py-2 font-medium">Status</th>
-                                <th className="hidden px-3 py-2 font-medium sm:table-cell">
-                                  Command
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {peerFleetSessions.map((s) => (
-                                <tr key={s.id} className="border-b last:border-0">
-                                  <td className="px-3 py-2 font-medium">{s.name}</td>
-                                  <td className="px-3 py-2">
-                                    <span className="inline-flex items-center gap-1.5 text-xs">
-                                      <span
-                                        className={`h-1.5 w-1.5 rounded-full ${statusColors[s.status] ?? 'bg-muted-foreground'}`}
-                                      />
-                                      {s.status}
-                                    </span>
-                                  </td>
-                                  <td className="hidden max-w-xs truncate px-3 py-2 text-muted-foreground sm:table-cell">
-                                    {s.command}
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </TabsContent>
-                  );
-                })}
-              </Tabs>
-            ) : (
-              localNode && (
-                <NodeCard
-                  name={localNode.name}
-                  nodeInfo={localNode}
-                  status="online"
-                  sessions={filteredSessions}
-                  isLocal
-                  onRefresh={handleRefresh}
-                  selectionMode={selectionMode}
-                  selectedIds={selectedIds}
-                  onToggleSelect={toggleSelect}
-                />
-              )
+            {localNode && (
+              <NodeCard
+                name={localNode.name}
+                nodeInfo={localNode}
+                status="online"
+                sessions={filteredSessions}
+                isLocal
+                onRefresh={handleRefresh}
+                selectionMode={selectionMode}
+                selectedIds={selectedIds}
+                onToggleSelect={toggleSelect}
+              />
             )}
           </>
         )}

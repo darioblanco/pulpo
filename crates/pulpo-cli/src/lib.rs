@@ -3,8 +3,8 @@ use clap::{Parser, Subcommand};
 #[cfg_attr(coverage, allow(unused_imports))]
 use pulpo_common::api::{
     AuthTokenResponse, CleanupResponse, ConfigResponse, CreateSessionResponse, DimensionRollup,
-    EnrollNodeRequest, EnrollNodeResponse, EnrolledNodesResponse, InterventionEventResponse,
-    PeersResponse, ScanRollup, SessionProjection, UsageProjectionResponse, UsageScanResponse,
+    InterventionEventResponse, PeersResponse, ScanRollup, SessionProjection,
+    UsageProjectionResponse, UsageScanResponse,
 };
 #[cfg(test)]
 use pulpo_common::session::Runtime;
@@ -148,12 +148,9 @@ pub enum Commands {
         name: String,
     },
 
-    /// List known nodes, or manage controller-enrolled nodes
+    /// List known nodes on the tailnet/peer registry
     #[command(visible_alias = "n")]
-    Nodes {
-        #[command(subcommand)]
-        action: Option<NodeAction>,
-    },
+    Nodes,
 
     /// Show intervention history for a session
     #[command(visible_alias = "iv")]
@@ -288,17 +285,6 @@ pub enum InkAction {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum NodeAction {
-    /// List nodes enrolled on the controller
-    Enrolled,
-    /// Enroll a new node and mint its token
-    Enroll {
-        /// Managed node name
-        name: String,
-    },
-}
-
-#[derive(Subcommand, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum ScheduleAction {
     /// Add a new schedule
@@ -311,9 +297,6 @@ pub enum ScheduleAction {
         /// Working directory
         #[arg(long)]
         workdir: Option<String>,
-        /// Target node (omit = local, "auto" = least-loaded)
-        #[arg(long)]
-        node: Option<String>,
         /// Ink preset
         #[arg(long)]
         ink: Option<String>,
@@ -587,41 +570,6 @@ fn format_nodes(resp: &PeersResponse) -> String {
         lines.push(format!(
             "{:<20} {:<25} {:<10} {}",
             p.name, p.address, p.status, sessions
-        ));
-    }
-    lines.join("\n")
-}
-
-fn format_enrolled_nodes(resp: &EnrolledNodesResponse) -> String {
-    if resp.nodes.is_empty() {
-        return "No enrolled nodes.".into();
-    }
-
-    let seen_width = resp
-        .nodes
-        .iter()
-        .map(|node| node.last_seen_at.as_deref().unwrap_or("-").len())
-        .max()
-        .unwrap_or(9)
-        .max(9);
-    let addr_width = resp
-        .nodes
-        .iter()
-        .map(|node| node.last_seen_address.as_deref().unwrap_or("-").len())
-        .max()
-        .unwrap_or(7)
-        .max(7);
-
-    let mut lines = vec![format!(
-        "{:<20} {:<seen_width$} {:<addr_width$}",
-        "NAME", "LAST SEEN", "ADDRESS"
-    )];
-    for node in &resp.nodes {
-        lines.push(format!(
-            "{:<20} {:<seen_width$} {:<addr_width$}",
-            node.node_name,
-            node.last_seen_at.as_deref().unwrap_or("-"),
-            node.last_seen_address.as_deref().unwrap_or("-"),
         ));
     }
     lines.join("\n")
@@ -1279,7 +1227,6 @@ async fn execute_schedule(
             name,
             cron,
             workdir,
-            node,
             ink,
             description,
             secret,
@@ -1304,9 +1251,6 @@ async fn execute_schedule(
             });
             if let Some(c) = &cmd {
                 body["command"] = serde_json::json!(c);
-            }
-            if let Some(n) = node {
-                body["target_node"] = serde_json::json!(n);
             }
             if let Some(i) = ink {
                 body["ink"] = serde_json::json!(i);
@@ -1714,10 +1658,7 @@ fn format_schedules(schedules: &[serde_json::Value]) -> String {
         let last_run = s["last_run_at"]
             .as_str()
             .map_or_else(|| "-".to_owned(), format_local_time);
-        let node = s["target_node"].as_str().unwrap_or("local");
-        lines.push(format!(
-            "{name:<20} {cron:<18} {enabled:<8} {last_run:<20} {node}"
-        ));
+        lines.push(format!("{name:<20} {cron:<18} {enabled:<8} {last_run:<20}"));
     }
     lines.join("\n")
 }
@@ -1931,49 +1872,15 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let sessions: Vec<Session> = serde_json::from_str(&text)?;
             Ok(format_sessions(&sessions))
         }
-        Commands::Nodes { action } => match action {
-            None => {
-                let resp = authed_get(&client, format!("{url}/api/v1/peers"), token.as_deref())
-                    .send()
-                    .await
-                    .map_err(|e| friendly_error(&e, node))?;
-                let text = ok_or_api_error(resp).await?;
-                let resp: PeersResponse = serde_json::from_str(&text)?;
-                Ok(format_nodes(&resp))
-            }
-            Some(NodeAction::Enrolled) => {
-                let resp = authed_get(
-                    &client,
-                    format!("{url}/api/v1/controller/nodes"),
-                    token.as_deref(),
-                )
+        Commands::Nodes => {
+            let resp = authed_get(&client, format!("{url}/api/v1/peers"), token.as_deref())
                 .send()
                 .await
                 .map_err(|e| friendly_error(&e, node))?;
-                let text = ok_or_api_error(resp).await?;
-                let resp: EnrolledNodesResponse = serde_json::from_str(&text)?;
-                Ok(format_enrolled_nodes(&resp))
-            }
-            Some(NodeAction::Enroll { name }) => {
-                let resp = authed_post(
-                    &client,
-                    format!("{url}/api/v1/controller/nodes"),
-                    token.as_deref(),
-                )
-                .json(&EnrollNodeRequest {
-                    node_name: name.clone(),
-                })
-                .send()
-                .await
-                .map_err(|e| friendly_error(&e, node))?;
-                let text = ok_or_api_error(resp).await?;
-                let resp: EnrollNodeResponse = serde_json::from_str(&text)?;
-                Ok(format!(
-                    "Enrolled node {}\nToken: {}\nSet [controller].token on that node and restart it.",
-                    resp.node_name, resp.token
-                ))
-            }
-        },
+            let text = ok_or_api_error(resp).await?;
+            let resp: PeersResponse = serde_json::from_str(&text)?;
+            Ok(format_nodes(&resp))
+        }
         Commands::Spawn {
             workdir,
             name,
@@ -2300,32 +2207,7 @@ mod tests {
     #[test]
     fn test_cli_parse_nodes() {
         let cli = Cli::try_parse_from(["pulpo", "nodes"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Nodes { action: None })
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_nodes_enrolled() {
-        let cli = Cli::try_parse_from(["pulpo", "nodes", "enrolled"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Nodes {
-                action: Some(NodeAction::Enrolled)
-            })
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_nodes_enroll() {
-        let cli = Cli::try_parse_from(["pulpo", "nodes", "enroll", "node-1"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Some(Commands::Nodes {
-                action: Some(NodeAction::Enroll { name })
-            }) if name == "node-1"
-        ));
+        assert!(matches!(cli.command, Some(Commands::Nodes)));
     }
 
     #[test]
@@ -2804,12 +2686,6 @@ mod tests {
         assert!(debug.contains("List"));
     }
 
-    #[test]
-    fn test_commands_debug() {
-        let cmd = Commands::List { all: false };
-        assert_eq!(format!("{cmd:?}"), "List { all: false }");
-    }
-
     /// A valid Session JSON for test responses.
     const TEST_SESSION_JSON: &str = r#"{"id":"00000000-0000-0000-0000-000000000001","name":"repo","workdir":"/tmp/repo","command":"claude -p 'Fix bug'","description":null,"status":"active","exit_code":null,"backend_session_id":null,"output_snapshot":null,"metadata":null,"ink":null,"intervention_code":null,"intervention_reason":null,"intervention_at":null,"last_output_at":null,"idle_since":null,"idle_threshold_secs":null,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
 
@@ -2851,19 +2727,6 @@ mod tests {
                 "/api/v1/peers",
                 get(|| async {
                     r#"{"local":{"name":"test","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":0,"gpu":null},"peers":[]}"#.to_owned()
-                }),
-            )
-            .route(
-                "/api/v1/controller/nodes",
-                get(|| async {
-                    r#"{"nodes":[{"node_name":"node-1","last_seen_at":"2026-04-02T17:00:00Z","last_seen_address":"10.0.0.10"}]}"#
-                        .to_owned()
-                })
-                .post(|| async {
-                    (
-                        StatusCode::CREATED,
-                        r#"{"node_name":"node-1","token":"issued-node-token"}"#.to_owned(),
-                    )
                 }),
             )
             .route(
@@ -2914,48 +2777,13 @@ mod tests {
         let cli = Cli {
             node,
             token: None,
-            command: Some(Commands::Nodes { action: None }),
+            command: Some(Commands::Nodes),
             path: None,
         };
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("test"));
         assert!(result.contains("(local)"));
         assert!(result.contains("NAME"));
-    }
-
-    #[tokio::test]
-    async fn test_execute_nodes_enrolled_success() {
-        let node = start_test_server().await;
-        let cli = Cli {
-            node,
-            token: None,
-            command: Some(Commands::Nodes {
-                action: Some(NodeAction::Enrolled),
-            }),
-            path: None,
-        };
-        let result = execute(&cli).await.unwrap();
-        assert!(result.contains("node-1"));
-        assert!(result.contains("10.0.0.10"));
-        assert!(result.contains("LAST SEEN"));
-    }
-
-    #[tokio::test]
-    async fn test_execute_nodes_enroll_success() {
-        let node = start_test_server().await;
-        let cli = Cli {
-            node,
-            token: None,
-            command: Some(Commands::Nodes {
-                action: Some(NodeAction::Enroll {
-                    name: "node-1".into(),
-                }),
-            }),
-            path: None,
-        };
-        let result = execute(&cli).await.unwrap();
-        assert!(result.contains("issued-node-token"));
-        assert!(result.contains("Set [controller].token"));
     }
 
     #[tokio::test]
@@ -3214,7 +3042,7 @@ mod tests {
         let cli = Cli {
             node: "localhost:1".into(),
             token: None,
-            command: Some(Commands::Nodes { action: None }),
+            command: Some(Commands::Nodes),
             path: None,
         };
         let result = execute(&cli).await;
@@ -3764,9 +3592,6 @@ mod tests {
                 session_count: Some(3),
                 source: PeerSource::Configured,
             }],
-            role: None,
-            controller_name: None,
-            controller_address: None,
         };
         let output = format_nodes(&resp);
         assert!(output.contains("mac-mini"));
@@ -3798,36 +3623,12 @@ mod tests {
                 session_count: None,
                 source: PeerSource::Configured,
             }],
-            role: None,
-            controller_name: None,
-            controller_address: None,
         };
         let output = format_nodes(&resp);
         assert!(output.contains("offline"));
         // No session count → shows "-"
         let lines: Vec<&str> = output.lines().collect();
         assert!(lines[2].contains('-'));
-    }
-
-    #[test]
-    fn test_format_enrolled_nodes() {
-        let resp = EnrolledNodesResponse {
-            nodes: vec![pulpo_common::api::EnrolledNodeInfo {
-                node_name: "node-1".into(),
-                last_seen_at: Some("2026-04-02T17:00:00Z".into()),
-                last_seen_address: Some("10.0.0.10".into()),
-            }],
-        };
-        let output = format_enrolled_nodes(&resp);
-        assert!(output.contains("NAME"));
-        assert!(output.contains("node-1"));
-        assert!(output.contains("10.0.0.10"));
-    }
-
-    #[test]
-    fn test_format_enrolled_nodes_empty() {
-        let resp = EnrolledNodesResponse { nodes: vec![] };
-        assert_eq!(format_enrolled_nodes(&resp), "No enrolled nodes.");
     }
 
     #[tokio::test]
@@ -4771,10 +4572,7 @@ mod tests {
     #[test]
     fn test_cli_parse_alias_nodes() {
         let cli = Cli::try_parse_from(["pulpo", "n"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Nodes { action: None })
-        ));
+        assert!(matches!(&cli.command, Some(Commands::Nodes)));
     }
 
     #[test]
@@ -5083,59 +4881,6 @@ mod tests {
     }
 
     #[test]
-    fn test_format_schedules_with_entries() {
-        let schedules = vec![serde_json::json!({
-            "name": "nightly",
-            "cron": "0 3 * * *",
-            "enabled": true,
-            "last_run_at": null,
-            "target_node": null
-        })];
-        let output = format_schedules(&schedules);
-        assert!(output.contains("nightly"));
-        assert!(output.contains("0 3 * * *"));
-        assert!(output.contains("local"));
-        assert!(output.contains("yes"));
-        assert!(output.contains('-'));
-    }
-
-    #[test]
-    fn test_format_schedules_disabled_entry() {
-        let schedules = vec![serde_json::json!({
-            "name": "weekly",
-            "cron": "0 0 * * 0",
-            "enabled": false,
-            "last_run_at": "2026-03-18T03:00:00Z",
-            "target_node": "gpu-box"
-        })];
-        let output = format_schedules(&schedules);
-        assert!(output.contains("weekly"));
-        assert!(output.contains("no"));
-        assert!(output.contains("gpu-box"));
-        // last_run_at is converted to local time; verify it contains the date
-        assert!(output.contains("2026-03-18"));
-    }
-
-    #[test]
-    fn test_format_schedules_header() {
-        let schedules = vec![serde_json::json!({
-            "name": "test",
-            "cron": "* * * * *",
-            "enabled": true,
-            "last_run_at": null,
-            "target_node": null
-        })];
-        let output = format_schedules(&schedules);
-        assert!(output.contains("NAME"));
-        assert!(output.contains("CRON (local)"));
-        assert!(output.contains("ENABLED"));
-        assert!(output.contains("LAST RUN"));
-        assert!(output.contains("NODE"));
-    }
-
-    // -- Schedule CLI parse tests --
-
-    #[test]
     fn test_cli_parse_schedule_add() {
         let cli = Cli::try_parse_from([
             "pulpo",
@@ -5161,6 +4906,8 @@ mod tests {
 
     #[test]
     fn test_cli_parse_schedule_add_with_node() {
+        // `--node` is the global connection flag: the schedule is created directly
+        // on that node's pulpod and fires locally there.
         let cli = Cli::try_parse_from([
             "pulpo",
             "schedule",
@@ -5175,11 +4922,12 @@ mod tests {
             "claude",
         ])
         .unwrap();
+        assert_eq!(cli.node, "gpu-box");
         assert!(matches!(
             &cli.command,
             Some(Commands::Schedule {
-                action: ScheduleAction::Add { node, .. }
-            }) if node.as_deref() == Some("gpu-box")
+                action: ScheduleAction::Add { name, .. }
+            }) if name == "nightly"
         ));
     }
 
@@ -5658,20 +5406,6 @@ mod tests {
         let secrets = vec![serde_json::json!({"name": "KEY", "created_at": "now"})];
         let output = format_secrets(&secrets);
         assert!(output.contains("now"));
-    }
-
-    #[test]
-    fn test_format_schedules_short_last_run_at() {
-        // Regression: last_run_at shorter than 16 chars must not panic
-        let schedules = vec![serde_json::json!({
-            "name": "test",
-            "cron": "* * * * *",
-            "enabled": true,
-            "last_run_at": "short",
-            "target_node": null
-        })];
-        let output = format_schedules(&schedules);
-        assert!(output.contains("short"));
     }
 
     #[test]

@@ -260,7 +260,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };

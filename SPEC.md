@@ -42,9 +42,10 @@ exactly what you'd least want flowing through a third-party relay.
 
 ## Non-Goals
 
-- **Cross-node agent orchestration** — the controller/node control plane is frozen
-  (see Roadmap "Phase C — Frozen"). Cross-node visibility is the event backbone
-  (forward to your own collector), not a bespoke controller.
+- **Cross-node agent orchestration** — a controller/node control plane existed, was frozen,
+  then removed (July 2026; see Roadmap "Phase C"). Every `pulpod` is standalone, reached
+  directly (`pulpo --node <name>`); cross-node visibility is the event backbone (forward to
+  your own collector), not a bespoke controller.
 - Optimizing the **inference path** (prompt caching, per-request routing, context
   trimming) — that's the agent's job; Pulpo optimizes the *operation* of agents
 - Agent-to-agent communication; custom model hosting/serving

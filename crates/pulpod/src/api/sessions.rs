@@ -7,35 +7,12 @@ use axum::{
 };
 use pulpo_common::api::{
     CleanupResponse, CreateSessionRequest, CreateSessionResponse, ErrorResponse, ListSessionsQuery,
-    NodeCommand, OutputQuery, SendInputRequest, SessionIndexEntry,
+    OutputQuery, SendInputRequest,
 };
 use pulpo_common::session::{Session, SessionStatus};
 use serde::Deserialize;
-use uuid::Uuid;
 
-use crate::api::session_remote::{
-    ApiError, expect_remote_no_content, internal_error, parse_remote_json, remote_json_request,
-    reqwest_error_response, resolve_remote_node_target, resolve_remote_session_node_target,
-    send_remote_request,
-};
-use crate::remote::{apply_remote_auth, remote_client};
-
-fn session_from_index_entry(entry: SessionIndexEntry) -> Session {
-    let status = entry
-        .status
-        .parse::<SessionStatus>()
-        .unwrap_or(SessionStatus::Lost);
-
-    Session {
-        id: Uuid::parse_str(&entry.session_id).unwrap_or_else(|_| Uuid::nil()),
-        name: entry.session_name,
-        command: entry.command.unwrap_or_default(),
-        status,
-        updated_at: chrono::DateTime::parse_from_rfc3339(&entry.updated_at)
-            .map_or_else(|_| chrono::Utc::now(), |dt| dt.with_timezone(&chrono::Utc)),
-        ..Session::default()
-    }
-}
+use crate::api::error::{ApiError, internal_error};
 
 pub async fn list(
     State(state): State<Arc<super::AppState>>,
@@ -68,62 +45,20 @@ pub async fn get(
 ) -> Result<Json<Session>, ApiError> {
     match state.session_manager.get_session(&id).await {
         Ok(Some(session)) => Ok(Json(session)),
-        Ok(None) => {
-            if let Some(session_index) = &state.session_index
-                && let Some(entry) = session_index.get(&id).await
-            {
-                return Ok(Json(session_from_index_entry(entry)));
-            }
-            Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!("session not found: {id}"),
-                }),
-            ))
-        }
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("session not found: {id}"),
+            }),
+        )),
         Err(e) => Err(internal_error(&e.to_string())),
     }
 }
 
 pub async fn create(
     State(state): State<Arc<super::AppState>>,
-    Json(mut req): Json<CreateSessionRequest>,
+    Json(req): Json<CreateSessionRequest>,
 ) -> Result<(StatusCode, Json<CreateSessionResponse>), ApiError> {
-    if let Some(target_node) = req.target_node.clone() {
-        let role = state.config.read().await.role();
-        if role != crate::config::NodeRole::Controller {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "target_node requires controller mode".into(),
-                }),
-            ));
-        }
-
-        if let Some(target) = resolve_remote_node_target(&state, &target_node).await? {
-            req.target_node = None;
-            let client = remote_client()
-                .map_err(|e| internal_error(&format!("failed to build HTTP client: {e}")))?;
-            let resp = send_remote_request(
-                apply_remote_auth(
-                    client
-                        .post(format!("{}/api/v1/sessions", target.base_url))
-                        .json(&req),
-                    target.token.as_deref(),
-                ),
-                format!("failed to create session on node {}", target.node_name),
-            )
-            .await?;
-            let body = parse_remote_json::<CreateSessionResponse>(
-                resp,
-                "failed to create remote session",
-                "failed to parse remote create response",
-            )
-            .await?;
-            return Ok((StatusCode::CREATED, Json(body)));
-        }
-    }
-
     let session = state
         .session_manager
         .create_session(req)
@@ -160,22 +95,6 @@ pub async fn stop(
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("not found") {
-                if let (Some(session_index), Some(command_queue)) =
-                    (&state.session_index, &state.command_queue)
-                    && let Some(entry) = session_index.get(&id).await
-                {
-                    command_queue
-                        .enqueue(
-                            &entry.node_name,
-                            NodeCommand::StopSession {
-                                command_id: Uuid::new_v4().to_string(),
-                                session_id: id,
-                            },
-                        )
-                        .await;
-                    return Ok(StatusCode::ACCEPTED);
-                }
-
                 Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg })))
             } else {
                 Err(internal_error(&msg))
@@ -206,34 +125,12 @@ pub async fn output(
         .await
         .map_err(|e| internal_error(&e.to_string()))?
     else {
-        let Some(target) = resolve_remote_session_node_target(&state, &id).await? else {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!("session not found: {id}"),
-                }),
-            ));
-        };
-
-        let lines = query.lines.unwrap_or(100);
-        let client = remote_client()
-            .map_err(|e| internal_error(&format!("failed to build HTTP client: {e}")))?;
-        let url = format!(
-            "{}/api/v1/sessions/{}/output?lines={lines}",
-            target.base_url, target.session_id
-        );
-        let resp = send_remote_request(
-            remote_json_request(&target, client.get(url)),
-            format!("failed to fetch output from node {}", target.node_name),
-        )
-        .await?;
-        let body = parse_remote_json::<serde_json::Value>(
-            resp,
-            "failed to fetch remote output",
-            "failed to parse remote output",
-        )
-        .await?;
-        return Ok(Json(body));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("session not found: {id}"),
+            }),
+        ));
     };
 
     let lines = query.lines.unwrap_or(100);
@@ -254,27 +151,6 @@ pub async fn resume(
         Err(e) => {
             let msg = e.to_string();
             if msg.contains("not found") {
-                if let Some(target) = resolve_remote_session_node_target(&state, &id).await? {
-                    let client = remote_client().map_err(|e| {
-                        internal_error(&format!("failed to build HTTP client: {e}"))
-                    })?;
-                    let url = format!(
-                        "{}/api/v1/sessions/{}/resume",
-                        target.base_url, target.session_id
-                    );
-                    let resp = send_remote_request(
-                        remote_json_request(&target, client.post(url)),
-                        format!("failed to resume session on node {}", target.node_name),
-                    )
-                    .await?;
-                    let session = parse_remote_json::<Session>(
-                        resp,
-                        "failed to resume remote session",
-                        "failed to parse remote resume response",
-                    )
-                    .await?;
-                    return Ok(Json(session));
-                }
                 Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg })))
             } else if msg.contains("cannot be resumed") {
                 Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg })))
@@ -304,55 +180,11 @@ pub async fn download_output(
         .await
         .map_err(|e| internal_error(&e.to_string()))?
     else {
-        let Some(target) = resolve_remote_session_node_target(&state, &id).await? else {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!("session not found: {id}"),
-                }),
-            ));
-        };
-
-        let client = remote_client()
-            .map_err(|e| internal_error(&format!("failed to build HTTP client: {e}")))?;
-        let url = format!(
-            "{}/api/v1/sessions/{}/output/download",
-            target.base_url, target.session_id
-        );
-        let resp = send_remote_request(
-            remote_json_request(&target, client.get(url)),
-            format!("failed to download output from node {}", target.node_name),
-        )
-        .await?;
-        if !resp.status().is_success() {
-            return Err(
-                reqwest_error_response(resp, "failed to download remote session output").await,
-            );
-        }
-
-        let headers = resp.headers().clone();
-        let content_type = headers
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("text/plain; charset=utf-8")
-            .to_owned();
-        let content_disposition = headers
-            .get(reqwest::header::CONTENT_DISPOSITION)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("attachment; filename=\"session.log\"")
-            .to_owned();
-        let body = resp
-            .text()
-            .await
-            .map_err(|e| internal_error(&format!("failed to read remote output download: {e}")))?;
-
-        return Ok((
-            StatusCode::OK,
-            [
-                (axum::http::header::CONTENT_TYPE, content_type),
-                (axum::http::header::CONTENT_DISPOSITION, content_disposition),
-            ],
-            body,
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("session not found: {id}"),
+            }),
         ));
     };
 
@@ -417,31 +249,12 @@ pub async fn input(
         .await
         .map_err(|e| internal_error(&e.to_string()))?
     else {
-        let Some(target) = resolve_remote_session_node_target(&state, &id).await? else {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!("session not found: {id}"),
-                }),
-            ));
-        };
-        let client = remote_client()
-            .map_err(|e| internal_error(&format!("failed to build HTTP client: {e}")))?;
-        let url = format!(
-            "{}/api/v1/sessions/{}/input",
-            target.base_url, target.session_id
-        );
-        let resp = send_remote_request(
-            remote_json_request(
-                &target,
-                client
-                    .post(url)
-                    .json(&serde_json::json!({ "text": req.text })),
-            ),
-            format!("failed to send input to node {}", target.node_name),
-        )
-        .await?;
-        return expect_remote_no_content(resp, "failed to send input to remote session").await;
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("session not found: {id}"),
+            }),
+        ));
     };
 
     let backend_id = state.session_manager.resolve_backend_id(&session);

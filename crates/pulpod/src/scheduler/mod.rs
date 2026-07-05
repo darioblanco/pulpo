@@ -14,13 +14,9 @@ use tokio::sync::{broadcast, watch};
 use tracing::{debug, info, warn};
 
 #[cfg(not(coverage))]
-use crate::remote::{apply_remote_auth, remote_client, resolve_peer_target};
-#[cfg(not(coverage))]
 use crate::session::manager::SessionManager;
 #[cfg(not(coverage))]
 use crate::store::Store;
-#[cfg(not(coverage))]
-use crate::{config::NodeRole, peers::PeerRegistry};
 
 /// Normalize a cron expression to the 7-field format expected by the `cron` crate.
 /// Accepts standard 5-field (`min hour dom month dow`) and prepends `0` for seconds
@@ -83,9 +79,6 @@ fn is_due_at(schedule: &Schedule, now: DateTime<Local>) -> bool {
 pub async fn run_scheduler_loop(
     session_manager: SessionManager,
     store: Store,
-    role: NodeRole,
-    local_node_name: String,
-    peer_registry: PeerRegistry,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
     mut shutdown_rx: watch::Receiver<bool>,
 ) {
@@ -95,15 +88,7 @@ pub async fn run_scheduler_loop(
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                fire_due_schedules(
-                    &session_manager,
-                    &store,
-                    role,
-                    &local_node_name,
-                    &peer_registry,
-                    event_tx.as_ref(),
-                )
-                .await;
+                fire_due_schedules(&session_manager, &store, event_tx.as_ref()).await;
             }
             _ = shutdown_rx.changed() => {
                 info!("Scheduler shutting down");
@@ -117,9 +102,6 @@ pub async fn run_scheduler_loop(
 async fn fire_due_schedules(
     session_manager: &SessionManager,
     store: &Store,
-    role: NodeRole,
-    local_node_name: &str,
-    peer_registry: &PeerRegistry,
     _event_tx: Option<&broadcast::Sender<PulpoEvent>>,
 ) {
     let schedules = match store.list_schedules().await {
@@ -132,9 +114,6 @@ async fn fire_due_schedules(
 
     for schedule in schedules {
         if !schedule.enabled {
-            continue;
-        }
-        if !should_fire_schedule(role, local_node_name, schedule.target_node.as_deref()) {
             continue;
         }
         if !is_due(&schedule) {
@@ -175,20 +154,11 @@ async fn fire_due_schedules(
             worktree_base: schedule.worktree_base.clone(),
             runtime,
             secrets,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
 
-        let result = dispatch_schedule_create(
-            session_manager,
-            role,
-            local_node_name,
-            peer_registry,
-            &schedule,
-            req,
-        )
-        .await;
+        let result = session_manager.create_session(req).await;
 
         match result {
             Ok(session) => {
@@ -227,94 +197,13 @@ async fn fire_due_schedules(
     }
 }
 
-#[cfg(not(coverage))]
-fn should_fire_schedule(role: NodeRole, local_node_name: &str, target_node: Option<&str>) -> bool {
-    if let Some(target) = target_node
-        && role != NodeRole::Controller
-        && target != local_node_name
-    {
-        return false;
-    }
-    true
-}
-
-#[cfg(not(coverage))]
-async fn dispatch_schedule_create(
-    session_manager: &SessionManager,
-    role: NodeRole,
-    local_node_name: &str,
-    peer_registry: &PeerRegistry,
-    schedule: &Schedule,
-    req: CreateSessionRequest,
-) -> anyhow::Result<pulpo_common::session::Session> {
-    match schedule.target_node.as_deref() {
-        Some(target_node) if role != NodeRole::Controller && target_node != local_node_name => Err(
-            anyhow::anyhow!("target_node requires controller mode (got {role:?})"),
-        ),
-        Some(target_node) if role == NodeRole::Controller && target_node != local_node_name => {
-            create_remote_scheduled_session(peer_registry, schedule.name.as_str(), target_node, req)
-                .await
-        }
-        _ => session_manager.create_session(req).await,
-    }
-}
-
-#[cfg(not(coverage))]
-async fn create_remote_scheduled_session(
-    peer_registry: &PeerRegistry,
-    schedule_name: &str,
-    target_node: &str,
-    req: CreateSessionRequest,
-) -> anyhow::Result<pulpo_common::session::Session> {
-    let Some(target) = resolve_peer_target(peer_registry, target_node).await else {
-        warn!(
-            schedule_name = %schedule_name,
-            target_node = %target_node,
-            "Schedule target node not found"
-        );
-        return Err(anyhow::anyhow!("target node not found: {target_node}"));
-    };
-    let client = remote_client()
-        .map_err(|e| anyhow::anyhow!("failed to build scheduler HTTP client: {e}"))?;
-    let request = apply_remote_auth(
-        client
-            .post(format!("{}/api/v1/sessions", target.base_url))
-            .json(&req),
-        target.token.as_deref(),
-    );
-
-    match request.send().await {
-        Ok(resp) if resp.status().is_success() => resp
-            .json::<pulpo_common::api::CreateSessionResponse>()
-            .await
-            .map(|body| body.session)
-            .map_err(|e| anyhow::anyhow!("failed to parse remote schedule create response: {e}")),
-        Ok(resp) => {
-            let status = resp.status();
-            let message = match resp.json::<pulpo_common::api::ErrorResponse>().await {
-                Ok(body) => body.error,
-                Err(_) => format!("node responded with {status}"),
-            };
-            Err(anyhow::anyhow!(message))
-        }
-        Err(e) => Err(anyhow::anyhow!(
-            "failed to reach node {}: {e}",
-            target.node_name
-        )),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[cfg(not(coverage))]
     use std::collections::HashMap;
 
     use super::*;
-    #[cfg(not(coverage))]
-    use crate::peers::PeerRegistry;
     use chrono::{Duration as ChronoDuration, TimeZone, Utc};
-    #[cfg(not(coverage))]
-    use pulpo_common::{api::CreateSessionRequest, peer::PeerEntry};
 
     #[test]
     fn test_normalize_cron_5_fields() {
@@ -354,7 +243,6 @@ mod tests {
             cron: "* * * * *".into(),
             command: "echo".into(),
             workdir: "/tmp".into(),
-            target_node: None,
             ink: None,
             description: None,
             runtime: None,
@@ -381,7 +269,6 @@ mod tests {
             cron: "* * * * *".into(),
             command: "echo hi".into(),
             workdir: workdir.into(),
-            target_node: None,
             ink: None,
             description: None,
             runtime: None,
@@ -419,21 +306,12 @@ mod tests {
     #[tokio::test]
     async fn test_fire_due_schedules_creates_session_and_records_last_run() {
         let (manager, store) = scheduler_test_manager().await;
-        let peers = PeerRegistry::new(&HashMap::new());
         store
             .insert_schedule(&due_schedule("sched-1", "nightly", "/tmp"))
             .await
             .unwrap();
 
-        fire_due_schedules(
-            &manager,
-            &store,
-            NodeRole::Standalone,
-            "local",
-            &peers,
-            None,
-        )
-        .await;
+        fire_due_schedules(&manager, &store, None).await;
 
         // A session was created from the due schedule.
         let sessions = store.list_sessions().await.unwrap();
@@ -450,22 +328,13 @@ mod tests {
     #[tokio::test]
     async fn test_fire_due_schedules_records_failure_on_bad_workdir() {
         let (manager, store) = scheduler_test_manager().await;
-        let peers = PeerRegistry::new(&HashMap::new());
         // A non-existent workdir makes session creation fail (validate_workdir).
         store
             .insert_schedule(&due_schedule("sched-2", "broken", "/no/such/dir-xyz"))
             .await
             .unwrap();
 
-        fire_due_schedules(
-            &manager,
-            &store,
-            NodeRole::Standalone,
-            "local",
-            &peers,
-            None,
-        )
-        .await;
+        fire_due_schedules(&manager, &store, None).await;
 
         assert!(store.list_sessions().await.unwrap().is_empty());
         let after = store.get_schedule("sched-2").await.unwrap().unwrap();
@@ -483,7 +352,6 @@ mod tests {
             cron: "0 * * * *".into(),
             command: "echo".into(),
             workdir: "/tmp".into(),
-            target_node: None,
             ink: None,
             description: None,
             runtime: None,
@@ -515,7 +383,6 @@ mod tests {
             cron: "invalid".into(),
             command: "echo".into(),
             workdir: "/tmp".into(),
-            target_node: None,
             ink: None,
             description: None,
             runtime: None,
@@ -541,7 +408,6 @@ mod tests {
             cron: "* * * * *".into(),
             command: "echo".into(),
             workdir: "/tmp".into(),
-            target_node: None,
             ink: None,
             description: None,
             runtime: None,
@@ -556,74 +422,5 @@ mod tests {
             created_at: (Utc::now() - ChronoDuration::hours(1)).to_rfc3339(),
         };
         assert!(is_due(&schedule));
-    }
-
-    #[cfg(not(coverage))]
-    #[tokio::test]
-    async fn test_create_remote_scheduled_session_target_not_found() {
-        let registry = PeerRegistry::new(&HashMap::new());
-        let err = create_remote_scheduled_session(
-            &registry,
-            "nightly-review",
-            "missing-node",
-            CreateSessionRequest {
-                name: "nightly-review".into(),
-                workdir: Some("/repo".into()),
-                metadata: None,
-                command: Some("claude code".into()),
-                description: None,
-                ink: None,
-                idle_threshold_secs: None,
-                worktree: None,
-                worktree_base: None,
-                runtime: None,
-                secrets: None,
-                target_node: None,
-                term_program: None,
-                budget_cost_usd: None,
-            },
-        )
-        .await
-        .unwrap_err();
-
-        assert_eq!(err.to_string(), "target node not found: missing-node");
-    }
-
-    #[cfg(not(coverage))]
-    #[tokio::test]
-    async fn test_create_remote_scheduled_session_unreachable_worker() {
-        let configured = HashMap::from([(
-            "node-1".to_owned(),
-            PeerEntry::Full {
-                address: "127.0.0.1:9".into(),
-                token: Some("secret-token".into()),
-            },
-        )]);
-        let registry = PeerRegistry::new(&configured);
-        let err = create_remote_scheduled_session(
-            &registry,
-            "nightly-review",
-            "node-1",
-            CreateSessionRequest {
-                name: "nightly-review".into(),
-                workdir: Some("/repo".into()),
-                metadata: None,
-                command: Some("claude code".into()),
-                description: None,
-                ink: None,
-                idle_threshold_secs: None,
-                worktree: None,
-                worktree_base: None,
-                runtime: None,
-                secrets: None,
-                target_node: None,
-                term_program: None,
-                budget_cost_usd: None,
-            },
-        )
-        .await
-        .unwrap_err();
-
-        assert!(err.to_string().contains("failed to reach node node-1"));
     }
 }

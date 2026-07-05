@@ -13,7 +13,6 @@ import type {
   CreateSessionRequest,
   CreateSessionResponse,
   CleanupSessionsResponse,
-  FleetSessionsResponse,
   VapidPublicKeyResponse,
   ScheduleInfo,
   CreateScheduleRequest,
@@ -108,11 +107,6 @@ export async function getSessions(params?: ListSessionsParams): Promise<Session[
   }
   const fetchUrl = base.startsWith('http') ? url.toString() : url.pathname + url.search;
   const res = await authFetch(fetchUrl);
-  return res.json();
-}
-
-export async function getFleetSessions(): Promise<FleetSessionsResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/fleet/sessions`);
   return res.json();
 }
 

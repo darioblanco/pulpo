@@ -160,11 +160,12 @@ Developers and teams who:
 Pulpo is **single-node-first**. Each node meters and governs its own sessions independently —
 no central server required, and nothing breaks if you only ever run one machine.
 
-For a fleet-wide view, point every node's **event forwarding** (`[[webhooks]]` + `/metrics`)
-at a collector you already run, and aggregate there. This is the supported cross-node story:
-it adds no single point of failure and integrates with your existing observability. A
-controller/node control plane also exists but is **frozen** (maintained, not extended) — see
-the [Roadmap](ROADMAP.md) for the rationale.
+There is deliberately no control plane joining machines together. Reach any node directly —
+`pulpo --node <name|host:port>` from the CLI, a saved connection in the web UI, or SSH/tmux
+— see [Control Your Agents From Anywhere](docs/guides/remote-control.md). For a view across
+machines, point every node's **event forwarding** (`[[webhooks]]` + `/metrics`) at a
+collector you already run, and aggregate there. This is the supported cross-node story: it
+adds no single point of failure and integrates with your existing observability.
 
 ## Core Capabilities
 

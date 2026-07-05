@@ -32,22 +32,6 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | GET | `/api/v1/auth/token` | Get current auth token |
 | GET | `/api/v1/auth/pairing-url` | Get pairing URL for web UI connection |
 
-## Node Enrollment
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/controller/nodes` | List nodes enrolled on the controller |
-| POST | `/api/v1/controller/nodes` | Enroll a node and mint its bearer token |
-| POST | `/api/v1/events/push` | Node-only endpoint for lifecycle and heartbeat pushes |
-| GET | `/api/v1/node/commands` | Node-only endpoint for polling queued controller commands |
-
-Node enrollment notes:
-
-- `POST /api/v1/controller/nodes` is a controller-only administrative endpoint
-- node identity is derived from the presented bearer token, not from path or payload claims
-- enrolled node tokens are required for node mode in both `public` and `tailscale`
-- `[peers]` remains routing metadata and is not the authority source for node identity
-
 ## Sessions
 
 | Method | Path | Description |
@@ -63,7 +47,6 @@ Node enrollment notes:
 | GET | `/api/v1/sessions/:id/interventions` | List watchdog interventions |
 | GET | `/api/v1/sessions/:id/stream` | WebSocket terminal stream |
 | POST | `/api/v1/sessions/cleanup` | Remove all stopped and lost sessions |
-| GET | `/api/v1/fleet/sessions` | Canonical fleet view on controller; local sessions only elsewhere |
 
 ### Create Session (POST /api/v1/sessions)
 
@@ -72,7 +55,6 @@ Node enrollment notes:
   "name": "my-api",
   "command": "claude -p 'Fix the auth bug'",
   "workdir": "/path/to/repo",
-  "target_node": "node-1",
   "ink": "reviewer",
   "description": "Fix auth bug in login endpoint",
   "metadata": {},
@@ -86,14 +68,11 @@ Node enrollment notes:
 
 `name` is required. All other fields are optional. If `ink` is specified, its `command` is used as the default (explicit `command` overrides it). `idle_threshold_secs` overrides the global idle threshold for this session (`null` = use global, `0` = never idle). `worktree_base` specifies the branch to fork from (implies `worktree: true`). Session responses include `worktree_branch` with the branch name when a worktree is active.
 
-`target_node` is only honored when the API request reaches a controller node. In standalone or node mode, create requests run locally and cross-node targeting is rejected.
-
-Multi-node notes:
-
-- `GET /api/v1/fleet/sessions` is authoritative only on a controller node
-- node and standalone nodes return local sessions there
-- `GET /api/v1/sessions/:id/stream` remains local-only; remote terminal proxying is intentionally out of scope
-- remote `output`, `input`, `resume`, and `download` are HTTP-proxied through the controller for indexed remote sessions
+There is no cross-node targeting — a create request always runs on the `pulpod` that
+receives it. To spawn on another machine, send the request to that machine directly (point
+the CLI or an HTTP client at its address, e.g. `pulpo --node gpu-box spawn ...`).
+`GET /api/v1/sessions/:id/stream` is local-only by the same principle; remote terminal
+proxying is intentionally out of scope.
 
 ## Inks
 

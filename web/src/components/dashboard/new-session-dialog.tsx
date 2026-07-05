@@ -21,20 +21,18 @@ import { Plus, GitBranch, X } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { createSession, getInks, getSecrets } from '@/api/client';
-import type { InkConfig, PeerInfo, SecretEntry, Session } from '@/api/types';
+import type { InkConfig, SecretEntry, Session } from '@/api/types';
 
 interface NewSessionDialogProps {
-  peers?: PeerInfo[];
   onCreated: (session: Session) => void;
 }
 
-export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProps) {
+export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [repoPath, setRepoPath] = useState('');
   const [command, setCommand] = useState('');
   const [description, setDescription] = useState('');
-  const [targetNode, setTargetNode] = useState('local');
   const [selectedInk, setSelectedInk] = useState('');
   const [inks, setInks] = useState<Record<string, InkConfig>>({});
   const [worktree, setWorktree] = useState(false);
@@ -44,8 +42,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
   const [error, setError] = useState<string | null>(null);
   const [availableSecrets, setAvailableSecrets] = useState<SecretEntry[]>([]);
   const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
-
-  const onlinePeers = peers.filter((p) => p.status === 'online');
 
   useEffect(() => {
     if (open) {
@@ -97,9 +93,7 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
         ...(selectedSecrets.length > 0 ? { secrets: selectedSecrets } : {}),
       };
 
-      const resp = await createSession(
-        targetNode === 'local' ? data : { ...data, target_node: targetNode },
-      );
+      const resp = await createSession(data);
 
       setName('');
       setRepoPath('');
@@ -263,23 +257,6 @@ export function NewSessionDialog({ peers = [], onCreated }: NewSessionDialogProp
               )}
             </div>
           )}
-
-          <div className="space-y-1.5">
-            <Label htmlFor="target-node">Node</Label>
-            <Select value={targetNode} onValueChange={setTargetNode}>
-              <SelectTrigger id="target-node" className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="local">Local</SelectItem>
-                {onlinePeers.map((peer) => (
-                  <SelectItem key={peer.name} value={peer.name}>
-                    {peer.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
 
           <div className="space-y-1.5">
             <Label htmlFor="idle-threshold">Idle Threshold (seconds)</Label>

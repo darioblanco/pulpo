@@ -8,7 +8,7 @@ use pulpo_common::api::{UsageProjectionResponse, UsageScanResponse};
 use pulpo_common::session::meta;
 use serde::Deserialize;
 
-use crate::api::session_remote::{ApiError, internal_error};
+use crate::api::error::{ApiError, internal_error};
 use crate::usage::projection::{
     build_ink_rollups, build_repo_rollups, build_rollups, project_session,
 };

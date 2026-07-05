@@ -121,25 +121,24 @@ Each run gets a fresh git worktree on its own branch, cleaned up when the sessio
 
 ### Review On Another Machine
 
-Run the schedule against a specific node:
+Schedules always fire on the node that holds them — there is no remote dispatch. To put
+this schedule on a different box, point the CLI at that node's `pulpod` with the global
+`--node` flag; the schedule is created directly there and fires locally:
 
 ```bash
-pulpo schedule add nightly-review "0 3 * * *" \
-  --node mac-mini \
+pulpo --node mac-mini schedule add nightly-review "0 3 * * *" \
   --workdir ~/repos/my-api \
   --ink nightly-review
 ```
 
-Or let Pulpo choose automatically:
-
-Only use a remote-targeted schedule when the request goes to the controller and the target node has the repo at the same path, or your operational setup guarantees the right path exists there.
+Make sure the workdir path exists on `mac-mini`, not just on the machine you're typing from.
 
 ## Recommended Companion Features
 
 This recipe gets stronger when combined with:
 
 - [Secrets](/guides/secrets) for API keys and repo credentials
-- [Discovery Guide](/guides/discovery) for multi-node fleets
+- [Discovery Guide](/guides/discovery) if you run more than one machine
 - notifications so you know when the overnight run is `ready`, `stopped`, or `lost`
 
 ## Related Commands

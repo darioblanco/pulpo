@@ -63,7 +63,7 @@ so a new or repriced model never needs a code change. "Don't bet your tooling on
 model" is itself a positioning line.
 
 Sovereignty remains the supporting argument: the daemon reads usage and account identity
-from local files and never ships them anywhere except your own controller node. Exactly
+from local files and never ships them anywhere except your own collector. Exactly
 the data you'd least want in a third-party relay. (CLOUD Act / EU AI Act / GDPR context
 unchanged — see git history of this file for the full sovereignty section.)
 
@@ -90,9 +90,9 @@ unchanged — see git history of this file for the full sovereignty section.)
 | Scheduler | Quota-aware dispatch |
 | Worktree spawning (`--worktree`) + cleanup | Isolation primitive: scheduled/parallel sessions on one repo can't trample each other, agent-agnostically; watchdog sweeps litter |
 | Inks | Attribution + budget + priority unit |
-| Event-forwarding backbone (`[[webhooks]]` + `/metrics`) | **The cross-node story**: forward signed events to your own collector; aggregate in Grafana/Datadog/SIEM. Replaces the bespoke controller for fleet visibility |
+| Event-forwarding backbone (`[[webhooks]]` + `/metrics`) | **The cross-node story**: forward signed events to your own collector; aggregate in Grafana/Datadog/SIEM. Replaces the removed bespoke controller for fleet visibility |
 | Tailscale transport (`bind = "tailscale"`) | Secure zero-setup remote access to a node's UI/API over the tailnet; standalone, no fleet required |
-| Controller / cross-node control plane | **FROZEN (2026-06-14)** — dormant-but-kept for a future central-governance option; not invested in (see Phase C) |
+| Controller / cross-node control plane | **REMOVED (July 2026)** — was frozen (2026-06-14), then deleted; not kept as dormant code (see Phase C) |
 | PWA web UI | The gauge; mobile-first; single-node-first with an optional event-fed fleet pane |
 | CLI, secret store, webhook/web-push notifications | Supporting surface |
 
@@ -135,7 +135,7 @@ Replace terminal-scraping with structured readers of the agents' own session fil
 3. Wire into the watchdog tick (detect → store → API → UI). New `usage_samples`
    migration. Keep keyword-proximity scraping as fallback for unknown agents.
 4. **Account identity** per machine (`~/.claude.json` oauth email, `~/.codex/auth.json`),
-   attached to sessions. Local-only; rollup metadata goes only to your own controller.
+   attached to sessions. Local-only; rollup metadata goes only to your own collector.
 5. Cost = tokens × per-model rates. **Shipped:** a built-in rate table (Opus/Sonnet/Haiku;
    a now-inert Fable row is retained only so historical sessions priced before the
    worldwide withdrawal still resolve), unknown models emit tokens without a misleading
@@ -199,11 +199,11 @@ dollars. NOT overdraft prevention on subscriptions.
 - Daily cost digest — cheap (cron + B1 endpoint + existing notifiers) and good for the
   "phone is the gauge" story, but retention not acquisition; post-launch only if cheap
 
-### Phase C — Fleet rollups + placement — FROZEN (2026-06-14)
+### Phase C — Fleet rollups + placement — FROZEN (2026-06-14), REMOVED (July 2026)
 
 **Decision (2026-06-14): do not build this.** Phase C was the cross-node *control* plane —
 controller-side rollups and quota-aware placement (remote spawn on the node with the most
-headroom). It is frozen because:
+headroom). It was frozen because:
 
 - It is **orchestration** — the exact thing this roadmap exited because first parties won it
   (Claude Code Remote Control is a per-machine daemon + mobile push). Competing here is the
@@ -217,20 +217,19 @@ headroom). It is frozen because:
   bearer tokens, eventually-consistent index) is a *liability* in security review, not an
   asset; forwarding to the buyer's own stack is the stronger play. The one enterprise need
   the backbone doesn't cover — *central governance / org-wide kill-switch* — is a narrow,
-  deliberate feature to build **only on real demand**, not the current general-purpose
-  remote-spawn controller.
+  deliberate feature to build **only on real demand**, and it would start from scratch, not
+  from a resurrection of the old remote-spawn controller.
 
-**What stays:** the existing controller code is **frozen, not removed** — kept dormant-but-
-working to preserve the central-governance option without spending now (the maintenance tax
-is the price of that optionality). **Tailscale stays** too, but as *secure transport*
-(`bind = "tailscale"` → `tailscale serve` HTTPS + tailnet identity, reachable from your
-phone with zero setup) — standalone, independent of any fleet. The cross-node story is the
-backbone; the dashboard is single-node-first with an optional fleet pane fed by events.
-
-Controller mode status (carried over, frozen): fleet reads, create/stop/resume, scheduled
-dispatch, event push + command polling, per-node bearer tokens, persisted session index are
-implemented. Distributed terminal attach stays out of scope. See
-[Controller + Node Setup](/guides/controller-node-setup).
+**Update (July 2026): the frozen controller/node code was removed**, not just left dormant —
+paying the maintenance tax on dead code with no active investment wasn't worth it. There is
+no `[controller]` config, no controller/node roles, and no fleet/enrollment/event-push/
+node-commands API surface; every `pulpod` is standalone. Cross-machine reach is direct:
+`pulpo --node <name|host:port>` from the CLI, saved connections in the web UI, or SSH/tmux —
+see [Control Your Agents From Anywhere](docs/guides/remote-control.md). **Tailscale stays**
+as *secure transport* (`bind = "tailscale"` → `tailscale serve` HTTPS + tailnet identity,
+reachable from your phone with zero setup) — standalone, independent of any fleet. The
+cross-node story is the event backbone; the dashboard is single-node-first, showing only the
+local node. If central governance is ever built, it starts from zero, not from this code.
 
 ### Phase M — Monitoring, alerting & operational optimization (a first-class pillar)
 
@@ -271,9 +270,10 @@ collector, not a vendor relay). Decisions locked:
   Push (webhooks) for discrete events; pull (`/metrics`) for continuous dashboard state.
 - **Scope boundary:** Pulpo emits events + exposes metrics; it is **not** a TSDB or log
   store — forward to the user's stack (collector, Slack webhook, ntfy, Datadog, …).
-- **Topology:** standalone node forwards to its own sinks; in controller mode managed nodes
-  forward important events to the controller, which fans out to centrally-configured sinks
-  and exposes a fleet event feed. Same event model, two deployment shapes.
+- **Topology:** every node forwards to its own sinks — there is no central hop. (At the time
+  this was written, controller mode additionally forwarded events to a controller for a
+  fleet event feed; controller mode was removed in July 2026, so the standalone shape is now
+  the only one. Aggregate by pointing every node's `[[webhooks]]` at the same collector.)
 
 **Webhook message contract (locked 2026-06-13).** One canonical envelope for *every*
 event — session state changes (idle/active/ready/stopped/lost) are first-class `lifecycle`
@@ -325,15 +325,16 @@ Build order (non-breaking; existing `[notifications.webhooks]` maps onto the new
 outbox + retry/backoff + HMAC + idempotency ✅ (#58) · **3)** universal `[[webhooks]]`
 config + `type.subtype`/severity routing ✅ (#60) · **4)** `/metrics` toggle ✅ (#59) ·
 **5)** controller aggregation + fleet event feed ✅ **already satisfied** by existing
-machinery: managed nodes' event-push loop forwards *all* events to the controller, the
-controller re-broadcasts them onto its bus (`event_push.rs`), and the step-1 dispatcher
-fans them out to the controller's `[[webhooks]]` (durable outbox) and its SSE feed. The
-controller's SSE `/api/v1/events` is the live fleet feed.
+machinery at the time (historical — described the controller mode later removed in July
+2026): managed nodes' event-push loop forwarded *all* events to the controller, the
+controller re-broadcast them onto its bus (`event_push.rs`), and the step-1 dispatcher
+fanned them out to the controller's `[[webhooks]]` (durable outbox) and its SSE feed.
 
-**Backbone status: COMPLETE.** Optional additive polish, parked (not core; build on demand):
-a *persistent/queryable* fleet event log (`GET /events?since=` history vs the live SSE);
-fleet-wide `/metrics` aggregated from the controller session index (today `/metrics` is
-per-node). Pre-existing M2 (burn-velocity governor, alert-only) remains the open optimizer.
+**Backbone status: COMPLETE.** Today, aggregation is direct — point every node's
+`[[webhooks]]` at the same collector; there is no controller to fan out through. Optional
+additive polish, parked (not core; build on demand): a *persistent/queryable* event log
+(`GET /events?since=` history vs the live SSE per node). Pre-existing M2 (burn-velocity
+governor, alert-only) remains the open optimizer.
 
 **M2 — Burn-velocity governor (the marquee optimizer).** A configurable `$/hr` (and/or
 tokens/hr) ceiling on the watchdog: crossing it **alerts** by default; **opt-in** to pause
@@ -351,18 +352,19 @@ that add a separate knob are either incomplete (env-vars: effort doesn't map, th
 env is uncertain) or reintroduce per-agent flag coupling — the command-agnostic principle the
 controller freeze reaffirmed. Marginal machinery for something inks already cover.
 
-**M5 — Cheapest-pool-first placement — FROZEN (2026-06-14).** Depended on the Phase C
-controller (cross-node spawn), which is frozen, so M5 is too. *Single-node* pool awareness
-(prefer the subscription pool with headroom before spilling to paid API credits on the
-machine you're on) can still be revisited later as a local policy — it does not need the
-controller. Cross-node placement is out.
+**M5 — Cheapest-pool-first placement — OUT (controller removed July 2026).** Depended on
+cross-node spawn via the Phase C controller. That controller was frozen (2026-06-14), then
+removed (not just frozen), so cross-node placement isn't coming back without rebuilding a
+control plane, which isn't planned. *Single-node* pool awareness (prefer the subscription
+pool with headroom before spilling to paid API credits on the machine you're on) can still
+be revisited later as a local policy — it never needed the controller.
 
 **Config-overridable rates** (the model-agnostic follow-up from Phase A) — **DONE**:
 `[rates.<model>]` so cost/burn math never needs a code change when a model reprices or a
 new one ships, directly serving the "monitor cost accurately for any model" goal. Built
 into the usage readers via `RateOverrides`/`resolve_rates`, installed once at startup.
 
-Sequence: M1 ✅ → M2 ✅ (+ config rates ✅) → M3/M4 anytime → M5 with the controller.
+Sequence: M1 ✅ → M2 ✅ (+ config rates ✅) → M3/M4 anytime → M5 stays out (no controller).
 M1+M2 are the visible "Pulpo watches your spend and catches runaways" story.
 
 ### Phase D — Reposition + distribution (gates the payoff)
@@ -385,24 +387,23 @@ M1+M2 are the visible "Pulpo watches your spend and catches runaways" story.
   subscription pool" advantage goes in the launch messaging.
 - Homebrew-core once ≥75 stars
 
-**Sequencing:** R + A + B + M (M1/M2 + config rates) are done. **C is frozen** (cross-node
-control plane — see Phase C). Remaining live work is single-node optimizers (M3/M4) and
-Phase D reposition; D's launch moment is after B (now satisfied).
+**Sequencing:** R + A + B + M (M1/M2 + config rates) are done. **C was frozen, then removed**
+(cross-node control plane — see Phase C). Remaining live work is single-node optimizers
+(M3/M4) and Phase D reposition; D's launch moment is after B (now satisfied).
 
 Also still planned: **agent completion callbacks** (`PULPO_CALLBACK_URL` env var; Claude
 Code hooks can call it) — replaces the 29 waiting-pattern regexes with a reliable signal
 and powers fast "agent blocked on permission prompt" push alerts. Babysitting wastes
 wall-clock and tokens; this serves the vision and stays.
 
-**Locked invariant — agent callbacks point at the local node, never the controller.**
+**Locked invariant — agent callbacks point at the local node, never a remote one.**
 Hooks and completion callbacks injected into an agent process target the **local
-`pulpod`** that spawned the session. The local daemon owns the session lifecycle and
-forwards upward to the controller; it is never the agent's job to reach the controller.
-Routing agents at the controller would couple every agent process to the controller's
-address and uptime, add a hop, break standalone operation, and make the controller a SPOF
-for completion detection. Same principle as event forwarding: **local-first, then
-aggregate.** See [architecture/overview](docs/architecture/overview.md) → "Monitoring &
-event topology."
+`pulpod`** that spawned the session — never another machine (there is no controller to
+reach; this held even before its removal). The local daemon owns the session lifecycle and
+forwards events onward from there. Routing agents at a central machine would couple every
+agent process to that machine's address and uptime, add a hop, and break standalone
+operation. Same principle as event forwarding: **local-first, then aggregate.** See
+[architecture/overview](docs/architecture/overview.md) → "Monitoring & event topology."
 
 ## Shipped (reference)
 
@@ -415,7 +416,9 @@ Core infrastructure:
   error/failure detection, tmux auto-adopt
 - Command-agnostic sessions (any CLI tool, any command)
 - Inks: reusable session blueprints (command, description, secrets, runtime defaults)
-- Multi-node: Tailscale peer discovery, manual peers, fleet summary, controller mode
+- Multi-node: Tailscale peer discovery, manual peers (`pulpo nodes`); a controller/node
+  control plane (fleet dashboard, cross-node create/stop/resume, scheduled dispatch)
+  shipped, then was removed in July 2026 — every `pulpod` is standalone, reached directly
   (see Phase C status above)
 - SSE event stream, webhook notifications, Web Push, PWA
 - Secret store: encrypted-at-rest env vars injected into sessions
@@ -451,8 +454,13 @@ Revisit only on real demand:
 - ~~mDNS + seed-based discovery~~ (v0.0.41) — Tailscale + manual peers cover real usage
 - ~~Provider-specific features, guard rails, culture system~~ — agents handle these
 - ~~Per-peer session tabs, fleet click-through, `target_node` on schedules,
-  naive `--auto`~~ — replaced by controller mode (placement returns in Phase C with
-  real quota data)
+  naive `--auto`~~ — replaced by controller mode, which was itself removed (July 2026,
+  see Phase C); cross-node placement is not coming back
+- ~~Controller/node control plane~~ (July 2026) — `[controller]` config, controller/node
+  roles, the fleet/enrollment/event-push/node-commands API surface, `nodes enroll`/`nodes
+  enrolled` CLI, per-schedule `target_node`. Cross-node orchestration was a dead product
+  lane (see Phase C); direct `pulpo --node <name>` access over Tailscale plus shared
+  `[[webhooks]]` cover real usage.
 
 ## Success Criteria
 
@@ -473,7 +481,8 @@ Pulpo is succeeding if:
 - Command-agnostic: runs any agent; structured usage readers where available
   (Claude, Codex), output-scraping fallback everywhere else
 - Sovereign by architecture: self-hosted, no vendor relay, local-only account data
-- Single-node excellence first; fleet via controller promotion
+- Single-node excellence first; multi-machine reach is direct (`pulpo --node <name>` over
+  Tailscale) plus shared webhooks for visibility, not a control plane
 - Mobile-first PWA: the phone is the primary gauge
 - Explicit failure semantics: every intervention is observable and auditable
 - Zero-config local start, progressive operational depth

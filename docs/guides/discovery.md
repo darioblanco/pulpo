@@ -6,24 +6,17 @@ Discovery is an operational layer, not the core Pulpo contract. Learn sessions, 
 
 Pulpo supports two methods for multi-node operation: **Tailscale auto-discovery** and **manual peer configuration**. The discovery method is derived from the `bind` mode in `[node]`. No separate `[discovery]` section is needed.
 
-## Control-plane boundary
+## No control plane
 
-Discovery tells nodes about each other. It does **not** make every node an equally capable control plane.
+Discovery tells nodes about each other. It does **not** make any node authoritative over the
+others — there is deliberately no control plane. Every `pulpod` is standalone:
 
-- **Standalone node**: local-only view and actions.
-- **Managed node**: local sessions remain visible and manageable on that node, but fleet-wide view and cross-node actions belong to the controller.
-- **Controller node**: canonical fleet-wide visibility and cross-node control surface, including remote create and targeted schedule execution.
-
-In the web UI, managed nodes should point you at the configured controller instead of pretending their fleet view is authoritative. The node dashboard remains useful for local sessions, but any fleet-wide create, stop, resume, or scheduled execution flow should go through the controller.
-
-Before a node can participate in the fleet, enroll it on the controller and issue its node token:
-
-```bash
-pulpo --node controller-node nodes enroll gpu-box
-pulpo --node controller-node nodes enrolled
-```
-
-Discovery tells the controller where a node is. Enrollment tells the controller which nodes are trusted members of the fleet.
+- **Local sessions** are only visible and manageable on the node that owns them.
+- **Remote sessions** are reached by pointing your CLI, web UI, or SSH session directly at
+  that node — `pulpo --node <name>`, a saved connection in the web UI, or `ssh <node> &&
+  pulpo attach <name>`.
+- **`pulpo nodes`** lists known peers (name, address, status, session count) for convenience,
+  but it is a directory, not a fleet-wide control surface.
 
 > **Note:** Distributed discovery methods (mDNS, seed-based gossip) were removed to simplify the codebase. They may return in a future version. Use Tailscale discovery or manual `[peers]` config instead.
 
@@ -40,7 +33,7 @@ tag = "pulpo"              # optional: filter by ACL tag
 discovery_interval_secs = 30  # default: 30
 ```
 
-Binds locally, exposes itself over the tailnet via `tailscale serve`, discovers peers via the local Tailscale API, and still uses enrolled node tokens for node-to-controller identity.
+Binds locally, exposes itself over the tailnet via `tailscale serve`, and discovers peers via the local Tailscale API.
 
 ## Manual peers
 

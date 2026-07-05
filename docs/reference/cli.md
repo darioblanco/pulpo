@@ -68,12 +68,15 @@ pulpo schedule remove <ID>                                      Remove a job
 | Flag | Description |
 |------|-------------|
 | `--workdir <PATH>` | Working directory (default: current) |
-| `--node <NAME>` | Target node (omit = local, `auto` = least-loaded) |
 | `--ink <NAME>` | Ink preset from config |
 | `--description <TEXT>` | Human-readable description |
 | `--secret <NAME>` | Inject a stored secret (repeatable) |
 | `--worktree` | Create an isolated git worktree for each run |
 | `--worktree-base <BRANCH>` | Fork worktree from a specific branch (implies `--worktree`) |
+
+There is no per-schedule node flag — a schedule always fires on the node that holds it. To
+create it on another machine, use the global `--node` flag before the subcommand (see
+[Global Options](#global-options)): `pulpo --node gpu-box schedule add ...`.
 
 **Scheduler behavior:** Schedules run in the daemon's machine timezone. The scheduler loop ticks every 60 seconds, so cron expressions more granular than 1 minute won't fire more often. Each schedule fire creates a fresh session with a timestamped name (`<schedule>-YYYYMMDD-HHMM`).
 

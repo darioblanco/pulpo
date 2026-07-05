@@ -12,30 +12,6 @@ use pulpo_common::peer::PeerEntry;
 use super::node::get_hostname;
 use crate::watchdog::memory::{MemoryReader, SystemMemoryReader};
 
-fn normalize_address(address: &str) -> &str {
-    address
-        .strip_prefix("http://")
-        .or_else(|| address.strip_prefix("https://"))
-        .unwrap_or(address)
-}
-
-async fn controller_identity(state: &Arc<super::AppState>) -> (Option<String>, Option<String>) {
-    let config = state.config.read().await;
-    let Some(controller_address) = config.controller.address.clone() else {
-        return (None, None);
-    };
-    drop(config);
-
-    let normalized_controller = normalize_address(&controller_address);
-    let peers = state.peer_registry.get_all().await;
-    let controller_name = peers
-        .into_iter()
-        .find(|peer| normalize_address(&peer.address) == normalized_controller)
-        .map(|peer| peer.name);
-
-    (controller_name, Some(controller_address))
-}
-
 /// Best-effort GPU detection. Returns a label like "Apple Metal" or "NVIDIA" if
 /// a GPU is likely present, `None` otherwise.
 fn detect_gpu() -> Option<String> {
@@ -70,14 +46,6 @@ fn detect_gpu_inner() -> Option<String> {
 
 pub async fn list_peers(State(state): State<Arc<super::AppState>>) -> Json<PeersResponse> {
     let config = state.config.read().await;
-    let role = Some(
-        match config.role() {
-            crate::config::NodeRole::Standalone => "standalone",
-            crate::config::NodeRole::Controller => "controller",
-            crate::config::NodeRole::Node => "node",
-        }
-        .to_owned(),
-    );
     let memory_mb = SystemMemoryReader
         .read_memory()
         .map(|s| s.total_mb)
@@ -92,7 +60,6 @@ pub async fn list_peers(State(state): State<Arc<super::AppState>>) -> Json<Peers
         gpu: detect_gpu(),
     };
     drop(config);
-    let (controller_name, controller_address) = controller_identity(&state).await;
 
     // Probe all peers on-demand (results are cached with a 60s TTL).
     // Gated behind cfg(not(coverage)) because CachedProber<HttpPeerProber> would
@@ -105,13 +72,7 @@ pub async fn list_peers(State(state): State<Arc<super::AppState>>) -> Json<Peers
 
     let peers = state.peer_registry.get_all().await;
 
-    Json(PeersResponse {
-        local,
-        peers,
-        role,
-        controller_name,
-        controller_address,
-    })
+    Json(PeersResponse { local, peers })
 }
 
 pub async fn add_peer(

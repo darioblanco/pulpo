@@ -1,11 +1,10 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use pulpo_common::api::SessionIndexEntry;
 use pulpo_common::session::{InterventionCode, Session, SessionStatus};
 use sqlx::{Row, sqlite::SqliteRow};
 use uuid::Uuid;
 
-use super::{EnrolledNode, InterventionEvent, WebhookOutboxRow};
+use super::{InterventionEvent, WebhookOutboxRow};
 
 pub(super) fn row_to_session(row: &SqliteRow) -> Result<Session> {
     let id_str: String = row.get("id");
@@ -101,7 +100,6 @@ pub(super) fn row_to_schedule(row: &SqliteRow) -> Result<pulpo_common::api::Sche
         cron: row.try_get("cron").unwrap_or_default(),
         command: row.try_get("command").unwrap_or_default(),
         workdir: row.try_get("workdir").unwrap_or_default(),
-        target_node: row.try_get("target_node").unwrap_or(None),
         ink: row.try_get("ink").unwrap_or(None),
         description: row.try_get("description").unwrap_or(None),
         runtime: row.try_get("runtime").unwrap_or(None),
@@ -114,18 +112,6 @@ pub(super) fn row_to_schedule(row: &SqliteRow) -> Result<pulpo_common::api::Sche
         last_attempted_at: row.try_get("last_attempted_at").unwrap_or(None),
         last_error: row.try_get("last_error").unwrap_or(None),
         created_at: row.try_get("created_at").unwrap_or_default(),
-    })
-}
-
-pub(super) fn row_to_session_index_entry(row: &SqliteRow) -> Result<SessionIndexEntry> {
-    Ok(SessionIndexEntry {
-        session_id: row.try_get("session_id")?,
-        node_name: row.try_get("node_name")?,
-        node_address: row.try_get("node_address").unwrap_or(None),
-        session_name: row.try_get("session_name")?,
-        status: row.try_get("status")?,
-        command: row.try_get("command").unwrap_or(None),
-        updated_at: row.try_get("updated_at")?,
     })
 }
 
@@ -144,19 +130,6 @@ pub(super) fn row_to_intervention_event(row: &SqliteRow) -> Result<InterventionE
         code,
         reason: row.get("reason"),
         created_at: DateTime::parse_from_rfc3339(&created_str)?.with_timezone(&Utc),
-    })
-}
-
-pub(super) fn row_to_enrolled_node(row: &SqliteRow) -> Result<EnrolledNode> {
-    let last_seen_at = row
-        .try_get::<Option<String>, _>("last_seen_at")?
-        .map(|value| DateTime::parse_from_rfc3339(&value).map(|dt| dt.with_timezone(&Utc)))
-        .transpose()?;
-    Ok(EnrolledNode {
-        node_name: row.try_get("node_name")?,
-        token_hash: row.try_get("token_hash")?,
-        last_seen_at,
-        last_seen_address: row.try_get("last_seen_address").unwrap_or(None),
     })
 }
 
@@ -357,25 +330,5 @@ mod tests {
         let schedule = row_to_schedule(&row).unwrap();
         assert!(schedule.secrets.is_empty());
         assert_eq!(schedule.worktree, Some(true));
-    }
-
-    #[tokio::test]
-    async fn test_row_to_enrolled_node_invalid_last_seen_returns_error() {
-        let pool = memory_pool().await;
-        let row = sqlx::query(
-            r"
-            SELECT
-                'node-1' AS node_name,
-                'hash' AS token_hash,
-                'not-a-timestamp' AS last_seen_at,
-                'http://node' AS last_seen_address
-            ",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-
-        let err = row_to_enrolled_node(&row).unwrap_err().to_string();
-        assert!(err.contains("timestamp") || err.contains("input"));
     }
 }

@@ -26,9 +26,6 @@ pub struct CreateSessionRequest {
     /// Secret names to inject as environment variables.
     #[serde(default)]
     pub secrets: Option<Vec<String>>,
-    /// Target node name when routing creation through a controller.
-    #[serde(default)]
-    pub target_node: Option<String>,
     /// Terminal program identifier (e.g. "ghostty", "iTerm.app") from the CLI's environment.
     /// Forwarded into the session shell environment as `TERM_PROGRAM` so agents can detect
     /// the outer terminal's capabilities (image paste, color support, etc.).
@@ -73,12 +70,6 @@ pub struct ErrorResponse {
 pub struct PeersResponse {
     pub local: NodeInfo,
     pub peers: Vec<PeerInfo>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub role: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub controller_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub controller_address: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -286,23 +277,6 @@ pub struct InterventionEventResponse {
     pub created_at: String,
 }
 
-/// A session annotated with its source node for fleet-wide views.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FleetSession {
-    /// The node this session belongs to.
-    pub node_name: String,
-    /// The node's address (empty for local).
-    pub node_address: String,
-    #[serde(flatten)]
-    pub session: Session,
-}
-
-/// Response from the fleet sessions endpoint.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FleetSessionsResponse {
-    pub sessions: Vec<FleetSession>,
-}
-
 /// A scheduled session spawn.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Schedule {
@@ -311,8 +285,6 @@ pub struct Schedule {
     pub cron: String,
     pub command: String,
     pub workdir: String,
-    /// Target node: None = local, Some("auto") = least-loaded, Some("name") = specific node.
-    pub target_node: Option<String>,
     pub ink: Option<String>,
     pub description: Option<String>,
     /// Runtime environment (historical; "docker" is rejected on create/update).
@@ -344,8 +316,6 @@ pub struct CreateScheduleRequest {
     pub cron: String,
     pub command: Option<String>,
     pub workdir: String,
-    /// Target node: omit = local, "auto" = least-loaded, "name" = specific node.
-    pub target_node: Option<String>,
     pub ink: Option<String>,
     pub description: Option<String>,
     /// Runtime environment (historical; "docker" is rejected — runtime removed).
@@ -365,7 +335,6 @@ pub struct UpdateScheduleRequest {
     pub cron: Option<String>,
     pub command: Option<String>,
     pub workdir: Option<String>,
-    pub target_node: Option<Option<String>>,
     pub ink: Option<Option<String>>,
     pub description: Option<Option<String>>,
     pub enabled: Option<bool>,
@@ -406,77 +375,6 @@ pub struct SecretEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<String>,
     pub created_at: String,
-}
-
-// -- Controller mode types --
-
-/// Request from a managed node pushing events to the controller.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EventPushRequest {
-    pub events: Vec<crate::event::PulpoEvent>,
-}
-
-/// Request to enroll a managed node on the controller.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnrollNodeRequest {
-    pub node_name: String,
-}
-
-/// Response returned when the controller enrolls a node.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnrollNodeResponse {
-    pub node_name: String,
-    pub token: String,
-}
-
-/// Enrolled node metadata exposed by the controller.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnrolledNodeInfo {
-    pub node_name: String,
-    pub last_seen_at: Option<String>,
-    pub last_seen_address: Option<String>,
-}
-
-/// Response listing enrolled nodes known to the controller.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnrolledNodesResponse {
-    pub nodes: Vec<EnrolledNodeInfo>,
-}
-
-/// A command queued by the controller for a specific managed node.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum NodeCommand {
-    CreateSession {
-        command_id: String,
-        name: String,
-        workdir: Option<String>,
-        command: Option<String>,
-        ink: Option<String>,
-        description: Option<String>,
-    },
-    StopSession {
-        command_id: String,
-        session_id: String,
-    },
-}
-
-/// Response containing pending commands for a managed node.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NodeCommandsResponse {
-    pub commands: Vec<NodeCommand>,
-}
-
-/// A lightweight session entry for the controller's aggregated index.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionIndexEntry {
-    pub session_id: String,
-    pub node_name: String,
-    pub node_address: Option<String>,
-    pub session_name: String,
-    pub status: String,
-    pub command: Option<String>,
-    pub updated_at: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -862,28 +760,6 @@ mod tests {
     }
 
     #[test]
-    fn test_create_session_request_debug() {
-        let req = CreateSessionRequest {
-            name: "test".into(),
-            workdir: Some("/tmp".into()),
-            command: Some("echo hello".into()),
-            ink: None,
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: None,
-            secrets: None,
-            target_node: None,
-            term_program: None,
-            budget_cost_usd: None,
-        };
-        let debug = format!("{req:?}");
-        assert!(debug.contains("/tmp"));
-    }
-
-    #[test]
     fn test_create_session_request_with_worktree_base() {
         let json = r#"{"name":"test","worktree":true,"worktree_base":"main"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
@@ -896,17 +772,6 @@ mod tests {
         let json = r#"{"name":"test"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert!(req.worktree_base.is_none());
-    }
-
-    #[test]
-    fn test_create_session_request_with_secrets() {
-        let json = r#"{"name":"test","secrets":["GITHUB_TOKEN","NPM_TOKEN"]}"#;
-        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            req.secrets,
-            Some(vec!["GITHUB_TOKEN".into(), "NPM_TOKEN".into()])
-        );
-        assert!(req.target_node.is_none());
     }
 
     #[test]
@@ -1024,9 +889,6 @@ mod tests {
                 session_count: Some(2),
                 source: PeerSource::Configured,
             }],
-            role: None,
-            controller_name: None,
-            controller_address: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"local\""));
@@ -1057,9 +919,6 @@ mod tests {
                 gpu: Some("M4".into()),
             },
             peers: vec![],
-            role: None,
-            controller_name: None,
-            controller_address: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         let deserialized: PeersResponse = serde_json::from_str(&json).unwrap();
@@ -1082,9 +941,6 @@ mod tests {
                 gpu: None,
             },
             peers: vec![],
-            role: Some("node".into()),
-            controller_name: Some("controller-node".into()),
-            controller_address: Some("https://controller.tailnet".into()),
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("debug"));
@@ -1509,105 +1365,6 @@ mod tests {
         assert_eq!(req.secret, Some("s".into()));
     }
 
-    // -- Fleet type tests --
-
-    fn make_fleet_session() -> FleetSession {
-        use crate::session::{Session, SessionStatus};
-        FleetSession {
-            node_name: "node-a".into(),
-            node_address: "10.0.0.1:7433".into(),
-            session: Session {
-                name: "my-session".into(),
-                workdir: "/tmp".into(),
-                command: "echo hi".into(),
-                status: SessionStatus::Active,
-                ..Default::default()
-            },
-        }
-    }
-
-    #[test]
-    fn test_fleet_session_serialize() {
-        let fs = make_fleet_session();
-        let json = serde_json::to_string(&fs).unwrap();
-        assert!(json.contains("\"node_name\":\"node-a\""));
-        assert!(json.contains("\"node_address\":\"10.0.0.1:7433\""));
-        // Flattened session fields should appear at top level
-        assert!(json.contains("\"name\":\"my-session\""));
-        assert!(json.contains("\"command\":\"echo hi\""));
-    }
-
-    #[test]
-    fn test_fleet_session_deserialize() {
-        let fs = make_fleet_session();
-        let json = serde_json::to_string(&fs).unwrap();
-        let deserialized: FleetSession = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.node_name, "node-a");
-        assert_eq!(deserialized.node_address, "10.0.0.1:7433");
-        assert_eq!(deserialized.session.name, "my-session");
-    }
-
-    #[test]
-    fn test_fleet_session_debug() {
-        let fs = make_fleet_session();
-        let debug = format!("{fs:?}");
-        assert!(debug.contains("node-a"));
-    }
-
-    #[test]
-    fn test_fleet_session_clone() {
-        let fs = make_fleet_session();
-        #[allow(clippy::redundant_clone)]
-        let cloned = fs.clone();
-        assert_eq!(cloned.node_name, "node-a");
-        assert_eq!(cloned.session.name, "my-session");
-    }
-
-    #[test]
-    fn test_fleet_session_local_empty_address() {
-        let mut fs = make_fleet_session();
-        fs.node_address = String::new();
-        let json = serde_json::to_string(&fs).unwrap();
-        assert!(json.contains("\"node_address\":\"\""));
-        let deserialized: FleetSession = serde_json::from_str(&json).unwrap();
-        assert!(deserialized.node_address.is_empty());
-    }
-
-    #[test]
-    fn test_fleet_sessions_response_serialize() {
-        let resp = FleetSessionsResponse {
-            sessions: vec![make_fleet_session()],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"sessions\""));
-        assert!(json.contains("\"node_name\":\"node-a\""));
-    }
-
-    #[test]
-    fn test_fleet_sessions_response_deserialize() {
-        let resp = FleetSessionsResponse {
-            sessions: vec![make_fleet_session()],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let deserialized: FleetSessionsResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.sessions.len(), 1);
-        assert_eq!(deserialized.sessions[0].node_name, "node-a");
-    }
-
-    #[test]
-    fn test_fleet_sessions_response_empty() {
-        let resp = FleetSessionsResponse { sessions: vec![] };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert_eq!(json, r#"{"sessions":[]}"#);
-    }
-
-    #[test]
-    fn test_fleet_sessions_response_debug() {
-        let resp = FleetSessionsResponse { sessions: vec![] };
-        let debug = format!("{resp:?}");
-        assert!(debug.contains("FleetSessionsResponse"));
-    }
-
     #[test]
     fn test_webhook_endpoint_config_response_clone() {
         let resp = WebhookEndpointConfigResponse {
@@ -1632,7 +1389,6 @@ mod tests {
             cron: "0 3 * * *".into(),
             command: "claude -p 'review'".into(),
             workdir: "/tmp".into(),
-            target_node: None,
             ink: None,
             description: Some("Nightly review".into()),
             runtime: None,
@@ -1655,15 +1411,6 @@ mod tests {
         assert!(json.contains("\"name\":\"nightly-review\""));
         assert!(json.contains("\"cron\":\"0 3 * * *\""));
         assert!(json.contains("\"enabled\":true"));
-    }
-
-    #[test]
-    fn test_schedule_deserialize() {
-        let json = r#"{"id":"s1","name":"test","cron":"* * * * *","command":"echo","workdir":"/tmp","target_node":null,"ink":null,"description":null,"enabled":true,"last_run_at":null,"last_session_id":null,"created_at":"2026-01-01T00:00:00Z"}"#;
-        let schedule: Schedule = serde_json::from_str(json).unwrap();
-        assert_eq!(schedule.id, "s1");
-        assert_eq!(schedule.name, "test");
-        assert!(schedule.enabled);
     }
 
     #[test]
@@ -1694,16 +1441,6 @@ mod tests {
     }
 
     #[test]
-    fn test_schedule_with_target_node() {
-        let mut schedule = make_schedule();
-        schedule.target_node = Some("auto".into());
-        let json = serde_json::to_string(&schedule).unwrap();
-        assert!(json.contains("\"target_node\":\"auto\""));
-        let deserialized: Schedule = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.target_node, Some("auto".into()));
-    }
-
-    #[test]
     fn test_create_schedule_request_deserialize() {
         let json = r#"{"name":"daily","cron":"0 9 * * *","workdir":"/repo","command":"echo hi","ink":"coder","description":"Daily task"}"#;
         let req: CreateScheduleRequest = serde_json::from_str(json).unwrap();
@@ -1712,17 +1449,6 @@ mod tests {
         assert_eq!(req.command, Some("echo hi".into()));
         assert_eq!(req.ink, Some("coder".into()));
         assert_eq!(req.description, Some("Daily task".into()));
-    }
-
-    #[test]
-    fn test_create_schedule_request_minimal() {
-        let json = r#"{"name":"min","cron":"* * * * *","workdir":"/tmp"}"#;
-        let req: CreateScheduleRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.name, "min");
-        assert!(req.command.is_none());
-        assert!(req.target_node.is_none());
-        assert!(req.ink.is_none());
-        assert!(req.description.is_none());
     }
 
     #[test]
@@ -1905,306 +1631,6 @@ mod tests {
         let deserialized: SecretEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.name, "GH_WORK");
         assert_eq!(deserialized.env.as_deref(), Some("GITHUB_TOKEN"));
-    }
-
-    #[test]
-    fn test_update_schedule_request_nullable_fields() {
-        // serde treats `"field":null` as None for Option<Option<T>> by default
-        let json = r#"{"target_node":null,"ink":"coder","description":null}"#;
-        let req: UpdateScheduleRequest = serde_json::from_str(json).unwrap();
-        assert!(req.target_node.is_none());
-        assert_eq!(req.ink, Some(Some("coder".into())));
-        assert!(req.description.is_none());
-    }
-
-    // -- Controller mode type tests --
-
-    #[test]
-    fn test_event_push_request_serialize_roundtrip() {
-        use crate::event::{PulpoEvent, SessionEvent};
-
-        let req = EventPushRequest {
-            events: vec![PulpoEvent::Session(SessionEvent {
-                session_id: "s1".into(),
-                session_name: "task-a".into(),
-                status: "active".into(),
-                node_name: "node-1".into(),
-                timestamp: "2026-01-01T00:00:00Z".into(),
-                ..Default::default()
-            })],
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"events\""));
-        let deserialized: EventPushRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.events.len(), 1);
-    }
-
-    #[test]
-    fn test_event_push_request_empty_events() {
-        let req = EventPushRequest { events: vec![] };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"events\":[]"));
-        let deserialized: EventPushRequest = serde_json::from_str(&json).unwrap();
-        assert!(deserialized.events.is_empty());
-    }
-
-    #[test]
-    fn test_event_push_request_debug_clone() {
-        let req = EventPushRequest { events: vec![] };
-        let cloned = req.clone();
-        assert_eq!(format!("{req:?}"), format!("{cloned:?}"));
-    }
-
-    #[test]
-    fn test_enroll_node_request_roundtrip() {
-        let req = EnrollNodeRequest {
-            node_name: "node-1".into(),
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"node_name\":\"node-1\""));
-        let deserialized: EnrollNodeRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.node_name, "node-1");
-    }
-
-    #[test]
-    fn test_enroll_node_response_roundtrip() {
-        let resp = EnrollNodeResponse {
-            node_name: "node-1".into(),
-            token: "secret-token".into(),
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"node_name\":\"node-1\""));
-        assert!(json.contains("\"token\":\"secret-token\""));
-        let deserialized: EnrollNodeResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.node_name, "node-1");
-        assert_eq!(deserialized.token, "secret-token");
-    }
-
-    #[test]
-    fn test_enrolled_nodes_response_roundtrip() {
-        let resp = EnrolledNodesResponse {
-            nodes: vec![EnrolledNodeInfo {
-                node_name: "node-1".into(),
-                last_seen_at: Some("2026-04-02T17:00:00Z".into()),
-                last_seen_address: Some("10.0.0.10".into()),
-            }],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"nodes\""));
-        assert!(json.contains("\"node_name\":\"node-1\""));
-        let deserialized: EnrolledNodesResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.nodes.len(), 1);
-        assert_eq!(deserialized.nodes[0].node_name, "node-1");
-    }
-
-    #[test]
-    fn test_node_command_create_session_serialize() {
-        let cmd = NodeCommand::CreateSession {
-            command_id: "cmd-1".into(),
-            name: "my-task".into(),
-            workdir: Some("/tmp/repo".into()),
-            command: Some("claude -p 'build'".into()),
-            ink: Some("coder".into()),
-            description: Some("Build feature".into()),
-        };
-        let json = serde_json::to_string(&cmd).unwrap();
-        assert!(json.contains("\"type\":\"create_session\""));
-        assert!(json.contains("\"command_id\":\"cmd-1\""));
-        assert!(json.contains("\"name\":\"my-task\""));
-    }
-
-    #[test]
-    fn test_node_command_stop_session_serialize() {
-        let cmd = NodeCommand::StopSession {
-            command_id: "cmd-2".into(),
-            session_id: "sess-42".into(),
-        };
-        let json = serde_json::to_string(&cmd).unwrap();
-        assert!(json.contains("\"type\":\"stop_session\""));
-        assert!(json.contains("\"command_id\":\"cmd-2\""));
-        assert!(json.contains("\"session_id\":\"sess-42\""));
-    }
-
-    #[test]
-    fn test_node_command_create_session_roundtrip() {
-        let cmd = NodeCommand::CreateSession {
-            command_id: "c1".into(),
-            name: "task".into(),
-            workdir: None,
-            command: None,
-            ink: None,
-            description: None,
-        };
-        let json = serde_json::to_string(&cmd).unwrap();
-        let deserialized: NodeCommand = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            NodeCommand::CreateSession {
-                command_id, name, ..
-            } => {
-                assert_eq!(command_id, "c1");
-                assert_eq!(name, "task");
-            }
-            NodeCommand::StopSession { .. } => panic!("Expected CreateSession"),
-        }
-    }
-
-    #[test]
-    fn test_node_command_stop_session_roundtrip() {
-        let cmd = NodeCommand::StopSession {
-            command_id: "c2".into(),
-            session_id: "s1".into(),
-        };
-        let json = serde_json::to_string(&cmd).unwrap();
-        let deserialized: NodeCommand = serde_json::from_str(&json).unwrap();
-        match deserialized {
-            NodeCommand::StopSession {
-                command_id,
-                session_id,
-            } => {
-                assert_eq!(command_id, "c2");
-                assert_eq!(session_id, "s1");
-            }
-            NodeCommand::CreateSession { .. } => panic!("Expected StopSession"),
-        }
-    }
-
-    #[test]
-    fn test_node_command_debug_clone() {
-        let cmd = NodeCommand::StopSession {
-            command_id: "c".into(),
-            session_id: "s".into(),
-        };
-        let cloned = cmd.clone();
-        assert_eq!(format!("{cmd:?}"), format!("{cloned:?}"));
-    }
-
-    #[test]
-    fn test_node_command_invalid_type() {
-        let json = r#"{"type":"unknown","command_id":"c1"}"#;
-        let result = serde_json::from_str::<NodeCommand>(json);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_node_commands_response_serialize() {
-        let resp = NodeCommandsResponse {
-            commands: vec![
-                NodeCommand::CreateSession {
-                    command_id: "c1".into(),
-                    name: "task-1".into(),
-                    workdir: None,
-                    command: None,
-                    ink: None,
-                    description: None,
-                },
-                NodeCommand::StopSession {
-                    command_id: "c2".into(),
-                    session_id: "s1".into(),
-                },
-            ],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"commands\""));
-        assert!(json.contains("\"create_session\""));
-        assert!(json.contains("\"stop_session\""));
-    }
-
-    #[test]
-    fn test_node_commands_response_empty() {
-        let resp = NodeCommandsResponse { commands: vec![] };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert_eq!(json, r#"{"commands":[]}"#);
-    }
-
-    #[test]
-    fn test_node_commands_response_roundtrip() {
-        let resp = NodeCommandsResponse {
-            commands: vec![NodeCommand::StopSession {
-                command_id: "c1".into(),
-                session_id: "s1".into(),
-            }],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let deserialized: NodeCommandsResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.commands.len(), 1);
-    }
-
-    #[test]
-    fn test_node_commands_response_debug_clone() {
-        let resp = NodeCommandsResponse { commands: vec![] };
-        let cloned = resp.clone();
-        assert_eq!(format!("{resp:?}"), format!("{cloned:?}"));
-    }
-
-    #[test]
-    fn test_session_index_entry_serialize() {
-        let entry = SessionIndexEntry {
-            session_id: "s1".into(),
-            node_name: "node-1".into(),
-            node_address: Some("10.0.0.1:7433".into()),
-            session_name: "my-task".into(),
-            status: "active".into(),
-            command: Some("claude -p 'build'".into()),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        assert!(json.contains("\"session_id\":\"s1\""));
-        assert!(json.contains("\"node_name\":\"node-1\""));
-        assert!(json.contains("\"node_address\":\"10.0.0.1:7433\""));
-        assert!(json.contains("\"status\":\"active\""));
-    }
-
-    #[test]
-    fn test_session_index_entry_roundtrip() {
-        let entry = SessionIndexEntry {
-            session_id: "s2".into(),
-            node_name: "node-2".into(),
-            node_address: None,
-            session_name: "task-b".into(),
-            status: "stopped".into(),
-            command: None,
-            updated_at: "2026-03-30T12:00:00Z".into(),
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        let deserialized: SessionIndexEntry = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.session_id, "s2");
-        assert_eq!(deserialized.node_name, "node-2");
-        assert!(deserialized.node_address.is_none());
-        assert_eq!(deserialized.session_name, "task-b");
-        assert_eq!(deserialized.status, "stopped");
-        assert!(deserialized.command.is_none());
-        assert_eq!(deserialized.updated_at, "2026-03-30T12:00:00Z");
-    }
-
-    #[test]
-    fn test_session_index_entry_debug_clone() {
-        let entry = SessionIndexEntry {
-            session_id: "s".into(),
-            node_name: "n".into(),
-            node_address: None,
-            session_name: "t".into(),
-            status: "active".into(),
-            command: None,
-            updated_at: "now".into(),
-        };
-        let cloned = entry.clone();
-        assert_eq!(format!("{entry:?}"), format!("{cloned:?}"));
-    }
-
-    #[test]
-    fn test_session_index_entry_with_all_optionals() {
-        let entry = SessionIndexEntry {
-            session_id: "s1".into(),
-            node_name: "n".into(),
-            node_address: Some("addr".into()),
-            session_name: "t".into(),
-            status: "active".into(),
-            command: Some("cmd".into()),
-            updated_at: "now".into(),
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        assert!(json.contains("\"node_address\":\"addr\""));
-        assert!(json.contains("\"command\":\"cmd\""));
     }
 
     #[test]

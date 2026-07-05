@@ -10,18 +10,17 @@ impl Store {
         let secrets_json = serde_json::to_string(&schedule.secrets)?;
         sqlx::query(
             "INSERT INTO schedules (
-                id, name, cron, command, workdir, target_node, ink, description,
+                id, name, cron, command, workdir, ink, description,
                 runtime, secrets, worktree, worktree_base, enabled,
                 last_run_at, last_session_id, last_attempted_at, last_error, created_at
              )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&schedule.id)
         .bind(&schedule.name)
         .bind(&schedule.cron)
         .bind(&schedule.command)
         .bind(&schedule.workdir)
-        .bind(&schedule.target_node)
         .bind(&schedule.ink)
         .bind(&schedule.description)
         .bind(&schedule.runtime)
