@@ -4,7 +4,6 @@ import {
   getNode,
   getPeers,
   getSessions,
-  getFleetSessions,
   getSession,
   createSession,
   stopSession,
@@ -790,20 +789,6 @@ describe('cleanupSessions', () => {
     });
 
     await expect(cleanupSessions()).rejects.toThrow('Failed to cleanup sessions');
-  });
-});
-
-// -- Fleet sessions --
-
-describe('getFleetSessions', () => {
-  it('fetches /api/v1/fleet/sessions', async () => {
-    const resp = { sessions: [{ id: '1', name: 'fleet-1', node_name: 'mac' }] };
-    mockFetch.mockResolvedValue(jsonResponse(resp));
-
-    const result = await getFleetSessions();
-
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/fleet/sessions', { headers: {} });
-    expect(result).toEqual(resp);
   });
 });
 

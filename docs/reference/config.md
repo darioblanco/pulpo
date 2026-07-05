@@ -30,27 +30,13 @@ delete `~/.pulpo/state.db` and restart.
 
 Not needed for `local`, `tailscale`, or `container` modes. Pulpo still auto-generates one on first run so a node can be switched to `public` later without manual bootstrap.
 
-## `[controller]`
+## `[controller]` (retired)
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `false` | Promote this node to controller mode |
-| `address` | string | — | Controller URL for node mode; when set, this node becomes a managed node |
-| `token` | string | — | Required bearer token bound to an enrolled node identity on the controller |
-| `stale_timeout_secs` | u64 | `300` | Seconds before the controller marks a silent managed node as lost |
-
-Role rules:
-
-- `enabled = true` and `address` unset => controller node
-- `address` set and `enabled = false` => managed node
-- neither set => standalone node
-- `enabled` and `address` are mutually exclusive
-
-Auth rules:
-
-- In `public` mode, a controller should expose `auth.token` for users, and managed nodes must set `controller.token`.
-- In node mode, `controller.token` is always required, including `tailscale`.
-- Node tokens identify enrolled nodes on the controller. They are separate from optional `[peers]` routing hints.
+Controller/node relay mode was removed — every `pulpod` is standalone, reached directly
+(`pulpo --node <name>`, a saved web UI connection, or SSH). A leftover `[controller]`
+section from a config written before the removal is tolerated: it still parses, is ignored,
+and is dropped the next time the config is saved. Same treatment as the retired `[docker]`
+session-runtime section.
 
 ## `[watchdog]`
 
@@ -145,7 +131,7 @@ token = "secret"
 | `address` | string | — | `host:port` of the peer |
 | `token` | string | — | Auth token for this peer (optional) |
 
-`[peers]` is discovery and routing metadata. In controller/node mode it is not the authority source for node identity.
+`[peers]` is discovery and routing metadata used to resolve `--node <name>` to an address. It does not grant any node authority over another — there is no control plane.
 
 ## `[[webhooks]]`
 

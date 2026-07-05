@@ -3,7 +3,6 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { NewSessionDialog } from './new-session-dialog';
 import * as api from '@/api/client';
-import type { PeerInfo } from '@/api/types';
 
 vi.mock('@/api/client', () => ({
   createSession: vi.fn(),
@@ -140,79 +139,6 @@ describe('NewSessionDialog', () => {
     await waitFor(() => {
       expect(screen.getByText('Failed to create session')).toBeInTheDocument();
     });
-  });
-
-  it('routes remote target through createSession', async () => {
-    mockCreateSession.mockResolvedValue({
-      session: { ...defaultSession, id: '2', name: 'remote-test' },
-    });
-    const peers: PeerInfo[] = [
-      {
-        name: 'remote-node',
-        address: 'remote:7433',
-        status: 'online',
-        node_info: null,
-        session_count: null,
-      },
-    ];
-    const onCreated = vi.fn();
-    render(<NewSessionDialog peers={peers} onCreated={onCreated} />);
-    const user = await openDialog();
-
-    await user.type(screen.getByLabelText('Name'), 'remote-test');
-    await user.type(screen.getByLabelText('Working directory'), '/repo');
-
-    // Select remote node
-    const nodeSelect = screen.getByRole('combobox', { name: 'Node' });
-    await user.click(nodeSelect);
-    await waitFor(() => {
-      expect(screen.getAllByText('remote-node').length).toBeGreaterThan(0);
-    });
-    // Click the option in the listbox
-    const options = screen.getAllByText('remote-node');
-    const listboxOption = options.find((el) => el.closest('[role="option"]'));
-    if (listboxOption) await user.click(listboxOption);
-
-    const form = screen.getByLabelText('Working directory').closest('form')!;
-    fireEvent.submit(form);
-
-    await waitFor(() => {
-      expect(mockCreateSession).toHaveBeenCalledWith({
-        name: 'remote-test',
-        workdir: '/repo',
-        target_node: 'remote-node',
-      });
-    });
-  });
-
-  it('only shows online peers in node selector', async () => {
-    const peers: PeerInfo[] = [
-      {
-        name: 'online-peer',
-        address: 'online:7433',
-        status: 'online',
-        node_info: null,
-        session_count: null,
-      },
-      {
-        name: 'offline-peer',
-        address: 'offline:7433',
-        status: 'offline',
-        node_info: null,
-        session_count: null,
-      },
-    ];
-    render(<NewSessionDialog peers={peers} onCreated={vi.fn()} />);
-    const user = await openDialog();
-
-    // Click the node select trigger to open it
-    const nodeSelect = screen.getByRole('combobox', { name: 'Node' });
-    await user.click(nodeSelect);
-
-    await waitFor(() => {
-      expect(screen.getAllByText('online-peer').length).toBeGreaterThan(0);
-    });
-    expect(screen.queryByText('offline-peer')).not.toBeInTheDocument();
   });
 
   it('fetches inks when dialog opens', async () => {

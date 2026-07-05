@@ -50,25 +50,6 @@ fn validate_schedule_runtime(runtime: Option<&str>) -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn validate_target_node(
-    state: &Arc<AppState>,
-    target_node: Option<&str>,
-) -> Result<(), ApiError> {
-    let Some(target_node) = target_node else {
-        return Ok(());
-    };
-    let role = state.config.read().await.role();
-    if role != crate::config::NodeRole::Controller {
-        return Err(bad_request(&format!(
-            "target_node requires controller mode (got {role:?})"
-        )));
-    }
-    if target_node.is_empty() {
-        return Err(bad_request("target_node cannot be empty"));
-    }
-    Ok(())
-}
-
 pub async fn list(State(state): State<Arc<AppState>>) -> Result<Json<Vec<Schedule>>, ApiError> {
     let schedules = state
         .store
@@ -98,7 +79,6 @@ pub async fn create(
     State(state): State<Arc<AppState>>,
     Json(req): Json<CreateScheduleRequest>,
 ) -> Result<(StatusCode, Json<Schedule>), ApiError> {
-    validate_target_node(&state, req.target_node.as_deref()).await?;
     validate_schedule_runtime(req.runtime.as_deref())?;
 
     // Validate name: schedule names become session name prefixes (e.g. "nightly-20260331-0300"),
@@ -141,7 +121,6 @@ pub async fn create(
         cron: req.cron,
         command: req.command.unwrap_or_default(),
         workdir: req.workdir,
-        target_node: req.target_node,
         ink: req.ink,
         description: req.description,
         runtime: req.runtime,
@@ -169,11 +148,6 @@ pub async fn update(
     Path(id): Path<String>,
     Json(req): Json<UpdateScheduleRequest>,
 ) -> Result<Json<Schedule>, ApiError> {
-    validate_target_node(
-        &state,
-        req.target_node.as_ref().and_then(|node| node.as_deref()),
-    )
-    .await?;
     validate_schedule_runtime(req.runtime.as_ref().and_then(|rt| rt.as_deref()))?;
 
     let mut schedule = state
@@ -199,9 +173,6 @@ pub async fn update(
     }
     if let Some(workdir) = &req.workdir {
         schedule.workdir.clone_from(workdir);
-    }
-    if let Some(target_node) = &req.target_node {
-        schedule.target_node.clone_from(target_node);
     }
     if let Some(ink) = &req.ink {
         schedule.ink.clone_from(ink);
@@ -288,7 +259,7 @@ mod tests {
     use super::*;
     use crate::api::AppState;
     use crate::backend::StubBackend;
-    use crate::config::{Config, ControllerConfig, NodeConfig};
+    use crate::config::{Config, NodeConfig};
     use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
@@ -296,18 +267,6 @@ mod tests {
     use std::collections::HashMap;
 
     async fn test_server() -> TestServer {
-        test_server_with_controller(ControllerConfig::default()).await
-    }
-
-    async fn controller_test_server() -> TestServer {
-        test_server_with_controller(ControllerConfig {
-            enabled: true,
-            ..ControllerConfig::default()
-        })
-        .await
-    }
-
-    async fn test_server_with_controller(controller: ControllerConfig) -> TestServer {
         let tmpdir = tempfile::tempdir().unwrap();
         let tmpdir = Box::leak(Box::new(tmpdir));
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
@@ -319,7 +278,6 @@ mod tests {
                 data_dir: tmpdir.path().to_str().unwrap().into(),
                 ..NodeConfig::default()
             },
-            controller,
             ..Default::default()
         };
         let backend = Arc::new(StubBackend);
@@ -561,106 +519,6 @@ mod tests {
         resp.assert_status(StatusCode::CREATED);
         let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
         assert_eq!(body["command"], "");
-    }
-
-    #[tokio::test]
-    async fn test_create_schedule_with_all_fields() {
-        let server = controller_test_server().await;
-        let resp = server
-            .post("/api/v1/schedules")
-            .json(&serde_json::json!({
-                "name": "full-test",
-                "cron": "0 3 * * *",
-                "command": "echo hello",
-                "workdir": "/tmp",
-                "target_node": "raven",
-                "ink": "reviewer",
-                "description": "Nightly code review"
-            }))
-            .await;
-        resp.assert_status(StatusCode::CREATED);
-        let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
-        assert_eq!(body["target_node"], "raven");
-        assert_eq!(body["ink"], "reviewer");
-        assert_eq!(body["description"], "Nightly code review");
-    }
-
-    #[tokio::test]
-    async fn test_update_schedule_all_fields() {
-        let server = controller_test_server().await;
-        let create_resp = server
-            .post("/api/v1/schedules")
-            .json(&serde_json::json!({
-                "name": "update-all",
-                "cron": "0 3 * * *",
-                "command": "echo",
-                "workdir": "/tmp"
-            }))
-            .await;
-        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
-        let id = created["id"].as_str().unwrap();
-
-        let resp = server
-            .put(&format!("/api/v1/schedules/{id}"))
-            .json(&serde_json::json!({
-                "cron": "*/5 * * * *",
-                "command": "echo updated",
-                "workdir": "/home",
-                "target_node": "raven",
-                "ink": "reviewer",
-                "description": "Updated desc"
-            }))
-            .await;
-        resp.assert_status_ok();
-        let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
-        assert_eq!(body["cron"], "*/5 * * * *");
-        assert_eq!(body["command"], "echo updated");
-        assert_eq!(body["workdir"], "/home");
-        assert_eq!(body["target_node"], "raven");
-        assert_eq!(body["ink"], "reviewer");
-        assert_eq!(body["description"], "Updated desc");
-    }
-
-    #[tokio::test]
-    async fn test_create_schedule_target_node_requires_controller() {
-        let server = test_server().await;
-        let resp = server
-            .post("/api/v1/schedules")
-            .json(&serde_json::json!({
-                "name": "remote-nightly",
-                "cron": "0 3 * * *",
-                "command": "echo hello",
-                "workdir": "/tmp",
-                "target_node": "node-1"
-            }))
-            .await;
-        resp.assert_status(StatusCode::BAD_REQUEST);
-        assert!(resp.text().contains("target_node requires controller mode"));
-    }
-
-    #[tokio::test]
-    async fn test_update_schedule_target_node_requires_controller() {
-        let server = test_server().await;
-        let create_resp = server
-            .post("/api/v1/schedules")
-            .json(&serde_json::json!({
-                "name": "local-nightly",
-                "cron": "0 3 * * *",
-                "command": "echo",
-                "workdir": "/tmp"
-            }))
-            .await;
-        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
-        let id = created["id"].as_str().unwrap();
-
-        let resp = server
-            .put(&format!("/api/v1/schedules/{id}"))
-            .json(&serde_json::json!({
-                "target_node": "node-1"
-            }))
-            .await;
-        resp.assert_status(StatusCode::BAD_REQUEST);
-        assert!(resp.text().contains("target_node requires controller mode"));
     }
 
     #[tokio::test]

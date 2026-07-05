@@ -116,17 +116,16 @@ pulpo spawn review-backend --workdir ~/repos/backend --ink private-review
 - [Worktrees](/guides/worktrees)
 - [Use Cases](/getting-started/use-cases)
 
-## Advanced: Multi-Node Control Plane (Experimental, Not Actively Developed)
+## Multiple Machines
 
-Everything above is one node. Pulpo also has a controller/node control plane for fleet-wide
-visibility and cross-node spawning from a single machine — but as of June 2026 it is
-**frozen**: it works and is maintained, but it is not being extended (no controller-side
-rollups, no quota-aware placement). For a fleet-wide view today, point every node's event
-forwarding (`[[webhooks]]`, `/metrics`) at a collector you already run instead — see the
-"Monitoring & event topology" section of the
-[Architecture Overview](/architecture/overview).
+Everything above is one node. If you have more than one, there is deliberately no control
+plane joining them — cross-node orchestration is a dead product lane (see
+[ROADMAP.md](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md) "Phase C"). Instead:
 
-If you still want the controller/node setup — for example to drive remote spawns from one
-laptop across several enrolled machines — see
-[Controller + Node Setup](/guides/controller-node-setup), which carries the same frozen-status
-caveat up front.
+- Run a `pulpod` per box, each on your tailnet (`bind = "tailscale"`).
+- Reach each one directly: `pulpo --node <name>` from any machine on the tailnet (resolves
+  via the peer registry — see [Discovery Guide](/guides/discovery)), a saved connection in
+  the web UI, or plain SSH + `pulpo attach`.
+- Aggregate visibility across machines by pointing every node's `[[webhooks]]` at the same
+  collector — see the "Monitoring & event topology" section of the
+  [Architecture Overview](/architecture/overview).

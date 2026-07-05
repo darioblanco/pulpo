@@ -10,9 +10,7 @@ use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 use super::AppState;
 use super::auth;
 use super::config;
-use super::event_push;
 use super::events;
-use super::fleet;
 use super::health;
 use super::inks;
 use super::metrics;
@@ -20,8 +18,6 @@ use super::node;
 use super::notifications;
 use super::peers;
 
-use super::node_auth;
-use super::node_commands;
 use super::push;
 use super::schedules;
 use super::secrets;
@@ -102,7 +98,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/sessions/{id}/stream", get(ws::stream))
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
-        .route("/api/v1/fleet/sessions", get(fleet::fleet_sessions))
         .route("/api/v1/inks", get(inks::list))
         .route(
             "/api/v1/inks/{name}",
@@ -115,12 +110,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/push/subscribe", post(push::subscribe_push))
         .route("/api/v1/push/unsubscribe", post(push::unsubscribe_push))
         .route("/api/v1/events", get(events::stream))
-        .route("/api/v1/events/push", post(event_push::push_events))
-        .route(
-            "/api/v1/controller/nodes",
-            get(node_auth::list_enrolled_nodes).post(node_auth::enroll_node),
-        )
-        .route("/api/v1/node/commands", get(node_commands::get_commands))
         .route(
             "/api/v1/schedules",
             get(schedules::list).post(schedules::create),
@@ -885,7 +874,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -937,7 +925,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1040,7 +1027,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1077,7 +1063,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1113,7 +1098,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1159,7 +1143,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1203,7 +1186,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };

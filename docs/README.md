@@ -95,9 +95,11 @@ and SSE stream, the scheduler, and the event-forwarding backbone (webhooks + `/m
 ## Multi-machine
 
 Pulpo is **single-node-first** — each node meters and governs its own sessions with no central
-server required. For a fleet-wide view, point every node's event forwarding (`[[webhooks]]` +
-`/metrics`) at a collector you already run. A controller/node control plane also exists but is
-**frozen** (maintained, not extended) — see the [Roadmap](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md).
+server required. There is deliberately no control plane: reach each node directly with
+`pulpo --node <name|host:port>`, a saved connection in the web UI, or SSH/tmux — see
+[Control Your Agents From Anywhere](/guides/remote-control). For a view across machines, point
+every node's event forwarding (`[[webhooks]]` + `/metrics`) at the same collector you already
+run.
 
 ## Read In Order
 
@@ -127,7 +129,6 @@ server required. For a fleet-wide view, point every node's event forwarding (`[[
 - [Nightly Code Review](/guides/nightly-code-review)
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)
 - [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale)
-- [Controller + Node Setup](/guides/controller-node-setup)
 - [Worktrees](/guides/worktrees)
 - [Agent Examples](/guides/agent-examples)
 - [Recovery Guide](/guides/recovery)

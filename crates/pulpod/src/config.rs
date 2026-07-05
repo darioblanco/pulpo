@@ -37,8 +37,13 @@ pub struct Config {
     /// would otherwise reject them). It is ignored and dropped on save.
     #[serde(default, skip_serializing)]
     pub docker: Option<toml::Value>,
-    #[serde(default)]
-    pub controller: ControllerConfig,
+    /// Retired `[controller]` mode configuration.
+    /// Controller/node relay mode was removed — every pulpod is standalone and
+    /// reached directly (peer registry + Tailscale). This field only exists so
+    /// configs written before the removal still load (`deny_unknown_fields`
+    /// would otherwise reject them). It is ignored and dropped on save.
+    #[serde(default, skip_serializing)]
+    pub controller: Option<toml::Value>,
     #[serde(default)]
     pub metrics: MetricsConfig,
     /// Per-model cost rates, keyed by a model-ID substring (`[rates.<model>]`).
@@ -81,50 +86,6 @@ pub struct MetricsConfig {
     /// When `true`, the `/metrics` endpoint is served. Defaults to `false`.
     #[serde(default)]
     pub enabled: bool,
-}
-
-/// Controller/node mode configuration.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ControllerConfig {
-    /// If true, this node aggregates events from managed nodes.
-    #[serde(default)]
-    pub enabled: bool,
-    /// URL of the controller node. When set, this node pushes events to the controller.
-    #[serde(default)]
-    pub address: Option<String>,
-    /// Bearer token for authenticating to the controller.
-    #[serde(default)]
-    pub token: Option<String>,
-    /// Seconds before the controller marks a silent node's sessions as lost.
-    #[serde(default = "default_stale_timeout")]
-    pub stale_timeout_secs: u64,
-}
-
-impl Default for ControllerConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            address: None,
-            token: None,
-            stale_timeout_secs: default_stale_timeout(),
-        }
-    }
-}
-
-const fn default_stale_timeout() -> u64 {
-    300
-}
-
-/// The role of a node in the cluster.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NodeRole {
-    /// Standalone node (default, no controller/node relationship).
-    Standalone,
-    /// Controller node: aggregates events from managed nodes.
-    Controller,
-    /// Managed node: pushes events to a controller.
-    Node,
 }
 
 /// Per-plan quota configuration.
@@ -567,49 +528,6 @@ impl Config {
             .cloned()
             .collect()
     }
-
-    /// Determine the node's role based on controller configuration.
-    pub const fn role(&self) -> NodeRole {
-        if self.controller.enabled {
-            NodeRole::Controller
-        } else if self.controller.address.is_some() {
-            NodeRole::Node
-        } else {
-            NodeRole::Standalone
-        }
-    }
-
-    /// Validate the controller configuration.
-    ///
-    /// - A node cannot be both controller and managed node (enabled + address).
-    /// - In `public` bind mode, controller mode requires `auth.token`.
-    /// - In node mode, `controller.token` is always required.
-    pub fn validate_controller(&self) -> Result<()> {
-        if self.controller.enabled && self.controller.address.is_some() {
-            anyhow::bail!(
-                "controller.enabled and controller.address are mutually exclusive: \
-                 a node cannot be both controller and node"
-            );
-        }
-        if self.controller.enabled && self.node.bind == BindMode::Public {
-            // Public controller: must have auth.token so nodes/users can authenticate.
-            if self.auth.token.is_empty() {
-                anyhow::bail!(
-                    "controller.enabled requires auth.token to be set: \
-                     public controller nodes require bearer auth for users and managed nodes"
-                );
-            }
-        }
-        if self.controller.address.is_some()
-            && (self.controller.token.is_none() || self.controller.token.as_deref() == Some(""))
-        {
-            anyhow::bail!(
-                "controller.address requires controller.token to be set: \
-                 managed nodes require a bound bearer token to authenticate with the controller"
-            );
-        }
-        Ok(())
-    }
 }
 
 pub fn save(config: &Config, path: &Path) -> Result<()> {
@@ -707,7 +625,6 @@ pub fn load(path: &str) -> Result<Config> {
             .with_context(|| format!("Failed to read config from {}", path.display()))?;
         let mut config: Config = toml::from_str(&content).context("Failed to parse config")?;
         config.watchdog.validate()?;
-        config.validate_controller()?;
         config.inks = merge_built_in_inks(config.inks);
         Ok(config)
     } else {
@@ -2586,6 +2503,58 @@ name = "test"
     }
 
     #[test]
+    fn test_load_config_with_legacy_controller_section() {
+        // Configs written before controller-mode removal still load; the section
+        // is tolerated and ignored.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[controller]
+enabled = true
+stale_timeout_secs = 300
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert!(
+            config.controller.is_some(),
+            "legacy [controller] section is parsed"
+        );
+    }
+
+    #[test]
+    fn test_save_drops_legacy_controller_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[controller]
+address = "http://controller:7433"
+token = "tok"
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        save(&config, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("[controller]"),
+            "retired [controller] section is dropped on save"
+        );
+    }
+
+    #[test]
     fn test_load_config_with_legacy_docker_section() {
         // Configs written before the docker runtime removal still load.
         let dir = tempfile::tempdir().unwrap();
@@ -2685,402 +2654,6 @@ port = 7433
     }
 
     // -- Controller mode config tests --
-
-    #[test]
-    fn test_controller_config_default() {
-        let mc = ControllerConfig::default();
-        assert!(!mc.enabled);
-        assert!(mc.address.is_none());
-        assert!(mc.token.is_none());
-        assert_eq!(mc.stale_timeout_secs, 300);
-    }
-
-    #[test]
-    fn test_controller_config_debug_clone() {
-        let mc = ControllerConfig {
-            enabled: true,
-            address: Some("http://controller:7433".into()),
-            token: Some("tok".into()),
-            stale_timeout_secs: 600,
-        };
-        let cloned = mc.clone();
-        assert_eq!(format!("{mc:?}"), format!("{cloned:?}"));
-    }
-
-    #[test]
-    fn test_config_no_controller_section_role_standalone() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "standalone"
-port = 7433
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.role(), NodeRole::Standalone);
-    }
-
-    #[test]
-    fn test_config_controller_enabled_role_controller() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "controller-node"
-port = 7433
-
-[auth]
-token = "controller-token"
-
-[controller]
-enabled = true
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.role(), NodeRole::Controller);
-        assert!(config.controller.enabled);
-    }
-
-    #[test]
-    fn test_config_controller_address_role_node() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "node-runner"
-port = 7433
-
-[controller]
-address = "http://controller:7433"
-token = "node-token"
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.role(), NodeRole::Node);
-        assert_eq!(
-            config.controller.address.as_deref(),
-            Some("http://controller:7433")
-        );
-        assert_eq!(config.controller.token.as_deref(), Some("node-token"));
-    }
-
-    #[test]
-    fn test_config_controller_enabled_and_address_validation_error() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "invalid"
-port = 7433
-
-[controller]
-enabled = true
-address = "http://controller:7433"
-"#
-        )
-        .unwrap();
-
-        let result = load(tmpfile.path().to_str().unwrap());
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("mutually exclusive"),
-            "Expected 'mutually exclusive' in error: {err}"
-        );
-    }
-
-    #[test]
-    fn test_default_stale_timeout_value() {
-        assert_eq!(default_stale_timeout(), 300);
-    }
-
-    #[test]
-    fn test_controller_config_custom_stale_timeout() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "controller"
-port = 7433
-
-[auth]
-token = "controller-token"
-
-[controller]
-enabled = true
-stale_timeout_secs = 600
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.controller.stale_timeout_secs, 600);
-    }
-
-    #[test]
-    fn test_controller_config_default_stale_timeout_from_serde() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "controller"
-port = 7433
-
-[auth]
-token = "controller-token"
-
-[controller]
-enabled = true
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.controller.stale_timeout_secs, 300);
-    }
-
-    #[test]
-    fn test_missing_config_has_default_controller() {
-        let config = load("/nonexistent/controller/config.toml").unwrap();
-        assert!(!config.controller.enabled);
-        assert!(config.controller.address.is_none());
-        assert!(config.controller.token.is_none());
-        assert_eq!(config.controller.stale_timeout_secs, 300);
-        assert_eq!(config.role(), NodeRole::Standalone);
-    }
-
-    #[test]
-    fn test_save_and_load_roundtrip_with_controller() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("controller-rt.toml");
-        let config = Config {
-            node: NodeConfig {
-                name: "controller-rt".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            auth: AuthConfig {
-                token: "controller-auth-token".into(),
-            },
-            controller: ControllerConfig {
-                enabled: true,
-                address: None,
-                token: Some("controller-token".into()),
-                stale_timeout_secs: 120,
-            },
-            ..Default::default()
-        };
-        save(&config, &path).unwrap();
-        let loaded = load(path.to_str().unwrap()).unwrap();
-        assert!(loaded.controller.enabled);
-        assert!(loaded.controller.address.is_none());
-        assert_eq!(loaded.controller.token.as_deref(), Some("controller-token"));
-        assert_eq!(loaded.controller.stale_timeout_secs, 120);
-        assert_eq!(loaded.role(), NodeRole::Controller);
-    }
-
-    #[test]
-    fn test_node_role_debug() {
-        assert_eq!(format!("{:?}", NodeRole::Standalone), "Standalone");
-        assert_eq!(format!("{:?}", NodeRole::Controller), "Controller");
-        assert_eq!(format!("{:?}", NodeRole::Node), "Node");
-    }
-
-    #[test]
-    fn test_node_role_clone_copy_eq() {
-        let role = NodeRole::Controller;
-        #[allow(clippy::clone_on_copy)]
-        let cloned = role.clone();
-        assert_eq!(role, cloned);
-
-        let role2 = NodeRole::Node;
-        assert_ne!(role, role2);
-    }
-
-    #[test]
-    fn test_validate_controller_standalone_ok() {
-        let config = Config {
-            node: NodeConfig::default(),
-            ..Default::default()
-        };
-        assert!(config.validate_controller().is_ok());
-    }
-
-    #[test]
-    fn test_validate_controller_enabled_ok() {
-        let config = Config {
-            node: NodeConfig::default(),
-            auth: AuthConfig {
-                token: "secret-token".into(),
-            },
-            controller: ControllerConfig {
-                enabled: true,
-                address: None,
-                ..ControllerConfig::default()
-            },
-            ..Default::default()
-        };
-        assert!(config.validate_controller().is_ok());
-    }
-
-    #[test]
-    fn test_validate_controller_node_ok() {
-        let config = Config {
-            node: NodeConfig::default(),
-            controller: ControllerConfig {
-                enabled: false,
-                address: Some("http://controller:7433".into()),
-                token: Some("node-token".into()),
-                ..ControllerConfig::default()
-            },
-            ..Default::default()
-        };
-        assert!(config.validate_controller().is_ok());
-    }
-
-    #[test]
-    fn test_validate_controller_both_enabled_and_address_errors() {
-        let config = Config {
-            node: NodeConfig::default(),
-            auth: AuthConfig {
-                token: "secret-token".into(),
-            },
-            controller: ControllerConfig {
-                enabled: true,
-                address: Some("http://controller:7433".into()),
-                ..ControllerConfig::default()
-            },
-            ..Default::default()
-        };
-        let err = config.validate_controller().unwrap_err();
-        assert!(err.to_string().contains("mutually exclusive"));
-    }
-
-    #[test]
-    fn test_validate_controller_enabled_without_auth_token_errors() {
-        let config = Config {
-            node: NodeConfig {
-                bind: BindMode::Public,
-                ..NodeConfig::default()
-            },
-            controller: ControllerConfig {
-                enabled: true,
-                address: None,
-                ..ControllerConfig::default()
-            },
-            ..Default::default()
-        };
-        let err = config.validate_controller().unwrap_err();
-        assert!(err.to_string().contains("auth.token"));
-    }
-
-    #[test]
-    fn test_validate_controller_enabled_without_auth_token_ok_on_tailscale() {
-        let config = Config {
-            node: NodeConfig {
-                bind: BindMode::Tailscale,
-                ..NodeConfig::default()
-            },
-            controller: ControllerConfig {
-                enabled: true,
-                address: None,
-                ..ControllerConfig::default()
-            },
-            ..Default::default()
-        };
-        assert!(config.validate_controller().is_ok());
-    }
-
-    #[test]
-    fn test_validate_controller_node_without_controller_token_errors() {
-        let config = Config {
-            node: NodeConfig {
-                bind: BindMode::Public,
-                ..NodeConfig::default()
-            },
-            controller: ControllerConfig {
-                enabled: false,
-                address: Some("http://controller:7433".into()),
-                token: None, // missing
-                ..ControllerConfig::default()
-            },
-            ..Default::default()
-        };
-        let err = config.validate_controller().unwrap_err();
-        assert!(err.to_string().contains("controller.token"));
-    }
-
-    #[test]
-    fn test_validate_controller_node_without_controller_token_errors_on_tailscale() {
-        let config = Config {
-            node: NodeConfig {
-                bind: BindMode::Tailscale,
-                ..NodeConfig::default()
-            },
-            controller: ControllerConfig {
-                enabled: false,
-                address: Some("https://controller.tailnet.ts.net".into()),
-                token: None,
-                ..ControllerConfig::default()
-            },
-            ..Default::default()
-        };
-        let err = config.validate_controller().unwrap_err();
-        assert!(err.to_string().contains("controller.token"));
-    }
-
-    #[test]
-    fn test_validate_controller_node_with_empty_controller_token_errors() {
-        let config = Config {
-            node: NodeConfig {
-                bind: BindMode::Public,
-                ..NodeConfig::default()
-            },
-            controller: ControllerConfig {
-                enabled: false,
-                address: Some("http://controller:7433".into()),
-                token: Some(String::new()), // empty string
-                ..ControllerConfig::default()
-            },
-            ..Default::default()
-        };
-        let err = config.validate_controller().unwrap_err();
-        assert!(err.to_string().contains("controller.token"));
-    }
-
-    #[test]
-    fn test_load_config_without_controller_section_defaults() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "old-node"
-port = 7433
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        // Master config should have defaults
-        assert!(!config.controller.enabled);
-        assert!(config.controller.address.is_none());
-        assert_eq!(config.role(), NodeRole::Standalone);
-    }
 
     #[test]
     fn test_load_tolerates_retired_discord_section() {

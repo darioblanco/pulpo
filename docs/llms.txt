@@ -37,8 +37,9 @@ Canonical runtime concepts:
   cross-agent spend with no daemon routing required.
 - Exact cost is available for Claude Code (token-based, via `[rates.<model>]`) and pi
   (agent-recorded, scan only). Codex reports exact tokens and quota, never a dollar cost.
-- The controller/node multi-machine control plane is frozen (maintained, not extended);
-  the supported multi-machine path is single-node-first plus the event-forwarding backbone.
+- There is no controller/node control plane (removed July 2026) — every pulpod is standalone.
+  The supported multi-machine path is direct access to each node (`pulpo --node <name>`, saved
+  web UI connections, SSH/tmux) plus the event-forwarding backbone for aggregated visibility.
 
 Installation:
 - Homebrew: brew install darioblanco/tap/pulpo

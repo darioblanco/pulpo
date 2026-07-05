@@ -24,14 +24,6 @@ pub struct InterventionEvent {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone)]
-pub struct EnrolledNode {
-    pub node_name: String,
-    pub token_hash: String,
-    pub last_seen_at: Option<DateTime<Utc>>,
-    pub last_seen_address: Option<String>,
-}
-
 /// A durable webhook-delivery row from the `webhook_outbox` table.
 ///
 /// One pending/delivered/dead delivery attempt of a single canonical event to a

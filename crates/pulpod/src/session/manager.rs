@@ -1006,7 +1006,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         }
@@ -1049,7 +1048,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1091,7 +1089,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1130,7 +1127,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1155,7 +1151,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1225,7 +1220,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1248,7 +1242,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -2177,7 +2170,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -2217,7 +2209,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -2255,7 +2246,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -2286,7 +2276,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -2316,7 +2305,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -2355,7 +2343,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -2422,7 +2409,6 @@ mod tests {
             worktree_base: None,
             runtime: Some(Runtime::Tmux), // Override ink's docker runtime
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -2463,7 +2449,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: Some(vec!["REQ_SECRET".into()]),
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -2613,7 +2598,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -2749,7 +2733,6 @@ mod tests {
             worktree_base: None,
             runtime: None,
             secrets: None,
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -3070,7 +3053,6 @@ mod tests {
             runtime: None,
             // SHARED_SECRET overlaps with ink, REQ_ONLY is new
             secrets: Some(vec!["SHARED_SECRET".into(), "REQ_ONLY".into()]),
-            target_node: None,
             term_program: None,
             budget_cost_usd: None,
         };

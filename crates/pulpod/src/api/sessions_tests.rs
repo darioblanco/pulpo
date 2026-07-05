@@ -1,9 +1,7 @@
 use super::*;
 use crate::api::AppState;
 use crate::backend::Backend;
-use crate::controller::{CommandQueue, SessionIndex};
 use std::collections::HashMap;
-use tokio::sync::broadcast;
 
 use crate::config::{Config, NodeConfig};
 use crate::peers::PeerRegistry;
@@ -66,52 +64,6 @@ async fn test_state() -> Arc<AppState> {
     state
 }
 
-async fn controller_state_with_index(entry: SessionIndexEntry) -> Arc<AppState> {
-    controller_state_with_index_and_peers(entry, HashMap::new()).await
-}
-
-async fn controller_state_with_index_and_peers(
-    entry: SessionIndexEntry,
-    peers: HashMap<String, pulpo_common::peer::PeerEntry>,
-) -> Arc<AppState> {
-    let tmpdir = tempfile::tempdir().unwrap();
-    let tmpdir = Box::leak(Box::new(tmpdir));
-    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-    store.migrate().await.unwrap();
-    let backend = Arc::new(StubBackend);
-    let manager =
-        SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-    let peer_registry = PeerRegistry::new(&peers);
-    let (event_tx, _) = broadcast::channel(16);
-    let session_index = Arc::new(SessionIndex::new());
-    session_index.upsert(entry).await;
-    let command_queue = Arc::new(CommandQueue::new());
-
-    AppState::with_event_tx_controller(
-        Config {
-            node: NodeConfig {
-                name: "controller-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            peers,
-            controller: crate::config::ControllerConfig {
-                enabled: true,
-                ..crate::config::ControllerConfig::default()
-            },
-            ..Default::default()
-        },
-        tmpdir.path().join("config.toml"),
-        manager,
-        peer_registry,
-        event_tx,
-        store,
-        Some(session_index),
-        Some(command_queue),
-    )
-}
-
 #[tokio::test]
 async fn test_list_returns_empty_vec() {
     let state = test_state().await;
@@ -135,7 +87,6 @@ async fn test_list_returns_local_session_without_filters() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -163,7 +114,6 @@ async fn test_list_with_status_filter() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -209,7 +159,6 @@ async fn test_get_returns_local_session() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -220,48 +169,6 @@ async fn test_get_returns_local_session() {
         .unwrap();
     assert_eq!(session.name, "get-test");
     assert_eq!(session.command, "echo get");
-}
-
-#[test]
-fn test_session_from_index_entry_invalid_fields_fall_back_safely() {
-    let before = chrono::Utc::now();
-    let session = session_from_index_entry(SessionIndexEntry {
-        session_id: "not-a-uuid".into(),
-        node_name: "node-1".into(),
-        node_address: None,
-        session_name: "indexed".into(),
-        status: "not-a-status".into(),
-        command: None,
-        updated_at: "not-a-timestamp".into(),
-    });
-    let after = chrono::Utc::now();
-
-    assert_eq!(session.id, Uuid::nil());
-    assert_eq!(session.name, "indexed");
-    assert_eq!(session.status, SessionStatus::Lost);
-    assert_eq!(session.command, "");
-    assert!(session.updated_at >= before);
-    assert!(session.updated_at <= after);
-}
-
-#[tokio::test]
-async fn test_get_returns_remote_session_from_controller_index() {
-    let session_id = Uuid::new_v4().to_string();
-    let state = controller_state_with_index(SessionIndexEntry {
-        session_id: session_id.clone(),
-        node_name: "node-1".into(),
-        node_address: Some("node-1.tailnet:7433".into()),
-        session_name: "remote-task".into(),
-        status: "active".into(),
-        command: Some("claude -p build".into()),
-        updated_at: "2026-03-30T12:00:00Z".into(),
-    })
-    .await;
-
-    let Json(session) = get(State(state), Path(session_id)).await.unwrap();
-    assert_eq!(session.name, "remote-task");
-    assert_eq!(session.status, SessionStatus::Active);
-    assert_eq!(session.command, "claude -p build");
 }
 
 #[tokio::test]
@@ -279,7 +186,6 @@ async fn test_create_returns_created() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -305,7 +211,6 @@ async fn test_create_docker_runtime_rejected_with_bad_request() {
         worktree_base: None,
         runtime: Some(pulpo_common::session::Runtime::Docker),
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -317,116 +222,6 @@ async fn test_create_docker_runtime_rejected_with_bad_request() {
         err.error.contains("docker runtime was removed"),
         "{}",
         err.error
-    );
-}
-
-#[tokio::test]
-async fn test_create_target_node_requires_controller() {
-    let state = test_state().await;
-    let req = CreateSessionRequest {
-        name: "remote-create".into(),
-        workdir: Some("/repo".into()),
-        metadata: None,
-        command: Some("claude code".into()),
-        description: None,
-        ink: None,
-        idle_threshold_secs: None,
-        worktree: None,
-        worktree_base: None,
-        runtime: None,
-        secrets: None,
-        target_node: Some("node-1".into()),
-        term_program: None,
-        budget_cost_usd: None,
-    };
-
-    let result = create(State(state), Json(req)).await;
-    assert!(result.is_err());
-    let (status, Json(err)) = result.unwrap_err();
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(err.error.contains("target_node requires controller mode"));
-}
-
-#[tokio::test]
-async fn test_create_target_node_matching_controller_name_creates_locally() {
-    let state = controller_state_with_index(SessionIndexEntry {
-        session_id: Uuid::new_v4().to_string(),
-        node_name: "controller-node".into(),
-        node_address: None,
-        session_name: "existing-local".into(),
-        status: "active".into(),
-        command: Some("echo".into()),
-        updated_at: "2026-03-30T12:00:00Z".into(),
-    })
-    .await;
-    let req = CreateSessionRequest {
-        name: "controller-local".into(),
-        workdir: Some("/tmp".into()),
-        metadata: None,
-        command: Some("echo local".into()),
-        description: None,
-        ink: None,
-        idle_threshold_secs: None,
-        worktree: None,
-        worktree_base: None,
-        runtime: None,
-        secrets: None,
-        target_node: Some("controller-node".into()),
-        term_program: None,
-        budget_cost_usd: None,
-    };
-
-    let (status, Json(resp)) = create(State(state), Json(req)).await.unwrap();
-    assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(resp.session.name, "controller-local");
-}
-
-#[tokio::test]
-async fn test_create_target_node_offline_node_returns_bad_gateway() {
-    let peers = HashMap::from([(
-        "node-1".to_owned(),
-        pulpo_common::peer::PeerEntry::Full {
-            address: "127.0.0.1:9".into(),
-            token: Some("secret-token".into()),
-        },
-    )]);
-    let state = controller_state_with_index_and_peers(
-        SessionIndexEntry {
-            session_id: Uuid::new_v4().to_string(),
-            node_name: "controller-node".into(),
-            node_address: None,
-            session_name: "existing-local".into(),
-            status: "active".into(),
-            command: Some("echo".into()),
-            updated_at: "2026-03-30T12:00:00Z".into(),
-        },
-        peers,
-    )
-    .await;
-    let req = CreateSessionRequest {
-        name: "remote-create".into(),
-        workdir: Some("/repo".into()),
-        metadata: None,
-        command: Some("claude code".into()),
-        description: None,
-        ink: None,
-        idle_threshold_secs: None,
-        worktree: None,
-        worktree_base: None,
-        runtime: None,
-        secrets: None,
-        target_node: Some("node-1".into()),
-        term_program: None,
-        budget_cost_usd: None,
-    };
-
-    let result = create(State(state), Json(req)).await;
-    assert!(result.is_err());
-    let (status, Json(err)) = result.unwrap_err();
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(
-        err.error
-            .contains("failed to create session on node node-1")
     );
 }
 
@@ -445,7 +240,6 @@ async fn test_create_duplicate_name_returns_conflict() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -468,37 +262,6 @@ async fn test_stop_not_found() {
 }
 
 #[tokio::test]
-async fn test_stop_enqueues_remote_command_when_session_is_indexed_on_controller() {
-    let session_id = Uuid::new_v4().to_string();
-    let state = controller_state_with_index(SessionIndexEntry {
-        session_id: session_id.clone(),
-        node_name: "node-1".into(),
-        node_address: Some("node-1.tailnet:7433".into()),
-        session_name: "remote-task".into(),
-        status: "active".into(),
-        command: Some("claude -p build".into()),
-        updated_at: "2026-03-30T12:00:00Z".into(),
-    })
-    .await;
-    let query = StopQuery { purge: None };
-
-    let status = stop(State(state.clone()), Path(session_id.clone()), Query(query))
-        .await
-        .unwrap();
-    assert_eq!(status, StatusCode::ACCEPTED);
-
-    let commands = state.command_queue.as_ref().unwrap().drain("node-1").await;
-    assert_eq!(commands.len(), 1);
-    match &commands[0] {
-        NodeCommand::StopSession {
-            session_id: queued_id,
-            ..
-        } => assert_eq!(queued_id, &session_id),
-        NodeCommand::CreateSession { .. } => panic!("expected stop command"),
-    }
-}
-
-#[tokio::test]
 async fn test_cleanup_removes_stopped_sessions() {
     let state = test_state().await;
     let req = CreateSessionRequest {
@@ -513,7 +276,6 @@ async fn test_cleanup_removes_stopped_sessions() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -566,7 +328,6 @@ async fn test_stop_returns_no_content() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -593,7 +354,6 @@ async fn test_stop_with_purge() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -631,7 +391,6 @@ async fn test_output_for_session() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -656,40 +415,6 @@ async fn test_output_not_found() {
 }
 
 #[tokio::test]
-async fn test_resolve_remote_session_node_target_uses_peer_registry() {
-    let session_id = Uuid::new_v4().to_string();
-    let mut peers = HashMap::new();
-    peers.insert(
-        "node-1".into(),
-        pulpo_common::peer::PeerEntry::Full {
-            address: "node-1.tailnet:7433".into(),
-            token: Some("secret-token".into()),
-        },
-    );
-    let controller_state = controller_state_with_index_and_peers(
-        SessionIndexEntry {
-            session_id: session_id.clone(),
-            node_name: "node-1".into(),
-            node_address: None,
-            session_name: "remote-output".into(),
-            status: "active".into(),
-            command: Some("echo test".into()),
-            updated_at: "2026-03-30T12:00:00Z".into(),
-        },
-        peers,
-    )
-    .await;
-
-    let target = resolve_remote_session_node_target(&controller_state, &session_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(target.node_name, "node-1");
-    assert_eq!(target.base_url, "http://node-1.tailnet:7433");
-    assert_eq!(target.token.as_deref(), Some("secret-token"));
-}
-
-#[tokio::test]
 async fn test_input_for_session() {
     let state = test_state().await;
     let req = CreateSessionRequest {
@@ -704,7 +429,6 @@ async fn test_input_for_session() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -729,28 +453,6 @@ async fn test_input_not_found() {
     assert!(result.is_err());
     let (status, _) = result.unwrap_err();
     assert_eq!(status, StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn test_resolve_remote_session_node_target_falls_back_to_index_address() {
-    let session_id = Uuid::new_v4().to_string();
-    let controller_state = controller_state_with_index(SessionIndexEntry {
-        session_id: session_id.clone(),
-        node_name: "node-1".into(),
-        node_address: Some("https://node-1.example.com".into()),
-        session_name: "remote-input".into(),
-        status: "active".into(),
-        command: Some("echo test".into()),
-        updated_at: "2026-03-30T12:00:00Z".into(),
-    })
-    .await;
-
-    let target = resolve_remote_session_node_target(&controller_state, &session_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(target.base_url, "https://node-1.example.com");
-    assert!(target.token.is_none());
 }
 
 /// Backend where all methods except `create_session` return errors.
@@ -866,7 +568,6 @@ async fn test_get_internal_error() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -895,7 +596,6 @@ async fn test_stop_internal_error() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -948,7 +648,6 @@ async fn test_create_internal_error() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -973,7 +672,6 @@ async fn test_output_internal_error() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1003,7 +701,6 @@ async fn test_input_internal_error() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1060,7 +757,6 @@ async fn test_output_capture_fallback_to_log() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1090,7 +786,6 @@ async fn test_input_send_error() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1184,7 +879,6 @@ async fn test_download_output_running_session() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1245,7 +939,6 @@ async fn test_download_output_dead_session_no_snapshot() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1277,132 +970,6 @@ async fn test_download_output_not_found() {
 }
 
 #[tokio::test]
-async fn test_resolve_remote_session_node_target_errors_without_any_address() {
-    let session_id = Uuid::new_v4().to_string();
-    let controller_state = controller_state_with_index(SessionIndexEntry {
-        session_id: session_id.clone(),
-        node_name: "node-1".into(),
-        node_address: None,
-        session_name: "remote-download".into(),
-        status: "active".into(),
-        command: Some("echo test".into()),
-        updated_at: "2026-03-30T12:00:00Z".into(),
-    })
-    .await;
-
-    let result = resolve_remote_session_node_target(&controller_state, &session_id).await;
-    assert!(result.is_err());
-    let (status, Json(err)) = result.unwrap_err();
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(err.error.contains("node address unknown"));
-}
-
-#[tokio::test]
-async fn test_output_remote_node_connection_failure_returns_bad_gateway() {
-    let session_id = Uuid::new_v4().to_string();
-    let state = controller_state_with_index(SessionIndexEntry {
-        session_id: session_id.clone(),
-        node_name: "node-1".into(),
-        node_address: Some("127.0.0.1:9".into()),
-        session_name: "remote-output".into(),
-        status: "active".into(),
-        command: Some("echo test".into()),
-        updated_at: "2026-03-30T12:00:00Z".into(),
-    })
-    .await;
-
-    let result = output(
-        State(state),
-        Path(session_id),
-        Query(OutputQuery { lines: Some(50) }),
-    )
-    .await;
-    assert!(result.is_err());
-    let (status, Json(err)) = result.unwrap_err();
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(
-        err.error
-            .contains("failed to fetch output from node node-1")
-    );
-}
-
-#[tokio::test]
-async fn test_input_remote_node_connection_failure_returns_bad_gateway() {
-    let session_id = Uuid::new_v4().to_string();
-    let state = controller_state_with_index(SessionIndexEntry {
-        session_id: session_id.clone(),
-        node_name: "node-1".into(),
-        node_address: Some("127.0.0.1:9".into()),
-        session_name: "remote-input".into(),
-        status: "active".into(),
-        command: Some("echo test".into()),
-        updated_at: "2026-03-30T12:00:00Z".into(),
-    })
-    .await;
-
-    let result = input(
-        State(state),
-        Path(session_id),
-        Json(SendInputRequest {
-            text: "continue".into(),
-        }),
-    )
-    .await;
-    assert!(result.is_err());
-    let (status, Json(err)) = result.unwrap_err();
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(err.error.contains("failed to send input to node node-1"));
-}
-
-#[tokio::test]
-async fn test_download_output_remote_node_connection_failure_returns_bad_gateway() {
-    let session_id = Uuid::new_v4().to_string();
-    let state = controller_state_with_index(SessionIndexEntry {
-        session_id: session_id.clone(),
-        node_name: "node-1".into(),
-        node_address: Some("127.0.0.1:9".into()),
-        session_name: "remote-download".into(),
-        status: "active".into(),
-        command: Some("echo test".into()),
-        updated_at: "2026-03-30T12:00:00Z".into(),
-    })
-    .await;
-
-    let result = download_output(State(state), Path(session_id)).await;
-    assert!(result.is_err());
-    let (status, Json(err)) = result.unwrap_err();
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(
-        err.error
-            .contains("failed to download output from node node-1")
-    );
-}
-
-#[tokio::test]
-async fn test_resume_remote_node_connection_failure_returns_bad_gateway() {
-    let session_id = Uuid::new_v4().to_string();
-    let state = controller_state_with_index(SessionIndexEntry {
-        session_id: session_id.clone(),
-        node_name: "node-1".into(),
-        node_address: Some("127.0.0.1:9".into()),
-        session_name: "remote-resume".into(),
-        status: "lost".into(),
-        command: Some("echo test".into()),
-        updated_at: "2026-03-30T12:00:00Z".into(),
-    })
-    .await;
-
-    let result = resume(State(state), Path(session_id)).await;
-    assert!(result.is_err());
-    let (status, Json(err)) = result.unwrap_err();
-    assert_eq!(status, StatusCode::BAD_GATEWAY);
-    assert!(
-        err.error
-            .contains("failed to resume session on node node-1")
-    );
-}
-
-#[tokio::test]
 async fn test_download_output_internal_error() {
     let state = failing_state().await;
     let req = CreateSessionRequest {
@@ -1417,7 +984,6 @@ async fn test_download_output_internal_error() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1446,7 +1012,6 @@ async fn test_list_interventions_empty() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1473,7 +1038,6 @@ async fn test_list_interventions_with_events() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1544,7 +1108,6 @@ async fn test_resume_not_stale() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1631,7 +1194,6 @@ async fn test_resume_stale_session() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1687,7 +1249,6 @@ async fn test_resume_name_collision_returns_conflict() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1712,7 +1273,6 @@ async fn test_resume_name_collision_returns_conflict() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1813,7 +1373,6 @@ async fn test_resume_internal_error() {
         worktree_base: None,
         runtime: None,
         secrets: None,
-        target_node: None,
         term_program: None,
         budget_cost_usd: None,
     };

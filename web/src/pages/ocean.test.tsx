@@ -11,7 +11,6 @@ import * as api from '@/api/client';
 vi.mock('@/api/client', () => ({
   getPeers: vi.fn(),
   getSessions: vi.fn(),
-  getFleetSessions: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
@@ -87,13 +86,10 @@ vi.stubGlobal(
 
 const mockGetPeers = vi.mocked(api.getPeers);
 const mockGetSessions = vi.mocked(api.getSessions);
-const mockGetFleetSessions = vi.mocked(api.getFleetSessions);
 
 beforeEach(() => {
   mockGetPeers.mockReset();
   mockGetSessions.mockReset();
-  mockGetFleetSessions.mockReset();
-  mockGetFleetSessions.mockResolvedValue({ sessions: [] });
   mockGetPeers.mockResolvedValue({
     local: {
       name: 'mac-studio',
@@ -105,7 +101,6 @@ beforeEach(() => {
       gpu: null,
     },
     peers: [],
-    role: 'standalone',
   });
   mockGetSessions.mockResolvedValue([]);
 });
@@ -164,37 +159,6 @@ describe('OceanPage', () => {
     renderOcean();
     await waitFor(() => {
       expect(screen.getByTestId('tide-pool-canvas-container')).toBeInTheDocument();
-    });
-  });
-
-  it('renders multiple tide pools for peers', async () => {
-    mockGetPeers.mockResolvedValue({
-      local: {
-        name: 'mac-studio',
-        hostname: 'mac-studio.local',
-        os: 'macos',
-        arch: 'aarch64',
-        cpus: 12,
-        memory_mb: 32768,
-        gpu: null,
-      },
-      peers: [
-        {
-          name: 'linux-box',
-          address: '10.0.0.2:7433',
-          status: 'online',
-          node_info: null,
-          session_count: null,
-        },
-      ],
-      role: 'controller',
-    });
-    mockGetFleetSessions.mockResolvedValue({ sessions: [] });
-
-    renderOcean();
-    await waitFor(() => {
-      const pools = screen.getAllByTestId('tide-pool');
-      expect(pools).toHaveLength(2);
     });
   });
 

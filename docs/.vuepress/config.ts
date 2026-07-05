@@ -51,7 +51,6 @@ export default defineUserConfig({
         '/guides/recovery',
         '/guides/worktrees',
         '/guides/secrets',
-        '/guides/controller-node-setup',
       ],
       '/reference/': ['/reference/cli', '/reference/config', '/reference/api'],
       '/operations/': ['/operations/session-lifecycle', '/operations/release-and-distribution'],

@@ -4,9 +4,9 @@ Instructions for coding agents (Codex, Claude, and compatible tools).
 
 ## Product Focus
 
-Pulpo is a **self-hosted control plane for background coding agents** — agent-agnostic infrastructure you own. It runs any CLI agent (Claude Code, Codex, Aider, Goose, etc.) on your machines with durable session lifecycle, watchdog supervision, scheduling, and multi-node fleet management.
+Pulpo is a **self-hosted control plane for background coding agents** — agent-agnostic infrastructure you own. It runs any CLI agent (Claude Code, Codex, Aider, Goose, etc.) on your machines with durable session lifecycle, watchdog supervision, and scheduling. Each machine's `pulpod` is standalone (no controller/fleet control plane); reach any of them directly over Tailscale.
 
-**Positioning:** infrastructure layer, not an agent. Sovereign by architecture — code never leaves your infrastructure. Key differentiators: scheduling, cost control (coming), self-hosted fleet management, EU sovereignty compliance.
+**Positioning:** infrastructure layer, not an agent. Sovereign by architecture — code never leaves your infrastructure. Key differentiators: scheduling, cost control, direct multi-machine access over Tailscale, EU sovereignty compliance.
 
 Current core scope: `pulpod` daemon, `pulpo` CLI, embedded web UI.
 Do not expand scope into desktop/mobile clients unless explicitly requested.

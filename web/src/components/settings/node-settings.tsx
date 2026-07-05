@@ -61,7 +61,7 @@ export function NodeSettings({
           <FormField
             label="Name"
             htmlFor="node-name"
-            description="A unique identifier for this node across your fleet."
+            description="A unique identifier for this node."
           >
             <Input
               id="node-name"

@@ -20,9 +20,6 @@ export interface PeerInfo {
 export interface PeersResponse {
   local: NodeInfo;
   peers: PeerInfo[];
-  role?: 'standalone' | 'controller' | 'node' | string;
-  controller_name?: string | null;
-  controller_address?: string | null;
 }
 
 export interface Session {
@@ -175,15 +172,6 @@ export interface CreateSessionResponse {
 
 export interface VapidPublicKeyResponse {
   public_key: string;
-}
-
-export interface FleetSession extends Session {
-  node_name: string;
-  node_address: string;
-}
-
-export interface FleetSessionsResponse {
-  sessions: FleetSession[];
 }
 
 export interface PushSubscriptionRequest {

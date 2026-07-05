@@ -1,14 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router';
 import { AppHeader } from '@/components/layout/app-header';
 import { TidePool } from '@/components/ocean/tide-pool';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Button } from '@/components/ui/button';
-import { getPeers, getFleetSessions, stopSession } from '@/api/client';
+import { getPeers, stopSession } from '@/api/client';
 import { loadAllSprites, type Sprites } from '@/components/ocean/engine/sprites';
 import { NODE_COLORS } from '@/components/ocean/engine/world';
 import { useSSE } from '@/hooks/use-sse';
-import type { FleetSession, NodeInfo, PeerInfo, Session } from '@/api/types';
+import type { NodeInfo, Session } from '@/api/types';
 
 interface TidePoolEntry {
   nodeName: string;
@@ -19,14 +17,8 @@ interface TidePoolEntry {
 }
 
 export function OceanPage() {
-  const navigate = useNavigate();
   const { sessions } = useSSE();
   const [localNode, setLocalNode] = useState<NodeInfo | null>(null);
-  const [peers, setPeers] = useState<PeerInfo[]>([]);
-  const [fleetSessions, setFleetSessions] = useState<FleetSession[]>([]);
-  const [nodeRole, setNodeRole] = useState<'standalone' | 'controller' | 'node'>('standalone');
-  const [controllerName, setControllerName] = useState<string | null>(null);
-  const [controllerAddress, setControllerAddress] = useState<string | null>(null);
   const [sprites, setSprites] = useState<Sprites | null>(null);
   const [focusedNode, setFocusedNode] = useState<string | null>(null);
 
@@ -43,18 +35,6 @@ export function OceanPage() {
     try {
       const resp = await getPeers();
       setLocalNode(resp.local);
-      setPeers(resp.peers);
-      setNodeRole((resp.role as 'standalone' | 'controller' | 'node') ?? 'standalone');
-      setControllerName(resp.controller_name ?? null);
-      setControllerAddress(resp.controller_address ?? null);
-
-      if (resp.role === 'controller') {
-        await getFleetSessions()
-          .then((r) => setFleetSessions(r.sessions))
-          .catch(() => setFleetSessions([]));
-      } else {
-        setFleetSessions([]);
-      }
     } catch {
       // Silently ignore — will retry on next poll
     }
@@ -76,17 +56,6 @@ export function OceanPage() {
       sessions,
       nodeColor: NODE_COLORS[0 % NODE_COLORS.length],
     });
-    if (nodeRole === 'controller') {
-      for (let i = 0; i < peers.length; i++) {
-        pools.push({
-          nodeName: peers[i].name,
-          isLocal: false,
-          nodeStatus: peers[i].status,
-          sessions: fleetSessions.filter((s) => s.node_name === peers[i].name),
-          nodeColor: NODE_COLORS[(i + 1) % NODE_COLORS.length],
-        });
-      }
-    }
   }
 
   const handleStop = useCallback(
@@ -132,36 +101,6 @@ export function OceanPage() {
           </div>
         ) : (
           <>
-            {nodeRole === 'node' && (
-              <div
-                data-testid="ocean-node-banner"
-                className="mb-4 flex flex-col gap-3 rounded-lg border bg-muted/30 p-4 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">This node is managed by a controller.</p>
-                  <p className="text-sm text-muted-foreground">
-                    The full fleet ocean is available on the controller.
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {controllerName
-                      ? `Controller: ${controllerName}`
-                      : 'Controller node configured'}
-                    {controllerAddress ? ` · ${controllerAddress}` : ''}
-                  </p>
-                </div>
-                {controllerAddress && (
-                  <Button
-                    data-testid="ocean-connect-controller-button"
-                    variant="outline"
-                    onClick={() =>
-                      navigate(`/connect?url=${encodeURIComponent(controllerAddress)}`)
-                    }
-                  >
-                    Connect to controller
-                  </Button>
-                )}
-              </div>
-            )}
             <div
               className={`grid ${focusedNode ? 'grid-cols-1' : gridCols} gap-4`}
               data-testid="tide-pool-grid"

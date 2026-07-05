@@ -23,7 +23,7 @@ command -> session -> backend -> lifecycle -> control surfaces
 - Pulpo creates a managed **session**
 - The session runs on a **backend**
 - The watchdog and liveness checks maintain the **lifecycle**
-- CLI, web UI, API, scheduler, and fleet features are **control surfaces**
+- CLI, web UI, API, and scheduler are **control surfaces**
 
 This separation matters because Pulpo is not:
 
@@ -142,75 +142,69 @@ Each session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the 
 
 ### Built-in Scheduler
 
-Cron-based schedules run inside `pulpod` (no crontab manipulation). Remote schedule targeting goes through the controller control plane:
+Cron-based schedules run inside `pulpod` (no crontab manipulation) and always fire on the
+node that holds them. To schedule on another box, point the CLI at it with the global
+`--node` connection flag — the schedule is created directly on that node's `pulpod`:
 
 ```bash
-pulpo schedule add nightly "0 3 * * *" --node gpu-box -- claude -p "review"
+pulpo --node gpu-box schedule add nightly "0 3 * * *" -- claude -p "review"
 ```
 
-To target another node reliably, send the schedule request to the controller. Managed nodes keep their own local schedules, but they are not the canonical place for cross-node dispatch. Schedules are visible in the web UI dashboard at `/schedules`.
+Schedules are visible in the web UI dashboard at `/schedules`.
 
 ### Multi-Node Architecture
 
-> **Status (2026-06-14): the cross-node control plane is frozen.** It works and is
-> maintained, but it is not being extended (no controller-side rollups, no quota-aware
-> remote placement). The supported way to get a fleet-wide view is the **event-forwarding
-> backbone** — every node forwards signed events to your own collector via `[[webhooks]]`
-> and exposes `/metrics` + `/usage`, so you aggregate in Grafana/Datadog/a SIEM (or a
-> single designated node). Tailscale stays as secure transport (`bind = "tailscale"`),
-> independent of any fleet. See the [Roadmap](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md)
-> "Phase C — Frozen" for the rationale.
+> **Status (July 2026): there is no control plane.** A controller/node relay mode existed
+> and was frozen (2026-06-14), then removed entirely (2026-07). Cross-node orchestration —
+> remote spawn, a canonical fleet session index, controller-proxied commands — was a dead
+> product lane: first parties (Claude Code Remote Control, Codex's desktop command center)
+> already won that race. See the [Roadmap](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md)
+> "Phase C" for the history.
 
-Pulpo supports a controller/node control-plane model for multi-node operation:
+Every `pulpod` is standalone. Multi-machine operation is direct, not brokered:
 
-- **Standalone**: local sessions only
-- **Controller**: canonical fleet-wide view and cross-node control surface
-- **Node**: local sessions plus handoff to the configured controller
-
-Discovery still matters:
-
-- **Tailscale**: discovers peers via local Tailscale API and serves HTTPS via `tailscale serve`
-- **Manual**: explicit peer entries in config
-
-But discovery does not make every node equally authoritative. The controller holds a persisted session index built from node heartbeats and event pushes. Sessions themselves still run on node-local backends and remain local to each node's SQLite store.
+- **Discovery** tells nodes about each other — **Tailscale** (peers discovered via the local
+  Tailscale API, HTTPS served via `tailscale serve`) or **manual** `[peers]` entries — but a
+  discovered peer is just a name-to-address mapping, not a subordinate. See the
+  [Discovery Guide](/guides/discovery).
+- **Direct access** is how you reach another node: `pulpo --node <name|host:port>` from the
+  CLI (resolves through the local peer registry), a saved connection in the web UI, or plain
+  SSH + `pulpo attach`. Sessions, schedules, and secrets are local to the node that runs them
+  — nothing is proxied through a third machine.
+- **Aggregated visibility**, when you want one view across machines, comes from the
+  event-forwarding backbone: every node forwards signed events to your own collector via
+  `[[webhooks]]` and exposes `/metrics` + `/usage`, so you aggregate in Grafana/Datadog/a SIEM
+  (or a single designated node) — see "Monitoring & event topology" below.
 
 Important limits:
 
-- fleet state is eventually consistent rather than strongly consistent
-- node UIs are local-first, not canonical fleet dashboards
-- the controller command queue is currently in-memory, so pending node commands do not survive controller restart
+- there is no fleet-wide session index; each node's SQLite store is authoritative only for
+  its own sessions
+- the web UI shows the local node only — no fleet tabs or cross-node table
 - distributed terminal attach is intentionally out of scope; remote detail remains HTTP/log-oriented
-- see [Controller + Node Setup](/guides/controller-node-setup) for the recommended enrollment workflow, token troubleshooting hints, and validation commands for controllers and nodes.
+- schedules always fire on the node that holds them; there is no remote schedule dispatch
 
 ### Monitoring & event topology (local-first invariant)
 
-Event forwarding is **local-first, not orchestrator-routed**. Every node — controller or
-node — runs its own event dispatcher and durable webhook outbox, so the events and alerts
-it emits are delivered to *its own* configured `[[webhooks]]` (and web-push / SSE)
-regardless of role. A managed node additionally pushes events to the controller for the
-aggregated fleet view, but that is an *extra* path, not the primary one.
+Event forwarding is **local-first, not orchestrator-routed**. Every node runs its own event
+dispatcher and durable webhook outbox, so the events and alerts it emits are delivered to
+*its own* configured `[[webhooks]]` (and web-push / SSE) independent of any other machine.
+There is no central hop events must pass through.
 
 Consequences, by design:
 
-- A node's own webhooks keep firing **even if the controller is down** — the dispatcher and
-  the durable outbox are node-local. The controller is **not** a single point of failure for
-  per-node alerting; it only aggregates the fleet pane.
-- The controller's job is **aggregation + control plane** (fleet view, session index,
-  cross-node commands), *not* a mandatory hop every event must pass through.
-
-**Recommended topology:** configure **critical alerts (budget / burn-rate / lost)
-node-local**, so they survive a controller outage. Use the controller's central
-`[[webhooks]]` for the aggregated fleet pane and non-critical events. Configuring webhooks
-*only* on the controller turns it into a SPOF for alerting — avoid that for anything you
-must not miss.
+- A node's own webhooks keep firing regardless of what any other node is doing — the
+  dispatcher and the durable outbox are node-local.
+- To get a cross-machine view, point every node's `[[webhooks]]` at the same collector (your
+  own aggregator, Grafana/Datadog/a SIEM, or a single designated node). That aggregation
+  point is something you own; Pulpo does not run one for you.
 
 **Agent callbacks point at the local node (locked invariant).** When agent-side hooks /
 completion callbacks land (e.g. an injected callback URL), they target the **local
-`pulpod`**, never the controller. The local daemon owns the session lifecycle and forwards
-upward; routing agent processes at the controller would couple every agent to the
-controller's address and uptime, add a hop, break standalone operation, and make the
-controller a SPOF for completion detection. Same principle as events: **local-first, then
-aggregate.**
+`pulpod`** that spawned the session — never a remote machine. The local daemon owns the
+session lifecycle and forwards events onward from there. Routing agent processes at a
+central machine would couple every agent to that machine's address and uptime, add a hop,
+and break standalone operation. Same principle as events: **local-first, then aggregate.**
 
 ## Data Flow
 
@@ -251,7 +245,7 @@ The most stable part of the project is:
 
 Useful but more secondary:
 
-- fleet discovery
+- peer discovery
 - schedules
 - worktrees
 - secrets and notifications
@@ -262,14 +256,14 @@ Experimental or convenience-oriented:
 
 ## Backend Abstraction
 
-All session operations go through a `Backend` trait. The session lifecycle, watchdog, scheduler, and fleet dashboard work identically regardless of backend:
+All session operations go through a `Backend` trait. The session lifecycle, watchdog, scheduler, and web UI work identically regardless of backend:
 
 | Backend | Use case | Backend ID format |
 |---------|----------|-------------------|
 | **tmux** (default) | Local/remote servers, zero infrastructure | `$0`, `$1`, ... |
 | **Kubernetes** (future) | Cluster scale, team infrastructure | — |
 
-Adding a new backend means implementing ~10 methods (`create_session`, `kill_session`, `is_alive`, `capture_output`, etc.). Everything above the backend layer — lifecycle states, watchdog, scheduler, fleet, web UI — works unchanged.
+Adding a new backend means implementing ~10 methods (`create_session`, `kill_session`, `is_alive`, `capture_output`, etc.). Everything above the backend layer — lifecycle states, watchdog, scheduler, web UI — works unchanged.
 
 ## Design Principles
 
