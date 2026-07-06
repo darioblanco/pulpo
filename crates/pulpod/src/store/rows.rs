@@ -310,7 +310,6 @@ mod tests {
                 '0 0 * * *' AS cron,
                 'echo hi' AS command,
                 '/tmp/repo' AS workdir,
-                NULL AS target_node,
                 NULL AS ink,
                 NULL AS description,
                 NULL AS runtime,

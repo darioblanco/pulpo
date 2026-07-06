@@ -48,15 +48,4 @@ impl Store {
         .await?;
         rows.iter().map(row_to_intervention_event).collect()
     }
-
-    pub async fn clear_session_intervention(&self, id: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE sessions SET intervention_code = NULL, intervention_reason = NULL, intervention_at = NULL, updated_at = ? WHERE id = ?",
-        )
-        .bind(Utc::now().to_rfc3339())
-        .bind(id)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
 }

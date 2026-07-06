@@ -99,6 +99,49 @@ pub fn build_status_command() -> std::process::Command {
     cmd
 }
 
+/// Apply one discovery sweep to the peer registry.
+///
+/// Adds (or refreshes) every peer present in the sweep, then prunes
+/// previously-discovered peers that are no longer present. Statically
+/// configured peers are never removed — `remove_discovered_peer` protects
+/// them by source.
+pub async fn apply_discovery_sweep(
+    registry: &crate::peers::PeerRegistry,
+    peers: &[TailscalePeer],
+    own_name: &str,
+) {
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for peer in peers {
+        if peer.name == own_name {
+            continue;
+        }
+        seen.insert(peer.name.as_str());
+        if registry
+            .add_discovered_peer(&peer.name, &peer.address)
+            .await
+        {
+            tracing::info!(
+                "Tailscale: discovered peer {} at {}",
+                peer.name,
+                peer.address
+            );
+        }
+    }
+
+    // Prune discovered peers that disappeared from the tailnet.
+    for existing in registry.get_all().await {
+        if existing.source == pulpo_common::peer::PeerSource::Discovered
+            && !seen.contains(existing.name.as_str())
+            && registry.remove_discovered_peer(&existing.name).await
+        {
+            tracing::info!(
+                "Tailscale: peer {} no longer present; pruned",
+                existing.name
+            );
+        }
+    }
+}
+
 /// Run the Tailscale discovery loop — periodically scans the tailnet and updates
 /// the peer registry.
 ///
@@ -132,21 +175,7 @@ pub async fn run_tailscale_discovery(
         {
             Ok(Ok(status)) => {
                 let peers = filter_peers(&status, tag.as_deref(), DEFAULT_PULPO_PORT, true);
-                for peer in &peers {
-                    if peer.name == own_name {
-                        continue;
-                    }
-                    if registry
-                        .add_discovered_peer(&peer.name, &peer.address)
-                        .await
-                    {
-                        tracing::info!(
-                            "Tailscale: discovered peer {} at {}",
-                            peer.name,
-                            peer.address
-                        );
-                    }
-                }
+                apply_discovery_sweep(&registry, &peers, &own_name).await;
             }
             Ok(Err(e)) => {
                 tracing::warn!("Tailscale discovery: {e}");
@@ -455,6 +484,77 @@ mod tests {
         let peers = filter_peers(&status, None, DEFAULT_PULPO_PORT, true);
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].address, "https://no-ip.tailnet.ts.net");
+    }
+
+    #[tokio::test]
+    async fn test_apply_discovery_sweep_adds_and_prunes_discovered_peers() {
+        let registry = crate::peers::PeerRegistry::new(&std::collections::HashMap::new());
+        // Previously discovered peer that will vanish from the tailnet
+        registry
+            .add_discovered_peer("gone-node", "100.64.0.9:7433")
+            .await;
+
+        let peers = vec![TailscalePeer {
+            name: "new-node".into(),
+            address: "100.64.0.2:7433".into(),
+        }];
+        apply_discovery_sweep(&registry, &peers, "my-mac").await;
+
+        assert!(registry.get("new-node").await.is_some());
+        assert!(
+            registry.get("gone-node").await.is_none(),
+            "peer absent from the sweep must be pruned"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_discovery_sweep_preserves_configured_peers() {
+        let mut configured = std::collections::HashMap::new();
+        configured.insert(
+            "static-node".into(),
+            pulpo_common::peer::PeerEntry::Simple("10.0.0.1:7433".into()),
+        );
+        let registry = crate::peers::PeerRegistry::new(&configured);
+
+        // Sweep result does not contain the configured peer
+        apply_discovery_sweep(&registry, &[], "my-mac").await;
+
+        let peer = registry.get("static-node").await;
+        assert!(
+            peer.is_some(),
+            "configured peers must never be pruned by discovery"
+        );
+        assert_eq!(
+            peer.unwrap().source,
+            pulpo_common::peer::PeerSource::Configured
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_discovery_sweep_skips_own_name() {
+        let registry = crate::peers::PeerRegistry::new(&std::collections::HashMap::new());
+        let peers = vec![TailscalePeer {
+            name: "my-mac".into(),
+            address: "100.64.0.1:7433".into(),
+        }];
+        apply_discovery_sweep(&registry, &peers, "my-mac").await;
+        assert!(registry.get("my-mac").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_apply_discovery_sweep_keeps_still_present_discovered_peer() {
+        let registry = crate::peers::PeerRegistry::new(&std::collections::HashMap::new());
+        registry
+            .add_discovered_peer("stable-node", "100.64.0.5:7433")
+            .await;
+
+        let peers = vec![TailscalePeer {
+            name: "stable-node".into(),
+            address: "100.64.0.5:7433".into(),
+        }];
+        apply_discovery_sweep(&registry, &peers, "my-mac").await;
+
+        assert!(registry.get("stable-node").await.is_some());
     }
 
     #[test]

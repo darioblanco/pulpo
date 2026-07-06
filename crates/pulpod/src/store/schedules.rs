@@ -57,15 +57,6 @@ impl Store {
         row.map(|r| row_to_schedule(&r)).transpose()
     }
 
-    pub async fn update_schedule_enabled(&self, id: &str, enabled: bool) -> Result<()> {
-        sqlx::query("UPDATE schedules SET enabled = ? WHERE id = ?")
-            .bind(enabled)
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
     pub async fn update_schedule_last_run(&self, id: &str, session_id: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query("UPDATE schedules SET last_run_at = ?, last_session_id = ?, last_attempted_at = ?, last_error = NULL WHERE id = ?")

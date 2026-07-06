@@ -77,11 +77,4 @@ impl Store {
             .await?;
         Ok(result.rows_affected() > 0)
     }
-
-    pub async fn get_all_secrets(&self) -> Result<std::collections::HashMap<String, String>> {
-        let rows: Vec<(String, String)> = sqlx::query_as("SELECT name, value FROM secrets")
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(rows.into_iter().collect())
-    }
 }
