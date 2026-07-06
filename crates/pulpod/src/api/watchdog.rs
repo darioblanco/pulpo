@@ -274,7 +274,7 @@ mod tests {
         };
         let (config_tx, config_rx) = tokio::sync::watch::channel(initial);
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        let state = AppState::with_watchdog_tx(
+        let state = AppState::with_all(
             config,
             std::path::PathBuf::new(),
             manager,

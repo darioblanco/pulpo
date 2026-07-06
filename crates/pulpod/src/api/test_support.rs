@@ -24,7 +24,7 @@ use crate::store::Store;
 
 /// The raw ingredients behind [`test_state`]/[`test_state_with`], for tests that
 /// need to call an `AppState` constructor directly (e.g. exercising `AppState::new`
-/// vs `AppState::with_event_tx` vs `AppState::with_watchdog_tx` themselves).
+/// vs `AppState::with_event_tx` vs `AppState::with_all` themselves).
 pub async fn test_parts() -> (Config, SessionManager, PeerRegistry, Store) {
     test_parts_with(|_| {}).await
 }

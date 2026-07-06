@@ -3,7 +3,7 @@ use std::sync::Arc;
 use pulpo_common::event::{PulpoEvent, UsageAlertEvent};
 use pulpo_common::session::{InterventionCode, SessionStatus, meta};
 
-use super::{BurnAction, BurnConfig, ReadyContext, resolve_backend_id};
+use super::{BurnAction, BurnConfig, ReadyContext};
 use crate::backend::Backend;
 use crate::store::Store;
 use crate::usage::projection::per_hour;
@@ -46,14 +46,7 @@ pub(super) async fn enforce_burn_ceiling(
         return;
     }
 
-    let sessions = match store.list_sessions().await {
-        Ok(s) => s,
-        #[allow(unused_variables)]
-        Err(error) => {
-            coverage_warn!("Burn check: failed to list sessions: {error}");
-            return;
-        }
-    };
+    let sessions = super::list_sessions_or_warn(store, "Burn check").await;
 
     let now = chrono::Utc::now();
 
@@ -164,7 +157,7 @@ fn burn_message(
 }
 
 /// Stop a session that exceeded its burn ceiling, recording a `BurnRate`
-/// intervention. Mirrors the budget intervention path.
+/// intervention via the shared [`super::intervention::stop_and_record`] path.
 async fn stop_over_ceiling(
     backend: &Arc<dyn Backend>,
     store: &Store,
@@ -172,33 +165,19 @@ async fn stop_over_ceiling(
     reason: &str,
     ready_ctx: &ReadyContext,
 ) {
-    let bid = resolve_backend_id(session, backend.as_ref());
-    if let Ok(output) = backend.capture_output(&bid, 500) {
-        let _ = store
-            .update_session_output_snapshot(&session.id.to_string(), &output)
-            .await;
-    }
-    #[allow(unused_variables)]
-    if let Err(error) = backend.kill_session(&bid) {
-        coverage_warn!(
-            session_name = %session.name,
-            "Failed to kill session over burn ceiling (still alive): {error}"
-        );
-        return;
-    }
-    #[allow(unused_variables)]
-    if let Err(error) = store
-        .update_session_intervention(&session.id.to_string(), InterventionCode::BurnRate, reason)
-        .await
+    if !super::intervention::stop_and_record(
+        backend,
+        store,
+        session,
+        InterventionCode::BurnRate,
+        reason,
+        ready_ctx,
+        "Failed to kill session over burn ceiling (still alive)",
+        "Failed to record burn intervention",
+    )
+    .await
     {
-        coverage_warn!(
-            session_name = %session.name,
-            "Failed to record burn intervention: {error}"
-        );
-    }
-    super::intervention::emit_intervention(ready_ctx, session, InterventionCode::BurnRate, reason);
-    if let Some(ref wt_path) = session.worktree_path {
-        crate::session::manager::cleanup_worktree(wt_path, &session.workdir);
+        return;
     }
     coverage_warn!(
         session_name = %session.name,

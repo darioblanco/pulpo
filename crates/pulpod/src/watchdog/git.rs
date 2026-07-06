@@ -10,13 +10,7 @@ use crate::store::Store;
 #[cfg(not(coverage))]
 #[allow(clippy::too_many_lines)]
 pub(super) async fn update_git_info(store: &Store) {
-    let sessions = match store.list_sessions().await {
-        Ok(s) => s,
-        Err(e) => {
-            coverage_warn!("Watchdog: failed to list sessions for git info: {e}");
-            return;
-        }
-    };
+    let sessions = super::list_sessions_or_warn(store, "Watchdog git info").await;
 
     let live: Vec<_> = sessions
         .into_iter()
