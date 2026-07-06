@@ -1,67 +1,17 @@
 use super::*;
 use crate::api::AppState;
+use crate::api::test_support;
 use crate::backend::Backend;
-use std::collections::HashMap;
-
-use crate::config::{Config, NodeConfig};
-use crate::peers::PeerRegistry;
-use crate::session::manager::SessionManager;
-use crate::store::Store;
 use anyhow::Result;
 
-struct StubBackend;
-
-impl Backend for StubBackend {
-    fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
-        Ok(())
-    }
-    fn kill_session(&self, _: &str) -> Result<()> {
-        Ok(())
-    }
-    fn is_alive(&self, _: &str) -> Result<bool> {
-        Ok(true)
-    }
-    fn capture_output(&self, _: &str, _: usize) -> Result<String> {
-        Ok("test output".into())
-    }
-    fn send_input(&self, _: &str, _: &str) -> Result<()> {
-        Ok(())
-    }
-    fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
-        Ok(())
-    }
-}
-
 async fn test_state_with_pool() -> (Arc<AppState>, sqlx::SqlitePool) {
-    let tmpdir = tempfile::tempdir().unwrap();
-    let tmpdir = Box::leak(Box::new(tmpdir));
-    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-    store.migrate().await.unwrap();
-    let pool = store.pool().clone();
-    let backend = Arc::new(StubBackend);
-    let manager =
-        SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-    let peer_registry = PeerRegistry::new(&HashMap::new());
-    let state = AppState::new(
-        Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        },
-        manager,
-        peer_registry,
-        store,
-    );
+    let state = test_support::test_state().await;
+    let pool = state.store.pool().clone();
     (state, pool)
 }
 
 async fn test_state() -> Arc<AppState> {
-    let (state, _) = test_state_with_pool().await;
-    state
+    test_support::test_state().await
 }
 
 #[tokio::test]
@@ -401,7 +351,7 @@ async fn test_output_for_session() {
     let result = output(State(state), Path(session.id.to_string()), Query(query)).await;
     assert!(result.is_ok());
     let Json(val) = result.unwrap();
-    assert_eq!(val["output"], "test output");
+    assert_eq!(val["output"], "");
 }
 
 #[tokio::test]
@@ -528,28 +478,7 @@ impl Backend for CaptureFailBackend {
 }
 
 async fn failing_state() -> Arc<AppState> {
-    let tmpdir = tempfile::tempdir().unwrap();
-    let tmpdir = Box::leak(Box::new(tmpdir));
-    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-    store.migrate().await.unwrap();
-    let backend = Arc::new(FailingBackend);
-    let manager =
-        SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-    let peer_registry = PeerRegistry::new(&HashMap::new());
-    AppState::new(
-        Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        },
-        manager,
-        peer_registry,
-        store,
-    )
+    test_support::test_state_with_backend(Arc::new(FailingBackend)).await
 }
 
 #[tokio::test]
@@ -613,28 +542,7 @@ async fn test_stop_internal_error() {
 
 #[tokio::test]
 async fn test_create_internal_error() {
-    let tmpdir = tempfile::tempdir().unwrap();
-    let tmpdir = Box::leak(Box::new(tmpdir));
-    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-    store.migrate().await.unwrap();
-    let backend = Arc::new(FailCreateBackend);
-    let manager =
-        SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-    let peer_registry = PeerRegistry::new(&HashMap::new());
-    let state = AppState::new(
-        Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        },
-        manager,
-        peer_registry,
-        store,
-    );
+    let state = test_support::test_state_with_backend(Arc::new(FailCreateBackend)).await;
 
     let req = CreateSessionRequest {
         name: "fail".into(),
@@ -718,28 +626,7 @@ async fn test_input_internal_error() {
 }
 
 async fn capture_fail_state() -> Arc<AppState> {
-    let tmpdir = tempfile::tempdir().unwrap();
-    let tmpdir = Box::leak(Box::new(tmpdir));
-    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-    store.migrate().await.unwrap();
-    let backend = Arc::new(CaptureFailBackend);
-    let manager =
-        SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-    let peer_registry = PeerRegistry::new(&HashMap::new());
-    AppState::new(
-        Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        },
-        manager,
-        peer_registry,
-        store,
-    )
+    test_support::test_state_with_backend(Arc::new(CaptureFailBackend)).await
 }
 
 #[tokio::test]
@@ -889,7 +776,7 @@ async fn test_download_output_running_session() {
     assert!(result.is_ok());
     let (status, headers, body) = result.unwrap();
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body, "test output");
+    assert_eq!(body, "");
     assert_eq!(headers[0].1, "text/plain; charset=utf-8");
     assert!(headers[1].1.contains("dl-test.log"));
 }
@@ -1158,28 +1045,7 @@ fn test_stale_backend_methods() {
 
 #[tokio::test]
 async fn test_resume_stale_session() {
-    let tmpdir = tempfile::tempdir().unwrap();
-    let tmpdir = Box::leak(Box::new(tmpdir));
-    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-    store.migrate().await.unwrap();
-    let backend = Arc::new(StaleBackend);
-    let manager =
-        SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-    let peer_registry = PeerRegistry::new(&HashMap::new());
-    let state = AppState::new(
-        Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        },
-        manager,
-        peer_registry,
-        store,
-    );
+    let state = test_support::test_state_with_backend(Arc::new(StaleBackend)).await;
 
     // Create a session (StaleBackend.is_alive returns false)
     let req = CreateSessionRequest {
@@ -1212,29 +1078,8 @@ async fn test_resume_stale_session() {
 
 #[tokio::test]
 async fn test_resume_name_collision_returns_conflict() {
-    let tmpdir = tempfile::tempdir().unwrap();
-    let tmpdir = Box::leak(Box::new(tmpdir));
-    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-    store.migrate().await.unwrap();
-    let pool = store.pool().clone();
-    let backend = Arc::new(StaleBackend);
-    let manager =
-        SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-    let peer_registry = PeerRegistry::new(&HashMap::new());
-    let state = AppState::new(
-        Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        },
-        manager,
-        peer_registry,
-        store,
-    );
+    let state = test_support::test_state_with_backend(Arc::new(StaleBackend)).await;
+    let pool = state.store.pool().clone();
 
     // Create first session, mark it lost
     let req = CreateSessionRequest {
@@ -1335,30 +1180,10 @@ fn test_resume_fail_backend_methods() {
 
 #[tokio::test]
 async fn test_resume_internal_error() {
-    let tmpdir = tempfile::tempdir().unwrap();
-    let tmpdir = Box::leak(Box::new(tmpdir));
-    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-    store.migrate().await.unwrap();
-    let backend = Arc::new(ResumeFailBackend {
+    let state = test_support::test_state_with_backend(Arc::new(ResumeFailBackend {
         created: std::sync::Mutex::new(false),
-    });
-    let manager =
-        SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-    let peer_registry = PeerRegistry::new(&HashMap::new());
-    let state = AppState::new(
-        Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        },
-        manager,
-        peer_registry,
-        store,
-    );
+    }))
+    .await;
 
     // Create a session
     let req = CreateSessionRequest {

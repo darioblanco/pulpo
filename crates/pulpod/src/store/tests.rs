@@ -18,15 +18,6 @@ fn make_session(name: &str) -> Session {
     }
 }
 
-async fn test_store() -> Store {
-    let tmpdir = tempfile::tempdir().unwrap();
-    // Leak so it persists for test lifetime
-    let tmpdir = Box::leak(Box::new(tmpdir));
-    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-    store.migrate().await.unwrap();
-    store
-}
-
 #[tokio::test]
 async fn test_new_creates_directory() {
     let tmpdir = tempfile::tempdir().unwrap();

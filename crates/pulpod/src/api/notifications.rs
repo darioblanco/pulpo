@@ -1,21 +1,11 @@
 use std::sync::Arc;
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Json, extract::State};
 use pulpo_common::api::{
-    ErrorResponse, NotificationsConfigResponse, UpdateNotificationsRequest,
-    WebhookEndpointConfigResponse,
+    NotificationsConfigResponse, UpdateNotificationsRequest, WebhookEndpointConfigResponse,
 };
 
-type ApiError = (StatusCode, Json<ErrorResponse>);
-
-fn internal_error(msg: &str) -> ApiError {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
+use crate::api::error::{ApiError, internal_error};
 
 fn to_response(config: &crate::config::Config) -> NotificationsConfigResponse {
     NotificationsConfigResponse {
@@ -81,69 +71,10 @@ pub async fn update_notifications(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::AppState;
-    use crate::backend::StubBackend;
+    use crate::api::test_support::{test_state, test_state_with_config_path};
     use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
-    use crate::session::manager::SessionManager;
-    use crate::store::Store;
     use axum::extract::State;
     use pulpo_common::api::WebhookEndpointUpdateRequest;
-    use std::collections::HashMap;
-
-    async fn test_state() -> Arc<AppState> {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        AppState::new(
-            Config {
-                node: NodeConfig {
-                    name: "test-node".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                ..Default::default()
-            },
-            manager,
-            peer_registry,
-            store,
-        )
-    }
-
-    async fn test_state_with_config_path() -> Arc<AppState> {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let config_path = tmpdir.path().join("config.toml");
-        let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        AppState::with_event_tx(
-            Config {
-                node: NodeConfig {
-                    name: "test-node".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                ..Default::default()
-            },
-            config_path,
-            manager,
-            peer_registry,
-            event_tx,
-            store,
-        )
-    }
 
     #[tokio::test]
     async fn test_get_notifications_empty() {
@@ -263,13 +194,6 @@ mod tests {
         // Updates write the canonical top-level `[[webhooks]]` list.
         assert_eq!(loaded.webhooks.len(), 1);
         assert_eq!(loaded.webhooks[0].url, "https://example.com/save");
-    }
-
-    #[test]
-    fn test_internal_error() {
-        let (status, Json(err)) = internal_error("boom");
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(err.error, "boom");
     }
 
     #[test]

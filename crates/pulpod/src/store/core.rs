@@ -109,3 +109,15 @@ impl Store {
         }
     }
 }
+
+/// Shared test-only builder: a tempdir-backed, migrated `Store`. The tempdir is
+/// leaked so it persists for the test's lifetime (mirrors the pattern every
+/// call site used to hand-roll).
+#[cfg(test)]
+pub async fn test_store() -> Store {
+    let tmpdir = tempfile::tempdir().unwrap();
+    let tmpdir = Box::leak(Box::new(tmpdir));
+    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+    store.migrate().await.unwrap();
+    store
+}

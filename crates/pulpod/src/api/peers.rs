@@ -5,11 +5,12 @@ use axum::{
     Json,
     extract::{Path, State},
 };
-use pulpo_common::api::{AddPeerRequest, ErrorResponse, PeersResponse};
+use pulpo_common::api::{AddPeerRequest, PeersResponse};
 use pulpo_common::node::NodeInfo;
 use pulpo_common::peer::PeerEntry;
 
 use super::node::get_hostname;
+use crate::api::error::{ApiError, bad_request, conflict, not_found};
 use crate::watchdog::memory::{MemoryReader, SystemMemoryReader};
 
 /// Best-effort GPU detection. Returns a label like "Apple Metal" or "NVIDIA" if
@@ -78,14 +79,9 @@ pub async fn list_peers(State(state): State<Arc<super::AppState>>) -> Json<Peers
 pub async fn add_peer(
     State(state): State<Arc<super::AppState>>,
     Json(req): Json<AddPeerRequest>,
-) -> Result<(StatusCode, Json<PeersResponse>), (StatusCode, Json<ErrorResponse>)> {
+) -> Result<(StatusCode, Json<PeersResponse>), ApiError> {
     if req.name.is_empty() || req.address.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Name and address are required".into(),
-            }),
-        ));
+        return Err(bad_request("Name and address are required"));
     }
 
     let added = state
@@ -93,12 +89,7 @@ pub async fn add_peer(
         .add_peer(&req.name, &req.address, None)
         .await;
     if !added {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ErrorResponse {
-                error: format!("Peer '{}' already exists", req.name),
-            }),
-        ));
+        return Err(conflict(&format!("Peer '{}' already exists", req.name)));
     }
 
     // Update config and save to disk
@@ -117,15 +108,10 @@ pub async fn add_peer(
 pub async fn remove_peer(
     State(state): State<Arc<super::AppState>>,
     Path(name): Path<String>,
-) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<StatusCode, ApiError> {
     let removed = state.peer_registry.remove_peer(&name).await;
     if !removed {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("Peer '{name}' not found"),
-            }),
-        ));
+        return Err(not_found(&format!("Peer '{name}' not found")));
     }
 
     // Update config and save to disk
@@ -146,36 +132,16 @@ mod tests {
     use pulpo_common::peer::{PeerEntry, PeerStatus};
 
     use crate::api::AppState;
-    use crate::backend::StubBackend;
-    use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
-    use crate::session::manager::SessionManager;
-    use crate::store::Store;
+    use crate::api::test_support;
 
+    /// Peers-seeded `test_state`: the mutator sets `config.peers`, which
+    /// `test_support::test_state_with` also threads into the `PeerRegistry`.
     async fn test_state_with_peers(peers_config: HashMap<String, PeerEntry>) -> Arc<AppState> {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&peers_config);
-        AppState::new(
-            Config {
-                node: NodeConfig {
-                    name: "local-node".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                peers: peers_config,
-                ..Default::default()
-            },
-            manager,
-            peer_registry,
-            store,
-        )
+        test_support::test_state_with(|cfg| {
+            cfg.node.name = "local-node".into();
+            cfg.peers = peers_config;
+        })
+        .await
     }
 
     #[tokio::test]

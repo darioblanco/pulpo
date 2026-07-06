@@ -4,40 +4,11 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use pulpo_common::api::{ErrorResponse, InkConfigResponse};
+use pulpo_common::api::InkConfigResponse;
 use serde::Serialize;
 
+use crate::api::error::{ApiError, bad_request, conflict, internal_error, not_found};
 use crate::config::InkConfig;
-
-type ApiError = (StatusCode, Json<ErrorResponse>);
-
-fn bad_request(msg: &str) -> ApiError {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
-
-fn not_found_error(msg: &str) -> ApiError {
-    (
-        StatusCode::NOT_FOUND,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
-
-#[cfg_attr(coverage, allow(dead_code))]
-fn internal_error(msg: &str) -> ApiError {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
 
 #[derive(Serialize)]
 pub struct InksResponse {
@@ -64,7 +35,7 @@ pub async fn get(
 ) -> Result<Json<InkConfigResponse>, ApiError> {
     let config = state.config.read().await;
     config.inks.get(&name).map_or_else(
-        || Err(not_found_error(&format!("ink not found: {name}"))),
+        || Err(not_found(&format!("ink not found: {name}"))),
         |ink| Ok(Json(InkConfigResponse::from(ink))),
     )
 }
@@ -81,12 +52,7 @@ pub async fn create(
     let config_snapshot = {
         let mut config = state.config.write().await;
         if config.inks.contains_key(&name) {
-            return Err((
-                StatusCode::CONFLICT,
-                Json(ErrorResponse {
-                    error: format!("ink '{name}' already exists"),
-                }),
-            ));
+            return Err(conflict(&format!("ink '{name}' already exists")));
         }
         config.inks.insert(name, InkConfig::from(&req));
         state.session_manager.set_inks(config.inks.clone());
@@ -105,7 +71,7 @@ pub async fn update(
     let config_snapshot = {
         let mut config = state.config.write().await;
         if !config.inks.contains_key(&name) {
-            return Err(not_found_error(&format!("ink not found: {name}")));
+            return Err(not_found(&format!("ink not found: {name}")));
         }
         config.inks.insert(name, InkConfig::from(&req));
         state.session_manager.set_inks(config.inks.clone());
@@ -122,7 +88,7 @@ pub async fn delete(
     let config_snapshot = {
         let mut config = state.config.write().await;
         if config.inks.remove(&name).is_none() {
-            return Err(not_found_error(&format!("ink not found: {name}")));
+            return Err(not_found(&format!("ink not found: {name}")));
         }
         state.session_manager.set_inks(config.inks.clone());
         config.clone()
@@ -166,35 +132,12 @@ fn save_config(state: &super::AppState, config: &crate::config::Config) -> Resul
 mod tests {
     use super::*;
     use crate::api::AppState;
-    use crate::backend::StubBackend;
-    use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
-    use crate::session::manager::SessionManager;
-    use crate::store::Store;
+    use crate::api::test_support;
 
+    /// Ink-seeded `test_state`: the mutator sets `config.inks`, which
+    /// `test_support::test_state_with` also threads into the `SessionManager`.
     async fn test_state(inks: HashMap<String, InkConfig>) -> Arc<AppState> {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let manager = SessionManager::new(Arc::new(StubBackend), store.clone(), inks.clone(), None)
-            .with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        AppState::new(
-            Config {
-                node: NodeConfig {
-                    name: "test".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                inks,
-                ..Default::default()
-            },
-            manager,
-            peer_registry,
-            store,
-        )
+        test_support::test_state_with(|cfg| cfg.inks = inks).await
     }
 
     #[tokio::test]
@@ -461,54 +404,13 @@ mod tests {
         assert_eq!(back.runtime, ink.runtime);
     }
 
-    #[test]
-    fn test_error_helpers() {
-        let (status, Json(body)) = bad_request("bad");
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(body.error, "bad");
-
-        let (status, Json(body)) = not_found_error("missing");
-        assert_eq!(status, StatusCode::NOT_FOUND);
-        assert_eq!(body.error, "missing");
-
-        let (status, Json(body)) = internal_error("boom");
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(body.error, "boom");
-    }
-
     #[tokio::test]
     async fn test_save_config_writes_to_disk() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let config_path = tmpdir.path().join("config.toml");
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        let manager =
-            SessionManager::new(Arc::new(StubBackend), store.clone(), HashMap::new(), None)
-                .with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        let state = AppState::with_event_tx(
-            config,
-            config_path.clone(),
-            manager,
-            peer_registry,
-            event_tx,
-            store,
-        );
+        let state = test_support::test_state_with_config_path().await;
         let config = state.config.read().await;
         let result = save_config(&state, &config);
         drop(config);
         assert!(result.is_ok());
-        assert!(config_path.exists());
+        assert!(state.config_path.exists());
     }
 }

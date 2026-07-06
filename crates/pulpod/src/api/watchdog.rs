@@ -1,27 +1,9 @@
 use std::sync::Arc;
 
-use axum::{Json, extract::State, http::StatusCode};
-use pulpo_common::api::{ErrorResponse, UpdateWatchdogRequest, WatchdogConfigResponse};
+use axum::{Json, extract::State};
+use pulpo_common::api::{UpdateWatchdogRequest, WatchdogConfigResponse};
 
-type ApiError = (StatusCode, Json<ErrorResponse>);
-
-fn internal_error(msg: &str) -> ApiError {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
-
-fn bad_request(msg: &str) -> ApiError {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
+use crate::api::error::{ApiError, bad_request, internal_error};
 
 pub async fn get_watchdog(
     State(state): State<Arc<super::AppState>>,
@@ -137,67 +119,9 @@ pub async fn update_watchdog(
 mod tests {
     use super::*;
     use crate::api::AppState;
-    use crate::backend::StubBackend;
-    use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
-    use crate::session::manager::SessionManager;
-    use crate::store::Store;
+    use crate::api::test_support::{self, test_state, test_state_with_config_path};
     use axum::extract::State;
-    use std::collections::HashMap;
-
-    async fn test_state() -> Arc<AppState> {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        AppState::new(
-            Config {
-                node: NodeConfig {
-                    name: "test-node".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                ..Default::default()
-            },
-            manager,
-            peer_registry,
-            store,
-        )
-    }
-
-    async fn test_state_with_config_path() -> Arc<AppState> {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let config_path = tmpdir.path().join("config.toml");
-        let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        AppState::with_event_tx(
-            Config {
-                node: NodeConfig {
-                    name: "test-node".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                ..Default::default()
-            },
-            config_path,
-            manager,
-            peer_registry,
-            event_tx,
-            store,
-        )
-    }
+    use axum::http::StatusCode;
 
     #[tokio::test]
     async fn test_get_watchdog_returns_defaults() {
@@ -335,30 +259,9 @@ mod tests {
         assert_eq!(resp.memory_threshold, 90);
     }
 
-    #[test]
-    fn test_internal_error() {
-        let (status, Json(err)) = internal_error("boom");
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(err.error, "boom");
-    }
-
-    #[test]
-    fn test_bad_request() {
-        let (status, Json(err)) = bad_request("nope");
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(err.error, "nope");
-    }
-
     #[tokio::test]
     async fn test_update_watchdog_pushes_config_to_channel() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (config, manager, peer_registry, store) = test_support::test_parts().await;
         let initial = crate::watchdog::WatchdogRuntimeConfig {
             threshold: 90,
             interval: std::time::Duration::from_secs(10),
@@ -372,15 +275,7 @@ mod tests {
         let (config_tx, config_rx) = tokio::sync::watch::channel(initial);
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let state = AppState::with_watchdog_tx(
-            Config {
-                node: NodeConfig {
-                    name: "test-node".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                ..Default::default()
-            },
+            config,
             std::path::PathBuf::new(),
             manager,
             peer_registry,

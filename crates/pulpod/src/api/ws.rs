@@ -1,17 +1,14 @@
 use std::sync::Arc;
 
 use axum::{
-    Json,
     extract::{Path, State, WebSocketUpgrade},
-    http::StatusCode,
     response::Response,
 };
 use futures::StreamExt;
-use pulpo_common::api::ErrorResponse;
 use pulpo_common::session::SessionStatus;
 use tracing::info;
 
-type ApiError = (StatusCode, Json<ErrorResponse>);
+use crate::api::error::{ApiError, bad_request, internal_error, not_found};
 
 pub async fn stream(
     State(state): State<Arc<super::AppState>>,
@@ -22,30 +19,14 @@ pub async fn stream(
         .session_manager
         .get_session(&id)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: e.to_string(),
-                }),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!("session not found: {id}"),
-                }),
-            )
-        })?;
+        .map_err(|e| internal_error(&e.to_string()))?
+        .ok_or_else(|| not_found(&format!("session not found: {id}")))?;
 
     if session.status != SessionStatus::Active && session.status != SessionStatus::Idle {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: format!("session is not running (status: {})", session.status),
-            }),
-        ));
+        return Err(bad_request(&format!(
+            "session is not running (status: {})",
+            session.status
+        )));
     }
 
     let backend_id = state.session_manager.resolve_backend_id(&session);
@@ -173,14 +154,9 @@ async fn handle_stream(
 mod tests {
     use super::*;
     use crate::api::AppState;
+    use crate::api::test_support;
     use crate::backend::Backend;
     use crate::backend::StubBackend;
-    use std::collections::HashMap;
-
-    use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
-    use crate::session::manager::SessionManager;
-    use crate::store::Store;
     use anyhow::Result;
     use pulpo_common::api::CreateSessionRequest;
 
@@ -208,27 +184,7 @@ mod tests {
     }
 
     async fn test_state_withbackend(backend: Arc<dyn Backend>) -> Arc<AppState> {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        AppState::new(
-            Config {
-                node: NodeConfig {
-                    name: "test-node".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                ..Default::default()
-            },
-            manager,
-            peer_registry,
-            store,
-        )
+        test_support::test_state_with_backend(backend).await
     }
 
     #[tokio::test]

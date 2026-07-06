@@ -6,11 +6,120 @@ use pulpo_common::api::ErrorResponse;
 
 pub(super) type ApiError = (StatusCode, Json<ErrorResponse>);
 
-pub(super) fn internal_error(msg: &str) -> ApiError {
+fn error_response(status: StatusCode, msg: &str) -> ApiError {
     (
-        StatusCode::INTERNAL_SERVER_ERROR,
+        status,
         Json(ErrorResponse {
             error: msg.to_owned(),
         }),
     )
+}
+
+pub(super) fn internal_error(msg: &str) -> ApiError {
+    error_response(StatusCode::INTERNAL_SERVER_ERROR, msg)
+}
+
+pub(super) fn bad_request(msg: &str) -> ApiError {
+    error_response(StatusCode::BAD_REQUEST, msg)
+}
+
+pub(super) fn not_found(msg: &str) -> ApiError {
+    error_response(StatusCode::NOT_FOUND, msg)
+}
+
+pub(super) fn conflict(msg: &str) -> ApiError {
+    error_response(StatusCode::CONFLICT, msg)
+}
+
+/// Map a `SessionManager` lifecycle error (create/stop/resume) to the right status
+/// code by matching the well-known substrings baked into its `anyhow` error
+/// messages. The message text is always passed through unchanged.
+///
+/// Substring table (checked in order):
+/// - "not found" → 404
+/// - "already active" → 409
+/// - "cannot be resumed" → 400
+/// - "docker runtime was removed" → 400
+/// - anything else → 500
+pub(super) fn map_manager_err(e: &anyhow::Error) -> ApiError {
+    let msg = e.to_string();
+    if msg.contains("not found") {
+        not_found(&msg)
+    } else if msg.contains("already active") {
+        conflict(&msg)
+    } else if msg.contains("cannot be resumed") || msg.contains("docker runtime was removed") {
+        bad_request(&msg)
+    } else {
+        internal_error(&msg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_internal_error() {
+        let (status, Json(err)) = internal_error("boom");
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(err.error, "boom");
+    }
+
+    #[test]
+    fn test_bad_request() {
+        let (status, Json(err)) = bad_request("bad");
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(err.error, "bad");
+    }
+
+    #[test]
+    fn test_not_found() {
+        let (status, Json(err)) = not_found("missing");
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(err.error, "missing");
+    }
+
+    #[test]
+    fn test_conflict() {
+        let (status, Json(err)) = conflict("taken");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(err.error, "taken");
+    }
+
+    #[test]
+    fn test_map_manager_err_not_found() {
+        let e = anyhow::anyhow!("session not found: abc");
+        let (status, Json(err)) = map_manager_err(&e);
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(err.error, "session not found: abc");
+    }
+
+    #[test]
+    fn test_map_manager_err_already_active() {
+        let e = anyhow::anyhow!("a session named 'x' is already active — stop it first");
+        let (status, _) = map_manager_err(&e);
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn test_map_manager_err_cannot_be_resumed() {
+        let e = anyhow::anyhow!("session cannot be resumed (status: active)");
+        let (status, _) = map_manager_err(&e);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_map_manager_err_docker_runtime_removed() {
+        let e = anyhow::anyhow!(crate::session::utils::DOCKER_RUNTIME_REMOVED);
+        let (status, _) = map_manager_err(&e);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_map_manager_err_fallback_internal_error() {
+        let e = anyhow::anyhow!("something unexpected exploded");
+        let (status, Json(err)) = map_manager_err(&e);
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(err.error, "something unexpected exploded");
+    }
 }

@@ -210,18 +210,11 @@ async fn stop_over_ceiling(
 mod tests {
     use super::*;
     use crate::backend::StubBackend;
+    use crate::store::test_store;
     use chrono::{TimeDelta, Utc};
     use pulpo_common::session::{Runtime, Session};
     use std::collections::HashMap;
     use uuid::Uuid;
-
-    async fn test_store() -> Store {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        store
-    }
 
     /// Insert an active session aged `age` with the given cost/token metadata.
     async fn insert(

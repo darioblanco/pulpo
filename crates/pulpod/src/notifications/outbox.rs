@@ -274,14 +274,7 @@ pub async fn run_outbox_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    async fn test_store() -> Store {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        store
-    }
+    use crate::store::test_store;
 
     fn config(name: &str, url: &str) -> WebhookEndpointConfig {
         WebhookEndpointConfig {

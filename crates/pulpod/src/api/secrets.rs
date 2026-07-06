@@ -5,18 +5,9 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use pulpo_common::api::{ErrorResponse, SecretEntry, SecretListResponse, SetSecretRequest};
+use pulpo_common::api::{SecretEntry, SecretListResponse, SetSecretRequest};
 
-type ApiError = (StatusCode, Json<ErrorResponse>);
-
-fn internal_error(msg: &str) -> ApiError {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
+use crate::api::error::{ApiError, bad_request, internal_error, not_found};
 
 /// Validate that a secret name is a valid env var name: uppercase alphanumeric + underscores.
 fn is_valid_secret_name(name: &str) -> bool {
@@ -52,32 +43,22 @@ pub async fn set_secret(
     Json(req): Json<SetSecretRequest>,
 ) -> Result<StatusCode, ApiError> {
     if !is_valid_secret_name(&name) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Invalid secret name: must be uppercase alphanumeric and underscores (env var format)".to_owned(),
-            }),
+        return Err(bad_request(
+            "Invalid secret name: must be uppercase alphanumeric and underscores (env var format)",
         ));
     }
     // Validate env field if provided
     if let Some(ref env) = req.env
         && !is_valid_secret_name(env)
     {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Invalid env var name: must be uppercase alphanumeric and underscores"
-                    .to_owned(),
-            }),
+        return Err(bad_request(
+            "Invalid env var name: must be uppercase alphanumeric and underscores",
         ));
     }
     let value = req.value.trim().to_owned();
     if value.contains('\n') || value.contains('\r') || value.contains('\0') {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Secret value must not contain newlines or null bytes".to_owned(),
-            }),
+        return Err(bad_request(
+            "Secret value must not contain newlines or null bytes",
         ));
     }
     state
@@ -100,51 +81,14 @@ pub async fn delete_secret(
     if deleted {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("secret not found: {name}"),
-            }),
-        ))
+        Err(not_found(&format!("secret not found: {name}")))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::AppState;
-    use crate::backend::StubBackend;
-    use std::collections::HashMap;
-
-    use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
-    use crate::session::manager::SessionManager;
-    use crate::store::Store;
-
-    async fn test_state() -> Arc<AppState> {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        AppState::new(
-            Config {
-                node: NodeConfig {
-                    name: "test-node".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                ..Default::default()
-            },
-            manager,
-            peer_registry,
-            store,
-        )
-    }
+    use crate::api::test_support::test_state;
 
     #[tokio::test]
     async fn test_list_secrets_empty() {
@@ -314,13 +258,6 @@ mod tests {
         assert!(result.is_err());
         let (status, _) = result.unwrap_err();
         assert_eq!(status, StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_internal_error_helper() {
-        let (status, Json(err)) = internal_error("boom");
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(err.error, "boom");
     }
 
     #[test]

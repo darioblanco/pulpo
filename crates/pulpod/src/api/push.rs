@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
 use axum::{Json, extract::State, http::StatusCode};
-use pulpo_common::api::{
-    ErrorResponse, PushSubscriptionRequest, PushUnsubscribeRequest, VapidPublicKeyResponse,
-};
+use pulpo_common::api::{PushSubscriptionRequest, PushUnsubscribeRequest, VapidPublicKeyResponse};
 
 use super::AppState;
+use crate::api::error::{ApiError, internal_error};
 
 pub async fn get_vapid_key(
     State(state): State<Arc<AppState>>,
-) -> Result<Json<VapidPublicKeyResponse>, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<Json<VapidPublicKeyResponse>, ApiError> {
     let public_key = state
         .config
         .read()
@@ -21,7 +20,7 @@ pub async fn get_vapid_key(
     if public_key.is_empty() {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorResponse {
+            Json(pulpo_common::api::ErrorResponse {
                 error: "VAPID keys not configured".into(),
             }),
         ));
@@ -32,38 +31,24 @@ pub async fn get_vapid_key(
 pub async fn subscribe_push(
     State(state): State<Arc<AppState>>,
     Json(req): Json<PushSubscriptionRequest>,
-) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<StatusCode, ApiError> {
     state
         .store
         .save_push_subscription(&req.endpoint, &req.keys.p256dh, &req.keys.auth)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: e.to_string(),
-                }),
-            )
-        })?;
+        .map_err(|e| internal_error(&e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn unsubscribe_push(
     State(state): State<Arc<AppState>>,
     Json(req): Json<PushUnsubscribeRequest>,
-) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<StatusCode, ApiError> {
     state
         .store
         .delete_push_subscription(&req.endpoint)
         .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    error: e.to_string(),
-                }),
-            )
-        })?;
+        .map_err(|e| internal_error(&e.to_string()))?;
     Ok(StatusCode::NO_CONTENT)
 }
 

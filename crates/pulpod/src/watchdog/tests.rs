@@ -1,5 +1,6 @@
 use super::*;
 use crate::backend::Backend;
+use crate::store::test_store;
 use anyhow::Result;
 use pulpo_common::session::{Session, SessionStatus};
 use std::collections::HashMap;
@@ -148,14 +149,6 @@ impl Backend for MockBackend {
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("no command line for {backend_id}"))
     }
-}
-
-async fn test_store() -> Store {
-    let tmpdir = tempfile::tempdir().unwrap();
-    let tmpdir = Box::leak(Box::new(tmpdir));
-    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-    store.migrate().await.unwrap();
-    store
 }
 
 fn test_ready_ctx() -> ReadyContext {

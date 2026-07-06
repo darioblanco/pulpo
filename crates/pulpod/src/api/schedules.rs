@@ -5,42 +5,13 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use pulpo_common::api::{CreateScheduleRequest, ErrorResponse, Schedule, UpdateScheduleRequest};
+use pulpo_common::api::{CreateScheduleRequest, Schedule, UpdateScheduleRequest};
 use pulpo_common::session::Session;
 use uuid::Uuid;
 
 use super::AppState;
+use crate::api::error::{ApiError, bad_request, conflict, internal_error, not_found};
 use crate::scheduler;
-
-type ApiError = (StatusCode, Json<ErrorResponse>);
-
-fn bad_request(msg: &str) -> ApiError {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
-
-fn not_found_error(msg: &str) -> ApiError {
-    (
-        StatusCode::NOT_FOUND,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
-
-#[cfg_attr(coverage, allow(dead_code))]
-fn internal_error(msg: &str) -> ApiError {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
 
 /// Reject the retired docker runtime on schedule create/update.
 fn validate_schedule_runtime(runtime: Option<&str>) -> Result<(), ApiError> {
@@ -65,12 +36,7 @@ pub async fn get(
 ) -> Result<Json<Schedule>, ApiError> {
     match state.store.get_schedule(&id).await {
         Ok(Some(s)) => Ok(Json(s)),
-        Ok(None) => Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("schedule not found: {id}"),
-            }),
-        )),
+        Ok(None) => Err(not_found(&format!("schedule not found: {id}"))),
         Err(e) => Err(internal_error(&e.to_string())),
     }
 }
@@ -107,12 +73,7 @@ pub async fn create(
         .await
         .map_err(|e| internal_error(&e.to_string()))?;
     if existing.iter().any(|s| s.name == req.name) {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ErrorResponse {
-                error: format!("schedule '{}' already exists", req.name),
-            }),
-        ));
+        return Err(conflict(&format!("schedule '{}' already exists", req.name)));
     }
 
     let schedule = Schedule {
@@ -155,14 +116,7 @@ pub async fn update(
         .get_schedule(&id)
         .await
         .map_err(|e| internal_error(&e.to_string()))?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!("schedule not found: {id}"),
-                }),
-            )
-        })?;
+        .ok_or_else(|| not_found(&format!("schedule not found: {id}")))?;
 
     if let Some(cron) = &req.cron {
         scheduler::validate_cron(cron).map_err(|e| bad_request(&e))?;
@@ -221,12 +175,7 @@ pub async fn delete(
         .await
         .map_err(|e| internal_error(&e.to_string()))?;
     if exists.is_none() {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("schedule not found: {id}"),
-            }),
-        ));
+        return Err(not_found(&format!("schedule not found: {id}")));
     }
     state
         .store
@@ -245,7 +194,7 @@ pub async fn list_runs(
         .get_schedule(&id)
         .await
         .map_err(|e| internal_error(&e.to_string()))?
-        .ok_or_else(|| not_found_error(&format!("schedule not found: {id}")))?;
+        .ok_or_else(|| not_found(&format!("schedule not found: {id}")))?;
     let sessions = state
         .store
         .list_schedule_runs(&schedule.name, 20)

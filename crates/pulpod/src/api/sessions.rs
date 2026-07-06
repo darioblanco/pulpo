@@ -6,13 +6,13 @@ use axum::{
     http::StatusCode,
 };
 use pulpo_common::api::{
-    CleanupResponse, CreateSessionRequest, CreateSessionResponse, ErrorResponse, ListSessionsQuery,
-    OutputQuery, SendInputRequest,
+    CleanupResponse, CreateSessionRequest, CreateSessionResponse, ListSessionsQuery, OutputQuery,
+    SendInputRequest,
 };
 use pulpo_common::session::{Session, SessionStatus};
 use serde::Deserialize;
 
-use crate::api::error::{ApiError, internal_error};
+use crate::api::error::{ApiError, internal_error, map_manager_err, not_found};
 
 pub async fn list(
     State(state): State<Arc<super::AppState>>,
@@ -45,12 +45,7 @@ pub async fn get(
 ) -> Result<Json<Session>, ApiError> {
     match state.session_manager.get_session(&id).await {
         Ok(Some(session)) => Ok(Json(session)),
-        Ok(None) => Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("session not found: {id}"),
-            }),
-        )),
+        Ok(None) => Err(not_found(&format!("session not found: {id}"))),
         Err(e) => Err(internal_error(&e.to_string())),
     }
 }
@@ -63,16 +58,7 @@ pub async fn create(
         .session_manager
         .create_session(req)
         .await
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("already active") {
-                (StatusCode::CONFLICT, Json(ErrorResponse { error: msg }))
-            } else if msg.contains("docker runtime was removed") {
-                (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg }))
-            } else {
-                internal_error(&msg)
-            }
-        })?;
+        .map_err(|e| map_manager_err(&e))?;
     Ok((StatusCode::CREATED, Json(CreateSessionResponse { session })))
 }
 
@@ -92,14 +78,7 @@ pub async fn stop(
         .await
     {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("not found") {
-                Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg })))
-            } else {
-                Err(internal_error(&msg))
-            }
-        }
+        Err(e) => Err(map_manager_err(&e)),
     }
 }
 
@@ -125,12 +104,7 @@ pub async fn output(
         .await
         .map_err(|e| internal_error(&e.to_string()))?
     else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("session not found: {id}"),
-            }),
-        ));
+        return Err(not_found(&format!("session not found: {id}")));
     };
 
     let lines = query.lines.unwrap_or(100);
@@ -148,18 +122,7 @@ pub async fn resume(
 ) -> Result<Json<Session>, ApiError> {
     match state.session_manager.resume_session(&id).await {
         Ok(session) => Ok(Json(session)),
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("not found") {
-                Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: msg })))
-            } else if msg.contains("cannot be resumed") {
-                Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: msg })))
-            } else if msg.contains("already active") {
-                Err((StatusCode::CONFLICT, Json(ErrorResponse { error: msg })))
-            } else {
-                Err(internal_error(&msg))
-            }
-        }
+        Err(e) => Err(map_manager_err(&e)),
     }
 }
 
@@ -180,12 +143,7 @@ pub async fn download_output(
         .await
         .map_err(|e| internal_error(&e.to_string()))?
     else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("session not found: {id}"),
-            }),
-        ));
+        return Err(not_found(&format!("session not found: {id}")));
     };
 
     let output = if session.status == SessionStatus::Active || session.status == SessionStatus::Lost
@@ -249,12 +207,7 @@ pub async fn input(
         .await
         .map_err(|e| internal_error(&e.to_string()))?
     else {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse {
-                error: format!("session not found: {id}"),
-            }),
-        ));
+        return Err(not_found(&format!("session not found: {id}")));
     };
 
     let backend_id = state.session_manager.resolve_backend_id(&session);
