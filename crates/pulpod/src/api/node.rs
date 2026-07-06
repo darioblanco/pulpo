@@ -3,63 +3,26 @@ use std::sync::Arc;
 use axum::{Json, extract::State};
 use pulpo_common::node::NodeInfo;
 
+use crate::watchdog::memory::{MemoryReader, SystemMemoryReader};
+
 pub fn get_hostname() -> String {
     let fallback = String::from("unknown");
     hostname::get().map_or(fallback, |h| h.to_string_lossy().into_owned())
 }
 
-/// Get system memory in megabytes.
-///
-/// On macOS, uses `sysctl hw.memsize`. On Linux, reads `/proc/meminfo`.
-/// Returns 0 on error or unsupported platforms.
-pub fn get_memory_mb() -> u64 {
-    get_memory_mb_impl()
-}
-
-#[cfg(target_os = "macos")]
-fn get_memory_mb_impl() -> u64 {
-    std::process::Command::new("sysctl")
-        .args(["-n", "hw.memsize"])
-        .output()
-        .ok()
-        .and_then(|out| {
-            String::from_utf8_lossy(&out.stdout)
-                .trim()
-                .parse::<u64>()
-                .ok()
-        })
-        .map_or(0, |bytes| bytes / 1_048_576)
-}
-
-#[cfg(target_os = "linux")]
-fn get_memory_mb_impl() -> u64 {
-    std::fs::read_to_string("/proc/meminfo")
-        .ok()
-        .and_then(|content| {
-            content.lines().find_map(|line| {
-                line.strip_prefix("MemTotal:")
-                    .and_then(|rest| rest.trim().strip_suffix("kB"))
-                    .and_then(|kb_str| kb_str.trim().parse::<u64>().ok())
-                    .map(|kb| kb / 1024)
-            })
-        })
-        .unwrap_or(0)
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
-const fn get_memory_mb_impl() -> u64 {
-    0
-}
-
 pub async fn get_info(State(state): State<Arc<super::AppState>>) -> Json<NodeInfo> {
     let config = state.config.read().await;
+    let memory_mb = SystemMemoryReader
+        .read_memory()
+        .map(|s| s.total_mb)
+        .unwrap_or(0);
     Json(NodeInfo {
         name: config.node.name.clone(),
         hostname: get_hostname(),
         os: crate::platform::os_name().into(),
         arch: std::env::consts::ARCH.into(),
         cpus: num_cpus::get(),
-        memory_mb: get_memory_mb(),
+        memory_mb,
         gpu: None,
     })
 }
@@ -105,13 +68,6 @@ mod tests {
     fn test_get_hostname() {
         let hostname = get_hostname();
         assert!(!hostname.is_empty());
-    }
-
-    #[test]
-    fn test_get_memory_mb() {
-        let mem = get_memory_mb();
-        // On any real macOS or Linux machine, should be > 0
-        assert!(mem > 0, "Expected positive memory, got: {mem}");
     }
 
     #[tokio::test]

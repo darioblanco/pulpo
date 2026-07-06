@@ -231,15 +231,8 @@ pub fn detect_auth_for_command(command: &str) -> Option<AuthInfo> {
 }
 
 /// Read a file to string, returning None on any error.
-#[cfg(not(coverage))]
 fn read_file_to_string(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
-}
-
-/// Under coverage, never read real files.
-#[cfg(coverage)]
-fn read_file_to_string(_path: &Path) -> Option<String> {
-    None
 }
 
 #[cfg(test)]
@@ -441,10 +434,69 @@ mod tests {
     // -- extract functions with temp dirs --
 
     #[test]
+    fn test_extract_claude_auth_reads_credentials_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".credentials.json"),
+            r#"{"claudeAiOauth": {"subscriptionType": "Max", "email": "user@example.com"}}"#,
+        )
+        .unwrap();
+        let info = extract_claude_auth(dir.path()).unwrap();
+        assert_eq!(info.provider, "claude.ai");
+        assert_eq!(info.plan.as_deref(), Some("max"));
+        assert_eq!(info.email.as_deref(), Some("user@example.com"));
+    }
+
+    #[test]
+    fn test_extract_codex_auth_reads_auth_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("auth.json"),
+            r#"{"plan": "Plus", "email": "codex@example.com"}"#,
+        )
+        .unwrap();
+        let info = extract_codex_auth(dir.path()).unwrap();
+        assert_eq!(info.provider, "openai");
+        assert_eq!(info.plan.as_deref(), Some("plus"));
+        assert_eq!(info.email.as_deref(), Some("codex@example.com"));
+    }
+
+    #[test]
+    fn test_extract_gemini_auth_reads_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config.json"),
+            r#"{"tier": "Pro", "email": "gemini@example.com"}"#,
+        )
+        .unwrap();
+        let info = extract_gemini_auth(dir.path()).unwrap();
+        assert_eq!(info.provider, "google");
+        assert_eq!(info.plan.as_deref(), Some("pro"));
+        assert_eq!(info.email.as_deref(), Some("gemini@example.com"));
+    }
+
+    #[test]
+    fn test_extract_gemini_auth_falls_back_to_credentials_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.json"),
+            r#"{"account": "fallback@gmail.com"}"#,
+        )
+        .unwrap();
+        let info = extract_gemini_auth(dir.path()).unwrap();
+        assert_eq!(info.email.as_deref(), Some("fallback@gmail.com"));
+    }
+
+    #[test]
+    fn test_extract_claude_auth_unparseable_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".credentials.json"), "not json").unwrap();
+        assert!(extract_claude_auth(dir.path()).is_none());
+    }
+
+    #[test]
     fn test_extract_claude_auth_nonexistent_dir() {
         let info = extract_claude_auth(Path::new("/nonexistent/path/.claude"));
-        // Under coverage, read_file_to_string returns None; in normal builds,
-        // the file doesn't exist so it also returns None.
         assert!(info.is_none());
     }
 

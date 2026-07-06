@@ -766,49 +766,6 @@ async fn test_update_session_intervention_after_table_dropped() {
 }
 
 #[tokio::test]
-async fn test_clear_session_intervention() {
-    let store = test_store().await;
-    let session = make_session("clear-test");
-    store.insert_session(&session).await.unwrap();
-
-    // Set intervention first
-    store
-        .update_session_intervention(
-            &session.id.to_string(),
-            InterventionCode::UserStop,
-            "test reason",
-        )
-        .await
-        .unwrap();
-
-    // Clear it
-    store
-        .clear_session_intervention(&session.id.to_string())
-        .await
-        .unwrap();
-
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(fetched.intervention_code.is_none());
-    assert!(fetched.intervention_reason.is_none());
-    assert!(fetched.intervention_at.is_none());
-}
-
-#[tokio::test]
-async fn test_clear_session_intervention_after_table_dropped() {
-    let store = test_store().await;
-    sqlx::query("DROP TABLE sessions")
-        .execute(store.pool())
-        .await
-        .unwrap();
-    let result = store.clear_session_intervention("test-id").await;
-    assert!(result.is_err());
-}
-
-#[tokio::test]
 async fn test_update_session_output_snapshot() {
     let store = test_store().await;
     let session = make_session("snapshot-test");

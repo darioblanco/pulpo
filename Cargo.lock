@@ -2439,17 +2439,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pty-process"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8749b545e244c90bf74a5767764cc2194f1888bb42f84015486a64c82bea5cc0"
-dependencies = [
- "libc",
- "rustix 0.38.44",
- "tokio",
-]
-
-[[package]]
 name = "pulpo-cli"
 version = "0.0.44"
 dependencies = [
@@ -2462,9 +2451,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 
@@ -2475,7 +2461,6 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
- "thiserror 2.0.18",
  "toml",
  "uuid",
 ]
@@ -2500,7 +2485,6 @@ dependencies = [
  "num_cpus",
  "openssl",
  "p256",
- "pty-process",
  "pulpo-common",
  "rand 0.10.0",
  "reqwest",
@@ -2508,12 +2492,10 @@ dependencies = [
  "rustix 0.38.44",
  "serde",
  "serde_json",
- "serde_yaml",
  "sha2",
  "shellexpand",
  "sqlx",
  "tempfile",
- "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tokio-tungstenite 0.26.2",
@@ -2889,7 +2871,6 @@ checksum = "fdb5bc1ae2baa591800df16c9ca78619bf65c0488b41b96ccec5d11220d8c154"
 dependencies = [
  "bitflags 2.11.0",
  "errno",
- "itoa",
  "libc",
  "linux-raw-sys 0.4.15",
  "windows-sys 0.59.0",
@@ -3146,19 +3127,6 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
-]
-
-[[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
 ]
 
 [[package]]
@@ -4069,12 +4037,6 @@ dependencies = [
  "crypto-common 0.1.7",
  "subtle",
 ]
-
-[[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
 
 [[package]]
 name = "untrusted"
