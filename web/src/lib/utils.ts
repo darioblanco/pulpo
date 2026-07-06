@@ -46,6 +46,12 @@ export const statusColors: Record<string, string> = {
   idle: 'bg-status-idle',
 };
 
+export const statusDotColors: Record<string, string> = {
+  online: 'bg-status-ready',
+  offline: 'bg-status-stopped',
+  unknown: 'bg-muted-foreground',
+};
+
 export function isTerminal(status: string): boolean {
   return status === 'stopped' || status === 'ready' || status === 'lost';
 }

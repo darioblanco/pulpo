@@ -14,6 +14,7 @@ import type {
   CreateSessionResponse,
   CleanupSessionsResponse,
   VapidPublicKeyResponse,
+  PushSubscriptionRequest,
   ScheduleInfo,
   CreateScheduleRequest,
   SecretEntry,
@@ -207,6 +208,7 @@ export async function updateConfig(data: UpdateConfigRequest): Promise<UpdateCon
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
+  if (!res.ok) throw await apiError(res, 'Failed to update config');
   return res.json();
 }
 
@@ -231,13 +233,17 @@ export async function getVapidKey(): Promise<VapidPublicKeyResponse> {
 }
 
 export async function subscribePush(subscription: PushSubscriptionJSON): Promise<void> {
+  const body: PushSubscriptionRequest = {
+    endpoint: subscription.endpoint ?? '',
+    keys: {
+      p256dh: subscription.keys?.p256dh ?? '',
+      auth: subscription.keys?.auth ?? '',
+    },
+  };
   const res = await authFetch(`${resolveBaseUrl()}/push/subscribe`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      endpoint: subscription.endpoint,
-      keys: subscription.keys,
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw await apiError(res, 'Failed to subscribe');
 }

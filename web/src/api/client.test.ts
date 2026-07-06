@@ -53,7 +53,7 @@ beforeEach(() => {
 });
 
 function jsonResponse(data: unknown) {
-  return { json: () => Promise.resolve(data) };
+  return { ok: true, json: () => Promise.resolve(data) };
 }
 
 describe('getNode', () => {
@@ -482,6 +482,26 @@ describe('updateConfig', () => {
     const result = await updateConfig({ port: 9000 });
 
     expect(result.restart_required).toBe(true);
+  });
+
+  it('throws on error response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      text: () => Promise.resolve(JSON.stringify({ error: 'invalid config' })),
+      json: () => Promise.resolve({ error: 'invalid config' }),
+    });
+
+    await expect(updateConfig({ port: 9000 })).rejects.toThrow('invalid config');
+  });
+
+  it('throws generic message when no error field', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      text: () => Promise.resolve(JSON.stringify({})),
+      json: () => Promise.resolve({}),
+    });
+
+    await expect(updateConfig({ port: 9000 })).rejects.toThrow('Failed to update config');
   });
 });
 
