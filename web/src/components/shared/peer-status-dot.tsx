@@ -1,10 +1,5 @@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-
-const statusDotColors: Record<string, string> = {
-  online: 'bg-status-ready',
-  offline: 'bg-status-stopped',
-  unknown: 'bg-muted-foreground',
-};
+import { statusDotColors } from '@/lib/utils';
 
 interface PeerStatusDotProps {
   name: string;

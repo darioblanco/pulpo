@@ -1,9 +1,8 @@
-import type { Session, NodeInfo, PeerInfo } from '@/api/types';
+import type { Session } from '@/api/types';
 import type { Camera } from './camera';
 import { createCamera, fitCamera } from './camera';
 
 // --- Layout constants ---
-const NODE_SPACING = 250;
 const SWIM_ZONE_TOP = 50;
 const SWIM_ZONE_BOTTOM = 190;
 const SEABED_Y = 230;
@@ -394,127 +393,6 @@ export function syncSingleNode(
         wanderTargetX: hx,
         wanderTargetY: hy,
       });
-    }
-  }
-
-  world.octopuses = newOctopuses;
-}
-
-// --- Sync React data into world state ---
-
-export function syncData(
-  world: WorldState,
-  localNode: NodeInfo,
-  localSessions: Session[],
-  peers: PeerInfo[],
-  peerSessions: Record<string, Session[]>,
-): void {
-  // Map sessions to nodes (needed for session counts)
-  const sessionsByNode: Record<string, Session[]> = {};
-  sessionsByNode[localNode.name] = localSessions;
-  for (const peer of peers) {
-    sessionsByNode[peer.name] = peerSessions[peer.name] ?? [];
-  }
-
-  // Build node list
-  const newNodes: NodeLandmark[] = [
-    {
-      name: localNode.name,
-      isLocal: true,
-      status: 'online',
-      x: 0,
-      y: NODE_Y,
-      color: NODE_COLORS[0 % NODE_COLORS.length],
-      sessionCount: (sessionsByNode[localNode.name] ?? []).length,
-    },
-  ];
-
-  for (let i = 0; i < peers.length; i++) {
-    newNodes.push({
-      name: peers[i].name,
-      isLocal: false,
-      status: peers[i].status,
-      x: (i + 1) * NODE_SPACING,
-      y: NODE_Y,
-      color: NODE_COLORS[(i + 1) % NODE_COLORS.length],
-      sessionCount: (sessionsByNode[peers[i].name] ?? []).length,
-    });
-  }
-
-  // Regenerate decorations only when node layout changes
-  const nodesChanged =
-    world.nodes.length !== newNodes.length ||
-    world.nodes.some((n, i) => n.name !== newNodes[i]?.name);
-
-  world.nodes = newNodes;
-
-  if (nodesChanged || world.decorations.length === 0) {
-    world.decorations = generateDecorations(newNodes);
-  }
-
-  fitCamera(world.camera, newNodes);
-
-  // Diff octopuses: keep existing (preserve animation), add new, remove gone
-  const existingById = new Map(world.octopuses.map((o) => [o.sessionId, o]));
-  const newOctopuses: OctopusEntity[] = [];
-
-  for (const node of newNodes) {
-    const sessions = sessionsByNode[node.name] ?? [];
-    const statusIndex: Record<string, number> = {};
-
-    for (let i = 0; i < sessions.length; i++) {
-      const session = sessions[i];
-      const idx = statusIndex[session.status] ?? 0;
-      statusIndex[session.status] = idx + 1;
-      const existing = existingById.get(session.id);
-
-      if (existing) {
-        // Update data fields, keep position and animation state
-        const statusChanged = existing.status !== session.status;
-        existing.status = session.status;
-        existing.ink = session.ink;
-        existing.command = session.command;
-        existing.description = session.description;
-        existing.workdir = session.workdir;
-        existing.createdAt = session.created_at;
-        existing.lastOutputAt = session.last_output_at;
-        existing.interventionReason = session.intervention_reason;
-        existing.nodeName = node.name;
-        if (statusChanged) {
-          const [hx, hy] = assignHomeForStatus(node.x, session.status, idx);
-          existing.homeX = hx;
-          existing.homeY = hy;
-        }
-        newOctopuses.push(existing);
-      } else {
-        // New octopus — place near its node in status-appropriate zone
-        const [hx, hy] = assignHomeForStatus(node.x, session.status, idx);
-        newOctopuses.push({
-          sessionId: session.id,
-          name: session.name,
-          status: session.status,
-          command: session.command,
-          description: session.description,
-          ink: session.ink,
-          workdir: session.workdir,
-          createdAt: session.created_at,
-          lastOutputAt: session.last_output_at,
-          interventionReason: session.intervention_reason,
-          nodeName: node.name,
-          x: hx + randomBetween(-10, 10),
-          y: hy + randomBetween(-10, 10),
-          homeX: hx,
-          homeY: hy,
-          vx: 0,
-          vy: 0,
-          animFrame: 0,
-          animTimer: 0,
-          isSwimming: false,
-          wanderTimer: randomBetween(1, 3),
-          wanderTargetX: hx,
-          wanderTargetY: hy,
-        });
-      }
     }
   }
 

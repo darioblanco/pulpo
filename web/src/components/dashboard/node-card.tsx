@@ -1,13 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import type { NodeInfo, Session } from '@/api/types';
 import { SessionCard } from './session-card';
-import { formatMemory } from '@/lib/utils';
-
-const statusDotColors: Record<string, string> = {
-  online: 'bg-status-ready',
-  offline: 'bg-status-stopped',
-  unknown: 'bg-muted-foreground',
-};
+import { formatMemory, statusDotColors } from '@/lib/utils';
 
 interface NodeCardProps {
   name: string;
