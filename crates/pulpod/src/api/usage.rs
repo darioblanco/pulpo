@@ -96,41 +96,11 @@ pub async fn scan(
 #[cfg(test)]
 mod tests {
     use crate::api::AppState;
-    use crate::backend::StubBackend;
-    use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
-    use crate::session::manager::SessionManager;
-    use crate::store::Store;
+    use crate::api::test_support::test_state;
     use axum::extract::State;
     use pulpo_common::session::{Runtime, Session, SessionStatus};
     use std::collections::HashMap;
-    use std::sync::Arc;
     use uuid::Uuid;
-
-    async fn test_state() -> Arc<AppState> {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        AppState::new(
-            Config {
-                node: NodeConfig {
-                    name: "test-node".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                ..Default::default()
-            },
-            manager,
-            peer_registry,
-            store,
-        )
-    }
 
     async fn insert(state: &AppState, name: &str, meta_pairs: &[(&str, &str)]) {
         let mut metadata = HashMap::new();

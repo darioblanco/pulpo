@@ -1,22 +1,13 @@
 use std::sync::Arc;
 
-use axum::{Json, extract::State, http::StatusCode};
+use axum::{Json, extract::State};
 use pulpo_common::api::{
-    AuthConfigResponse, ConfigResponse, ErrorResponse, InkConfigResponse, NodeConfigResponse,
+    AuthConfigResponse, ConfigResponse, InkConfigResponse, NodeConfigResponse,
     NotificationsConfigResponse, UpdateConfigRequest, UpdateConfigResponse, WatchdogConfigResponse,
     WebhookEndpointConfigResponse,
 };
 
-type ApiError = (StatusCode, Json<ErrorResponse>);
-
-fn internal_error(msg: &str) -> ApiError {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorResponse {
-            error: msg.to_owned(),
-        }),
-    )
-}
+use crate::api::error::{ApiError, internal_error};
 
 fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
     ConfigResponse {
@@ -192,6 +183,7 @@ mod tests {
     use crate::session::manager::SessionManager;
     use crate::store::Store;
     use axum::extract::State;
+    use axum::http::StatusCode;
     use pulpo_common::peer::PeerEntry;
 
     async fn test_state() -> Arc<AppState> {
@@ -460,13 +452,6 @@ mod tests {
         let state = test_state().await;
         let Json(resp) = get_config(State(state)).await.unwrap();
         assert_eq!(resp.node.bind, pulpo_common::auth::BindMode::Local);
-    }
-
-    #[test]
-    fn test_internal_error() {
-        let (status, Json(err)) = internal_error("boom");
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(err.error, "boom");
     }
 
     #[tokio::test]

@@ -138,61 +138,14 @@ pub fn build(state: Arc<AppState>) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::test_support;
     use crate::backend::Backend;
-    use std::collections::HashMap;
-
-    use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
-    use crate::session::manager::SessionManager;
-    use crate::store::Store;
     use anyhow::Result;
     use axum::http::StatusCode;
     use axum_test::TestServer;
 
-    struct StubBackend;
-
-    impl Backend for StubBackend {
-        fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
-            Ok(())
-        }
-        fn kill_session(&self, _: &str) -> Result<()> {
-            Ok(())
-        }
-        fn is_alive(&self, _: &str) -> Result<bool> {
-            Ok(true)
-        }
-        fn capture_output(&self, _: &str, _: usize) -> Result<String> {
-            Ok("captured output".into())
-        }
-        fn send_input(&self, _: &str, _: &str) -> Result<()> {
-            Ok(())
-        }
-        fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
-            Ok(())
-        }
-    }
-
     async fn test_server() -> TestServer {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry, store);
-        let app = build(state);
-        TestServer::new(app).unwrap()
+        test_support::test_server().await
     }
 
     #[tokio::test]
@@ -232,35 +185,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_inks_with_entries() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let mut inks = HashMap::new();
-        inks.insert(
-            "reviewer".into(),
-            crate::config::InkConfig {
-                description: None,
-                command: Some("Review code".into()),
-                ..crate::config::InkConfig::default()
-            },
-        );
-        let config = Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            inks: inks.clone(),
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store.clone(), inks, None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry, store);
-        let app = build(state);
-        let server = TestServer::new(app).unwrap();
+        let server = test_support::test_server_with(|cfg| {
+            cfg.inks.insert(
+                "reviewer".into(),
+                crate::config::InkConfig {
+                    description: None,
+                    command: Some("Review code".into()),
+                    ..crate::config::InkConfig::default()
+                },
+            );
+        })
+        .await;
         let resp = server.get("/api/v1/inks").await;
         resp.assert_status_ok();
         let body = resp.text();
@@ -480,8 +415,8 @@ mod tests {
             .get(&format!("/api/v1/sessions/{id}/output?lines=50"))
             .await;
         resp.assert_status_ok();
-        let body = resp.text();
-        assert!(body.contains("captured output"));
+        let body: serde_json::Value = resp.json();
+        assert_eq!(body["output"], "");
     }
 
     #[tokio::test]
@@ -632,30 +567,11 @@ mod tests {
     }
 
     async fn test_server_with_bind(bind: pulpo_common::auth::BindMode) -> TestServer {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                bind,
-                ..NodeConfig::default()
-            },
-            auth: crate::config::AuthConfig {
-                token: "test-token".into(),
-            },
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry, store);
-        let app = build(state);
-        TestServer::new(app).unwrap()
+        test_support::test_server_with(|cfg| {
+            cfg.node.bind = bind;
+            cfg.auth.token = "test-token".into();
+        })
+        .await
     }
 
     #[tokio::test]
@@ -786,7 +702,7 @@ mod tests {
             .await;
         resp.assert_status_ok();
         let body = resp.text();
-        assert_eq!(body, "captured output");
+        assert_eq!(body, "");
         let headers = resp.headers();
         assert_eq!(
             headers.get("content-type").unwrap().to_str().unwrap(),
@@ -819,24 +735,7 @@ mod tests {
 
     /// Spin up a real TCP server for WebSocket testing (axum-test doesn't support WS).
     async fn ws_test_server() -> (String, Arc<crate::api::AppState>) {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = crate::api::AppState::new(config, manager, peer_registry, store);
+        let state = test_support::test_state().await;
         let app = build(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -995,24 +894,7 @@ mod tests {
     #[tokio::test]
     async fn test_ws_stream_internal_error() {
         // Use a backend where is_alive fails, causing get_session to error
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        let backend = Arc::new(FailIsAliveBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = crate::api::AppState::new(config, manager, peer_registry, store);
+        let state = test_support::test_state_with_backend(Arc::new(FailIsAliveBackend)).await;
 
         // Create a session (create works, but later get_session will call is_alive → error)
         let req = pulpo_common::api::CreateSessionRequest {
@@ -1215,30 +1097,12 @@ mod tests {
     const TEST_TOKEN: &str = "test-auth-token-value";
 
     async fn authed_test_server() -> TestServer {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "auth-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                bind: pulpo_common::auth::BindMode::Public,
-                ..NodeConfig::default()
-            },
-            auth: crate::config::AuthConfig {
-                token: TEST_TOKEN.into(),
-            },
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry, store);
-        let app = build(state);
-        TestServer::new(app).unwrap()
+        test_support::test_server_with(|cfg| {
+            cfg.node.name = "auth-node".into();
+            cfg.node.bind = pulpo_common::auth::BindMode::Public;
+            cfg.auth.token = TEST_TOKEN.into();
+        })
+        .await
     }
 
     #[tokio::test]
@@ -1389,28 +1253,12 @@ mod tests {
 
     /// Test auth via real TCP server (with `ConnectInfo` available).
     async fn real_authed_tcp_server() -> (String, Arc<crate::api::AppState>) {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "auth-tcp".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                bind: pulpo_common::auth::BindMode::Public,
-                ..NodeConfig::default()
-            },
-            auth: crate::config::AuthConfig {
-                token: TEST_TOKEN.into(),
-            },
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = crate::api::AppState::new(config, manager, peer_registry, store);
+        let state = test_support::test_state_with(|cfg| {
+            cfg.node.name = "auth-tcp".into();
+            cfg.node.bind = pulpo_common::auth::BindMode::Public;
+            cfg.auth.token = TEST_TOKEN.into();
+        })
+        .await;
         let app = build(state.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1488,24 +1336,7 @@ mod tests {
         use pulpo_common::event::{PulpoEvent, SessionEvent};
         use tower::ServiceExt;
 
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry, store);
+        let state = test_support::test_state().await;
 
         // Subscribe to the event_tx before building the router so we can send events
         let event_tx = state.event_tx.clone();
@@ -1627,33 +1458,13 @@ mod tests {
     // -- Push endpoint integration tests --
 
     async fn test_server_with_vapid() -> TestServer {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            notifications: crate::config::NotificationsConfig {
-                vapid: crate::config::VapidConfig {
-                    private_key: "test-priv-key".into(),
-                    public_key: "test-pub-key".into(),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry, store);
-        let app = build(state);
-        TestServer::new(app).unwrap()
+        test_support::test_server_with(|cfg| {
+            cfg.notifications.vapid = crate::config::VapidConfig {
+                private_key: "test-priv-key".into(),
+                public_key: "test-pub-key".into(),
+            };
+        })
+        .await
     }
 
     #[tokio::test]
@@ -1762,27 +1573,7 @@ mod tests {
     // -- Metrics endpoint integration tests --
 
     async fn test_server_with_metrics_enabled() -> TestServer {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            metrics: crate::config::MetricsConfig { enabled: true },
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry, store);
-        let app = build(state);
-        TestServer::new(app).unwrap()
+        test_support::test_server_with(|cfg| cfg.metrics.enabled = true).await
     }
 
     #[tokio::test]

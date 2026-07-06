@@ -113,15 +113,8 @@ pub async fn run_dispatcher_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::test_store;
     use pulpo_common::event::SessionEvent;
-
-    async fn test_store() -> Store {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        store
-    }
 
     fn session_pulpo_event(status: &str) -> PulpoEvent {
         PulpoEvent::Session(SessionEvent {

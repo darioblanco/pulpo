@@ -30,39 +30,7 @@ pub async fn get_info(State(state): State<Arc<super::AppState>>) -> Json<NodeInf
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::AppState;
-    use crate::backend::StubBackend;
-    use std::collections::HashMap;
-
-    use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
-    use crate::session::manager::SessionManager;
-    use crate::store::Store;
-
-    async fn test_state() -> Arc<AppState> {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        AppState::new(
-            Config {
-                node: NodeConfig {
-                    name: "test-node".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                ..Default::default()
-            },
-            manager,
-            peer_registry,
-            store,
-        )
-    }
+    use crate::api::test_support::test_state;
 
     #[test]
     fn test_get_hostname() {

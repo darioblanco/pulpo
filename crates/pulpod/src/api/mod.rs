@@ -16,6 +16,8 @@ pub mod schedules;
 pub mod secrets;
 pub mod sessions;
 pub mod static_files;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod usage;
 pub mod watchdog;
 pub mod ws;
@@ -158,55 +160,20 @@ pub fn router(state: Arc<AppState>) -> Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-
-    use crate::backend::StubBackend;
-    use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
-    use crate::store::Store;
+    use crate::api::test_support;
 
     #[tokio::test]
     async fn test_app_state_new() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (config, manager, peer_registry, store) = test_support::test_parts().await;
         let state = AppState::new(config, manager, peer_registry, store);
-        assert_eq!(state.config.read().await.node.name, "test");
+        assert_eq!(state.config.read().await.node.name, "test-node");
         assert!(state.config_path.as_os_str().is_empty());
     }
 
     #[tokio::test]
     async fn test_app_state_with_event_tx() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        let config_path = tmpdir.path().join("config.toml");
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (config, manager, peer_registry, store) = test_support::test_parts().await;
+        let config_path = std::path::PathBuf::from("/nonexistent/config.toml");
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let state = AppState::with_event_tx(
             config,
@@ -216,28 +183,13 @@ mod tests {
             event_tx,
             store,
         );
-        assert_eq!(state.config.read().await.node.name, "test");
+        assert_eq!(state.config.read().await.node.name, "test-node");
         assert_eq!(state.config_path, config_path);
     }
 
     #[tokio::test]
     async fn test_app_state_with_watchdog_tx() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (config, manager, peer_registry, store) = test_support::test_parts().await;
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let initial = crate::watchdog::WatchdogRuntimeConfig {
             threshold: 90,
@@ -252,7 +204,7 @@ mod tests {
         let (config_tx, _config_rx) = tokio::sync::watch::channel(initial);
         let state = AppState::with_watchdog_tx(
             config,
-            tmpdir.path().join("config.toml"),
+            std::path::PathBuf::from("/nonexistent/config.toml"),
             manager,
             peer_registry,
             event_tx,
@@ -264,26 +216,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_app_state_with_watchdog_tx_none() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
+        let (config, manager, peer_registry, store) = test_support::test_parts().await;
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let state = AppState::with_watchdog_tx(
             config,
-            tmpdir.path().join("config.toml"),
+            std::path::PathBuf::from("/nonexistent/config.toml"),
             manager,
             peer_registry,
             event_tx,
@@ -295,23 +232,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_router_builds() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry, store);
+        let state = test_support::test_state().await;
         let _router = router(state);
     }
 }
