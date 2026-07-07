@@ -41,6 +41,27 @@ pub struct CreateSessionResponse {
     pub session: Session,
 }
 
+/// `POST /api/v1/sessions/{id}/handoff` request body.
+///
+/// Spawns a new session that inherits a finished session's working context (working
+/// directory, and git worktree if any). Pulpo never reads or interprets any artifacts
+/// the source session left behind — it only guarantees the next command starts in the
+/// same place. Response reuses [`CreateSessionResponse`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandoffSessionRequest {
+    /// New session name. Auto-generated as `<source>-2`, `-3`, ... if omitted.
+    pub name: Option<String>,
+    pub command: Option<String>,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub secrets: Option<Vec<String>>,
+    #[serde(default)]
+    pub budget_cost_usd: Option<f64>,
+    pub idle_threshold_secs: Option<u32>,
+    #[serde(default)]
+    pub term_program: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CleanupResponse {
     pub sessions_deleted: u64,
@@ -695,6 +716,80 @@ mod tests {
         let json = r#"{"name":"my-task"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert!(req.term_program.is_none());
+    }
+
+    #[test]
+    fn test_handoff_session_request_deserialize_full() {
+        let json = r#"{"name":"implement-auth","command":"codex 'implement'","description":"Implement the plan","secrets":["GH_WORK"],"budget_cost_usd":2.5,"idle_threshold_secs":30,"term_program":"ghostty"}"#;
+        let req: HandoffSessionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name.as_deref(), Some("implement-auth"));
+        assert_eq!(req.command.as_deref(), Some("codex 'implement'"));
+        assert_eq!(req.description.as_deref(), Some("Implement the plan"));
+        assert_eq!(req.secrets, Some(vec!["GH_WORK".to_owned()]));
+        assert_eq!(req.budget_cost_usd, Some(2.5));
+        assert_eq!(req.idle_threshold_secs, Some(30));
+        assert_eq!(req.term_program.as_deref(), Some("ghostty"));
+    }
+
+    #[test]
+    fn test_handoff_session_request_deserialize_empty() {
+        let json = "{}";
+        let req: HandoffSessionRequest = serde_json::from_str(json).unwrap();
+        assert!(req.name.is_none());
+        assert!(req.command.is_none());
+        assert!(req.description.is_none());
+        assert!(req.secrets.is_none());
+        assert!(req.budget_cost_usd.is_none());
+        assert!(req.idle_threshold_secs.is_none());
+        assert!(req.term_program.is_none());
+    }
+
+    #[test]
+    fn test_handoff_session_request_debug() {
+        let req = HandoffSessionRequest {
+            name: Some("test".into()),
+            command: None,
+            description: None,
+            secrets: None,
+            budget_cost_usd: None,
+            idle_threshold_secs: None,
+            term_program: None,
+        };
+        let debug = format!("{req:?}");
+        assert!(debug.contains("test"));
+    }
+
+    #[test]
+    fn test_handoff_session_request_clone() {
+        let req = HandoffSessionRequest {
+            name: Some("test".into()),
+            command: Some("echo hi".into()),
+            description: None,
+            secrets: None,
+            budget_cost_usd: None,
+            idle_threshold_secs: None,
+            term_program: None,
+        };
+        #[allow(clippy::redundant_clone)]
+        let cloned = req.clone();
+        assert_eq!(cloned.name, req.name);
+        assert_eq!(cloned.command, req.command);
+    }
+
+    #[test]
+    fn test_handoff_session_request_serialize() {
+        let req = HandoffSessionRequest {
+            name: Some("implement-auth".into()),
+            command: None,
+            description: None,
+            secrets: None,
+            budget_cost_usd: Some(1.0),
+            idle_threshold_secs: None,
+            term_program: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("implement-auth"));
+        assert!(json.contains("\"budget_cost_usd\":1.0"));
     }
 
     #[test]

@@ -1223,3 +1223,136 @@ async fn test_stop_purge_not_found() {
     let (status, _) = result.unwrap_err();
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+// -- Handoff tests --
+
+fn empty_handoff_req() -> HandoffSessionRequest {
+    HandoffSessionRequest {
+        name: None,
+        command: None,
+        description: None,
+        secrets: None,
+        budget_cost_usd: None,
+        idle_threshold_secs: None,
+        term_program: None,
+    }
+}
+
+#[tokio::test]
+async fn test_handoff_not_found() {
+    let state = test_state().await;
+    let result = handoff(
+        State(state),
+        Path("nonexistent".into()),
+        Json(empty_handoff_req()),
+    )
+    .await;
+    assert!(result.is_err());
+    let (status, _) = result.unwrap_err();
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_handoff_auto_name_by_id() {
+    let state = test_state().await;
+    let req = CreateSessionRequest {
+        name: "plan-auth".into(),
+        workdir: Some("/tmp".into()),
+        metadata: None,
+        command: Some("echo test".into()),
+        description: None,
+        ink: None,
+        idle_threshold_secs: None,
+        worktree: None,
+        worktree_base: None,
+        runtime: None,
+        secrets: None,
+        term_program: None,
+        budget_cost_usd: None,
+    };
+    let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+    let source = resp.session;
+
+    let (status, Json(handoff_resp)) = handoff(
+        State(state),
+        Path(source.id.to_string()),
+        Json(empty_handoff_req()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(handoff_resp.session.name, "plan-auth-2");
+    assert_eq!(handoff_resp.session.workdir, source.workdir);
+}
+
+#[tokio::test]
+async fn test_handoff_resolves_source_by_name() {
+    let state = test_state().await;
+    let req = CreateSessionRequest {
+        name: "plan-by-name".into(),
+        workdir: Some("/tmp".into()),
+        metadata: None,
+        command: Some("echo test".into()),
+        description: None,
+        ink: None,
+        idle_threshold_secs: None,
+        worktree: None,
+        worktree_base: None,
+        runtime: None,
+        secrets: None,
+        term_program: None,
+        budget_cost_usd: None,
+    };
+    let _ = create(State(state.clone()), Json(req)).await.unwrap();
+
+    let (status, Json(handoff_resp)) = handoff(
+        State(state),
+        Path("plan-by-name".into()),
+        Json(empty_handoff_req()),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(handoff_resp.session.name, "plan-by-name-2");
+}
+
+#[tokio::test]
+async fn test_handoff_explicit_name_and_command() {
+    let state = test_state().await;
+    let req = CreateSessionRequest {
+        name: "plan-x".into(),
+        workdir: Some("/tmp".into()),
+        metadata: None,
+        command: Some("echo test".into()),
+        description: None,
+        ink: None,
+        idle_threshold_secs: None,
+        worktree: None,
+        worktree_base: None,
+        runtime: None,
+        secrets: None,
+        term_program: None,
+        budget_cost_usd: None,
+    };
+    let (_, Json(resp)) = create(State(state.clone()), Json(req)).await.unwrap();
+    let source = resp.session;
+
+    let handoff_req = HandoffSessionRequest {
+        name: Some("implement-x".into()),
+        command: Some("codex 'implement'".into()),
+        description: Some("Implement".into()),
+        budget_cost_usd: Some(2.0),
+        idle_threshold_secs: Some(30),
+        ..empty_handoff_req()
+    };
+    let (status, Json(handoff_resp)) =
+        handoff(State(state), Path(source.name.clone()), Json(handoff_req))
+            .await
+            .unwrap();
+
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(handoff_resp.session.name, "implement-x");
+    assert_eq!(handoff_resp.session.command, "codex 'implement'");
+}

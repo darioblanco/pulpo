@@ -4,6 +4,8 @@
 
 ```text
 pulpo spawn [NAME] [OPTIONS] [-- <COMMAND...>]  Spawn a new session (auto-attaches)
+pulpo handoff <SOURCE> [NAME] [OPTIONS] [-- <COMMAND...>]  Hand off a finished
+                                          session's context to a new session (alias: h)
 pulpo list                                List sessions (alias: ls)
 pulpo logs <NAME> [--follow]              Show session output
 pulpo attach <NAME>                       Attach to a session terminal
@@ -45,7 +47,7 @@ By default, `spawn` auto-attaches to the session. Use `--detach` / `-d` to skip 
 | `--ink <NAME>` | Ink preset from config (provides a default command) |
 | `--description <TEXT>` | Human-readable description for the session |
 | `--idle-threshold <SECS>` | Per-session idle threshold (`0` = never idle) |
-| `--worktree` | Create an isolated git worktree for the session |
+| `--worktree` / `-w` | Create an isolated git worktree for the session |
 | `--worktree-base <BRANCH>` | Fork worktree from a specific branch (implies `--worktree`) |
 | `--secret <NAME>` | Inject a stored secret as an environment variable |
 | `--budget-cost <USD>` | Cost budget; watchdog alerts at 80% and stops the session at 100% |
@@ -53,6 +55,40 @@ By default, `spawn` auto-attaches to the session. Use `--detach` / `-d` to skip 
 If no name is provided, Pulpo derives one from the workdir/path context. If no command is provided, Pulpo falls back to the ink command, `node.default_command`, or finally `$SHELL`.
 
 The command is whatever you want to run — any agent CLI, script, or shell command. If `--ink` is specified and no command is given after `--`, the ink's command is used.
+
+## Handoff
+
+`pulpo handoff <SOURCE> [NAME] [OPTIONS] [-- <COMMAND...>]` (alias `h`) spawns a **new**
+session that inherits a finished session's working context — its working directory, and
+its git worktree if it has one — so a plan-then-build flow across two agents (or two
+models) is one command instead of a manual `cd`/branch dance.
+
+```bash
+pulpo spawn plan-auth -w -- claude --model opus -p "Plan the auth refactor, write PLAN.md"
+# ...plan-auth finishes...
+pulpo handoff plan-auth -- codex "implement PLAN.md"
+```
+
+Pulpo never reads or interprets `PLAN.md` (or any other artifact) — it only guarantees
+the next command starts in the same directory (and worktree, if any).
+
+| Flag | Description |
+|------|-------------|
+| `NAME` | New session name (auto-generated as `<source>-2`, `-3`, ... if omitted) |
+| `--description <TEXT>` | Human-readable description for the new session |
+| `--secret <NAME>` | Inject a stored secret as an environment variable (repeatable) |
+| `--budget-cost <USD>` | Cost budget for the new session |
+| `--idle-threshold <SECS>` | Per-session idle threshold (`0` = never idle) |
+| `--detach` / `-d` | Don't attach to the new session after handoff |
+
+If the source session used a worktree, the new session **adopts it** — no new branch or
+checkout is created. A worktree shared this way is only reclaimed once *every* session
+referencing it has stopped (via `stop --purge` or `pulpo cleanup`), so purging the source
+session early never deletes work a handoff session still needs. See
+[Plan Then Build](/guides/plan-then-build) for the full workflow.
+
+If no command is given, the new session opens a login shell in the same directory —
+handy for wrapping up manually.
 
 ## Schedule Subcommands
 

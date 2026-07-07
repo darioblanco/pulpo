@@ -44,6 +44,7 @@ export default defineUserConfig({
         '/guides/remote-control',
         '/guides/nightly-code-review',
         '/guides/parallel-agents-one-repo',
+        '/guides/plan-then-build',
         '/guides/private-infra-with-tailscale',
         '/guides/agent-examples',
         '/guides/configuration',

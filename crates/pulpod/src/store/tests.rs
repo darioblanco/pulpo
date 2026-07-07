@@ -296,6 +296,72 @@ async fn test_has_active_session_by_name_excluding_different_id() {
 }
 
 #[tokio::test]
+async fn test_find_live_sessions_by_worktree_finds_other_live_session() {
+    let store = test_store().await;
+    let mut source = make_session("plan-auth");
+    source.worktree_path = Some("/tmp/wt/plan-auth".into());
+    store.insert_session(&source).await.unwrap();
+
+    let mut handoff = make_session("plan-auth-2");
+    handoff.worktree_path = Some("/tmp/wt/plan-auth".into());
+    handoff.status = SessionStatus::Active;
+    store.insert_session(&handoff).await.unwrap();
+
+    let others = store
+        .find_live_sessions_by_worktree("/tmp/wt/plan-auth", &source.id.to_string())
+        .await
+        .unwrap();
+    assert_eq!(others.len(), 1);
+    assert_eq!(others[0].name, "plan-auth-2");
+}
+
+#[tokio::test]
+async fn test_find_live_sessions_by_worktree_excludes_dead_sessions() {
+    let store = test_store().await;
+    let mut source = make_session("plan-auth");
+    source.worktree_path = Some("/tmp/wt/plan-auth".into());
+    store.insert_session(&source).await.unwrap();
+
+    let mut dead = make_session("plan-auth-2");
+    dead.worktree_path = Some("/tmp/wt/plan-auth".into());
+    dead.status = SessionStatus::Stopped;
+    store.insert_session(&dead).await.unwrap();
+
+    let others = store
+        .find_live_sessions_by_worktree("/tmp/wt/plan-auth", &source.id.to_string())
+        .await
+        .unwrap();
+    assert!(
+        others.is_empty(),
+        "a stopped session must not count as in-use"
+    );
+}
+
+#[tokio::test]
+async fn test_find_live_sessions_by_worktree_excludes_self() {
+    let store = test_store().await;
+    let mut source = make_session("solo-task");
+    source.worktree_path = Some("/tmp/wt/solo-task".into());
+    store.insert_session(&source).await.unwrap();
+
+    let others = store
+        .find_live_sessions_by_worktree("/tmp/wt/solo-task", &source.id.to_string())
+        .await
+        .unwrap();
+    assert!(others.is_empty());
+}
+
+#[tokio::test]
+async fn test_find_live_sessions_by_worktree_no_match() {
+    let store = test_store().await;
+    let others = store
+        .find_live_sessions_by_worktree("/tmp/wt/nonexistent", "some-id")
+        .await
+        .unwrap();
+    assert!(others.is_empty());
+}
+
+#[tokio::test]
 async fn test_unique_index_prevents_duplicate_live_names() {
     let store = test_store().await;
     let s1 = make_session("dup-name");

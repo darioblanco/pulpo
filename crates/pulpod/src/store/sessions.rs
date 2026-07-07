@@ -247,6 +247,26 @@ impl Store {
         Ok(())
     }
 
+    /// Other (non-dead) sessions referencing the same `worktree_path`, excluding
+    /// `exclude_id`. Used to guard worktree reclamation: `pulpo handoff` can make two
+    /// sessions share a worktree, and it must survive until every referencing session
+    /// has stopped.
+    pub async fn find_live_sessions_by_worktree(
+        &self,
+        worktree_path: &str,
+        exclude_id: &str,
+    ) -> Result<Vec<Session>> {
+        let rows = sqlx::query(
+            "SELECT * FROM sessions WHERE worktree_path = ? AND id != ? \
+             AND status IN ('creating', 'active', 'idle', 'ready')",
+        )
+        .bind(worktree_path)
+        .bind(exclude_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_session).collect()
+    }
+
     pub const fn pool(&self) -> &sqlx::SqlitePool {
         &self.pool
     }

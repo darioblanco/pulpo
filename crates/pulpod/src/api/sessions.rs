@@ -6,8 +6,8 @@ use axum::{
     http::StatusCode,
 };
 use pulpo_common::api::{
-    CleanupResponse, CreateSessionRequest, CreateSessionResponse, ListSessionsQuery, OutputQuery,
-    SendInputRequest,
+    CleanupResponse, CreateSessionRequest, CreateSessionResponse, HandoffSessionRequest,
+    ListSessionsQuery, OutputQuery, SendInputRequest,
 };
 use pulpo_common::session::{Session, SessionStatus};
 use serde::Deserialize;
@@ -57,6 +57,22 @@ pub async fn create(
     let session = state
         .session_manager
         .create_session(req)
+        .await
+        .map_err(|e| map_manager_err(&e))?;
+    Ok((StatusCode::CREATED, Json(CreateSessionResponse { session })))
+}
+
+/// `POST /api/v1/sessions/{id}/handoff` — spawn a new session that inherits the
+/// source session's working context (directory, and git worktree if it has one).
+/// `id` resolves by ID or name, same as [`get`].
+pub async fn handoff(
+    State(state): State<Arc<super::AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<HandoffSessionRequest>,
+) -> Result<(StatusCode, Json<CreateSessionResponse>), ApiError> {
+    let session = state
+        .session_manager
+        .handoff_session(&id, req)
         .await
         .map_err(|e| map_manager_err(&e))?;
     Ok((StatusCode::CREATED, Json(CreateSessionResponse { session })))

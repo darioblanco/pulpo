@@ -95,7 +95,7 @@ pub enum Commands {
         idle_threshold: Option<u32>,
 
         /// Create an isolated git worktree for the session
-        #[arg(long)]
+        #[arg(short, long)]
         worktree: bool,
 
         /// Base branch to fork the worktree from (implies --worktree)
@@ -109,6 +109,40 @@ pub enum Commands {
         /// Cost budget in USD (watchdog alerts at 80%, stops at 100%)
         #[arg(long = "budget-cost")]
         budget_cost: Option<f64>,
+
+        /// Command to run (everything after --)
+        #[arg(last = true)]
+        command: Vec<String>,
+    },
+
+    /// Hand off a finished session's working context (directory, worktree) to a new session
+    #[command(visible_alias = "h")]
+    Handoff {
+        /// Source session name or ID
+        source: String,
+
+        /// New session name (auto-generated as `<source>-2`, `-3`, ... if omitted)
+        name: Option<String>,
+
+        /// Human-readable description of the task
+        #[arg(long)]
+        description: Option<String>,
+
+        /// Secrets to inject as environment variables (by name)
+        #[arg(long)]
+        secret: Vec<String>,
+
+        /// Cost budget in USD (watchdog alerts at 80%, stops at 100%)
+        #[arg(long = "budget-cost")]
+        budget_cost: Option<f64>,
+
+        /// Idle threshold in seconds (0 = never idle)
+        #[arg(long)]
+        idle_threshold: Option<u32>,
+
+        /// Don't attach to the new session after handoff
+        #[arg(short, long)]
+        detach: bool,
 
         /// Command to run (everything after --)
         #[arg(last = true)]
@@ -623,6 +657,44 @@ async fn check_session_alive(
         break;
     }
     Ok(())
+}
+
+/// Shared tail for `spawn` and `handoff`: print the creation message, optionally
+/// verify the new session survived past `creating` (only for explicit commands —
+/// shell sessions may be immediately marked idle/stopped by the watchdog, which is
+/// expected), then attach unless `detach` is set or the target node isn't local.
+async fn attach_or_report(
+    client: &reqwest::Client,
+    url: &str,
+    node: &str,
+    token: Option<&str>,
+    resp: &CreateSessionResponse,
+    detach: bool,
+    has_explicit_command: bool,
+) -> Result<String> {
+    let msg = format!(
+        "Created session \"{}\" ({})",
+        resp.session.name, resp.session.id
+    );
+    // Auto-detach for a remote node — can't attach to a remote tmux session.
+    if !is_localhost(node) {
+        return Ok(msg);
+    }
+    if !detach {
+        let backend_id = resp
+            .session
+            .backend_session_id
+            .as_deref()
+            .unwrap_or(&resp.session.name);
+        eprintln!("{msg}");
+        if has_explicit_command {
+            let sid = resp.session.id.to_string();
+            check_session_alive(client, url, &sid, token).await?;
+        }
+        attach_session(backend_id)?;
+        return Ok(format!("Detached from session \"{}\".", resp.session.name));
+    }
+    Ok(msg)
 }
 
 /// Compute the new trailing lines that differ from the previous output.
@@ -1331,31 +1403,73 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                 Some(&body),
             )
             .await?;
-            let msg = format!(
-                "Created session \"{}\" ({})",
-                resp.session.name, resp.session.id
-            );
-            // Auto-detach for remote spawn — can't attach to a remote tmux session
-            if !is_localhost(node) {
-                return Ok(msg);
+            attach_or_report(
+                &client,
+                &url,
+                node,
+                token.as_deref(),
+                &resp,
+                *detach,
+                cmd.is_some(),
+            )
+            .await
+        }
+        Commands::Handoff {
+            source,
+            name,
+            description,
+            secret,
+            budget_cost,
+            idle_threshold,
+            detach,
+            command,
+        } => {
+            let cmd = if command.is_empty() {
+                None
+            } else {
+                Some(command.join(" "))
+            };
+            let mut body = serde_json::json!({});
+            if let Some(n) = name {
+                body["name"] = serde_json::json!(n);
             }
-            if !detach {
-                let backend_id = resp
-                    .session
-                    .backend_session_id
-                    .as_deref()
-                    .unwrap_or(&resp.session.name);
-                eprintln!("{msg}");
-                // Only check liveness for explicit commands — shell sessions (no command)
-                // may be immediately marked idle/stopped by the watchdog, which is expected
-                if cmd.is_some() {
-                    let sid = resp.session.id.to_string();
-                    check_session_alive(&client, &url, &sid, token.as_deref()).await?;
-                }
-                attach_session(backend_id)?;
-                return Ok(format!("Detached from session \"{}\".", resp.session.name));
+            if let Some(c) = &cmd {
+                body["command"] = serde_json::json!(c);
             }
-            Ok(msg)
+            if let Some(d) = description {
+                body["description"] = serde_json::json!(d);
+            }
+            if !secret.is_empty() {
+                body["secrets"] = serde_json::json!(secret);
+            }
+            if let Some(b) = budget_cost {
+                body["budget_cost_usd"] = serde_json::json!(b);
+            }
+            if let Some(t) = idle_threshold {
+                body["idle_threshold_secs"] = serde_json::json!(t);
+            }
+            if let Ok(tp) = std::env::var("TERM_PROGRAM") {
+                body["term_program"] = serde_json::json!(tp);
+            }
+            let resp: CreateSessionResponse = request_json(
+                &client,
+                reqwest::Method::POST,
+                format!("{url}/api/v1/sessions/{source}/handoff"),
+                token.as_deref(),
+                node,
+                Some(&body),
+            )
+            .await?;
+            attach_or_report(
+                &client,
+                &url,
+                node,
+                token.as_deref(),
+                &resp,
+                *detach,
+                cmd.is_some(),
+            )
+            .await
         }
         Commands::Stop { names, purge } => {
             let mut results = Vec::new();
@@ -1738,6 +1852,15 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_spawn_worktree_short() {
+        let cli = Cli::try_parse_from(["pulpo", "spawn", "x", "-w"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Spawn { worktree, .. }) if *worktree
+        ));
+    }
+
+    #[test]
     fn test_cli_parse_spawn_worktree_base() {
         let cli = Cli::try_parse_from([
             "pulpo",
@@ -1797,6 +1920,87 @@ mod tests {
             Some(Commands::Worktree {
                 action: WorktreeAction::List
             })
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_handoff_basic() {
+        let cli = Cli::try_parse_from(["pulpo", "handoff", "plan-auth"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Handoff { source, name, command, .. })
+                if source == "plan-auth" && name.is_none() && command.is_empty()
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_handoff_alias_h() {
+        let cli = Cli::try_parse_from(["pulpo", "h", "plan-auth"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Handoff { source, .. }) if source == "plan-auth"
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_handoff_with_name() {
+        let cli = Cli::try_parse_from(["pulpo", "handoff", "plan-auth", "implement-auth"]).unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Handoff { source, name, .. })
+                if source == "plan-auth" && name.as_deref() == Some("implement-auth")
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_handoff_with_command() {
+        let cli =
+            Cli::try_parse_from(["pulpo", "handoff", "plan-auth", "--", "codex", "implement"])
+                .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Handoff { source, command, .. })
+                if source == "plan-auth" && command == &["codex", "implement"]
+        ));
+    }
+
+    #[test]
+    fn test_cli_parse_handoff_flags() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "handoff",
+            "plan-auth",
+            "implement-auth",
+            "--description",
+            "Implement the plan",
+            "--secret",
+            "GH_WORK",
+            "--budget-cost",
+            "2.5",
+            "--idle-threshold",
+            "30",
+            "-d",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Handoff {
+                source,
+                name,
+                description,
+                secret,
+                budget_cost,
+                idle_threshold,
+                detach,
+                ..
+            })
+                if source == "plan-auth"
+                    && name.as_deref() == Some("implement-auth")
+                    && description.as_deref() == Some("Implement the plan")
+                    && secret == &["GH_WORK"]
+                    && *budget_cost == Some(2.5)
+                    && *idle_threshold == Some(30)
+                    && *detach
         ));
     }
 
@@ -1980,6 +2184,7 @@ mod tests {
         };
 
         let create_json = test_create_response_json();
+        let handoff_json = test_create_response_json();
 
         let app = Router::new()
             .route(
@@ -1991,6 +2196,10 @@ mod tests {
             .route(
                 "/api/v1/sessions/{id}",
                 get(|| async { TEST_SESSION_JSON.to_owned() }),
+            )
+            .route(
+                "/api/v1/sessions/{id}/handoff",
+                post(move || async move { (StatusCode::CREATED, handoff_json.clone()) }),
             )
             .route(
                 "/api/v1/sessions/{id}/stop",
@@ -2245,6 +2454,131 @@ mod tests {
         let result = execute(&cli).await.unwrap();
         // When not detached, spawn prints creation to stderr and returns detach message
         assert!(result.contains("Detached from session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_handoff_detached() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Some(Commands::Handoff {
+                source: "plan-auth".into(),
+                name: None,
+                description: None,
+                secret: vec![],
+                budget_cost: None,
+                idle_threshold: None,
+                detach: true,
+                command: vec!["codex".into(), "implement".into()],
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Created session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_handoff_with_all_flags() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Some(Commands::Handoff {
+                source: "plan-auth".into(),
+                name: Some("implement-auth".into()),
+                description: Some("Implement the plan".into()),
+                secret: vec!["GH_WORK".into()],
+                budget_cost: Some(2.5),
+                idle_threshold: Some(30),
+                detach: true,
+                command: vec![],
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Created session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_handoff_auto_attach() {
+        let node = start_test_server().await;
+        let cli = Cli {
+            node,
+            token: None,
+            command: Some(Commands::Handoff {
+                source: "plan-auth".into(),
+                name: None,
+                description: None,
+                secret: vec![],
+                budget_cost: None,
+                idle_threshold: None,
+                detach: false,
+                command: vec!["codex".into(), "implement".into()],
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await.unwrap();
+        assert!(result.contains("Detached from session"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_handoff_connection_refused() {
+        let cli = Cli {
+            node: "localhost:1".into(),
+            token: None,
+            command: Some(Commands::Handoff {
+                source: "plan-auth".into(),
+                name: None,
+                description: None,
+                secret: vec![],
+                budget_cost: None,
+                idle_threshold: None,
+                detach: true,
+                command: vec![],
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await;
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Could not connect to pulpod"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_handoff_error_response() {
+        use axum::{Router, http::StatusCode, routing::post};
+
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}/handoff",
+            post(|| async {
+                (
+                    StatusCode::NOT_FOUND,
+                    "{\"error\":\"session not found: plan-auth\"}",
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+
+        let cli = Cli {
+            node,
+            token: None,
+            command: Some(Commands::Handoff {
+                source: "plan-auth".into(),
+                name: None,
+                description: None,
+                secret: vec![],
+                budget_cost: None,
+                idle_threshold: None,
+                detach: true,
+                command: vec![],
+            }),
+            path: None,
+        };
+        let err = execute(&cli).await.unwrap_err();
+        assert_eq!(err.to_string(), "session not found: plan-auth");
     }
 
     #[tokio::test]
