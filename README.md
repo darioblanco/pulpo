@@ -57,6 +57,9 @@ pulpo usage
 # Put a hard budget on a run: alert at 80%, stop at 100%
 pulpo spawn nightly-review --budget-cost 5 -- claude -p "review today's diff"
 
+# Plan with one model, build with another — same worktree, one command
+pulpo handoff my-api -- codex "implement the fix"
+
 # Open the dashboard (installable as a PWA on your phone)
 pulpo ui
 ```

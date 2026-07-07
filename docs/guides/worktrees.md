@@ -104,6 +104,11 @@ many sessions, worktrees, and log files it removed.
 
 If a stale branch is found when creating a new worktree with the same name, it is automatically cleaned up.
 
+`pulpo handoff` can make two sessions share one worktree (see
+[Plan Then Build](/guides/plan-then-build)) — in that case the worktree is only reclaimed
+once *every* session referencing it has stopped, so purging one early never deletes work
+the other still needs.
+
 ## Example: parallel agents on one repo
 
 Spawn three agents working on different parts of the same codebase:

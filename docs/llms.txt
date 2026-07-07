@@ -19,6 +19,7 @@ Primary docs:
 - /docs/guides/configuration.md
 - /docs/guides/discovery.md
 - /docs/guides/recovery.md
+- /docs/guides/plan-then-build.md
 - /docs/reference/cli.md
 - /docs/reference/config.md
 - /docs/reference/api.md
@@ -35,6 +36,9 @@ Canonical runtime concepts:
 - Config path defaults to ~/.pulpo/config.toml.
 - `pulpo usage --scan` reads Claude Code, Codex, and pi session files directly from disk —
   cross-agent spend with no daemon routing required.
+- `pulpo handoff <SOURCE> [NAME]` (alias `h`) spawns a new session inheriting a source
+  session's working directory and git worktree (if any); it never parses artifacts the
+  source left behind. See /docs/guides/plan-then-build.md.
 - Exact cost is available for Claude Code (token-based, via `[rates.<model>]`) and pi
   (agent-recorded, scan only). Codex reports exact tokens and quota, never a dollar cost.
 - There is no controller/node control plane (removed July 2026) — every pulpod is standalone.

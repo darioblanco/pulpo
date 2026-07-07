@@ -40,6 +40,7 @@ pub(super) fn conflict(msg: &str) -> ApiError {
 /// - "already active" → 409
 /// - "cannot be resumed" → 400
 /// - "docker runtime was removed" → 400
+/// - "worktree no longer exists" (handoff, source worktree missing on disk) → 400
 /// - anything else → 500
 pub(super) fn map_manager_err(e: &anyhow::Error) -> ApiError {
     let msg = e.to_string();
@@ -47,7 +48,10 @@ pub(super) fn map_manager_err(e: &anyhow::Error) -> ApiError {
         not_found(&msg)
     } else if msg.contains("already active") {
         conflict(&msg)
-    } else if msg.contains("cannot be resumed") || msg.contains("docker runtime was removed") {
+    } else if msg.contains("cannot be resumed")
+        || msg.contains("docker runtime was removed")
+        || msg.contains("worktree no longer exists")
+    {
         bad_request(&msg)
     } else {
         internal_error(&msg)
@@ -111,6 +115,15 @@ mod tests {
     #[test]
     fn test_map_manager_err_docker_runtime_removed() {
         let e = anyhow::anyhow!(crate::session::utils::DOCKER_RUNTIME_REMOVED);
+        let (status, _) = map_manager_err(&e);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_map_manager_err_worktree_missing() {
+        let e = anyhow::anyhow!(
+            "source session's worktree no longer exists on disk: /tmp/x — cannot hand off"
+        );
         let (status, _) = map_manager_err(&e);
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }

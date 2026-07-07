@@ -98,6 +98,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         )
         .route("/api/v1/sessions/{id}/stream", get(ws::stream))
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
+        .route("/api/v1/sessions/{id}/handoff", post(sessions::handoff))
         .route("/api/v1/inks", get(inks::list))
         .route(
             "/api/v1/inks/{name}",
@@ -501,6 +502,39 @@ mod tests {
 
         let resp = server.post(&format!("/api/v1/sessions/{id}/resume")).await;
         resp.assert_status(StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_handoff_session_route() {
+        let server = test_server().await;
+        let create_resp = server
+            .post("/api/v1/sessions")
+            .json(&serde_json::json!({
+                "name": "handoff-src",
+                "workdir": "/tmp",
+                "command": "test"
+            }))
+            .await;
+        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
+
+        let resp = server
+            .post(&format!("/api/v1/sessions/{id}/handoff"))
+            .json(&serde_json::json!({}))
+            .await;
+        resp.assert_status(StatusCode::CREATED);
+        let body: serde_json::Value = resp.json();
+        assert_eq!(body["session"]["name"], "handoff-src-2");
+    }
+
+    #[tokio::test]
+    async fn test_handoff_session_route_not_found() {
+        let server = test_server().await;
+        let resp = server
+            .post("/api/v1/sessions/nonexistent/handoff")
+            .json(&serde_json::json!({}))
+            .await;
+        resp.assert_status(StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 use chrono::Utc;
-use pulpo_common::api::{CleanupResponse, CreateSessionRequest};
+use pulpo_common::api::{CleanupResponse, CreateSessionRequest, HandoffSessionRequest};
 use pulpo_common::event::{PulpoEvent, SessionDeletedEvent, SessionEvent};
 use pulpo_common::session::{Runtime, Session, SessionStatus, meta};
 use std::sync::RwLock;
@@ -157,7 +157,97 @@ impl SessionManager {
     }
 
     pub async fn create_session(&self, req: CreateSessionRequest) -> Result<Session> {
-        let mut plan = self.build_create_plan(req).await?;
+        let plan = self.build_create_plan(req, None).await?;
+        self.execute_create_plan(plan).await
+    }
+
+    /// Spawn a new session that inherits a finished session's working context —
+    /// its working directory, and its git worktree if it has one. Pulpo never reads
+    /// or interprets any artifacts the source session left behind (e.g. a PLAN.md) —
+    /// it only guarantees the next command starts in the same place.
+    ///
+    /// Reuses [`Self::build_create_plan`] (and therefore `wrap_command`, the secrets
+    /// file, budget metadata, and idle threshold plumbing) with an adopted worktree
+    /// instead of creating a new one, so this is not a parallel code path to `spawn`.
+    pub async fn handoff_session(
+        &self,
+        source_id: &str,
+        req: HandoffSessionRequest,
+    ) -> Result<Session> {
+        let source = self
+            .store
+            .get_session(source_id)
+            .await?
+            .ok_or_else(|| anyhow!("session not found: {source_id}"))?;
+
+        let name = match req.name {
+            Some(n) => n,
+            None => self.next_handoff_name(&source.name).await?,
+        };
+
+        let adopt_worktree = match &source.worktree_path {
+            Some(path) => {
+                if !std::path::Path::new(path).exists() {
+                    bail!(
+                        "source session's worktree no longer exists on disk: {path} — cannot hand off"
+                    );
+                }
+                let branch = source
+                    .worktree_branch
+                    .clone()
+                    .unwrap_or_else(|| source.name.clone());
+                Some((path.clone(), branch))
+            }
+            None => None,
+        };
+
+        let create_req = CreateSessionRequest {
+            name,
+            workdir: Some(source.workdir.clone()),
+            command: req.command,
+            ink: None,
+            description: req.description,
+            metadata: None,
+            idle_threshold_secs: req.idle_threshold_secs,
+            worktree: None,
+            worktree_base: None,
+            runtime: None,
+            secrets: req.secrets,
+            term_program: req.term_program,
+            budget_cost_usd: req.budget_cost_usd,
+        };
+
+        let plan = self.build_create_plan(create_req, adopt_worktree).await?;
+        self.execute_create_plan(plan).await
+    }
+
+    /// Auto-generate a handoff session name: `{source}-2`, `{source}-3`, ... — the
+    /// first suffix that doesn't collide with any existing session name (dead or
+    /// alive, matching the CLI's own client-side dedup for the common no-name case).
+    /// Falls back to `-100` unconditionally after 99 attempts, mirroring the CLI's
+    /// `deduplicate_session_name` fallback.
+    async fn next_handoff_name(&self, source_name: &str) -> Result<String> {
+        for suffix in 2..=99u32 {
+            let candidate = Self::handoff_suffixed_name(source_name, suffix);
+            if self.store.get_session(&candidate).await?.is_none() {
+                return Ok(candidate);
+            }
+        }
+        Ok(Self::handoff_suffixed_name(source_name, 100))
+    }
+
+    /// Build `{source}-{suffix}`, truncating `source` (rather than bailing) so the
+    /// result never exceeds the 128-char session-name limit.
+    fn handoff_suffixed_name(source_name: &str, suffix: u32) -> String {
+        let suffix_str = format!("-{suffix}");
+        let max_source_len = 128usize.saturating_sub(suffix_str.len());
+        let truncated: String = source_name.chars().take(max_source_len).collect();
+        format!("{}{suffix_str}", truncated.trim_end_matches('-'))
+    }
+
+    /// Insert, create the backend session, and finalize — the shared tail of
+    /// `create_session` and `handoff_session` once a [`SessionCreatePlan`] exists.
+    async fn execute_create_plan(&self, mut plan: SessionCreatePlan) -> Result<Session> {
         self.store.insert_session(&plan.session).await?;
 
         if let Err(error) = self.backend.create_session(
@@ -176,7 +266,11 @@ impl SessionManager {
     }
 
     #[allow(clippy::too_many_lines)]
-    async fn build_create_plan(&self, req: CreateSessionRequest) -> Result<SessionCreatePlan> {
+    async fn build_create_plan(
+        &self,
+        req: CreateSessionRequest,
+        adopt_worktree: Option<(String, String)>,
+    ) -> Result<SessionCreatePlan> {
         // Validate session name: must be kebab-case (lowercase alphanumeric + hyphens).
         // This prevents shell injection via wrap_command where the name is interpolated
         // into a shell string, and matches the documented naming convention.
@@ -199,8 +293,14 @@ impl SessionManager {
         let wants_worktree = req.worktree.unwrap_or(false);
         validate_workdir(&workdir)?;
 
-        // Create git worktree if requested
-        let (effective_workdir, worktree_path, worktree_branch) = if wants_worktree {
+        // Create a git worktree if requested, or adopt one handed off from another
+        // session (`pulpo handoff`) — the directory already exists, so no `git
+        // worktree add` runs; the caller has already verified it's still on disk.
+        let (effective_workdir, worktree_path, worktree_branch) = if let Some((path, branch)) =
+            adopt_worktree
+        {
+            (path.clone(), Some(path), Some(branch))
+        } else if wants_worktree {
             #[cfg(not(coverage))]
             {
                 let wt_dir = worktrees_dir(self.store.data_dir());
@@ -501,17 +601,42 @@ impl SessionManager {
     async fn purge_session(&self, session: &Session) -> Result<()> {
         let session_id = session.id.to_string();
         if let Some(ref wt_path) = session.worktree_path {
-            tracing::info!(
-                session = %session.name,
-                path = %wt_path,
-                "Cleaning up worktree after purge"
-            );
-            cleanup_worktree(wt_path, &session.workdir);
+            if self.worktree_in_use_elsewhere(wt_path, &session_id).await? {
+                tracing::debug!(
+                    session = %session.name,
+                    path = %wt_path,
+                    "Skipping worktree cleanup — still referenced by another session"
+                );
+            } else {
+                tracing::info!(
+                    session = %session.name,
+                    path = %wt_path,
+                    "Cleaning up worktree after purge"
+                );
+                cleanup_worktree(wt_path, &session.workdir);
+            }
         }
         remove_session_log(self.store.data_dir(), &session_id);
         self.store.delete_session(&session_id).await?;
         self.emit_session_deleted(session);
         Ok(())
+    }
+
+    /// True when another (non-dead) session still references `worktree_path` — guards
+    /// against reclaiming a worktree that `pulpo handoff` made two sessions share.
+    async fn worktree_in_use_elsewhere(
+        &self,
+        worktree_path: &str,
+        exclude_id: &str,
+    ) -> Result<bool> {
+        let others = self
+            .store
+            .find_live_sessions_by_worktree(worktree_path, exclude_id)
+            .await?;
+        Ok(others.first().is_some_and(|other| {
+            tracing::debug!("worktree still in use by {}", other.name);
+            true
+        }))
     }
 
     fn emit_session_deleted(&self, session: &Session) {
@@ -670,10 +795,21 @@ impl SessionManager {
         let mut logs_cleaned = 0u64;
 
         // 1. Reclaim worktrees + per-session log files for dead (stopped/lost) sessions.
+        //    A worktree shared with another still-live session (via `pulpo handoff`)
+        //    is left alone — it's reclaimed once every referencing session is dead.
         for session in &dead_sessions {
             if let Some(ref wt_path) = session.worktree_path {
-                cleanup_worktree(wt_path, &session.workdir);
-                worktrees_cleaned += 1;
+                let sid = session.id.to_string();
+                if self.worktree_in_use_elsewhere(wt_path, &sid).await? {
+                    tracing::debug!(
+                        session = %session.name,
+                        path = %wt_path,
+                        "Skipping worktree cleanup — still referenced by another session"
+                    );
+                } else {
+                    cleanup_worktree(wt_path, &session.workdir);
+                    worktrees_cleaned += 1;
+                }
             }
             if remove_session_log(&data_dir, &session.id.to_string()) {
                 logs_cleaned += 1;
@@ -2925,6 +3061,326 @@ mod tests {
         mgr.stop_session(&id, true).await.unwrap();
         let fetched = mgr.get_session(&id).await.unwrap();
         assert!(fetched.is_none());
+    }
+
+    // -- Handoff tests --
+
+    fn make_handoff_req() -> HandoffSessionRequest {
+        HandoffSessionRequest {
+            name: None,
+            command: None,
+            description: None,
+            secrets: None,
+            budget_cost_usd: None,
+            idle_threshold_secs: None,
+            term_program: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handoff_session_not_found() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let err = mgr
+            .handoff_session("nonexistent", make_handoff_req())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("session not found"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_handoff_session_auto_name_no_worktree() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let source = mgr.create_session(make_req("plan-auth")).await.unwrap();
+
+        let handed_off = mgr
+            .handoff_session(&source.id.to_string(), make_handoff_req())
+            .await
+            .unwrap();
+
+        assert_eq!(handed_off.name, "plan-auth-2");
+        assert_eq!(handed_off.workdir, source.workdir);
+        assert!(handed_off.worktree_path.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_handoff_session_auto_name_skips_existing() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let source = mgr.create_session(make_req("plan-auth")).await.unwrap();
+        mgr.create_session(make_req("plan-auth-2")).await.unwrap();
+
+        let handed_off = mgr
+            .handoff_session(&source.id.to_string(), make_handoff_req())
+            .await
+            .unwrap();
+
+        assert_eq!(handed_off.name, "plan-auth-3");
+    }
+
+    #[tokio::test]
+    async fn test_handoff_session_explicit_name() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let source = mgr.create_session(make_req("plan-auth")).await.unwrap();
+        let req = HandoffSessionRequest {
+            name: Some("implement-auth".into()),
+            ..make_handoff_req()
+        };
+
+        let handed_off = mgr
+            .handoff_session(&source.id.to_string(), req)
+            .await
+            .unwrap();
+
+        assert_eq!(handed_off.name, "implement-auth");
+    }
+
+    #[tokio::test]
+    async fn test_handoff_session_by_name() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        mgr.create_session(make_req("plan-auth")).await.unwrap();
+
+        // Resolves the source by name, same as get_session.
+        let handed_off = mgr
+            .handoff_session("plan-auth", make_handoff_req())
+            .await
+            .unwrap();
+
+        assert_eq!(handed_off.name, "plan-auth-2");
+    }
+
+    #[tokio::test]
+    async fn test_handoff_session_invalid_explicit_name() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let source = mgr.create_session(make_req("plan-auth")).await.unwrap();
+        let req = HandoffSessionRequest {
+            name: Some("Bad Name".into()),
+            ..make_handoff_req()
+        };
+
+        let err = mgr
+            .handoff_session(&source.id.to_string(), req)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("lowercase"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn test_handoff_session_passes_through_fields() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let source = mgr.create_session(make_req("plan-auth")).await.unwrap();
+        let req = HandoffSessionRequest {
+            command: Some("codex 'implement PLAN.md'".into()),
+            description: Some("Implement the plan".into()),
+            idle_threshold_secs: Some(120),
+            budget_cost_usd: Some(3.5),
+            ..make_handoff_req()
+        };
+
+        let handed_off = mgr
+            .handoff_session(&source.id.to_string(), req)
+            .await
+            .unwrap();
+
+        assert_eq!(handed_off.command, "codex 'implement PLAN.md'");
+        assert_eq!(
+            handed_off.description.as_deref(),
+            Some("Implement the plan")
+        );
+        assert_eq!(handed_off.idle_threshold_secs, Some(120));
+        assert_eq!(handed_off.meta_str(meta::BUDGET_COST_USD), Some("3.5"));
+    }
+
+    #[tokio::test]
+    async fn test_handoff_session_adopts_worktree() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let source = mgr.create_session(make_req("plan-auth")).await.unwrap();
+        let wt_tmp = tempfile::tempdir().unwrap();
+        let wt_path = wt_tmp.path().to_str().unwrap().to_owned();
+        sqlx::query("UPDATE sessions SET worktree_path = ?, worktree_branch = ? WHERE id = ?")
+            .bind(&wt_path)
+            .bind("plan-auth")
+            .bind(source.id.to_string())
+            .execute(mgr.store().pool())
+            .await
+            .unwrap();
+
+        let handed_off = mgr
+            .handoff_session(&source.id.to_string(), make_handoff_req())
+            .await
+            .unwrap();
+
+        assert_eq!(handed_off.worktree_path.as_deref(), Some(wt_path.as_str()));
+        assert_eq!(handed_off.worktree_branch.as_deref(), Some("plan-auth"));
+        // `pulpo worktree list` filters on worktree_path being set — it's naturally
+        // included with no server-side change needed.
+        assert!(handed_off.worktree_path.is_some());
+
+        // The new session's tmux command must run in the worktree, not source.workdir.
+        let calls = backend.calls.lock().unwrap();
+        assert!(
+            calls.iter().any(|c| c.contains(&wt_path)),
+            "expected create call in worktree dir, got: {calls:?}"
+        );
+        drop(calls);
+    }
+
+    #[tokio::test]
+    async fn test_handoff_session_worktree_missing_on_disk_bails() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let source = mgr.create_session(make_req("plan-auth")).await.unwrap();
+        sqlx::query("UPDATE sessions SET worktree_path = ?, worktree_branch = ? WHERE id = ?")
+            .bind("/tmp/pulpo-test-definitely-does-not-exist-xyz")
+            .bind("plan-auth")
+            .bind(source.id.to_string())
+            .execute(mgr.store().pool())
+            .await
+            .unwrap();
+
+        let err = mgr
+            .handoff_session(&source.id.to_string(), make_handoff_req())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no longer exists"), "got: {err}");
+    }
+
+    #[test]
+    fn test_handoff_suffixed_name_no_truncation_needed() {
+        assert_eq!(
+            SessionManager::handoff_suffixed_name("plan-auth", 2),
+            "plan-auth-2"
+        );
+    }
+
+    #[test]
+    fn test_handoff_suffixed_name_truncates_long_source() {
+        let long = "a".repeat(130);
+        let name = SessionManager::handoff_suffixed_name(&long, 2);
+        assert_eq!(name.len(), 128);
+        assert!(name.ends_with("-2"));
+    }
+
+    #[test]
+    fn test_handoff_suffixed_name_trims_trailing_hyphen_after_truncation() {
+        // 125 'a's + a hyphen at position 126 + filler — truncating to 126 chars
+        // (128 - len("-2")) would otherwise leave a dangling hyphen before the suffix.
+        let mut long = "a".repeat(125);
+        long.push('-');
+        long.push_str("bbbb");
+        let name = SessionManager::handoff_suffixed_name(&long, 2);
+        assert!(!name.contains("--"), "got: {name}");
+        assert!(name.ends_with("-2"));
+    }
+
+    #[tokio::test]
+    async fn test_next_handoff_name_exhausts_to_suffix_100() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        for i in 2..=99u32 {
+            let s = Session {
+                id: Uuid::new_v4(),
+                name: format!("plan-auth-{i}"),
+                workdir: "/tmp".into(),
+                command: "echo".into(),
+                ..Default::default()
+            };
+            mgr.store().insert_session(&s).await.unwrap();
+        }
+
+        let name = mgr.next_handoff_name("plan-auth").await.unwrap();
+        assert_eq!(name, "plan-auth-100");
+    }
+
+    // -- Worktree cleanup guard (shared worktrees via handoff) --
+
+    #[tokio::test]
+    async fn test_purge_session_skips_cleanup_when_worktree_shared() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let wt_tmp = tempfile::tempdir().unwrap();
+        let wt_path = wt_tmp.path().to_str().unwrap().to_owned();
+
+        let source = mgr.create_session(make_req("plan-auth")).await.unwrap();
+        sqlx::query("UPDATE sessions SET worktree_path = ? WHERE id = ?")
+            .bind(&wt_path)
+            .bind(source.id.to_string())
+            .execute(mgr.store().pool())
+            .await
+            .unwrap();
+
+        // A second, still-active session shares the same worktree (as a real
+        // `pulpo handoff` session would).
+        let handoff = mgr.create_session(make_req("plan-auth-2")).await.unwrap();
+        sqlx::query("UPDATE sessions SET worktree_path = ? WHERE id = ?")
+            .bind(&wt_path)
+            .bind(handoff.id.to_string())
+            .execute(mgr.store().pool())
+            .await
+            .unwrap();
+
+        // Stop + purge the source. The handoff session is still live and shares the
+        // worktree, so the directory must survive.
+        mgr.stop_session(&source.id.to_string(), true)
+            .await
+            .unwrap();
+
+        assert!(
+            std::path::Path::new(&wt_path).exists(),
+            "worktree should survive while another live session references it"
+        );
+        assert!(
+            mgr.get_session(&source.id.to_string())
+                .await
+                .unwrap()
+                .is_none(),
+            "purge always deletes the source row itself"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_purge_session_cleans_solo_worktree() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let wt_tmp = tempfile::tempdir().unwrap();
+        let wt_path = wt_tmp.path().to_str().unwrap().to_owned();
+
+        let session = mgr.create_session(make_req("solo-task")).await.unwrap();
+        sqlx::query("UPDATE sessions SET worktree_path = ? WHERE id = ?")
+            .bind(&wt_path)
+            .bind(session.id.to_string())
+            .execute(mgr.store().pool())
+            .await
+            .unwrap();
+
+        mgr.stop_session(&session.id.to_string(), true)
+            .await
+            .unwrap();
+
+        assert!(
+            !std::path::Path::new(&wt_path).exists(),
+            "a solo (unshared) worktree must still be reclaimed on purge"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_dead_sessions_reclaims_shared_worktree_when_both_dead() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let wt_tmp = tempfile::tempdir().unwrap();
+        let wt_path = wt_tmp.path().to_str().unwrap().to_owned();
+
+        let a = mgr.create_session(make_req("plan-auth")).await.unwrap();
+        let b = mgr.create_session(make_req("plan-auth-2")).await.unwrap();
+        for id in [a.id, b.id] {
+            sqlx::query("UPDATE sessions SET worktree_path = ?, status = 'stopped' WHERE id = ?")
+                .bind(&wt_path)
+                .bind(id.to_string())
+                .execute(mgr.store().pool())
+                .await
+                .unwrap();
+        }
+
+        let result = mgr.cleanup_dead_sessions().await.unwrap();
+
+        assert!(
+            !std::path::Path::new(&wt_path).exists(),
+            "worktree should be reclaimed once every referencing session is dead"
+        );
+        assert_eq!(result.sessions_deleted, 2);
     }
 
     #[tokio::test]
