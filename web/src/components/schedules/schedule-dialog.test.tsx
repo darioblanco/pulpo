@@ -12,7 +12,6 @@ vi.mock('sonner', () => ({
 vi.mock('@/api/client', () => ({
   createSchedule: vi.fn(),
   updateSchedule: vi.fn(),
-  getInks: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
@@ -20,7 +19,6 @@ vi.mock('@/api/client', () => ({
 
 const mockCreateSchedule = vi.mocked(api.createSchedule);
 const mockUpdateSchedule = vi.mocked(api.updateSchedule);
-const mockGetInks = vi.mocked(api.getInks);
 
 function makeSchedule(overrides: Partial<ScheduleInfo> = {}): ScheduleInfo {
   return {
@@ -45,8 +43,6 @@ function makeSchedule(overrides: Partial<ScheduleInfo> = {}): ScheduleInfo {
 beforeEach(() => {
   mockCreateSchedule.mockReset();
   mockUpdateSchedule.mockReset();
-  mockGetInks.mockReset();
-  mockGetInks.mockResolvedValue({ inks: {} });
   vi.mocked(toast.error).mockReset();
   vi.mocked(toast.success).mockReset();
 });
@@ -160,7 +156,7 @@ describe('ScheduleDialog', () => {
     });
   });
 
-  it('shows error when neither command nor ink is provided', async () => {
+  it('shows error when command is not provided', async () => {
     renderDialog();
     fireEvent.change(screen.getByTestId('schedule-name-input'), {
       target: { value: 'my-sched' },
@@ -172,9 +168,7 @@ describe('ScheduleDialog', () => {
     fireEvent.submit(screen.getByTestId('schedule-form'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('schedule-form-error')).toHaveTextContent(
-        'Command or ink is required',
-      );
+      expect(screen.getByTestId('schedule-form-error')).toHaveTextContent('Command is required');
     });
   });
 
@@ -362,29 +356,6 @@ describe('ScheduleDialog', () => {
     await waitFor(() => {
       expect(screen.getByTestId('schedule-submit-button')).toHaveTextContent('Saving...');
     });
-  });
-
-  // Ink integration
-
-  it('shows ink selector when inks are available', async () => {
-    mockGetInks.mockResolvedValue({
-      inks: {
-        reviewer: { description: 'Code review', command: 'claude code' },
-      },
-    });
-    renderDialog();
-    await waitFor(() => {
-      expect(screen.getByTestId('schedule-ink-select')).toBeInTheDocument();
-    });
-  });
-
-  it('does not show ink selector when no inks', async () => {
-    mockGetInks.mockResolvedValue({ inks: {} });
-    renderDialog();
-    await waitFor(() => {
-      expect(mockGetInks).toHaveBeenCalled();
-    });
-    expect(screen.queryByTestId('schedule-ink-select')).not.toBeInTheDocument();
   });
 
   // Closed dialog renders nothing

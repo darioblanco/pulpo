@@ -55,47 +55,24 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
   "name": "my-api",
   "command": "claude -p 'Fix the auth bug'",
   "workdir": "/path/to/repo",
-  "ink": "reviewer",
   "description": "Fix auth bug in login endpoint",
   "metadata": {},
   "idle_threshold_secs": 120,
   "worktree": true,
   "worktree_base": "main",
   "runtime": "tmux",
-  "secrets": ["GITHUB_TOKEN"]
+  "secrets": ["GITHUB_TOKEN"],
+  "budget_cost_usd": 5.0
 }
 ```
 
-`name` is required. All other fields are optional. If `ink` is specified, its `command` is used as the default (explicit `command` overrides it). `idle_threshold_secs` overrides the global idle threshold for this session (`null` = use global, `0` = never idle). `worktree_base` specifies the branch to fork from (implies `worktree: true`). Session responses include `worktree_branch` with the branch name when a worktree is active.
+`name` is required. All other fields are optional; without a `command`, the session falls back to the node's `default_command` or `$SHELL`. `idle_threshold_secs` overrides the global idle threshold for this session (`null` = use global, `0` = never idle). `worktree_base` specifies the branch to fork from (implies `worktree: true`). `budget_cost_usd` sets a cost budget for this session — the watchdog alerts at 80% and stops the session at 100%. Session responses include `worktree_branch` with the branch name when a worktree is active.
 
 There is no cross-node targeting — a create request always runs on the `pulpod` that
 receives it. To spawn on another machine, send the request to that machine directly (point
 the CLI or an HTTP client at its address, e.g. `pulpo --node gpu-box spawn ...`).
 `GET /api/v1/sessions/:id/stream` is local-only by the same principle; remote terminal
 proxying is intentionally out of scope.
-
-## Inks
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/inks` | List all configured inks |
-| GET | `/api/v1/inks/:name` | Get a specific ink |
-| POST | `/api/v1/inks/:name` | Create a new ink |
-| PUT | `/api/v1/inks/:name` | Update an existing ink |
-| DELETE | `/api/v1/inks/:name` | Delete an ink |
-
-Ink request/response body:
-
-```json
-{
-  "description": "Code reviewer focused on correctness",
-  "command": "claude -p 'review this code'",
-  "secrets": ["GITHUB_TOKEN"],
-  "runtime": "tmux"
-}
-```
-
-All fields are optional. `secrets` defaults to `[]`, `runtime` defaults to `null` (inherits tmux). Changes are persisted to `config.toml`.
 
 ## Schedules
 
@@ -107,6 +84,9 @@ All fields are optional. `secrets` defaults to `[]`, `runtime` defaults to `null
 | PUT | `/api/v1/schedules/:id` | Update a schedule |
 | DELETE | `/api/v1/schedules/:id` | Delete a schedule |
 | GET | `/api/v1/schedules/:id/runs` | List schedule run history |
+
+Like sessions, schedules accept a `budget_cost_usd` field — applied to every session the
+schedule fires (watchdog alerts at 80%, stops at 100%).
 
 ## Secrets
 

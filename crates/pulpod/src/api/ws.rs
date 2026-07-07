@@ -210,7 +210,6 @@ mod tests {
             metadata: None,
             command: Some("echo test".into()),
             description: None,
-            ink: None,
             idle_threshold_secs: None,
             worktree: None,
             worktree_base: None,

@@ -6,7 +6,6 @@ import * as api from '@/api/client';
 
 vi.mock('@/api/client', () => ({
   createSession: vi.fn(),
-  getInks: vi.fn(),
   getSecrets: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
@@ -14,7 +13,6 @@ vi.mock('@/api/client', () => ({
 }));
 
 const mockCreateSession = vi.mocked(api.createSession);
-const mockGetInks = vi.mocked(api.getInks);
 const mockGetSecrets = vi.mocked(api.getSecrets);
 
 const defaultSession = {
@@ -35,9 +33,7 @@ const defaultSession = {
 
 beforeEach(() => {
   mockCreateSession.mockReset();
-  mockGetInks.mockReset();
   mockGetSecrets.mockReset();
-  mockGetInks.mockResolvedValue({ inks: {} });
   mockGetSecrets.mockResolvedValue([]);
 });
 
@@ -141,132 +137,6 @@ describe('NewSessionDialog', () => {
     });
   });
 
-  it('fetches inks when dialog opens', async () => {
-    mockGetInks.mockResolvedValue({
-      inks: {
-        reviewer: {
-          description: 'Code review',
-          command: 'claude code --model opus-4',
-        },
-      },
-    });
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    await openDialog();
-
-    await waitFor(() => {
-      expect(mockGetInks).toHaveBeenCalled();
-    });
-  });
-
-  it('shows ink selector when inks are available', async () => {
-    mockGetInks.mockResolvedValue({
-      inks: {
-        reviewer: {
-          description: 'Code review',
-          command: 'claude code',
-        },
-      },
-    });
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    await openDialog();
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('Ink')).toBeInTheDocument();
-    });
-  });
-
-  it('does not show ink selector when no inks available', async () => {
-    mockGetInks.mockResolvedValue({ inks: {} });
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    await openDialog();
-
-    // Wait for inks to load (empty)
-    await waitFor(() => {
-      expect(mockGetInks).toHaveBeenCalled();
-    });
-    expect(screen.queryByLabelText('Ink')).not.toBeInTheDocument();
-  });
-
-  it('auto-fills command when ink is selected', async () => {
-    mockGetInks.mockResolvedValue({
-      inks: {
-        reviewer: {
-          description: 'Code review',
-          command: 'codex --model gpt-4o',
-        },
-      },
-    });
-    mockCreateSession.mockResolvedValue({
-      session: { ...defaultSession, ink: 'reviewer', command: 'codex --model gpt-4o' },
-    });
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    const user = await openDialog();
-
-    // Wait for inks to load
-    await waitFor(() => {
-      expect(screen.getByLabelText('Ink')).toBeInTheDocument();
-    });
-
-    // Select the ink
-    const inkSelect = screen.getByRole('combobox', { name: 'Ink' });
-    await user.click(inkSelect);
-    await waitFor(() => {
-      expect(screen.getAllByText(/reviewer/).length).toBeGreaterThan(0);
-    });
-    const options = screen.getAllByText(/reviewer/);
-    const listboxOption = options.find((el) => el.closest('[role="option"]'));
-    if (listboxOption) await user.click(listboxOption);
-
-    // Fill required fields and submit
-    await user.type(screen.getByLabelText('Name'), 'ink-test');
-    await user.type(screen.getByLabelText('Working directory'), '/repo');
-
-    const form = screen.getByLabelText('Working directory').closest('form')!;
-    fireEvent.submit(form);
-
-    await waitFor(() => {
-      expect(mockCreateSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          ink: 'reviewer',
-          command: 'codex --model gpt-4o',
-        }),
-      );
-    });
-  });
-
-  it('shows ink summary when ink is selected', async () => {
-    mockGetInks.mockResolvedValue({
-      inks: {
-        reviewer: {
-          description: 'Code review',
-          command: 'codex --autonomous',
-        },
-      },
-    });
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    const user = await openDialog();
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('Ink')).toBeInTheDocument();
-    });
-
-    // Select the ink
-    const inkSelect = screen.getByRole('combobox', { name: 'Ink' });
-    await user.click(inkSelect);
-    await waitFor(() => {
-      expect(screen.getAllByText(/reviewer/).length).toBeGreaterThan(0);
-    });
-    const options = screen.getAllByText(/reviewer/);
-    const listboxOption = options.find((el) => el.closest('[role="option"]'));
-    if (listboxOption) await user.click(listboxOption);
-
-    await waitFor(() => {
-      const summary = screen.getByTestId('ink-summary');
-      expect(summary).toBeInTheDocument();
-      expect(summary.textContent).toContain('codex');
-    });
-  });
-
   it('shows worktree toggle in dialog', async () => {
     render(<NewSessionDialog onCreated={vi.fn()} />);
     await openDialog();
@@ -323,16 +193,6 @@ describe('NewSessionDialog', () => {
         workdir: '/repo',
       });
     });
-  });
-
-  it('handles getInks failure gracefully', async () => {
-    mockGetInks.mockRejectedValue(new Error('Network error'));
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    await openDialog();
-
-    // Dialog should still work without ink selector
-    expect(screen.getByText('Create New Session')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Ink')).not.toBeInTheDocument();
   });
 
   it('shows secrets picker when secrets are available', async () => {

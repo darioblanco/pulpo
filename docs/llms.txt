@@ -31,7 +31,6 @@ Canonical runtime concepts:
 - Session states: creating, active, idle, ready, stopped, lost.
 - Resume applies to lost and ready sessions. Stopped sessions cannot be resumed.
 - Sessions run arbitrary shell commands — no built-in provider abstraction.
-- Inks are reusable command templates with a description and command field.
 - pulpod exposes REST and SSE on port 7433 by default.
 - Config path defaults to ~/.pulpo/config.toml.
 - `pulpo usage --scan` reads Claude Code, Codex, and pi session files directly from disk —
@@ -44,6 +43,9 @@ Canonical runtime concepts:
 - There is no controller/node control plane (removed July 2026) — every pulpod is standalone.
   The supported multi-machine path is direct access to each node (`pulpo --node <name>`, saved
   web UI connections, SSH/tmux) plus the event-forwarding backbone for aggregated visibility.
+- There is no ink preset registry (removed July 2026) — command and secrets are set directly
+  per session/schedule (`--secret`), and cost budgets are set with `--budget-cost` on both
+  `pulpo spawn` and `pulpo schedule add`.
 
 Installation:
 - Homebrew: brew install darioblanco/tap/pulpo

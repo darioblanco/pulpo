@@ -16,7 +16,7 @@ status from anywhere, and recover cleanly when things go wrong.
 
 ## Non-Goals
 
-- Defining the "best" inks or prompting methodology
+- Defining the "best" prompting methodology or command presets
 - Replacing specialized local agent UX tools
 - Competing with hosted agent products on model quality or cloud UX
 - Building a monolithic all-in-one platform

@@ -16,7 +16,6 @@ vi.mock('@/api/client', () => ({
   updateSchedule: vi.fn(),
   deleteSchedule: vi.fn(),
   createSchedule: vi.fn(),
-  getInks: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),

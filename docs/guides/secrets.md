@@ -10,7 +10,7 @@ This guide matters most for:
 - teams keeping runtime execution on infrastructure they control
 - sessions that need agent authentication tokens
 
-Secrets are environment variables that get injected into agent sessions. They provide a way to pass sensitive values (API keys, tokens, credentials) to your sessions without hardcoding them in commands or inks.
+Secrets are environment variables that get injected into agent sessions. They provide a way to pass sensitive values (API keys, tokens, credentials) to your sessions without hardcoding them in commands.
 
 For a full multi-node example, see
 [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale).
@@ -84,34 +84,6 @@ When injected, secrets are written to a temporary file (`/tmp/pulpo-secrets-<ses
 
 - Secret values must **not contain newlines or null bytes** (rejected with 400 error)
 - If two `--secret` flags resolve to the **same env var** (e.g., both map to `GITHUB_TOKEN` via `--env`), spawn fails with a clear error — use only one
-
-## Inks with Secrets
-
-Inks can bundle a command and its secrets, making them reusable session blueprints:
-
-```toml
-[inks.work-coder]
-command = "claude --dangerously-skip-permissions -p 'Implement the changes'"
-description = "Coder with work GitHub token"
-secrets = ["GH_WORK", "ANTHROPIC_KEY"]
-```
-
-Then spawn with just the ink — no `--secret` flags needed:
-
-```bash
-pulpo spawn my-task --ink work-coder
-# Equivalent to:
-# pulpo spawn my-task --secret GH_WORK --secret ANTHROPIC_KEY -- claude ...
-```
-
-Spawn flags extend ink defaults:
-
-```bash
-# Add extra secrets beyond what the ink provides
-pulpo spawn my-task --ink work-coder --secret EXTRA_TOKEN
-```
-
-Ink secrets and request `--secret` flags are merged (deduplicated).
 
 ## Example Workflow
 

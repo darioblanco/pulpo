@@ -49,7 +49,6 @@ Most scripts use these environment variables:
 |---------|-------------|
 | `cli/01-basic-spawn.sh` | Spawn a session, check status, view logs |
 | `cli/02-spawn-and-detach.sh` | Spawn without attaching (for scripts/CI) |
-| `cli/03-spawn-with-ink.sh` | Use ink presets for reusable commands |
 | `cli/04-idle-threshold.sh` | Per-session idle control (never idle, custom threshold) |
 | `cli/05-attach-and-input.sh` | Attach to a running session, send input |
 | `cli/06-recovery.sh` | Resume lost/ready sessions after crash or reboot |
@@ -72,7 +71,6 @@ Most scripts use these environment variables:
 | Example | Description |
 |---------|-------------|
 | `config/minimal.toml` | Zero-config local setup |
-| `config/inks.toml` | Ink presets for different agent workflows |
 | `config/watchdog.toml` | Watchdog tuning (idle, memory, patterns) |
 | `config/multi-node-tailscale.toml` | Multi-node with Tailscale discovery |
 | `config/multi-node-public.toml` | Multi-node with auth + mDNS |

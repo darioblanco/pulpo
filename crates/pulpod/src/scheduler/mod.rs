@@ -146,7 +146,6 @@ async fn fire_due_schedules(
             } else {
                 Some(schedule.command.clone())
             },
-            ink: schedule.ink.clone(),
             description: schedule.description.clone(),
             metadata: None,
             idle_threshold_secs: None,
@@ -155,7 +154,7 @@ async fn fire_due_schedules(
             runtime,
             secrets,
             term_program: None,
-            budget_cost_usd: None,
+            budget_cost_usd: schedule.budget_cost_usd,
         };
 
         let result = session_manager.create_session(req).await;
@@ -199,9 +198,6 @@ async fn fire_due_schedules(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(not(coverage))]
-    use std::collections::HashMap;
-
     use super::*;
     use chrono::{Duration as ChronoDuration, TimeZone, Utc};
 
@@ -249,6 +245,7 @@ mod tests {
             secrets: vec![],
             worktree: None,
             worktree_base: None,
+            budget_cost_usd: None,
             enabled: true,
             last_run_at: None,
             last_session_id: None,
@@ -275,6 +272,7 @@ mod tests {
             secrets: vec![],
             worktree: None,
             worktree_base: None,
+            budget_cost_usd: None,
             enabled: true,
             last_run_at: None,
             last_session_id: None,
@@ -295,7 +293,6 @@ mod tests {
         let manager = crate::session::manager::SessionManager::new(
             std::sync::Arc::new(crate::backend::StubBackend),
             store.clone(),
-            HashMap::new(),
             None,
         )
         .with_no_stale_grace();
@@ -322,6 +319,24 @@ mod tests {
         // last_run was recorded on the schedule.
         let after = store.get_schedule("sched-1").await.unwrap().unwrap();
         assert!(after.last_session_id.is_some());
+    }
+
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_fire_due_schedules_passes_budget_cost_usd_to_session() {
+        let (manager, store) = scheduler_test_manager().await;
+        let mut schedule = due_schedule("sched-budget", "nightly-budget", "/tmp");
+        schedule.budget_cost_usd = Some(3.5);
+        store.insert_schedule(&schedule).await.unwrap();
+
+        fire_due_schedules(&manager, &store, None).await;
+
+        let sessions = store.list_sessions().await.unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].meta_str(pulpo_common::session::meta::BUDGET_COST_USD),
+            Some("3.5")
+        );
     }
 
     #[cfg(not(coverage))]
@@ -358,6 +373,7 @@ mod tests {
             secrets: vec![],
             worktree: None,
             worktree_base: None,
+            budget_cost_usd: None,
             enabled: true,
             last_run_at: Some(
                 (now_local - ChronoDuration::seconds(10))
@@ -389,6 +405,7 @@ mod tests {
             secrets: vec![],
             worktree: None,
             worktree_base: None,
+            budget_cost_usd: None,
             enabled: true,
             last_run_at: None,
             last_session_id: None,
@@ -414,6 +431,7 @@ mod tests {
             secrets: vec![],
             worktree: None,
             worktree_base: None,
+            budget_cost_usd: None,
             enabled: false,
             last_run_at: None,
             last_session_id: None,

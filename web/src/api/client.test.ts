@@ -18,7 +18,6 @@ import {
   addPeer,
   removePeer,
   getPairingUrl,
-  getInks,
   resolveWsUrl,
   resolveBaseUrl,
   authHeaders,
@@ -514,12 +513,8 @@ describe('updateRemoteConfig', () => {
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(response) });
 
     const data = {
-      inks: {
-        reviewer: {
-          description: 'Test',
-          command: 'claude code',
-        },
-      },
+      node_name: 'macbook',
+      watchdog_enabled: true,
     };
     const result = await updateRemoteConfig('macbook:7433', data);
 
@@ -535,7 +530,7 @@ describe('updateRemoteConfig', () => {
     const response = { config: {}, restart_required: false };
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(response) });
 
-    await updateRemoteConfig('https://remote:7433', { inks: {} });
+    await updateRemoteConfig('https://remote:7433', { watchdog_enabled: true });
 
     expect(mockFetch).toHaveBeenCalledWith('https://remote:7433/api/v1/config', expect.anything());
   });
@@ -620,18 +615,6 @@ describe('getPairingUrl', () => {
     const result = await getPairingUrl();
 
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/auth/pairing-url', { headers: {} });
-    expect(result).toEqual(resp);
-  });
-});
-
-describe('getInks', () => {
-  it('fetches /api/v1/inks', async () => {
-    const resp = { inks: { coder: { description: null, command: 'claude code' } } };
-    mockFetch.mockResolvedValue(jsonResponse(resp));
-
-    const result = await getInks();
-
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/inks', { headers: {} });
     expect(result).toEqual(resp);
   });
 });

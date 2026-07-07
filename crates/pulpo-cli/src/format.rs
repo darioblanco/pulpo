@@ -1,5 +1,5 @@
 //! Terminal output rendering for the `pulpo` CLI: table and report
-//! formatting for sessions, nodes, usage, schedules, secrets, and inks.
+//! formatting for sessions, nodes, usage, schedules, and secrets.
 //!
 //! Pure move from `lib.rs` — no logic changes.
 
@@ -208,7 +208,7 @@ fn fmt_quota(s: &SessionProjection) -> String {
     )
 }
 
-/// Append a labeled cost-rollup section (per-ink / per-repo), most expensive first.
+/// Append a labeled cost-rollup section (per-repo), most expensive first.
 fn append_dimension_rollups(lines: &mut Vec<String>, heading: &str, rollups: &[DimensionRollup]) {
     if rollups.is_empty() {
         return;
@@ -271,7 +271,6 @@ pub fn format_usage_projection(p: &UsageProjectionResponse) -> String {
         }
     }
 
-    append_dimension_rollups(&mut lines, "By ink:", &p.inks);
     append_dimension_rollups(&mut lines, "By repo:", &p.repos);
 
     lines.join(
@@ -376,63 +375,6 @@ pub fn format_worktree_sessions(sessions: &[&Session]) -> String {
             "{:<20} {:<20} {:<10} {}",
             s.name, branch, s.status, path
         ));
-    }
-    lines.join("\n")
-}
-
-/// Format a map of inks as a table.
-#[cfg_attr(coverage, allow(dead_code))]
-pub fn format_inks(inks: &serde_json::Map<String, serde_json::Value>) -> String {
-    if inks.is_empty() {
-        return "No inks configured.".into();
-    }
-    let mut lines = vec![format!(
-        "{:<20} {:<12} {:<30} {}",
-        "NAME", "RUNTIME", "COMMAND", "DESCRIPTION"
-    )];
-    let mut names: Vec<&String> = inks.keys().collect();
-    names.sort();
-    for name in names {
-        let ink = &inks[name];
-        let runtime = ink
-            .get("runtime")
-            .and_then(|v| v.as_str())
-            .unwrap_or("tmux");
-        let command = ink.get("command").and_then(|v| v.as_str()).unwrap_or("-");
-        let desc = ink
-            .get("description")
-            .and_then(|v| v.as_str())
-            .unwrap_or("-");
-        // Truncate command for display (char-safe to avoid multi-byte panic)
-        let cmd_display = if command.chars().count() > 28 {
-            let truncated: String = command.chars().take(25).collect();
-            format!("{truncated}...")
-        } else {
-            command.to_owned()
-        };
-        lines.push(format!("{name:<20} {runtime:<12} {cmd_display:<30} {desc}"));
-    }
-    lines.join("\n")
-}
-
-/// Format a single ink detail view.
-#[cfg_attr(coverage, allow(dead_code))]
-pub fn format_ink_detail(name: &str, ink: &serde_json::Value) -> String {
-    let mut lines = vec![format!("Ink: {name}")];
-    if let Some(desc) = ink.get("description").and_then(|v| v.as_str()) {
-        lines.push(format!("  Description: {desc}"));
-    }
-    if let Some(cmd) = ink.get("command").and_then(|v| v.as_str()) {
-        lines.push(format!("  Command:     {cmd}"));
-    }
-    if let Some(runtime) = ink.get("runtime").and_then(|v| v.as_str()) {
-        lines.push(format!("  Runtime:     {runtime}"));
-    }
-    if let Some(secrets) = ink.get("secrets").and_then(|v| v.as_array())
-        && !secrets.is_empty()
-    {
-        let names: Vec<&str> = secrets.iter().filter_map(|s| s.as_str()).collect();
-        lines.push(format!("  Secrets:     {}", names.join(", ")));
     }
     lines.join("\n")
 }
@@ -847,7 +789,6 @@ mod tests {
         SessionProjection {
             session_id: "id".into(),
             session_name: "my-task".into(),
-            ink: Some("coder".into()),
             workdir: "/repo".into(),
             usage_source: Some("claude-jsonl".into()),
             auth_provider: Some("claude.ai".into()),
@@ -901,7 +842,6 @@ mod tests {
             generated_at: "t".into(),
             sessions: vec![],
             accounts: vec![],
-            inks: vec![],
             repos: vec![],
         };
         assert_eq!(
@@ -928,7 +868,6 @@ mod tests {
                 max_quota_used_percent: None,
                 cost_is_exact: true,
             }],
-            inks: vec![],
             repos: vec![],
         };
         let out = format_usage_projection(&resp);
@@ -963,7 +902,6 @@ mod tests {
                 max_quota_used_percent: None,
                 cost_is_exact: false,
             }],
-            inks: vec![],
             repos: vec![],
         };
         let out = format_usage_projection(&resp);
@@ -972,20 +910,12 @@ mod tests {
     }
 
     #[test]
-    fn test_format_usage_projection_shows_ink_and_repo_rollups() {
+    fn test_format_usage_projection_shows_repo_rollups() {
         let resp = UsageProjectionResponse {
             node_name: "n".into(),
             generated_at: "t".into(),
             sessions: vec![sample_projection()],
             accounts: vec![],
-            inks: vec![DimensionRollup {
-                label: "nightly".into(),
-                session_count: 2,
-                total_tokens: 1_000_000,
-                total_cost_usd: Some(11.0),
-                cost_per_hour: Some(1.0),
-                cost_is_exact: true,
-            }],
             repos: vec![DimensionRollup {
                 label: "/repos/api".into(),
                 session_count: 3,
@@ -996,9 +926,6 @@ mod tests {
             }],
         };
         let out = format_usage_projection(&resp);
-        assert!(out.contains("By ink:"));
-        assert!(out.contains("nightly"));
-        assert!(out.contains("$11.00")); // exact ink cost, no ~
         assert!(out.contains("By repo:"));
         assert!(out.contains("/repos/api"));
         assert!(out.contains("~$40.00")); // scraped repo cost → estimated marker
@@ -1156,77 +1083,6 @@ mod tests {
     }
 
     #[test]
-    fn test_format_inks_empty() {
-        let inks = serde_json::Map::new();
-        assert_eq!(format_inks(&inks), "No inks configured.");
-    }
-
-    #[test]
-    fn test_format_inks_with_entries() {
-        let mut inks = serde_json::Map::new();
-        inks.insert(
-            "coder".into(),
-            serde_json::json!({
-                "description": "A coder",
-                "command": "claude -p 'code'",
-                "runtime": "docker"
-            }),
-        );
-        let output = format_inks(&inks);
-        assert!(output.contains("coder"));
-        assert!(output.contains("docker"));
-        assert!(output.contains("A coder"));
-    }
-
-    #[test]
-    fn test_format_inks_header() {
-        let mut inks = serde_json::Map::new();
-        inks.insert("test".into(), serde_json::json!({}));
-        let output = format_inks(&inks);
-        assert!(output.contains("NAME"));
-        assert!(output.contains("RUNTIME"));
-        assert!(output.contains("COMMAND"));
-        assert!(output.contains("DESCRIPTION"));
-    }
-
-    #[test]
-    fn test_format_inks_long_command_truncated() {
-        let mut inks = serde_json::Map::new();
-        inks.insert(
-            "longcmd".into(),
-            serde_json::json!({
-                "command": "this is a very long command that exceeds the display limit for the table"
-            }),
-        );
-        let output = format_inks(&inks);
-        assert!(output.contains("..."));
-    }
-
-    #[test]
-    fn test_format_ink_detail() {
-        let ink = serde_json::json!({
-            "description": "A coder ink",
-            "command": "claude -p 'code'",
-            "runtime": "docker",
-            "secrets": ["GH_TOKEN", "NPM_TOKEN"]
-        });
-        let output = format_ink_detail("coder", &ink);
-        assert!(output.contains("Ink: coder"));
-        assert!(output.contains("A coder ink"));
-        assert!(output.contains("claude -p 'code'"));
-        assert!(output.contains("docker"));
-        assert!(output.contains("GH_TOKEN, NPM_TOKEN"));
-    }
-
-    #[test]
-    fn test_format_ink_detail_minimal() {
-        let ink = serde_json::json!({});
-        let output = format_ink_detail("bare", &ink);
-        assert!(output.contains("Ink: bare"));
-        assert!(!output.contains("Description"));
-    }
-
-    #[test]
     fn test_format_local_time_valid_utc() {
         let result = format_local_time("2026-03-18T03:00:00Z");
         assert!(result.contains("2026-03-18"));
@@ -1257,20 +1113,6 @@ mod tests {
         // Multi-byte input should not panic
         let result = format_local_time("日本語テストの文字列です");
         assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn test_format_inks_multibyte_command_safe() {
-        let mut inks = serde_json::Map::new();
-        inks.insert(
-            "test".into(),
-            serde_json::json!({
-                "command": "日本語コマンドですこれは長い文字列で切り捨てテスト"
-            }),
-        );
-        // Should not panic on multi-byte truncation
-        let output = format_inks(&inks);
-        assert!(output.contains("test"));
     }
 
     #[test]

@@ -9,7 +9,6 @@ import type {
   UpdateConfigRequest,
   UpdateConfigResponse,
   PairingUrlResponse,
-  InksResponse,
   CreateSessionRequest,
   CreateSessionResponse,
   CleanupSessionsResponse,
@@ -81,11 +80,6 @@ export function resolveWsUrl(path: string): string {
     wsUrl += `?token=${encodeURIComponent(token)}`;
   }
   return wsUrl;
-}
-
-export async function getInks(): Promise<InksResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/inks`);
-  return res.json();
 }
 
 export async function getNode(): Promise<NodeInfo> {

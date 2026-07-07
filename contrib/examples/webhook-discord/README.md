@@ -28,7 +28,7 @@ POST <your endpoint>
   "occurred_at": "2026-06-13T12:00:00Z",
   "node": "mac-mini",
   "session": {                  // present for session-scoped events
-    "id": "...", "name": "fix-auth", "status": "idle", "ink": "coder",
+    "id": "...", "name": "fix-auth", "status": "idle",
     "git_branch": "...", "pr_url": null,
     "cost_usd": 2.5, "total_tokens": 1234000, "pool": "subscription"
   },

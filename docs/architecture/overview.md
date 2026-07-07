@@ -123,8 +123,6 @@ pulpo spawn lint-check -- npm run lint
 pulpo spawn review -- gemini "review this code"
 ```
 
-Inks provide reusable command templates (see [Configuration Guide](/guides/configuration)).
-
 ## Operational Layers
 
 These are important features, but they sit above the core runtime rather than defining it.
@@ -209,7 +207,7 @@ and break standalone operation. Same principle as events: **local-first, then ag
 ## Data Flow
 
 ```
-Session spawn → resolve_ink → build_command → tmux create
+Session spawn → resolve_command → build_command → tmux create
        ↓                                                                           ↓
     SQLite                                                                     Agent runs
        ↓                                                                           ↓

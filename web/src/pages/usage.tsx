@@ -41,7 +41,7 @@ function accountLabel(a: AccountRollup): string {
   return a.email ?? a.provider ?? 'unknown';
 }
 
-/** A cost-attribution breakdown by ink or repo (most expensive first). */
+/** A cost-attribution breakdown by repo (most expensive first). */
 function DimensionTable({ title, rows }: { title: string; rows: DimensionRollup[] }) {
   if (rows.length === 0) return null;
   return (
@@ -137,9 +137,8 @@ export function UsagePage() {
               </div>
             )}
 
-            {(data.inks.length > 0 || data.repos.length > 0) && (
+            {data.repos.length > 0 && (
               <div className="grid gap-3 sm:grid-cols-2">
-                <DimensionTable title="By ink" rows={data.inks} />
                 <DimensionTable title="By repo" rows={data.repos} />
               </div>
             )}

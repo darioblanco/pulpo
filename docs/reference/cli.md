@@ -24,7 +24,6 @@ pulpo usage --scan --since <DAYS>         Like --scan, but limited to the last N
 pulpo usage [--scan] --json               Output raw JSON instead of the formatted report
 pulpo nodes                               List known nodes/peers
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
-pulpo ink <SUBCOMMAND>                    Manage ink presets (reusable command templates)
 pulpo worktree list                       List worktree sessions (alias: wt ls)
 pulpo secret <SUBCOMMAND>                 Manage secrets (env vars for sessions)
 pulpo ui                                  Open web UI in browser
@@ -44,7 +43,6 @@ By default, `spawn` auto-attaches to the session. Use `--detach` / `-d` to skip 
 |------|-------------|
 | `--workdir <PATH>` | Working directory (default: current) |
 | `--detach` / `-d` | Don't attach to the session after spawning |
-| `--ink <NAME>` | Ink preset from config (provides a default command) |
 | `--description <TEXT>` | Human-readable description for the session |
 | `--idle-threshold <SECS>` | Per-session idle threshold (`0` = never idle) |
 | `--worktree` / `-w` | Create an isolated git worktree for the session |
@@ -52,9 +50,9 @@ By default, `spawn` auto-attaches to the session. Use `--detach` / `-d` to skip 
 | `--secret <NAME>` | Inject a stored secret as an environment variable |
 | `--budget-cost <USD>` | Cost budget; watchdog alerts at 80% and stops the session at 100% |
 
-If no name is provided, Pulpo derives one from the workdir/path context. If no command is provided, Pulpo falls back to the ink command, `node.default_command`, or finally `$SHELL`.
+If no name is provided, Pulpo derives one from the workdir/path context. If no command is provided, Pulpo falls back to `node.default_command`, or finally `$SHELL`.
 
-The command is whatever you want to run — any agent CLI, script, or shell command. If `--ink` is specified and no command is given after `--`, the ink's command is used.
+The command is whatever you want to run — any agent CLI, script, or shell command.
 
 ## Handoff
 
@@ -104,11 +102,11 @@ pulpo schedule remove <ID>                                      Remove a job
 | Flag | Description |
 |------|-------------|
 | `--workdir <PATH>` | Working directory (default: current) |
-| `--ink <NAME>` | Ink preset from config |
 | `--description <TEXT>` | Human-readable description |
 | `--secret <NAME>` | Inject a stored secret (repeatable) |
 | `--worktree` | Create an isolated git worktree for each run |
 | `--worktree-base <BRANCH>` | Fork worktree from a specific branch (implies `--worktree`) |
+| `--budget-cost <USD>` | Cost budget applied to every session this schedule fires (watchdog alerts at 80%, stops at 100%) |
 
 There is no per-schedule node flag — a schedule always fires on the node that holds it. To
 create it on another machine, use the global `--node` flag before the subcommand (see
@@ -117,24 +115,6 @@ create it on another machine, use the global `--node` flag before the subcommand
 **Scheduler behavior:** Schedules run in the daemon's machine timezone. The scheduler loop ticks every 60 seconds, so cron expressions more granular than 1 minute won't fire more often. Each schedule fire creates a fresh session with a timestamped name (`<schedule>-YYYYMMDD-HHMM`).
 
 **Worktree schedules:** When `--worktree` is set, each scheduled run creates a fresh git worktree, giving the agent an isolated copy of the repository. The worktree is cleaned up when the session is stopped.
-
-## Ink Subcommands
-
-```text
-pulpo ink list                             List all ink presets (alias: ls)
-pulpo ink get <NAME>                       Show ink details
-pulpo ink add <NAME> [OPTIONS]             Add a new ink preset
-pulpo ink update <NAME> [OPTIONS]          Update an existing ink preset
-pulpo ink remove <NAME>                    Remove an ink preset (alias: rm)
-```
-
-| Flag | Description |
-|------|-------------|
-| `--description <TEXT>` | Human-readable description |
-| `--command <CMD>` | Command template |
-| `--secret <NAME>` | Default secrets to inject (repeatable) |
-
-Inks are persisted in `config.toml` and take effect immediately for new sessions. When used with `pulpo spawn --ink <NAME>`, the ink provides defaults for command, description, and secrets. Explicit spawn flags override ink defaults.
 
 ## Secret Subcommands
 
@@ -197,12 +177,13 @@ pulpo spawn backend  --workdir ~/repos/my-app --worktree -d -- codex "Optimize t
 
 See [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) for the complete recipe.
 
-### Nightly review via ink
+### Nightly review with a cost budget
 
 ```bash
 pulpo schedule add nightly-review "0 3 * * *" \
   --workdir ~/repos/my-api \
-  --ink nightly-review
+  --budget-cost 5.0 \
+  -- claude -p "Review the last day's commits for bugs, security issues, and style"
 ```
 
 See [Nightly Code Review](/guides/nightly-code-review) for the complete recipe.

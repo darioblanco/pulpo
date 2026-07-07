@@ -12,7 +12,6 @@ pub struct CreateSessionRequest {
     pub name: String,
     pub workdir: Option<String>,
     pub command: Option<String>,
-    pub ink: Option<String>,
     pub description: Option<String>,
     pub metadata: Option<HashMap<String, String>>,
     pub idle_threshold_secs: Option<u32>,
@@ -114,7 +113,6 @@ pub struct ConfigResponse {
     pub peers: HashMap<String, PeerEntry>,
     pub watchdog: WatchdogConfigResponse,
     pub notifications: NotificationsConfigResponse,
-    pub inks: HashMap<String, InkConfigResponse>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -179,19 +177,6 @@ pub struct NotificationsConfigResponse {
     pub webhooks: Vec<WebhookEndpointConfigResponse>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InkConfigResponse {
-    pub description: Option<String>,
-    pub command: Option<String>,
-    /// Secret names to inject as environment variables.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub secrets: Vec<String>,
-    /// Runtime override (historical). "docker" is rejected on create/update —
-    /// the docker session runtime was removed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub runtime: Option<String>,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct WebhookEndpointUpdateRequest {
     pub name: String,
@@ -223,8 +208,6 @@ pub struct UpdateConfigRequest {
     pub watchdog_idle_action: Option<String>,
     // Notifications — Generic webhooks (full replace when provided)
     pub webhooks: Option<Vec<WebhookEndpointUpdateRequest>>,
-    // Inks (full replace)
-    pub inks: Option<HashMap<String, InkConfigResponse>>,
     // Peers
     pub peers: Option<HashMap<String, PeerEntry>>,
 }
@@ -306,6 +289,10 @@ pub struct Schedule {
     pub cron: String,
     pub command: String,
     pub workdir: String,
+    /// Ink the schedule was created from (historical). The ink registry was
+    /// removed — this is never set for new schedules but is preserved on the
+    /// wire for schedules created before the removal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ink: Option<String>,
     pub description: Option<String>,
     /// Runtime environment (historical; "docker" is rejected on create/update).
@@ -320,6 +307,10 @@ pub struct Schedule {
     /// Base branch to fork the worktree from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_base: Option<String>,
+    /// Cost budget in USD applied to every session this schedule fires.
+    /// Watchdog alerts at 80% and stops the session at 100%.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_cost_usd: Option<f64>,
     pub enabled: bool,
     pub last_run_at: Option<String>,
     pub last_session_id: Option<String>,
@@ -337,7 +328,6 @@ pub struct CreateScheduleRequest {
     pub cron: String,
     pub command: Option<String>,
     pub workdir: String,
-    pub ink: Option<String>,
     pub description: Option<String>,
     /// Runtime environment (historical; "docker" is rejected — runtime removed).
     pub runtime: Option<String>,
@@ -348,6 +338,9 @@ pub struct CreateScheduleRequest {
     pub worktree: Option<bool>,
     /// Base branch to fork the worktree from.
     pub worktree_base: Option<String>,
+    /// Cost budget in USD applied to every session this schedule fires.
+    #[serde(default)]
+    pub budget_cost_usd: Option<f64>,
 }
 
 /// Request to update a schedule.
@@ -356,7 +349,6 @@ pub struct UpdateScheduleRequest {
     pub cron: Option<String>,
     pub command: Option<String>,
     pub workdir: Option<String>,
-    pub ink: Option<Option<String>>,
     pub description: Option<Option<String>>,
     pub enabled: Option<bool>,
     /// Runtime environment. Use `Some(None)` to clear.
@@ -368,6 +360,8 @@ pub struct UpdateScheduleRequest {
     pub worktree: Option<Option<bool>>,
     /// Base branch to fork the worktree from. Use `Some(None)` to clear.
     pub worktree_base: Option<Option<String>>,
+    /// Cost budget in USD. Use `Some(None)` to clear.
+    pub budget_cost_usd: Option<Option<f64>>,
 }
 
 // -- Secret types --
@@ -412,9 +406,6 @@ pub struct ListSessionsQuery {
 pub struct SessionProjection {
     pub session_id: String,
     pub session_name: String,
-    /// Ink the session was spawned from, if any (for per-ink attribution).
-    #[serde(default)]
-    pub ink: Option<String>,
     /// Working directory (repo) the session ran in (for per-repo attribution).
     #[serde(default)]
     pub workdir: String,
@@ -459,13 +450,13 @@ pub struct AccountRollup {
     pub cost_is_exact: bool,
 }
 
-/// Cost/token rollup for one attribution dimension value (an ink, or a repo).
+/// Cost/token rollup for one attribution dimension value (a repo).
 ///
-/// The differentiator vendors can't do: tie spend to *tasks*, not just accounts —
-/// "the nightly-review ink cost €11" / "work in ~/repos/api cost $40".
+/// The differentiator vendors can't do: tie spend to *where the work happened*,
+/// not just accounts — "work in ~/repos/api cost $40".
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DimensionRollup {
-    /// The ink name or repo path this rollup aggregates.
+    /// The repo path this rollup aggregates.
     pub label: String,
     pub session_count: u32,
     pub total_tokens: u64,
@@ -517,10 +508,6 @@ pub struct UsageProjectionResponse {
     pub generated_at: String,
     pub sessions: Vec<SessionProjection>,
     pub accounts: Vec<AccountRollup>,
-    /// Per-ink cost rollups (only sessions spawned from an ink). `#[serde(default)]`
-    /// keeps older clients deserializable.
-    #[serde(default)]
-    pub inks: Vec<DimensionRollup>,
     /// Per-repo (workdir) cost rollups.
     #[serde(default)]
     pub repos: Vec<DimensionRollup>,
@@ -555,7 +542,6 @@ mod tests {
                 extra_waiting_patterns: vec![],
             },
             notifications: NotificationsConfigResponse { webhooks: vec![] },
-            inks: HashMap::new(),
         }
     }
 
@@ -569,14 +555,13 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"discovery_interval_secs":30},"auth":{},"peers":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"webhooks":[]},"inks":{}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"discovery_interval_secs":30},"auth":{},"peers":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"webhooks":[]}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
         assert_eq!(resp.node.bind, BindMode::Local);
         assert!(resp.watchdog.enabled);
         assert!(resp.notifications.webhooks.is_empty());
-        assert!(resp.inks.is_empty());
     }
 
     #[test]
@@ -679,12 +664,11 @@ mod tests {
         assert_eq!(req.description.as_deref(), Some("Fix bug"));
         assert!(req.command.is_none());
         assert!(req.metadata.is_none());
-        assert!(req.ink.is_none());
     }
 
     #[test]
     fn test_create_session_request_with_command() {
-        let json = r#"{"name":"my-session","workdir":"/repo","command":"claude -p 'Do it'","description":"test","metadata":{"discord_channel":"123"},"ink":"coder"}"#;
+        let json = r#"{"name":"my-session","workdir":"/repo","command":"claude -p 'Do it'","description":"test","metadata":{"discord_channel":"123"}}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.name, "my-session");
         assert_eq!(req.command, Some("claude -p 'Do it'".into()));
@@ -693,7 +677,17 @@ mod tests {
             req.metadata.as_ref().unwrap().get("discord_channel"),
             Some(&"123".into())
         );
-        assert_eq!(req.ink, Some("coder".into()));
+    }
+
+    #[test]
+    fn test_create_session_request_ignores_legacy_ink_field() {
+        // Old CLI clients may still send `"ink": "..."` from cached binaries —
+        // `CreateSessionRequest` has no `deny_unknown_fields`, so it's silently
+        // ignored rather than rejected. The ink registry itself is gone; this
+        // just confirms the request still deserializes.
+        let json = r#"{"name":"my-task","ink":"coder"}"#;
+        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "my-task");
     }
 
     #[test]
@@ -1395,32 +1389,6 @@ mod tests {
     }
 
     #[test]
-    fn test_ink_config_response_serialize() {
-        let resp = InkConfigResponse {
-            description: Some("Code review".into()),
-            command: Some("claude -p 'review'".into()),
-            secrets: vec![],
-            runtime: None,
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("Code review"));
-        assert!(json.contains("claude -p 'review'"));
-    }
-
-    #[test]
-    fn test_ink_config_response_clone() {
-        let resp = InkConfigResponse {
-            description: None,
-            command: None,
-            secrets: vec![],
-            runtime: None,
-        };
-        #[allow(clippy::redundant_clone)]
-        let cloned = resp.clone();
-        assert!(cloned.description.is_none());
-    }
-
-    #[test]
     fn test_update_watchdog_request_default() {
         let req = UpdateWatchdogRequest::default();
         assert!(req.enabled.is_none());
@@ -1490,6 +1458,7 @@ mod tests {
             secrets: vec![],
             worktree: None,
             worktree_base: None,
+            budget_cost_usd: None,
             enabled: true,
             last_run_at: None,
             last_session_id: None,
@@ -1537,13 +1506,21 @@ mod tests {
 
     #[test]
     fn test_create_schedule_request_deserialize() {
-        let json = r#"{"name":"daily","cron":"0 9 * * *","workdir":"/repo","command":"echo hi","ink":"coder","description":"Daily task"}"#;
+        let json = r#"{"name":"daily","cron":"0 9 * * *","workdir":"/repo","command":"echo hi","description":"Daily task"}"#;
         let req: CreateScheduleRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.name, "daily");
         assert_eq!(req.cron, "0 9 * * *");
         assert_eq!(req.command, Some("echo hi".into()));
-        assert_eq!(req.ink, Some("coder".into()));
         assert_eq!(req.description, Some("Daily task".into()));
+    }
+
+    #[test]
+    fn test_create_schedule_request_ignores_legacy_ink_field() {
+        // Old clients may still send `"ink": "..."` — no `deny_unknown_fields`
+        // on this request type, so it's silently ignored.
+        let json = r#"{"name":"daily","cron":"0 9 * * *","workdir":"/repo","ink":"coder"}"#;
+        let req: CreateScheduleRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.name, "daily");
     }
 
     #[test]
@@ -1580,6 +1557,72 @@ mod tests {
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("true"));
+    }
+
+    #[test]
+    fn test_schedule_budget_cost_usd_serialize() {
+        let schedule = Schedule {
+            budget_cost_usd: Some(2.5),
+            ..make_schedule()
+        };
+        let json = serde_json::to_string(&schedule).unwrap();
+        assert!(json.contains("\"budget_cost_usd\":2.5"));
+    }
+
+    #[test]
+    fn test_schedule_budget_cost_usd_omitted_when_none() {
+        let schedule = make_schedule();
+        let json = serde_json::to_string(&schedule).unwrap();
+        assert!(!json.contains("budget_cost_usd"));
+    }
+
+    #[test]
+    fn test_schedule_budget_cost_usd_roundtrip() {
+        let schedule = Schedule {
+            budget_cost_usd: Some(10.0),
+            ..make_schedule()
+        };
+        let json = serde_json::to_string(&schedule).unwrap();
+        let deserialized: Schedule = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.budget_cost_usd, Some(10.0));
+    }
+
+    #[test]
+    fn test_create_schedule_request_deserialize_budget_cost_usd() {
+        let json = r#"{"name":"daily","cron":"0 9 * * *","workdir":"/repo","budget_cost_usd":5.0}"#;
+        let req: CreateScheduleRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.budget_cost_usd, Some(5.0));
+    }
+
+    #[test]
+    fn test_create_schedule_request_budget_cost_usd_defaults_none() {
+        let json = r#"{"name":"daily","cron":"0 9 * * *","workdir":"/repo"}"#;
+        let req: CreateScheduleRequest = serde_json::from_str(json).unwrap();
+        assert!(req.budget_cost_usd.is_none());
+    }
+
+    #[test]
+    fn test_update_schedule_request_budget_cost_usd_set() {
+        let json = r#"{"budget_cost_usd":3.5}"#;
+        let req: UpdateScheduleRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.budget_cost_usd, Some(Some(3.5)));
+    }
+
+    #[test]
+    fn test_update_schedule_request_budget_cost_usd_null() {
+        // Plain `Option<Option<T>>` fields collapse an explicit JSON `null` down to the
+        // outer `None`, same as the field being absent (matching the sibling `ink`,
+        // `runtime`, `worktree`, and `worktree_base` fields on this same request type).
+        let json = r#"{"budget_cost_usd":null}"#;
+        let req: UpdateScheduleRequest = serde_json::from_str(json).unwrap();
+        assert!(req.budget_cost_usd.is_none());
+    }
+
+    #[test]
+    fn test_update_schedule_request_budget_cost_usd_absent() {
+        let json = "{}";
+        let req: UpdateScheduleRequest = serde_json::from_str(json).unwrap();
+        assert!(req.budget_cost_usd.is_none());
     }
 
     // -- Secret type tests --

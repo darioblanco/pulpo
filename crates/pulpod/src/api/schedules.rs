@@ -82,12 +82,14 @@ pub async fn create(
         cron: req.cron,
         command: req.command.unwrap_or_default(),
         workdir: req.workdir,
-        ink: req.ink,
+        // The ink registry was removed — new schedules never carry one.
+        ink: None,
         description: req.description,
         runtime: req.runtime,
         secrets: req.secrets.unwrap_or_default(),
         worktree: req.worktree,
         worktree_base: req.worktree_base,
+        budget_cost_usd: req.budget_cost_usd,
         enabled: true,
         last_run_at: None,
         last_session_id: None,
@@ -128,9 +130,6 @@ pub async fn update(
     if let Some(workdir) = &req.workdir {
         schedule.workdir.clone_from(workdir);
     }
-    if let Some(ink) = &req.ink {
-        schedule.ink.clone_from(ink);
-    }
     if let Some(description) = &req.description {
         schedule.description.clone_from(description);
     }
@@ -148,6 +147,9 @@ pub async fn update(
     }
     if let Some(worktree_base) = &req.worktree_base {
         schedule.worktree_base.clone_from(worktree_base);
+    }
+    if let Some(budget_cost_usd) = req.budget_cost_usd {
+        schedule.budget_cost_usd = budget_cost_usd;
     }
 
     // Delete and re-insert (simpler than UPDATE with all fields)
@@ -230,8 +232,7 @@ mod tests {
             ..Default::default()
         };
         let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(config, manager, peer_registry, store);
         let app = crate::api::routes::build(state);
@@ -598,6 +599,70 @@ mod tests {
         );
         assert_eq!(body["worktree"], true);
         assert_eq!(body["worktree_base"], "main");
+    }
+
+    #[tokio::test]
+    async fn test_create_schedule_with_budget_cost_usd() {
+        let server = test_server().await;
+        let resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "budgeted",
+                "cron": "0 3 * * *",
+                "command": "echo hi",
+                "workdir": "/tmp",
+                "budget_cost_usd": 4.25
+            }))
+            .await;
+        resp.assert_status(StatusCode::CREATED);
+        let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
+        assert_eq!(body["budget_cost_usd"], 4.25);
+    }
+
+    #[tokio::test]
+    async fn test_create_schedule_without_budget_cost_usd() {
+        let server = test_server().await;
+        let resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "no-budget",
+                "cron": "0 3 * * *",
+                "command": "echo hi",
+                "workdir": "/tmp"
+            }))
+            .await;
+        resp.assert_status(StatusCode::CREATED);
+        let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
+        assert!(body.get("budget_cost_usd").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_schedule_budget_cost_usd() {
+        let server = test_server().await;
+        let create_resp = server
+            .post("/api/v1/schedules")
+            .json(&serde_json::json!({
+                "name": "update-budget",
+                "cron": "0 3 * * *",
+                "command": "echo",
+                "workdir": "/tmp"
+            }))
+            .await;
+        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
+        let id = created["id"].as_str().unwrap();
+
+        let resp = server
+            .put(&format!("/api/v1/schedules/{id}"))
+            .json(&serde_json::json!({ "budget_cost_usd": 9.0 }))
+            .await;
+        resp.assert_status_ok();
+        let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
+        assert_eq!(body["budget_cost_usd"], 9.0);
+
+        // Verify persisted (delete+re-insert path in update()).
+        let get_resp = server.get(&format!("/api/v1/schedules/{id}")).await;
+        let fetched: serde_json::Value = serde_json::from_str(&get_resp.text()).unwrap();
+        assert_eq!(fetched["budget_cost_usd"], 9.0);
     }
 
     #[tokio::test]

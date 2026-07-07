@@ -94,8 +94,8 @@ table), enforces budgets, and forwards alerts and events to whatever observabili
 
 **Meter — exactly, everywhere.** Pulpo parses the session files Claude Code and Codex write
 themselves, so **token counts are exact** (not scraped) and costed from your rate table —
-attributed per session and rolled up per account, billing pool, **ink, and repo** ("the
-nightly-review ink cost €11"), across every machine and agent you run. (Codex reports exact
+attributed per session and rolled up per account, billing pool, **and repo** ("work in
+~/repos/api cost €11"), across every machine and agent you run. (Codex reports exact
 subscription quota rather than a per-token cost.) Unknown
 models still report tokens; `[rates.<model>]` config prices a new or repriced model with no
 code change.
@@ -114,9 +114,9 @@ worktrees and subdirectories roll up to the origin repo, so per-repo spend means
 and not *this checkout* (add `--by-worktree` to keep each checkout separate). Narrow to a
 window with `--since <days>`, or pipe the raw numbers somewhere with `--json`.
 
-**Control — pull the plug before the wall.** Per-session and per-ink cost caps that alert at
-80% and stop at 100%, plus a burn-velocity governor that catches the catastrophic 2 a.m.
-runaway a flat budget misses. Alert-only by default; opt in to auto-stop.
+**Control — pull the plug before the wall.** Per-session and per-schedule cost caps that
+alert at 80% and stop at 100%, plus a burn-velocity governor that catches the catastrophic
+2 a.m. runaway a flat budget misses. Alert-only by default; opt in to auto-stop.
 
 ```bash
 pulpo spawn fix --budget-cost 10 -- claude -p "..."   # hard $10 cap, recorded as an intervention
@@ -173,7 +173,7 @@ adds no single point of failure and integrates with your existing observability.
 ## Core Capabilities
 
 - **Exact usage metering**: structured readers for Claude Code, Codex & pi (tokens, cost, cache, quota; pi in `--scan` only for now), cross-account / cross-agent rollups, `[rates.<model>]` config, output-scraping fallback for other agents.
-- **Cost control**: per-session / per-ink budget caps (alert 80%, stop 100%) and a burn-velocity ($/hr) governor — alert-first, opt-in stop.
+- **Cost control**: per-session / per-schedule budget caps (alert 80%, stop 100%) and a burn-velocity ($/hr) governor — alert-first, opt-in stop.
 - **Monitoring backbone**: signed canonical events to multiple webhooks with a durable outbox + backoff; toggleable Prometheus `/metrics`; SSE stream; web push.
 - **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots; adopts external tmux sessions.
 - **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error/completion patterns, git telemetry (branch, diff; PR URL detected from output).

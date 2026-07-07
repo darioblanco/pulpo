@@ -4,7 +4,7 @@
 //! `StubBackend` → `SessionManager` → `PeerRegistry` → `AppState` builder. This
 //! module centralizes it: [`test_state`] for the common case, [`test_state_with`]
 //! for per-test `Config` tweaks (via a mutator closure, applied *before* the
-//! `SessionManager`/`PeerRegistry` are built so ink/peer config takes effect),
+//! `SessionManager`/`PeerRegistry` are built so peer config takes effect),
 //! and [`test_server`] / [`test_server_with`] for full-router `TestServer`
 //! integration tests.
 //!
@@ -30,9 +30,8 @@ pub async fn test_parts() -> (Config, SessionManager, PeerRegistry, Store) {
 }
 
 /// Like [`test_parts`], but runs `mutate` on the default `Config` before the
-/// `SessionManager` (ink map) and `PeerRegistry` (peers) are built from it, so a
-/// mutator that sets `config.inks` or `config.peers` is reflected consistently
-/// across all three.
+/// `SessionManager` and `PeerRegistry` (peers) are built from it, so a mutator
+/// that sets `config.peers` is reflected consistently across all three.
 pub async fn test_parts_with(
     mutate: impl FnOnce(&mut Config),
 ) -> (Config, SessionManager, PeerRegistry, Store) {
@@ -53,8 +52,7 @@ pub async fn test_parts_with(
     mutate(&mut config);
 
     let backend = Arc::new(StubBackend);
-    let manager = SessionManager::new(backend, store.clone(), config.inks.clone(), None)
-        .with_no_stale_grace();
+    let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
     let peer_registry = PeerRegistry::new(&config.peers);
     (config, manager, peer_registry, store)
 }
@@ -81,8 +79,7 @@ pub async fn test_state_with_config_path() -> Arc<AppState> {
     let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
     store.migrate().await.unwrap();
     let backend = Arc::new(StubBackend);
-    let manager =
-        SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+    let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
     let peer_registry = PeerRegistry::new(&HashMap::new());
     let config_path = tmpdir.path().join("config.toml");
     let (event_tx, _) = tokio::sync::broadcast::channel(16);
@@ -112,8 +109,7 @@ pub async fn test_state_with_backend(backend: Arc<dyn crate::backend::Backend>) 
     let tmpdir = Box::leak(Box::new(tmpdir));
     let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
     store.migrate().await.unwrap();
-    let manager =
-        SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+    let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
     let peer_registry = PeerRegistry::new(&HashMap::new());
     AppState::new(
         Config {

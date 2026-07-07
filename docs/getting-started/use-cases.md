@@ -70,20 +70,16 @@ You want a nightly review, a weekly dependency scan, or a recurring migration re
 unattended, with a ceiling so a run with nobody watching can't quietly burn a chunk of your
 weekly quota by morning.
 
-Give the recurring job a budget by attaching it to an ink:
-
-```toml
-[inks.nightly-review]
-command = "claude -p 'Review this repository for bugs, regressions, and missing tests.'"
-budget_cost_usd = 5.0
-```
+Give the recurring job a budget directly on the schedule:
 
 ```bash
-pulpo schedule add nightly-review "0 3 * * *" --workdir ~/repo --ink nightly-review
+pulpo schedule add nightly-review "0 3 * * *" --workdir ~/repo --budget-cost 5.0 \
+  -- claude -p "Review this repository for bugs, regressions, and missing tests."
 ```
 
-The watchdog alerts at 80% of the ink's `budget_cost_usd` and stops the session at 100% — you
-find a `stopped` session with a clear reason in the morning, not a surprise on the invoice.
+The watchdog alerts at 80% of the schedule's `budget_cost_usd` and stops the session at
+100% — you find a `stopped` session with a clear reason in the morning, not a surprise on
+the invoice.
 
 Best docs to read next:
 
