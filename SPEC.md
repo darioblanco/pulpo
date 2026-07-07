@@ -366,7 +366,7 @@ WS     /sessions/:id/stream   Stream terminal output (WebSocket)
   "workdir": "/home/user/repos/my-api",
   "command": "claude 'Fix the auth bug in login.py'",
   "description": "Fix auth bug",
-  "metadata": { "discord_channel_id": "123456" },
+  "metadata": { "ticket": "AUTH-123" },
   "ink": "reviewer",
   "worktree": true,
   "worktree_base": "main"
