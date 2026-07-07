@@ -47,14 +47,7 @@ pub(super) async fn adopt_tmux_sessions(
         return;
     }
 
-    let pulpo_sessions = match store.list_sessions().await {
-        Ok(sessions) => sessions,
-        #[allow(unused_variables)]
-        Err(error) => {
-            coverage_warn!("Adopt: failed to list pulpo sessions: {error}");
-            return;
-        }
-    };
+    let pulpo_sessions = super::list_sessions_or_warn(store, "Adopt").await;
 
     let live_statuses = [
         SessionStatus::Creating,

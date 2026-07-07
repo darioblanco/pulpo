@@ -18,14 +18,7 @@ pub(super) async fn check_idle_sessions(
     ready_ctx: &ReadyContext,
     extra_waiting_patterns: &[String],
 ) {
-    let sessions = match store.list_sessions().await {
-        Ok(sessions) => sessions,
-        #[allow(unused_variables)]
-        Err(error) => {
-            coverage_warn!("Idle check: failed to list sessions: {error}");
-            return;
-        }
-    };
+    let sessions = super::list_sessions_or_warn(store, "Idle check").await;
 
     let live: Vec<_> = sessions
         .into_iter()
@@ -145,7 +138,6 @@ pub(super) async fn check_session_idle(
         store,
         idle_config,
         session,
-        &backend_id,
         now,
         timeout,
         ready_ctx,
@@ -239,7 +231,6 @@ pub(super) async fn handle_idle_session(
     store: &Store,
     idle_config: &IdleConfig,
     session: &Session,
-    backend_id: &str,
     now: chrono::DateTime<chrono::Utc>,
     timeout: chrono::Duration,
     ready_ctx: &ReadyContext,
@@ -274,37 +265,21 @@ pub(super) async fn handle_idle_session(
         IdleAction::Kill => {
             let reason = format!("Idle for {minutes} minutes");
 
-            #[allow(unused_variables)]
-            if let Err(error) = backend.kill_session(backend_id) {
-                coverage_warn!(
-                    "Idle check: failed to kill idle session {}: {error}",
-                    session.name
-                );
-                return;
-            }
-
-            #[allow(unused_variables)]
-            if let Err(error) = store
-                .update_session_intervention(
-                    &session.id.to_string(),
-                    InterventionCode::IdleTimeout,
-                    &reason,
-                )
-                .await
-            {
-                coverage_warn!(
-                    "Idle check: failed to record intervention for {}: {error}",
-                    session.name
-                );
-            }
-            super::intervention::emit_intervention(
-                ready_ctx,
+            // Shared breaker path: captures a final output snapshot before the
+            // kill, so idle-killed sessions keep their last output.
+            if !super::intervention::stop_and_record(
+                backend,
+                store,
                 session,
                 InterventionCode::IdleTimeout,
                 &reason,
-            );
-            if let Some(worktree_path) = &session.worktree_path {
-                crate::session::manager::cleanup_worktree(worktree_path, &session.workdir);
+                ready_ctx,
+                "Idle check: failed to kill idle session",
+                "Idle check: failed to record intervention",
+            )
+            .await
+            {
+                return;
             }
             coverage_warn!(
                 "Idle check: stopped idle session {} after {minutes} minutes",
@@ -319,14 +294,7 @@ pub(super) async fn cleanup_ready_sessions(
     store: &Store,
     ready_ttl_secs: u64,
 ) {
-    let sessions = match store.list_sessions().await {
-        Ok(sessions) => sessions,
-        #[allow(unused_variables)]
-        Err(error) => {
-            coverage_warn!("Ready cleanup: failed to list sessions: {error}");
-            return;
-        }
-    };
+    let sessions = super::list_sessions_or_warn(store, "Ready cleanup").await;
 
     let now = chrono::Utc::now();
     let ttl = chrono::Duration::seconds(ready_ttl_secs.try_into().unwrap_or(i64::MAX));

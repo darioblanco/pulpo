@@ -49,6 +49,21 @@ fn resolve_backend_id(session: &Session, backend: &dyn Backend) -> String {
         .unwrap_or_else(|| backend.session_id(&session.name))
 }
 
+/// List all sessions from the store, warning (with the caller's `context` label)
+/// and returning an empty list on error so watchdog checks degrade gracefully
+/// instead of aborting the tick.
+#[cfg_attr(coverage, allow(unused_variables))]
+async fn list_sessions_or_warn(store: &Store, context: &str) -> Vec<Session> {
+    match store.list_sessions().await {
+        Ok(sessions) => sessions,
+        #[allow(unused_variables)]
+        Err(error) => {
+            coverage_warn!("{context}: failed to list sessions: {error}");
+            Vec::new()
+        }
+    }
+}
+
 /// Action to take when a session is detected as idle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdleAction {

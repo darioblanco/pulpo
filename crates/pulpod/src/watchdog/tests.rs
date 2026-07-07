@@ -1067,6 +1067,66 @@ async fn test_idle_detection_kill_action() {
 }
 
 #[tokio::test]
+async fn test_idle_kill_records_output_snapshot() {
+    // Regression: idle-killed sessions must save a final output snapshot before
+    // the kill (previously the idle Kill path skipped the capture step, losing
+    // the session's last output).
+    let backend = Arc::new(MockBackend::new().with_output("final agent output"));
+    let store = test_store().await;
+
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "kill-snap".into(),
+        workdir: "/tmp/repo".into(),
+        command: "echo hello".into(),
+        description: Some("test".into()),
+        status: SessionStatus::Idle,
+        backend_session_id: Some("kill-snap".into()),
+        last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+        idle_since: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Kill,
+        threshold_secs: 60,
+    };
+    let now = chrono::Utc::now();
+    let timeout = chrono::Duration::seconds(600);
+    let dyn_backend: Arc<dyn Backend> = backend;
+
+    handle_idle_session(
+        &dyn_backend,
+        &store,
+        &idle_config,
+        &session,
+        now,
+        timeout,
+        &test_ready_ctx(),
+    )
+    .await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Stopped);
+    assert_eq!(
+        fetched.intervention_code,
+        Some(pulpo_common::session::InterventionCode::IdleTimeout)
+    );
+    // The final output was captured and stored before the kill.
+    assert_eq!(
+        fetched.output_snapshot.as_deref(),
+        Some("final agent output")
+    );
+}
+
+#[tokio::test]
 async fn test_idle_detection_clears_when_active() {
     let backend = Arc::new(MockBackend::new());
     let store = test_store().await;
@@ -1672,7 +1732,6 @@ async fn test_handle_idle_session_alert_update_fails() {
         &store,
         &idle_config,
         &session,
-        "alert-fail",
         now,
         timeout,
         &test_ready_ctx(),
@@ -1720,7 +1779,6 @@ async fn test_handle_idle_session_kill_intervention_record_fails() {
         &store,
         &idle_config,
         &session,
-        "kill-record-fail",
         now,
         timeout,
         &test_ready_ctx(),
@@ -1947,7 +2005,6 @@ async fn test_idle_kill_succeeds_but_session_disappears() {
         &store,
         &idle_config,
         &session,
-        "vanishing",
         now,
         timeout,
         &test_ready_ctx(),
