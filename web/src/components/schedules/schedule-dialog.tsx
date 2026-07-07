@@ -11,10 +11,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { createSchedule, updateSchedule, getInks } from '@/api/client';
+import { createSchedule, updateSchedule } from '@/api/client';
 import { describeCron, isValidCron, CRON_PRESETS } from '@/lib/cron';
 import { toast } from 'sonner';
-import type { ScheduleInfo, InkConfig } from '@/api/types';
+import type { ScheduleInfo } from '@/api/types';
 
 interface ScheduleDialogProps {
   open: boolean;
@@ -31,22 +31,9 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
   const [cronExpr, setCronExpr] = useState('');
   const [command, setCommand] = useState('');
   const [workdir, setWorkdir] = useState('');
-  const [selectedInk, setSelectedInk] = useState('');
   const [description, setDescription] = useState('');
-  const [inks, setInks] = useState<Record<string, InkConfig>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Load inks when dialog opens
-  useEffect(() => {
-    if (open) {
-      getInks()
-        .then((res) => setInks(res.inks))
-        .catch(() => {
-          /* inks are optional */
-        });
-    }
-  }, [open]);
 
   // Populate form when editing or reset when creating
   useEffect(() => {
@@ -55,7 +42,6 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
       setCronExpr(schedule.cron);
       setCommand(schedule.command || '');
       setWorkdir(schedule.workdir || '');
-      setSelectedInk(schedule.ink || '');
       setDescription(schedule.description || '');
       // Check if cron matches a preset
       const preset = CRON_PRESETS.find((p) => p.value === schedule.cron);
@@ -66,7 +52,6 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
       setCronExpr('');
       setCommand('');
       setWorkdir('');
-      setSelectedInk('');
       setDescription('');
       setError(null);
     }
@@ -79,23 +64,11 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
     }
   }
 
-  function handleInkChange(inkName: string) {
-    if (inkName === 'none') {
-      setSelectedInk('');
-      return;
-    }
-    setSelectedInk(inkName);
-    const ink = inks[inkName];
-    if (ink?.command && !command) {
-      setCommand(ink.command);
-    }
-  }
-
   function validate(): string | null {
     if (!name.trim()) return 'Name is required';
     if (!cronExpr.trim()) return 'Cron expression is required';
     if (!isValidCron(cronExpr)) return 'Invalid cron expression (must be 5 fields)';
-    if (!command.trim() && !selectedInk) return 'Command or ink is required';
+    if (!command.trim()) return 'Command is required';
     return null;
   }
 
@@ -116,7 +89,6 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
         cron: cronExpr.trim(),
         workdir: workdir.trim() || '.',
         ...(command.trim() ? { command: command.trim() } : {}),
-        ...(selectedInk ? { ink: selectedInk } : {}),
         ...(description.trim() ? { description: description.trim() } : {}),
       };
 
@@ -136,8 +108,6 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
       setSubmitting(false);
     }
   }
-
-  const inkNames = Object.keys(inks).sort();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -228,26 +198,6 @@ export function ScheduleDialog({ open, onOpenChange, schedule, onSaved }: Schedu
               data-testid="schedule-workdir-input"
             />
           </div>
-
-          {inkNames.length > 0 && (
-            <div className="space-y-1.5">
-              <Label>Ink</Label>
-              <Select value={selectedInk || 'none'} onValueChange={handleInkChange}>
-                <SelectTrigger className="w-full" data-testid="schedule-ink-select">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  {inkNames.map((inkName) => (
-                    <SelectItem key={inkName} value={inkName}>
-                      {inkName}
-                      {inks[inkName]?.description ? ` — ${inks[inkName].description}` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="schedule-description">Description</Label>

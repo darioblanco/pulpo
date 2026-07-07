@@ -30,8 +30,8 @@ exactly what you'd least want flowing through a third-party relay.
 
 1. **Single binary** (`pulpod`) runs on each machine as a daemon (embedded web UI)
 2. **Exact usage metering** — read tokens/cost from each agent's own session files,
-   attributed per session and rolled up per account/pool, per ink, and per repo
-3. **Cost control** — per-session/ink budget caps (alert 80%, stop 100%) and a
+   attributed per session and rolled up per account/pool and per repo
+3. **Cost control** — per-session/schedule budget caps (alert 80%, stop 100%) and a
    burn-velocity governor; alert-first, opt-in auto-stop
 4. **Monitoring backbone** — signed canonical events to multiple webhooks (durable
    outbox + backoff + HMAC) and a toggleable Prometheus `/metrics` endpoint
@@ -50,7 +50,9 @@ exactly what you'd least want flowing through a third-party relay.
   trimming) — that's the agent's job; Pulpo optimizes the *operation* of agents
 - Agent-to-agent communication; custom model hosting/serving
 - Multi-user / team features (single-user, your tailnet)
-- Defining the "best" ink catalog or prompting methodology
+- Defining the "best" preset catalog or prompting methodology — a preset registry
+  (`inks`) existed and was removed (July 2026; see Roadmap "Removed"); command/secrets
+  live directly on sessions and schedules
 - Replacing specialized local agent UX tools, or becoming an all-in-one platform
 
 ---
@@ -367,17 +369,17 @@ WS     /sessions/:id/stream   Stream terminal output (WebSocket)
   "command": "claude 'Fix the auth bug in login.py'",
   "description": "Fix auth bug",
   "metadata": { "ticket": "AUTH-123" },
-  "ink": "reviewer",
   "worktree": true,
-  "worktree_base": "main"
+  "worktree_base": "main",
+  "budget_cost_usd": 5.0
 }
 ```
 
 `name` is required. All other fields are optional. `workdir` defaults to the
-user's home directory, `command` defaults to the ink's command or an
-interactive shell. If `ink` is set, its config is used as defaults; explicit
-fields override ink values. `worktree_base` specifies the branch to fork
-from (implies `worktree: true`).
+user's home directory, `command` defaults to `node.default_command` or an
+interactive shell. `worktree_base` specifies the branch to fork from (implies
+`worktree: true`). `budget_cost_usd` sets a cost budget — the watchdog alerts
+at 80% and stops the session at 100%.
 
 #### GET /sessions
 
@@ -390,13 +392,15 @@ from (implies `worktree: true`).
     "command": "claude 'Fix the auth bug in login.py'",
     "description": "Fix auth bug",
     "status": "active",
-    "ink": "reviewer",
     "output_snapshot": "Analyzing login.py...\nFound issue in validate_token()...",
     "created_at": "2026-02-16T10:30:00Z",
     "updated_at": "2026-02-16T10:35:00Z"
   }
 ]
 ```
+
+`ink` also appears on historical `Session` rows created before the ink registry was
+removed (July 2026); it is never set for new sessions.
 
 The full `Session` object includes additional nullable fields: `exit_code`,
 `backend_session_id`, `worktree_branch`, `metadata`, `intervention_code`,
@@ -416,10 +420,9 @@ POST   /peers                 Add a peer
 DELETE /peers/:name           Remove a peer
 ```
 
-### Inks & Events
+### Events
 
 ```
-GET    /inks                  List configured inks
 GET    /events                SSE event stream
 ```
 
@@ -449,7 +452,6 @@ GET    /events                SSE event stream
 | `PUT`    | `/config`                       | Update daemon config           |
 | `GET`    | `/auth/token`                   | Get auth token (local only)    |
 | `GET`    | `/auth/pairing-url`             | Get QR pairing URL (local)     |
-| `GET`    | `/inks`                         | List configured inks           |
 | `GET`    | `/events`                       | SSE event stream               |
 
 ---
@@ -532,7 +534,7 @@ See [CLAUDE.md](CLAUDE.md) for the full, maintained project layout. Key director
 pulpo/
 ├── crates/
 │   ├── pulpod/src/             # Daemon: Axum API, tmux backend, SQLite, watchdog,
-│   │   ├── api/                #   REST API, SSE, inks
+│   │   ├── api/                #   REST API, SSE
 │   │   ├── backend/            #   tmux.rs — terminal backend
 │   │   ├── session/            #   manager, state machine, output capture, PTY bridge
 │   │   ├── store/              #   SQLite persistence + migrations
@@ -615,7 +617,7 @@ Ship the smallest useful thing first.
 ### Phase 4: Command-Agnostic Sessions ✅
 
 - ✅ Command-agnostic session model (any shell command instead of provider enum)
-- ✅ Inks simplified to description + command
+- ~~Inks simplified to description + command~~ — inks themselves removed July 2026 (see Phase 8, Roadmap "Removed")
 
 ### Phase 5: Web UI ✅
 
@@ -658,10 +660,10 @@ the primary management surface.
 
 ### Phase 8: Control Plane + Notifications ✅
 
-- ✅ Flexible session model (command, description, metadata, ink)
-- ✅ Ink config (`[inks.name]` in config.toml with command + description, `GET /api/v1/inks`)
+- ✅ Flexible session model (command, description, metadata)
 - ✅ SSE event stream (`GET /api/v1/events`, broadcast channel, SessionEvent)
 - ✅ Generic webhook notifications (`[[notifications.webhooks]]` config) + Web Push
+- ~~Ink config (`[inks.name]` preset registry, `GET/POST/PUT/DELETE /api/v1/inks`)~~ — removed July 2026: command/secrets set directly per session/schedule; budget moved onto schedules (`--budget-cost`)
 - ~~Discord webhook notifier (`[notifications.discord]` config)~~ — removed June 2026: use `[[notifications.webhooks]]`
 - ~~Discord bot (`contrib/discord-bot/`)~~ — removed June 2026
 - ~~MCP server (session management as MCP tools)~~ — removed June 2026: REST API is the primary integration surface
@@ -692,14 +694,6 @@ idle_action = "alert"       # "alert" or "stop"
 [peers]
 macbook = "macbook:7433"
 server = "hetzner:7433"
-
-[inks.reviewer]
-command = "claude"
-description = "Code reviewer focused on correctness and security"
-
-[inks.coder]
-command = "claude --dangerously-skip-permissions"
-description = "Autonomous coder with tests and clear commit messages"
 
 [[notifications.webhooks]]
 name = "primary"

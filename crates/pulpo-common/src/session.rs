@@ -140,6 +140,9 @@ pub struct Session {
     pub backend_session_id: Option<String>,
     pub output_snapshot: Option<String>,
     pub metadata: Option<HashMap<String, String>>,
+    /// Ink the session was spawned from (historical). The ink registry was
+    /// removed — this is never set for new sessions but is preserved on the
+    /// wire for sessions created before the removal.
     pub ink: Option<String>,
     pub intervention_code: Option<InterventionCode>,
     pub intervention_reason: Option<String>,
@@ -242,7 +245,7 @@ pub mod meta {
     pub const QUOTA_SECONDARY_WINDOW_MINUTES: &str = "quota_secondary_window_minutes";
     pub const QUOTA_SECONDARY_RESETS_AT: &str = "quota_secondary_resets_at";
     pub const QUOTA_PLAN: &str = "quota_plan";
-    // Cost budget (resolved at spawn: spawn flag > ink). Watchdog alerts at 80%, stops at 100%.
+    // Cost budget (resolved at spawn: explicit spawn/schedule flag). Watchdog alerts at 80%, stops at 100%.
     pub const BUDGET_COST_USD: &str = "budget_cost_usd";
     pub const BUDGET_ALERTED_AT: &str = "budget_alerted_at";
     // Burn-velocity governor: one-shot timestamp recorded when the lifetime-average spend

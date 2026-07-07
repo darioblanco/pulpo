@@ -54,7 +54,6 @@ const testConfig: ConfigResponse = {
   notifications: {
     webhooks: [],
   },
-  inks: {},
 };
 
 const testNode = {
@@ -123,7 +122,6 @@ describe('SettingsPage', () => {
       expect(screen.getByTestId('settings-tabs')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-node')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-watchdog')).toBeInTheDocument();
-      expect(screen.getByTestId('settings-tab-inks')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-secrets')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-notifications')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-peers')).toBeInTheDocument();
@@ -145,11 +143,6 @@ describe('SettingsPage', () => {
     clickTab('settings-tab-watchdog');
     await waitFor(() => {
       expect(screen.getByTestId('watchdog-settings')).toBeInTheDocument();
-    });
-
-    clickTab('settings-tab-inks');
-    await waitFor(() => {
-      expect(screen.getByTestId('ink-settings')).toBeInTheDocument();
     });
 
     clickTab('settings-tab-secrets');
@@ -323,70 +316,6 @@ describe('SettingsPage', () => {
           webhooks: [
             { name: 'ci-hook', url: 'https://example.com/hook', events: ['session.created'] },
           ],
-        }),
-      );
-    });
-  });
-
-  it('loads and displays inks from config', async () => {
-    const configWithInks: ConfigResponse = {
-      ...testConfig,
-      inks: {
-        reviewer: {
-          description: 'Code reviewer',
-          command: 'claude code',
-        },
-      },
-    };
-    mockGetConfig.mockResolvedValue(configWithInks);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
-    renderSettings();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('settings-tab-inks')).toBeInTheDocument();
-    });
-
-    clickTab('settings-tab-inks');
-
-    await waitFor(() => {
-      expect(screen.getByTestId('ink-settings')).toBeInTheDocument();
-      expect(screen.getByTestId('ink-reviewer')).toBeInTheDocument();
-    });
-  });
-
-  it('saves inks in config update', async () => {
-    const configWithInks: ConfigResponse = {
-      ...testConfig,
-      inks: {
-        coder: {
-          description: 'Coder ink',
-          command: 'claude code --autonomous',
-        },
-      },
-    };
-    mockGetConfig.mockResolvedValue(configWithInks);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
-    mockUpdateConfig.mockResolvedValue({
-      config: configWithInks,
-      restart_required: false,
-    });
-    renderSettings();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('save-btn')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByTestId('save-btn'));
-
-    await waitFor(() => {
-      expect(mockUpdateConfig).toHaveBeenCalledWith(
-        expect.objectContaining({
-          inks: {
-            coder: expect.objectContaining({
-              description: 'Coder ink',
-              command: 'claude code --autonomous',
-            }),
-          },
         }),
       );
     });

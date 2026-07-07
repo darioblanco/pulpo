@@ -9,9 +9,7 @@ use pulpo_common::session::meta;
 use serde::Deserialize;
 
 use crate::api::error::{ApiError, internal_error};
-use crate::usage::projection::{
-    build_ink_rollups, build_repo_rollups, build_rollups, project_session,
-};
+use crate::usage::projection::{build_repo_rollups, build_rollups, project_session};
 
 /// `GET /api/v1/usage/projection` — per-session burn-rate projections plus per-account
 /// rollups for this node.
@@ -44,14 +42,12 @@ pub async fn projection(
     drop(config);
 
     let accounts = build_rollups(&projections);
-    let inks = build_ink_rollups(&projections);
     let repos = build_repo_rollups(&projections);
     Ok(Json(UsageProjectionResponse {
         node_name,
         generated_at: now.to_rfc3339(),
         sessions: projections,
         accounts,
-        inks,
         repos,
     }))
 }
@@ -153,17 +149,16 @@ mod tests {
         assert_eq!(resp.accounts.len(), 1);
         assert_eq!(resp.accounts[0].email.as_deref(), Some("a@x.com"));
         assert_eq!(resp.accounts[0].session_count, 1);
-        // Per-repo rollup wired (session has workdir /tmp/repo); no ink → empty ink rollup.
+        // Per-repo rollup wired (session has workdir /tmp/repo).
         assert_eq!(resp.repos.len(), 1);
         assert_eq!(resp.repos[0].label, "/tmp/repo");
-        assert!(resp.inks.is_empty());
     }
 
     #[tokio::test]
-    async fn test_projection_ink_rollup_wired() {
+    async fn test_projection_repo_rollup_exact_cost() {
         use pulpo_common::session::meta;
         let state = test_state().await;
-        // Insert a session spawned from an ink, with exact cost.
+        // Insert a session with an exact (structured-reader) cost.
         let mut metadata = HashMap::new();
         metadata.insert(meta::USAGE_SOURCE.to_owned(), "claude-jsonl".to_owned());
         metadata.insert(meta::SESSION_COST_USD.to_owned(), "11.0".to_owned());
@@ -172,7 +167,6 @@ mod tests {
             name: "nightly-run".into(),
             workdir: "/repos/api".into(),
             command: "claude -p review".into(),
-            ink: Some("nightly".into()),
             status: SessionStatus::Active,
             runtime: Runtime::Tmux,
             metadata: Some(metadata),
@@ -181,11 +175,9 @@ mod tests {
         state.store.insert_session(&session).await.unwrap();
 
         let resp = super::projection(State(state)).await.unwrap();
-        assert_eq!(resp.inks.len(), 1);
-        assert_eq!(resp.inks[0].label, "nightly");
-        assert!(resp.inks[0].cost_is_exact);
         assert_eq!(resp.repos.len(), 1);
         assert_eq!(resp.repos[0].label, "/repos/api");
+        assert!(resp.repos[0].cost_is_exact);
     }
 
     #[tokio::test]

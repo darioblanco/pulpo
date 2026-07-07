@@ -29,7 +29,7 @@ It has:
 - captured output
 - timestamps
 - a lifecycle state
-- optional metadata such as worktree, ink, and intervention history
+- optional metadata such as worktree and intervention history
 
 Examples:
 

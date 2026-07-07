@@ -51,7 +51,7 @@ async fn test_migrate_uses_sqlx_migrations_table() {
             .fetch_all(store.pool())
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
 
     let has_sandbox: i32 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'sandbox'",

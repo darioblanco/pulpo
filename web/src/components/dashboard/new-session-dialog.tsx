@@ -4,13 +4,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -20,8 +13,8 @@ import {
 import { Plus, GitBranch, X } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { createSession, getInks, getSecrets } from '@/api/client';
-import type { InkConfig, SecretEntry, Session } from '@/api/types';
+import { createSession, getSecrets } from '@/api/client';
+import type { SecretEntry, Session } from '@/api/types';
 
 interface NewSessionDialogProps {
   onCreated: (session: Session) => void;
@@ -33,8 +26,6 @@ export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
   const [repoPath, setRepoPath] = useState('');
   const [command, setCommand] = useState('');
   const [description, setDescription] = useState('');
-  const [selectedInk, setSelectedInk] = useState('');
-  const [inks, setInks] = useState<Record<string, InkConfig>>({});
   const [worktree, setWorktree] = useState(false);
   const [worktreeBase, setWorktreeBase] = useState('');
   const [idleThreshold, setIdleThreshold] = useState('');
@@ -45,11 +36,6 @@ export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
 
   useEffect(() => {
     if (open) {
-      getInks()
-        .then((res) => setInks(res.inks))
-        .catch(() => {
-          /* inks are optional */
-        });
       getSecrets()
         .then((entries) => setAvailableSecrets(entries))
         .catch(() => {
@@ -57,17 +43,6 @@ export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
         });
     }
   }, [open]);
-
-  function handleInkChange(inkName: string) {
-    setSelectedInk(inkName);
-    if (inkName === 'none' || !inkName) {
-      setSelectedInk('');
-      return;
-    }
-    const ink = inks[inkName];
-    if (!ink) return;
-    if (ink.command) setCommand(ink.command);
-  }
 
   function toggleSecret(secretName: string) {
     setSelectedSecrets((prev) =>
@@ -86,7 +61,6 @@ export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
         workdir: repoPath,
         ...(command ? { command } : {}),
         ...(description ? { description } : {}),
-        ...(selectedInk ? { ink: selectedInk } : {}),
         ...(worktree ? { worktree: true } : {}),
         ...(worktree && worktreeBase ? { worktree_base: worktreeBase } : {}),
         ...(idleThreshold ? { idle_threshold_secs: Number(idleThreshold) } : {}),
@@ -99,7 +73,6 @@ export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
       setRepoPath('');
       setCommand('');
       setDescription('');
-      setSelectedInk('');
       setWorktree(false);
       setWorktreeBase('');
       setIdleThreshold('');
@@ -112,9 +85,6 @@ export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
       setSubmitting(false);
     }
   }
-
-  const inkNames = Object.keys(inks).sort();
-  const activeInk = selectedInk ? inks[selectedInk] : null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -188,7 +158,7 @@ export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
             <Label htmlFor="command">Command</Label>
             <Input
               id="command"
-              placeholder="claude code (optional, uses ink or default)"
+              placeholder="claude code (optional, uses default)"
               value={command}
               onChange={(e) => setCommand(e.target.value)}
             />
@@ -204,31 +174,6 @@ export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-
-          {inkNames.length > 0 && (
-            <div className="space-y-1.5">
-              <Label htmlFor="ink-select">Ink</Label>
-              <Select value={selectedInk || 'none'} onValueChange={handleInkChange}>
-                <SelectTrigger id="ink-select" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  {inkNames.map((inkName) => (
-                    <SelectItem key={inkName} value={inkName}>
-                      {inkName}
-                      {inks[inkName]?.description ? ` — ${inks[inkName].description}` : ''}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {activeInk && (
-                <p className="text-xs text-muted-foreground" data-testid="ink-summary">
-                  {[activeInk.command, activeInk.description].filter(Boolean).join(' · ')}
-                </p>
-              )}
-            </div>
-          )}
 
           {availableSecrets.length > 0 && (
             <div className="space-y-1.5" data-testid="secrets-picker">

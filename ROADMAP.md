@@ -69,10 +69,10 @@ unchanged — see git history of this file for the full sovereignty section.)
 
 ## Gauge vs. Control System — what Pulpo answers that `/usage` can't
 
-1. **Attribution** — "the nightly review ink costs €11/week". Per-session, per-account/pool,
-   **per-ink, and per-repo** rollups all ship today (`build_ink_rollups`/`build_repo_rollups`,
-   surfaced in `pulpo usage` and the web gauge). Only the thing managing sessions can tie spend
-   to tasks.
+1. **Attribution** — "work in ~/repos/api costs €11/week". Per-session, per-account/pool,
+   and **per-repo** rollups all ship today (`build_repo_rollups`, surfaced in `pulpo usage`
+   and the web gauge). Only the thing managing sessions can tie spend to where the work
+   happened.
 2. **Fleet gauge** — all accounts, machines, and agents on one phone screen.
 3. **Projection** — "at this burn rate you hit the weekly cap Thursday 15:00."
 4. **Placement** — spawn where there's headroom.
@@ -89,10 +89,10 @@ unchanged — see git history of this file for the full sovereignty section.)
 | Watchdog | The enforcement engine (budgets, idle, memory, thrash) |
 | Scheduler | Quota-aware dispatch |
 | Worktree spawning (`--worktree`) + cleanup | Isolation primitive: scheduled/parallel sessions on one repo can't trample each other, agent-agnostically; watchdog sweeps litter |
-| Inks | Attribution + budget + priority unit |
 | Event-forwarding backbone (`[[webhooks]]` + `/metrics`) | **The cross-node story**: forward signed events to your own collector; aggregate in Grafana/Datadog/SIEM. Replaces the removed bespoke controller for fleet visibility |
 | Tailscale transport (`bind = "tailscale"`) | Secure zero-setup remote access to a node's UI/API over the tailnet; standalone, no fleet required |
 | Controller / cross-node control plane | **REMOVED (July 2026)** — was frozen (2026-06-14), then deleted; not kept as dormant code (see Phase C) |
+| Inks (`[inks.<name>]` preset registry) | **REMOVED (July 2026)** — command/secrets set directly per session/schedule; budget moved onto schedules (`--budget-cost`); a shared blueprint added indirection without a corresponding need |
 | PWA web UI | The gauge; mobile-first; single-node-first with an optional event-fed fleet pane |
 | CLI, secret store, webhook/web-push notifications | Supporting surface |
 
@@ -185,12 +185,13 @@ advantage: Pulpo's interactive-in-tmux sessions stay on the subscription pool, u
 SDK-built orchestrators on `claude -p`.
 
 **B3 — Minimal budget guardrail (SHIP — credibility proof, not a headline).** Per-session
-and per-ink **cost cap only**: alert at 80% (one-shot, deduped via metadata flag), stop at
-100% via the existing intervention path (new `InterventionCode::BudgetExceeded`). Config
-on `WatchdogConfig`/`InkConfig` + a `--budget-cost` spawn flag (resolution: spawn > ink >
-global). Frame honestly: on subscriptions this *allocates the shared pool* (a runaway
-session can starve the rest until reset); on prepaid credits / API keys it protects real
-dollars. NOT overdraft prevention on subscriptions.
+**cost cap only**: alert at 80% (one-shot, deduped via metadata flag), stop at 100% via the
+existing intervention path (new `InterventionCode::BudgetExceeded`). Config on
+`WatchdogConfig` + a `--budget-cost` spawn flag. Frame honestly: on subscriptions this
+*allocates the shared pool* (a runaway session can starve the rest until reset); on prepaid
+credits / API keys it protects real dollars. NOT overdraft prevention on subscriptions.
+(Originally resolved spawn flag > ink default > global; the ink layer was removed July
+2026 — budget is now set directly per session/schedule, see Roadmap "Removed".)
 
 **Parked (build on real fleet demand, not for launch):**
 - Multi-dimension budgets (token caps, quota-% guard, per-day per-node rollup cap)
@@ -296,7 +297,7 @@ POST <endpoint-url>
   "occurred_at": "2026-06-13T12:00:00Z",
   "node": "mac-mini",
   "session": {                // present for session-scoped events
-    "id": "...", "name": "fix-auth", "status": "idle", "ink": "coder",
+    "id": "...", "name": "fix-auth", "status": "idle",
     "git_branch": "...", "pr_url": null,
     "cost_usd": 2.5, "total_tokens": 1234000, "pool": "subscription"
   },
@@ -346,11 +347,13 @@ pause until `resets_at`; stuck/idle reclamation. High complexity (new session st
 scheduling interplay), narrow benefit; revisit on real demand.
 
 **M4 — Cheaper-by-default policy — DROPPED (2026-06-14).** The idea was ink fields for a
-recommended model/effort default. Dropped because an ink's `command` field *already* lets you
+recommended model/effort default. Dropped because an ink's `command` field *already* let you
 pin a cheaper model per ink (`claude --model sonnet -p …`, a codex model). The only versions
 that add a separate knob are either incomplete (env-vars: effort doesn't map, the Codex model
 env is uncertain) or reintroduce per-agent flag coupling — the command-agnostic principle the
-controller freeze reaffirmed. Marginal machinery for something inks already cover.
+controller freeze reaffirmed. Marginal machinery for something inks already covered. (Inks
+themselves were removed July 2026; the underlying point stands unchanged — a session's
+`command` string is still the place to pin a cheaper model, ink or no ink.)
 
 **M5 — Cheapest-pool-first placement — OUT (controller removed July 2026).** Depended on
 cross-node spawn via the Phase C controller. That controller was frozen (2026-06-14), then
@@ -409,13 +412,15 @@ operation. Same principle as event forwarding: **local-first, then aggregate.** 
 
 Core infrastructure:
 - `pulpod` daemon + REST API + embedded web UI (single binary)
-- `pulpo` CLI with attach, spawn, resume, stop, logs, schedule, ink, secret
+- `pulpo` CLI with attach, spawn, resume, stop, logs, schedule, secret
 - SQLite-backed session persistence with full lifecycle state machine
   (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`; resume from `lost`/`ready`)
 - Watchdog: memory pressure intervention, idle detection, ready TTL cleanup,
   error/failure detection, tmux auto-adopt
 - Command-agnostic sessions (any CLI tool, any command)
-- Inks: reusable session blueprints (command, description, secrets, runtime defaults)
+- Inks: reusable session blueprints (command, description, secrets, runtime defaults) —
+  shipped, then removed in July 2026; command/secrets/budget now set directly per
+  session/schedule (see Roadmap "Removed")
 - Multi-node: Tailscale peer discovery, manual peers (`pulpo nodes`); a controller/node
   control plane (fleet dashboard, cross-node create/stop/resume, scheduled dispatch)
   shipped, then was removed in July 2026 — every `pulpod` is standalone, reached directly
@@ -461,6 +466,13 @@ Revisit only on real demand:
   enrolled` CLI, per-schedule `target_node`. Cross-node orchestration was a dead product
   lane (see Phase C); direct `pulpo --node <name>` access over Tailscale plus shared
   `[[webhooks]]` cover real usage.
+- ~~Inks (`[inks.<name>]` preset registry)~~ (July 2026) — `pulpo ink` CLI, `GET/POST/PUT/
+  DELETE /api/v1/inks`, `InkConfig`, `resolve_ink`, per-ink usage rollups. The community
+  standardized agent-side config (AGENTS.md, skills) and shell-side presets (aliases,
+  scripts); a pulpo-proprietary preset registry was config overhead nobody wrote. Command
+  and secrets are set directly per session/schedule; the recurring cost budget moved onto
+  the schedule itself (`pulpo schedule add --budget-cost <USD>`). `Session.ink` and
+  `Schedule.ink` remain on the wire for historical rows; never set for new ones.
 
 ## Success Criteria
 

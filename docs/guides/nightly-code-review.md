@@ -6,7 +6,6 @@ infrastructure you control.
 It is a good example because it combines:
 
 - scheduled execution
-- reusable inks
 - durable session state
 - morning-after inspection through CLI, UI, or notifications
 
@@ -36,13 +35,12 @@ Use this when you want:
 This recipe is especially useful for the "operator running recurring agent work"
 ICP described in [Use Cases](/getting-started/use-cases).
 
-## Option 1: Direct Scheduled Command
-
-Start with the simplest form:
+## Direct Scheduled Command
 
 ```bash
 pulpo schedule add nightly-review "0 3 * * *" \
   --workdir ~/repos/my-api \
+  --secret GH_WORK --secret ANTHROPIC_KEY \
   -- claude -p "Review this repository for bugs, regressions, risky changes, and missing tests. Summarize findings clearly."
 ```
 
@@ -50,7 +48,7 @@ What this does:
 
 1. Adds a schedule named `nightly-review`
 2. Runs every day at `03:00` in the daemon's machine timezone
-3. Starts a fresh Pulpo session in `~/repos/my-api`
+3. Starts a fresh Pulpo session in `~/repos/my-api`, with the given secrets injected
 4. Uses your review prompt as the session command
 
 Each schedule fire creates a fresh timestamped session such as:
@@ -59,34 +57,19 @@ Each schedule fire creates a fresh timestamped session such as:
 nightly-review-20260331-0300
 ```
 
-## Option 2: Ink-Based Nightly Review
+## With a Cost Budget
 
-This is the better long-term version because it keeps the reusable review logic
-in one place.
-
-Add an ink to `~/.pulpo/config.toml`:
-
-```toml
-[inks.nightly-review]
-description = "Nightly review focused on bugs, regressions, and missing tests"
-command = "claude -p 'Review this repository for bugs, regressions, risky changes, and missing tests. Summarize findings clearly.'"
-secrets = ["GH_WORK", "ANTHROPIC_KEY"]
-```
-
-Then schedule the ink:
+Give the recurring job a cap so a runaway review can't burn unattended:
 
 ```bash
 pulpo schedule add nightly-review "0 3 * * *" \
   --workdir ~/repos/my-api \
-  --ink nightly-review
+  --budget-cost 5.0 \
+  -- claude -p "Review this repository for bugs, regressions, risky changes, and missing tests. Summarize findings clearly."
 ```
 
-Why this version is better:
-
-- the schedule stays short
-- you can refine the review command in one place
-- the command and secrets travel with the review blueprint
-- the same ink can be reused across multiple repos or schedules
+The watchdog alerts at 80% of the schedule's `budget_cost_usd` and stops the session at
+100% — you find out about a runaway overnight job instead of a surprise bill.
 
 ## Morning Check-In
 
@@ -114,7 +97,7 @@ If you want the unattended run to work in an isolated checkout (so it cannot dis
 pulpo schedule add nightly-review "0 3 * * *" \
   --workdir ~/repos/my-api \
   --worktree \
-  --ink nightly-review
+  -- claude -p "Review this repository for bugs, regressions, risky changes, and missing tests. Summarize findings clearly."
 ```
 
 Each run gets a fresh git worktree on its own branch, cleaned up when the session is stopped.
@@ -128,7 +111,7 @@ this schedule on a different box, point the CLI at that node's `pulpod` with the
 ```bash
 pulpo --node mac-mini schedule add nightly-review "0 3 * * *" \
   --workdir ~/repos/my-api \
-  --ink nightly-review
+  -- claude -p "Review this repository for bugs, regressions, risky changes, and missing tests. Summarize findings clearly."
 ```
 
 Make sure the workdir path exists on `mac-mini`, not just on the machine you're typing from.
@@ -148,8 +131,6 @@ pulpo schedule list
 pulpo schedule pause <id>
 pulpo schedule resume <id>
 pulpo schedule remove <id>
-pulpo ink list
-pulpo ink get nightly-review
 ```
 
 ## Summary

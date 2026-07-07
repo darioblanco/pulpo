@@ -6,12 +6,10 @@ use chrono::Utc;
 use pulpo_common::api::{CleanupResponse, CreateSessionRequest, HandoffSessionRequest};
 use pulpo_common::event::{PulpoEvent, SessionDeletedEvent, SessionEvent};
 use pulpo_common::session::{Runtime, Session, SessionStatus, meta};
-use std::sync::RwLock;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::backend::Backend;
-use crate::config::InkConfig;
 #[cfg(not(coverage))]
 use crate::session::utils::create_worktree;
 use crate::session::utils::{
@@ -30,7 +28,6 @@ pub(crate) use crate::session::utils::{is_shell_command, wrap_command_for_test};
 pub struct SessionManager {
     backend: Arc<dyn Backend>,
     store: Store,
-    inks: Arc<RwLock<HashMap<String, InkConfig>>>,
     default_command: Option<String>,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
     node_name: String,
@@ -43,15 +40,10 @@ pub struct SessionManager {
     capture_session_output: bool,
 }
 
-/// Result of resolving an ink: command, description, and optional defaults for
-/// secrets and runtime that the ink provides.
-struct ResolvedInk {
+/// Result of resolving the command and description to launch a session with.
+struct ResolvedCommand {
     command: String,
     description: Option<String>,
-    /// Secret names from the ink (merged with request secrets).
-    secrets: Vec<String>,
-    /// Runtime from the ink (used only if request doesn't specify one).
-    runtime: Option<Runtime>,
 }
 
 struct SessionCreatePlan {
@@ -63,16 +55,10 @@ struct SessionCreatePlan {
 }
 
 impl SessionManager {
-    pub fn new(
-        backend: Arc<dyn Backend>,
-        store: Store,
-        inks: HashMap<String, InkConfig>,
-        default_command: Option<String>,
-    ) -> Self {
+    pub fn new(backend: Arc<dyn Backend>, store: Store, default_command: Option<String>) -> Self {
         Self {
             backend,
             store,
-            inks: Arc::new(RwLock::new(inks)),
             default_command,
             event_tx: None,
             node_name: String::new(),
@@ -102,16 +88,6 @@ impl SessionManager {
         self.event_tx = Some(tx);
         self.node_name = node_name;
         self
-    }
-
-    /// Return a snapshot of the current inks map.
-    pub fn inks(&self) -> HashMap<String, InkConfig> {
-        self.inks.read().expect("inks lock poisoned").clone()
-    }
-
-    /// Replace the inks map (e.g., after config CRUD).
-    pub fn set_inks(&self, inks: HashMap<String, InkConfig>) {
-        *self.inks.write().expect("inks lock poisoned") = inks;
     }
 
     pub fn backend(&self) -> Arc<dyn Backend> {
@@ -205,7 +181,6 @@ impl SessionManager {
             name,
             workdir: Some(source.workdir.clone()),
             command: req.command,
-            ink: None,
             description: req.description,
             metadata: None,
             idle_threshold_secs: req.idle_threshold_secs,
@@ -276,8 +251,8 @@ impl SessionManager {
         // into a shell string, and matches the documented naming convention.
         validate_session_name(&req.name)?;
 
-        // Resolve ink → get command, description, and ink defaults for secrets/runtime
-        let resolved = self.resolve_ink(&req)?;
+        // Resolve command and description: explicit request > configured default > $SHELL.
+        let resolved = self.resolve_command(&req);
         let command = resolved.command;
         let description = resolved.description;
 
@@ -286,9 +261,9 @@ impl SessionManager {
             dirs::home_dir().map_or_else(|| "/tmp".to_owned(), |h| h.to_string_lossy().into_owned())
         });
 
-        // Runtime: request overrides ink, ink overrides default (tmux).
+        // Runtime: request overrides the default (tmux).
         // The docker runtime was removed — reject it wherever it comes from.
-        let runtime = req.runtime.or(resolved.runtime).unwrap_or_default();
+        let runtime = req.runtime.unwrap_or_default();
         validate_runtime(runtime)?;
         let wants_worktree = req.worktree.unwrap_or(false);
         validate_workdir(&workdir)?;
@@ -324,22 +299,13 @@ impl SessionManager {
             );
         }
 
-        // Resolve secrets for injection: merge ink secrets with request secrets
-        // Request secrets override ink secrets (request is more specific)
-        let mut all_secret_names = resolved.secrets;
-        if let Some(ref req_secrets) = req.secrets {
-            for s in req_secrets {
-                if !all_secret_names.contains(s) {
-                    all_secret_names.push(s.clone());
-                }
-            }
-        }
-        let secrets_env = if all_secret_names.is_empty() {
-            HashMap::new()
+        // Resolve secrets for injection.
+        let secrets_env = if let Some(ref secret_names) = req.secrets
+            && !secret_names.is_empty()
+        {
+            self.store.get_secrets_for_injection(secret_names).await?
         } else {
-            self.store
-                .get_secrets_for_injection(&all_secret_names)
-                .await?
+            HashMap::new()
         };
 
         let id = Uuid::new_v4();
@@ -363,19 +329,10 @@ impl SessionManager {
             req.term_program.as_deref(),
         );
 
-        // Resolve the cost budget (explicit spawn value wins over the ink default) and
-        // fold it into the session metadata so the watchdog can enforce it.
-        let budget_cost = req.budget_cost_usd.or_else(|| {
-            req.ink.as_ref().and_then(|name| {
-                self.inks
-                    .read()
-                    .ok()?
-                    .get(name)
-                    .and_then(|ink| ink.budget_cost_usd)
-            })
-        });
+        // Fold the explicit cost budget into the session metadata so the watchdog can
+        // enforce it.
         let mut metadata = req.metadata.unwrap_or_default();
-        if let Some(budget) = budget_cost {
+        if let Some(budget) = req.budget_cost_usd {
             metadata.insert(meta::BUDGET_COST_USD.to_owned(), budget.to_string());
         }
 
@@ -388,7 +345,6 @@ impl SessionManager {
             description,
             backend_session_id: Some(backend_id.clone()),
             metadata: Some(metadata),
-            ink: req.ink,
             idle_threshold_secs: req.idle_threshold_secs,
             worktree_path,
             worktree_branch,
@@ -650,68 +606,31 @@ impl SessionManager {
         }
     }
 
-    /// Resolve ink: if ink has command, use it. Request command takes precedence.
-    /// Also resolves secrets and runtime defaults from the ink.
-    fn resolve_ink(&self, req: &CreateSessionRequest) -> Result<ResolvedInk> {
-        let mut ink_secrets: Vec<String> = Vec::new();
-        let mut ink_runtime: Option<Runtime> = None;
-
-        // If an ink is specified, extract its defaults
-        if let Some(ref ink_name) = req.ink {
-            let ink = self
-                .inks
-                .read()
-                .expect("inks lock poisoned")
-                .get(ink_name)
-                .cloned()
-                .ok_or_else(|| anyhow!("unknown ink: {ink_name}"))?;
-            ink_secrets.clone_from(&ink.secrets);
-            ink_runtime = ink.runtime.as_deref().and_then(|r| r.parse().ok());
-
-            // If no explicit command, try the ink's command
-            if req.command.is_none() {
-                let command = ink.command.clone().unwrap_or_default();
-                let description = req.description.clone().or(ink.description);
-                if !command.is_empty() {
-                    return Ok(ResolvedInk {
-                        command,
-                        description,
-                        secrets: ink_secrets,
-                        runtime: ink_runtime,
-                    });
-                }
-                // Ink has no command — fall through to default_command / $SHELL
-            }
-        }
-
+    /// Resolve the command to launch a session with: explicit request command takes
+    /// precedence, then the configured `default_command`, then `$SHELL` (or `/bin/sh`).
+    fn resolve_command(&self, req: &CreateSessionRequest) -> ResolvedCommand {
         // Explicit command takes precedence
         if let Some(ref cmd) = req.command {
-            return Ok(ResolvedInk {
+            return ResolvedCommand {
                 command: cmd.clone(),
                 description: req.description.clone(),
-                secrets: ink_secrets,
-                runtime: ink_runtime,
-            });
+            };
         }
 
-        // No command and no ink command — fall back to default_command from config
+        // No explicit command — fall back to default_command from config
         if let Some(ref default_cmd) = self.default_command {
-            return Ok(ResolvedInk {
+            return ResolvedCommand {
                 command: default_cmd.clone(),
                 description: req.description.clone(),
-                secrets: ink_secrets,
-                runtime: ink_runtime,
-            });
+            };
         }
 
         // No fallback available — fall back to $SHELL (or /bin/sh)
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_owned());
-        Ok(ResolvedInk {
+        ResolvedCommand {
             command: shell,
             description: req.description.clone(),
-            secrets: ink_secrets,
-            runtime: ink_runtime,
-        })
+        }
     }
 
     pub async fn get_session(&self, id: &str) -> Result<Option<Session>> {
@@ -1124,8 +1043,7 @@ mod tests {
         store.migrate().await.unwrap();
         let pool = store.pool().clone();
         let backend = Arc::new(backend);
-        let manager =
-            SessionManager::new(backend.clone(), store, HashMap::new(), None).with_no_stale_grace();
+        let manager = SessionManager::new(backend.clone(), store, None).with_no_stale_grace();
         (manager, backend, pool)
     }
 
@@ -1134,7 +1052,6 @@ mod tests {
             name: name.to_owned(),
             workdir: Some("/tmp".into()),
             command: Some("echo hello".into()),
-            ink: None,
             description: None,
             metadata: None,
             idle_threshold_secs: None,
@@ -1176,7 +1093,6 @@ mod tests {
             name: "test".into(),
             workdir: Some("/tmp".into()),
             command: None,
-            ink: None,
             description: None,
             metadata: None,
             idle_threshold_secs: None,
@@ -1193,106 +1109,6 @@ mod tests {
         let calls = backend.calls.lock().unwrap();
         assert!(calls[0].contains("-l -c"));
         drop(calls);
-    }
-
-    #[tokio::test]
-    async fn test_create_session_with_ink() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "coder".into(),
-            InkConfig {
-                description: Some("Coder ink".into()),
-                command: Some("claude -p 'implement'".into()),
-                ..InkConfig::default()
-            },
-        );
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend, store, inks, None).with_no_stale_grace();
-
-        let req = CreateSessionRequest {
-            name: "ink-test".into(),
-            workdir: Some("/tmp".into()),
-            command: None,
-            ink: Some("coder".into()),
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: None,
-            secrets: None,
-            term_program: None,
-            budget_cost_usd: None,
-        };
-        let session = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.command, "claude -p 'implement'");
-        assert_eq!(session.description, Some("Coder ink".into()));
-    }
-
-    #[tokio::test]
-    async fn test_create_session_command_overrides_ink() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "coder".into(),
-            InkConfig {
-                description: Some("Coder ink".into()),
-                command: Some("claude -p 'default'".into()),
-                ..InkConfig::default()
-            },
-        );
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend, store, inks, None).with_no_stale_grace();
-
-        let req = CreateSessionRequest {
-            name: "override-test".into(),
-            workdir: Some("/tmp".into()),
-            command: Some("my-custom-command".into()),
-            ink: Some("coder".into()),
-            description: Some("My desc".into()),
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: None,
-            secrets: None,
-            term_program: None,
-            budget_cost_usd: None,
-        };
-        let session = mgr.create_session(req).await.unwrap();
-        // Explicit command wins over ink command
-        assert_eq!(session.command, "my-custom-command");
-        assert_eq!(session.description, Some("My desc".into()));
-    }
-
-    #[tokio::test]
-    async fn test_create_session_unknown_ink() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let req = CreateSessionRequest {
-            name: "test".into(),
-            workdir: Some("/tmp".into()),
-            command: None,
-            ink: Some("nonexistent".into()),
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: None,
-            secrets: None,
-            term_program: None,
-            budget_cost_usd: None,
-        };
-        let result = mgr.create_session(req).await;
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("unknown ink"), "got: {err}");
     }
 
     #[test]
@@ -1348,7 +1164,6 @@ mod tests {
             name: "bad name with spaces".into(),
             workdir: Some("/tmp".into()),
             command: Some("echo".into()),
-            ink: None,
             description: None,
             metadata: None,
             idle_threshold_secs: None,
@@ -1370,7 +1185,6 @@ mod tests {
             name: "defaults-test".into(),
             workdir: None,
             command: Some("echo test".into()),
-            ink: None,
             description: None,
             metadata: None,
             idle_threshold_secs: None,
@@ -1696,7 +1510,7 @@ mod tests {
         assert!(fc.send_input("n", "t").is_ok());
         assert!(fc.setup_logging("n", "p").is_ok());
 
-        let mgr = SessionManager::new(Arc::new(FailCapture), store, HashMap::new(), None);
+        let mgr = SessionManager::new(Arc::new(FailCapture), store, None);
         let output = mgr.capture_output("test-id", "whatever", 3);
         assert_eq!(output, "line 3\nline 4\nline 5");
     }
@@ -1710,7 +1524,6 @@ mod tests {
         let mgr = SessionManager::new(
             Arc::new(MockBackend::new()) as Arc<dyn Backend>,
             store,
-            HashMap::new(),
             None,
         );
         // read_log_tail for nonexistent file returns empty string
@@ -2292,13 +2105,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resolve_ink_no_command_no_ink_falls_back_to_shell() {
+    async fn test_resolve_command_no_command_falls_back_to_shell() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
             name: "test".into(),
             workdir: Some("/tmp".into()),
             command: None,
-            ink: None,
             description: Some("desc".into()),
             metadata: None,
             idle_threshold_secs: None,
@@ -2309,85 +2121,10 @@ mod tests {
             term_program: None,
             budget_cost_usd: None,
         };
-        let resolved = mgr.resolve_ink(&req).unwrap();
+        let resolved = mgr.resolve_command(&req);
         // Falls back to $SHELL or /bin/sh
         assert!(!resolved.command.is_empty());
         assert_eq!(resolved.description, Some("desc".into()));
-    }
-
-    #[tokio::test]
-    async fn test_ink_description_fallback() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "test-ink".into(),
-            InkConfig {
-                description: Some("Ink desc".into()),
-                command: Some("echo test".into()),
-                ..InkConfig::default()
-            },
-        );
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend, store, inks, None).with_no_stale_grace();
-
-        let req = CreateSessionRequest {
-            name: "fallback-test".into(),
-            workdir: Some("/tmp".into()),
-            command: None,
-            ink: Some("test-ink".into()),
-            description: None, // Should fall back to ink description
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: None,
-            secrets: None,
-            term_program: None,
-            budget_cost_usd: None,
-        };
-        let session = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.description, Some("Ink desc".into()));
-    }
-
-    #[tokio::test]
-    async fn test_ink_with_no_command_falls_back_to_shell() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "empty-ink".into(),
-            InkConfig {
-                description: Some("Empty".into()),
-                command: None,
-                ..InkConfig::default()
-            },
-        );
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend, store, inks, None).with_no_stale_grace();
-
-        let req = CreateSessionRequest {
-            name: "empty-test".into(),
-            workdir: Some("/tmp".into()),
-            command: None,
-            ink: Some("empty-ink".into()),
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: None,
-            secrets: None,
-            term_program: None,
-            budget_cost_usd: None,
-        };
-        // Ink with no command falls back to $SHELL
-        let session = mgr.create_session(req).await.unwrap();
-        assert!(!session.command.is_empty());
     }
 
     #[tokio::test]
@@ -2397,14 +2134,12 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend, store, HashMap::new(), Some("claude".into()))
-            .with_no_stale_grace();
+        let mgr = SessionManager::new(backend, store, Some("claude".into())).with_no_stale_grace();
 
         let req = CreateSessionRequest {
             name: "default-cmd-test".into(),
             workdir: Some("/tmp".into()),
             command: None,
-            ink: None,
             description: None,
             metadata: None,
             idle_threshold_secs: None,
@@ -2426,14 +2161,12 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend, store, HashMap::new(), Some("claude".into()))
-            .with_no_stale_grace();
+        let mgr = SessionManager::new(backend, store, Some("claude".into())).with_no_stale_grace();
 
         let req = CreateSessionRequest {
             name: "explicit-cmd-test".into(),
             workdir: Some("/tmp".into()),
             command: Some("custom-agent".into()),
-            ink: None,
             description: None,
             metadata: None,
             idle_threshold_secs: None,
@@ -2446,178 +2179,6 @@ mod tests {
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "custom-agent");
-    }
-
-    #[tokio::test]
-    async fn test_create_session_ink_overrides_default_command() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "coder".into(),
-            InkConfig {
-                description: Some("Coder ink".into()),
-                command: Some("claude -p 'implement'".into()),
-                ..InkConfig::default()
-            },
-        );
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend, store, inks, Some("default-agent".into()))
-            .with_no_stale_grace();
-
-        let req = CreateSessionRequest {
-            name: "ink-over-default".into(),
-            workdir: Some("/tmp".into()),
-            command: None,
-            ink: Some("coder".into()),
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: None,
-            secrets: None,
-            term_program: None,
-            budget_cost_usd: None,
-        };
-        let session = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.command, "claude -p 'implement'");
-    }
-
-    #[tokio::test]
-    async fn test_create_session_ink_docker_runtime_rejected() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "sandbox-coder".into(),
-            InkConfig {
-                description: Some("Docker coder".into()),
-                command: Some("claude".into()),
-                runtime: Some("docker".into()),
-                ..InkConfig::default()
-            },
-        );
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let mgr = SessionManager::new(Arc::new(MockBackend::new()), store, inks, None)
-            .with_no_stale_grace();
-
-        let mut req = make_req("ink-rt");
-        req.command = None;
-        req.ink = Some("sandbox-coder".into()); // Ink carries the retired docker runtime
-        let err = mgr.create_session(req).await.unwrap_err();
-        assert!(
-            err.to_string().contains("docker runtime was removed"),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_ink_runtime_overridden_by_request() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "docker-ink".into(),
-            InkConfig {
-                command: Some("claude".into()),
-                runtime: Some("docker".into()),
-                ..InkConfig::default()
-            },
-        );
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let mgr = SessionManager::new(Arc::new(MockBackend::new()), store, inks, None)
-            .with_no_stale_grace();
-
-        let req = CreateSessionRequest {
-            name: "override-rt".into(),
-            workdir: Some("/tmp".into()),
-            command: None,
-            ink: Some("docker-ink".into()),
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: Some(Runtime::Tmux), // Override ink's docker runtime
-            secrets: None,
-            term_program: None,
-            budget_cost_usd: None,
-        };
-        let session = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.runtime, Runtime::Tmux);
-    }
-
-    #[tokio::test]
-    async fn test_ink_secrets_merged_with_request_secrets() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "coder-with-secrets".into(),
-            InkConfig {
-                command: Some("claude".into()),
-                secrets: vec!["INK_SECRET".into()],
-                ..InkConfig::default()
-            },
-        );
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        // Set up the secrets in the store
-        store.set_secret("INK_SECRET", "ink-value").await.unwrap();
-        store.set_secret("REQ_SECRET", "req-value").await.unwrap();
-        let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend.clone(), store, inks, None).with_no_stale_grace();
-
-        let req = CreateSessionRequest {
-            name: "merged-secrets".into(),
-            workdir: Some("/tmp".into()),
-            command: None,
-            ink: Some("coder-with-secrets".into()),
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: None,
-            secrets: Some(vec!["REQ_SECRET".into()]),
-            term_program: None,
-            budget_cost_usd: None,
-        };
-        let session = mgr.create_session(req).await.unwrap();
-        // Secret values should NOT appear in the command string (security fix)
-        let calls: Vec<_> = backend.calls.lock().unwrap().clone();
-        let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
-        assert!(
-            !create_call.contains("ink-value"),
-            "ink secret value leaked into command: {create_call}"
-        );
-        assert!(
-            !create_call.contains("req-value"),
-            "request secret value leaked into command: {create_call}"
-        );
-        // Instead, the command should source a secrets file
-        assert!(
-            create_call.contains("/secrets/secrets-"),
-            "command should source secrets file: {create_call}"
-        );
-
-        // Verify the secrets file contains both secrets
-        let data_dir = mgr.store().data_dir();
-        let secrets_path = format!("{data_dir}/secrets/secrets-{}.sh", session.id);
-        let content = std::fs::read_to_string(&secrets_path).unwrap();
-        assert!(
-            content.contains("INK_SECRET"),
-            "ink secret should be in file: {content}"
-        );
-        assert!(
-            content.contains("REQ_SECRET"),
-            "request secret should be in file: {content}"
-        );
     }
 
     #[test]
@@ -2726,7 +2287,6 @@ mod tests {
             name: "no-fallback".into(),
             workdir: Some("/tmp".into()),
             command: None,
-            ink: None,
             description: None,
             metadata: None,
             idle_threshold_secs: None,
@@ -2861,7 +2421,6 @@ mod tests {
             name: "bad-dir".to_owned(),
             workdir: Some("/nonexistent/path/that/does/not/exist".into()),
             command: Some("echo hi".into()),
-            ink: None,
             description: None,
             metadata: None,
             idle_threshold_secs: None,
@@ -2992,7 +2551,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(MockBackend::new().with_alive(false));
-        let mgr = SessionManager::new(backend, store, HashMap::new(), None);
+        let mgr = SessionManager::new(backend, store, None);
 
         let session = mgr.create_session(make_req("young")).await.unwrap();
         // Session was just created — within grace period, so check_and_mark_stale returns false
@@ -3468,64 +3027,6 @@ mod tests {
     fn test_is_shell_command_bash_with_args_is_not_shell() {
         // "bash -c 'cmd'" is not a bare shell — it's running a command
         assert!(!is_shell_command("bash -c 'echo hello'"));
-    }
-
-    // -- create_session: ink secrets dedup --
-
-    #[tokio::test]
-    async fn test_ink_secrets_dedup_with_request_overlap() {
-        let mut inks = HashMap::new();
-        inks.insert(
-            "shared-secrets".into(),
-            InkConfig {
-                command: Some("claude".into()),
-                secrets: vec!["SHARED_SECRET".into(), "INK_ONLY".into()],
-                ..InkConfig::default()
-            },
-        );
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        store
-            .set_secret("SHARED_SECRET", "shared-val")
-            .await
-            .unwrap();
-        store.set_secret("INK_ONLY", "ink-val").await.unwrap();
-        store.set_secret("REQ_ONLY", "req-val").await.unwrap();
-        let backend = Arc::new(MockBackend::new());
-        let mgr = SessionManager::new(backend, store, inks, None).with_no_stale_grace();
-
-        let req = CreateSessionRequest {
-            name: "dedup-test".into(),
-            workdir: Some("/tmp".into()),
-            command: None,
-            ink: Some("shared-secrets".into()),
-            description: None,
-            metadata: None,
-            idle_threshold_secs: None,
-            worktree: None,
-            worktree_base: None,
-            runtime: None,
-            // SHARED_SECRET overlaps with ink, REQ_ONLY is new
-            secrets: Some(vec!["SHARED_SECRET".into(), "REQ_ONLY".into()]),
-            term_program: None,
-            budget_cost_usd: None,
-        };
-        let session = mgr.create_session(req).await.unwrap();
-
-        // Verify the secrets file contains all 3 secrets (no duplicates)
-        let data_dir = mgr.store().data_dir();
-        let secrets_path = format!("{data_dir}/secrets/secrets-{}.sh", session.id);
-        let content = std::fs::read_to_string(&secrets_path).unwrap();
-        // Count occurrences of SHARED_SECRET — should appear exactly once
-        let shared_count = content.matches("SHARED_SECRET").count();
-        assert_eq!(
-            shared_count, 1,
-            "SHARED_SECRET should not be duplicated: {content}"
-        );
-        assert!(content.contains("INK_ONLY"));
-        assert!(content.contains("REQ_ONLY"));
     }
 
     // -- stop_session with purge on various statuses --

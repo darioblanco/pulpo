@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use axum::{Json, extract::State};
 use pulpo_common::api::{
-    AuthConfigResponse, ConfigResponse, InkConfigResponse, NodeConfigResponse,
-    NotificationsConfigResponse, UpdateConfigRequest, UpdateConfigResponse, WatchdogConfigResponse,
+    AuthConfigResponse, ConfigResponse, NodeConfigResponse, NotificationsConfigResponse,
+    UpdateConfigRequest, UpdateConfigResponse, WatchdogConfigResponse,
     WebhookEndpointConfigResponse,
 };
 
@@ -48,11 +48,6 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
                 })
                 .collect(),
         },
-        inks: config
-            .inks
-            .iter()
-            .map(|(k, v)| (k.clone(), InkConfigResponse::from(v)))
-            .collect(),
     }
 }
 
@@ -131,14 +126,6 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
         config.notifications.webhooks.clear();
     }
 
-    // Inks (full replace when provided)
-    if let Some(inks) = req.inks {
-        config.inks = inks
-            .into_iter()
-            .map(|(k, v)| (k, crate::config::InkConfig::from(&v)))
-            .collect();
-    }
-
     // Peers
     if let Some(peers) = req.peers {
         config.peers = peers;
@@ -192,8 +179,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
@@ -217,8 +203,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
         let config_path = tmpdir.path().join("config.toml");
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
@@ -528,33 +513,8 @@ mod tests {
         assert!(!resp.restart_required);
     }
 
-    #[tokio::test]
-    async fn test_update_config_inks() {
-        use pulpo_common::api::InkConfigResponse;
-        let state = test_state().await;
-        let mut inks = HashMap::new();
-        inks.insert(
-            "reviewer".into(),
-            InkConfigResponse {
-                description: Some("Review code".into()),
-                command: Some("claude -p 'review'".into()),
-                secrets: vec![],
-                runtime: None,
-            },
-        );
-        let req = UpdateConfigRequest {
-            inks: Some(inks),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.inks.len(), 1);
-        let p = &resp.config.inks["reviewer"];
-        assert_eq!(p.command, Some("claude -p 'review'".into()));
-        assert_eq!(p.description, Some("Review code".into()));
-    }
-
     #[test]
-    fn test_config_to_response_with_notifications_and_inks() {
+    fn test_config_to_response_with_notifications() {
         let config = Config {
             node: NodeConfig {
                 name: "test".into(),
@@ -578,18 +538,6 @@ mod tests {
                 burn_ceiling_usd_per_hour: None,
                 burn_ceiling_tokens_per_hour: None,
                 burn_action: "alert".into(),
-            },
-            inks: {
-                let mut m = HashMap::new();
-                m.insert(
-                    "coder".into(),
-                    crate::config::InkConfig {
-                        description: None,
-                        command: Some("claude -p 'code'".into()),
-                        ..crate::config::InkConfig::default()
-                    },
-                );
-                m
             },
             notifications: crate::config::NotificationsConfig {
                 webhooks: vec![crate::config::WebhookEndpointConfig {
@@ -619,10 +567,6 @@ mod tests {
         let w = &resp.notifications.webhooks[0];
         assert_eq!(w.url, "https://example.com/hook");
         assert_eq!(w.events, vec!["session.created"]);
-        // Inks
-        assert_eq!(resp.inks.len(), 1);
-        let p = &resp.inks["coder"];
-        assert_eq!(p.command, Some("claude -p 'code'".into()));
     }
 
     #[test]
@@ -769,8 +713,7 @@ mod tests {
         let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
-        let manager =
-            SessionManager::new(backend, store.clone(), HashMap::new(), None).with_no_stale_grace();
+        let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
         let peer_registry = PeerRegistry::new(&HashMap::new());
 
         // Use /dev/null/impossible as config path (can't create dirs under /dev/null)

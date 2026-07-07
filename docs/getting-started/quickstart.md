@@ -109,8 +109,8 @@ pulpo schedule add nightly-review "0 3 * * *" --workdir ~/repo -- claude -p "rev
 pulpo schedule list
 ```
 
-For a fuller version of this pattern using reusable inks and a real overnight
-workflow, see [Nightly Code Review](/guides/nightly-code-review).
+For a fuller version of this pattern — including a cost budget — see
+[Nightly Code Review](/guides/nightly-code-review).
 
 ## 9. Isolated Worktree Runs
 
@@ -153,7 +153,7 @@ curl -N http://localhost:7433/api/v1/events  # SSE stream
 - [Core Concepts](/architecture/core-concepts) — the smallest vocabulary for understanding Pulpo
 - [Architecture Overview](/architecture/overview) — the session/runtime/watchdog mental model
 - [Session Lifecycle](/operations/session-lifecycle) — exact transition behavior
-- [Configuration Guide](/guides/configuration) — inks, watchdog, notifications, peers
+- [Configuration Guide](/guides/configuration) — watchdog, notifications, peers
 - [Examples](https://github.com/darioblanco/pulpo/tree/main/examples) — runnable CLI workflows
 - [Discovery Guide](/guides/discovery) — multi-node setup with Tailscale or manual peers
 - [CLI Reference](/reference/cli) — all commands, flags, and scripting recipes

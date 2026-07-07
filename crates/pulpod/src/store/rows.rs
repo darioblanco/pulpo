@@ -106,6 +106,7 @@ pub(super) fn row_to_schedule(row: &SqliteRow) -> Result<pulpo_common::api::Sche
         secrets,
         worktree: row.try_get("worktree").unwrap_or(None),
         worktree_base: row.try_get("worktree_base").unwrap_or(None),
+        budget_cost_usd: row.try_get("budget_cost_usd").unwrap_or(None),
         enabled: row.try_get("enabled").unwrap_or(true),
         last_run_at: row.try_get("last_run_at").unwrap_or(None),
         last_session_id: row.try_get("last_session_id").unwrap_or(None),

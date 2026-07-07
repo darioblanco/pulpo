@@ -4,7 +4,6 @@ mod embed;
 pub mod error;
 pub mod events;
 pub mod health;
-pub mod inks;
 pub mod metrics;
 pub mod node;
 pub mod notifications;

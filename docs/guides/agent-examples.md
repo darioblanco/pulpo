@@ -175,18 +175,14 @@ pulpo spawn my-task --workdir ~/repos/my-api --worktree -d -- <agent-command>
 pulpo schedule add nightly-task "0 3 * * *" --workdir ~/repos/my-api -- <agent-command>
 ```
 
-### Put it behind an ink
+### Reuse a command
 
-```toml
-[inks.agent-review]
-description = "Reusable review workflow"
-command = "claude -p 'Review this repository for bugs, regressions, and missing tests.'"
-```
-
-Then:
+Pulpo doesn't keep its own preset registry — a shell alias or a one-line script does the
+same job and works everywhere else too:
 
 ```bash
-pulpo spawn review --workdir ~/repos/my-api --ink agent-review
+# ~/.bashrc or ~/.zshrc
+alias agent-review='pulpo spawn review --workdir ~/repos/my-api -- claude -p "Review this repository for bugs, regressions, and missing tests."'
 ```
 
 ## What This Page Is Not

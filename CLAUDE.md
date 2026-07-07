@@ -262,7 +262,6 @@ pulpo/
 │   │   │   ├── node.rs           # Node info + memory detection
 │   │   │   ├── peers.rs          # Peers endpoint
 │   │   │   ├── ws.rs             # WebSocket terminal streaming
-│   │   │   ├── inks.rs           # Inks endpoint
 │   │   │   ├── events.rs         # SSE event stream endpoint
 │   │   │   ├── static_files.rs   # rust-embed static file serving
 │   │   │   └── embed.rs          # rust-embed derive (excluded from coverage)

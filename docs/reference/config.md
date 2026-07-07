@@ -18,7 +18,7 @@ delete `~/.pulpo/state.db` and restart.
 | `bind` | string | `"local"` | `"local"`, `"public"`, `"tailscale"`, `"container"` |
 | `tag` | string | — | Tailscale ACL tag for filtering (e.g. `"pulpo"`) |
 | `discovery_interval_secs` | u64 | `30` | How often to run peer discovery |
-| `default_command` | string | — | Default command when spawn has no explicit command or ink command |
+| `default_command` | string | — | Default command when spawn has no explicit command |
 | `log_retain_days` | u32 | `7` | Days of rotated daemon logs (`logs/pulpod.log.*`) to keep (hourly rotation) |
 | `capture_session_output` | bool | `false` | Mirror each session's full terminal output to `logs/<id>.log` via `tmux pipe-pane`. Off by default — the capture is unbounded and fills the disk on long/chatty sessions. Enable only for debugging; the watchdog reads the live tail from tmux scrollback and persists the last snapshot in the database regardless. |
 
@@ -53,14 +53,15 @@ session-runtime section.
 | `idle_threshold_secs` | u64 | `60` | Seconds of unchanged output before Active→Idle |
 | `waiting_patterns` | string[] | `[]` | Extra patterns for waiting-for-input detection (appended to 29 built-in patterns) |
 
-## `[inks.<name>]`
+## `[inks.<name>]` (retired)
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `description` | string | — | Human-readable ink description |
-| `command` | string | — | Shell command to run (e.g. `"claude -p 'review code'"`) |
-| `secrets` | string[] | `[]` | Stored secret names to inject when the ink is used |
-| `budget_cost_usd` | float | — | Cost budget for sessions from this ink (watchdog alerts at 80%, stops at 100%) |
+Inks — a named-preset registry (command, description, secrets, runtime, budget) — were
+removed. Command and secrets are set directly per session/schedule (`pulpo spawn --secret`,
+`pulpo schedule add --secret`), and the recurring cost budget moved onto the schedule itself
+(`pulpo schedule add --budget-cost <USD>`). A leftover `[inks.*]` section from a config
+written before the removal is tolerated: it still parses, is ignored, and is dropped the
+next time the config is saved. Same treatment as the retired `[docker]` and `[controller]`
+sections.
 
 ## `[plans.<name>]`
 

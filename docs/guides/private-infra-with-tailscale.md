@@ -83,22 +83,6 @@ pulpo spawn risky-audit \
 
 See [Worktrees](/guides/worktrees) for the full isolation model.
 
-## Optional: Reusable Ink
-
-If you run this kind of task often, define an ink so the command and its secrets travel
-together:
-
-```toml
-[inks.private-review]
-description = "Private review on internal infrastructure"
-command = "claude -p 'Review this repository for correctness, security issues, and missing tests.'"
-secrets = ["GH_WORK"]
-```
-
-```bash
-pulpo spawn review-backend --workdir ~/repos/backend --ink private-review
-```
-
 ## Operational Notes
 
 - Tailscale is the recommended `bind` mode for reaching a node outside your LAN; use manual

@@ -12,9 +12,8 @@ mod http;
 
 #[cfg_attr(coverage, allow(unused_imports))]
 use format::{
-    format_cleanup_message, format_ink_detail, format_inks, format_interventions, format_nodes,
-    format_schedules, format_secrets, format_sessions, format_usage_projection, format_usage_scan,
-    format_worktree_sessions,
+    format_cleanup_message, format_interventions, format_nodes, format_schedules, format_secrets,
+    format_sessions, format_usage_projection, format_usage_scan, format_worktree_sessions,
 };
 #[cfg_attr(coverage, allow(unused_imports))]
 use http::{
@@ -77,10 +76,6 @@ pub enum Commands {
         /// Working directory (defaults to current directory)
         #[arg(long)]
         workdir: Option<String>,
-
-        /// Ink name (from config)
-        #[arg(long)]
-        ink: Option<String>,
 
         /// Human-readable description of the task
         #[arg(long)]
@@ -246,12 +241,6 @@ pub enum Commands {
         #[command(subcommand)]
         action: WorktreeAction,
     },
-
-    /// Manage ink presets (reusable command templates)
-    Ink {
-        #[command(subcommand)]
-        action: InkAction,
-    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -285,52 +274,6 @@ pub enum WorktreeAction {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum InkAction {
-    /// List all ink presets
-    #[command(visible_alias = "ls")]
-    List,
-    /// Show details for a specific ink
-    Get {
-        /// Ink name
-        name: String,
-    },
-    /// Add a new ink preset
-    Add {
-        /// Ink name
-        name: String,
-        /// Human-readable description
-        #[arg(long)]
-        description: Option<String>,
-        /// Command template
-        #[arg(long)]
-        command: Option<String>,
-        /// Secrets to inject (by name, repeatable)
-        #[arg(long)]
-        secret: Vec<String>,
-    },
-    /// Update an existing ink preset
-    Update {
-        /// Ink name
-        name: String,
-        /// Human-readable description
-        #[arg(long)]
-        description: Option<String>,
-        /// Command template
-        #[arg(long)]
-        command: Option<String>,
-        /// Secrets to inject (by name, repeatable). Replaces existing secrets.
-        #[arg(long)]
-        secret: Vec<String>,
-    },
-    /// Remove an ink preset
-    #[command(visible_alias = "rm")]
-    Remove {
-        /// Ink name
-        name: String,
-    },
-}
-
-#[derive(Subcommand, Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum ScheduleAction {
     /// Add a new schedule
@@ -343,9 +286,6 @@ pub enum ScheduleAction {
         /// Working directory
         #[arg(long)]
         workdir: Option<String>,
-        /// Ink preset
-        #[arg(long)]
-        ink: Option<String>,
         /// Description
         #[arg(long)]
         description: Option<String>,
@@ -358,6 +298,10 @@ pub enum ScheduleAction {
         /// Base branch to fork the worktree from (implies --worktree)
         #[arg(long = "worktree-base")]
         worktree_base: Option<String>,
+        /// Cost budget in USD applied to every session this schedule fires
+        /// (watchdog alerts at 80%, stops at 100%)
+        #[arg(long = "budget-cost")]
+        budget_cost: Option<f64>,
         /// Command to run (everything after --)
         #[arg(last = true)]
         command: Vec<String>,
@@ -804,11 +748,11 @@ async fn execute_schedule(
             name,
             cron,
             workdir,
-            ink,
             description,
             secret,
             worktree,
             worktree_base,
+            budget_cost,
             command,
         } => {
             let cmd = if command.is_empty() {
@@ -829,9 +773,6 @@ async fn execute_schedule(
             if let Some(c) = &cmd {
                 body["command"] = serde_json::json!(c);
             }
-            if let Some(i) = ink {
-                body["ink"] = serde_json::json!(i);
-            }
             if let Some(d) = description {
                 body["description"] = serde_json::json!(d);
             }
@@ -843,6 +784,9 @@ async fn execute_schedule(
             }
             if let Some(wb) = worktree_base {
                 body["worktree_base"] = serde_json::json!(wb);
+            }
+            if let Some(b) = budget_cost {
+                body["budget_cost_usd"] = serde_json::json!(b);
             }
             request_text(
                 client,
@@ -1004,122 +948,6 @@ async fn execute_worktree(
 async fn execute_worktree(
     _client: &reqwest::Client,
     _action: &WorktreeAction,
-    _base: &str,
-    _token: Option<&str>,
-    _node: &str,
-) -> Result<String> {
-    Ok(String::new())
-}
-
-#[cfg_attr(coverage, allow(dead_code))]
-fn build_ink_body(
-    base: &serde_json::Value,
-    description: Option<&String>,
-    command: Option<&String>,
-    secret: &[String],
-) -> serde_json::Value {
-    let mut body = base.clone();
-    if let Some(d) = description {
-        body["description"] = serde_json::json!(d);
-    }
-    if let Some(c) = command {
-        body["command"] = serde_json::json!(c);
-    }
-    if !secret.is_empty() {
-        body["secrets"] = serde_json::json!(secret);
-    }
-    body
-}
-
-/// Execute an ink subcommand via the inks API.
-#[cfg(not(coverage))]
-async fn execute_ink(
-    client: &reqwest::Client,
-    action: &InkAction,
-    base: &str,
-    token: Option<&str>,
-    node: &str,
-) -> Result<String> {
-    match action {
-        InkAction::List => {
-            let wrapper: serde_json::Value =
-                get_json(client, format!("{base}/api/v1/inks"), token, node).await?;
-            let inks = wrapper
-                .get("inks")
-                .and_then(|v| v.as_object())
-                .cloned()
-                .unwrap_or_default();
-            Ok(format_inks(&inks))
-        }
-        InkAction::Get { name } => {
-            let ink: serde_json::Value =
-                get_json(client, format!("{base}/api/v1/inks/{name}"), token, node).await?;
-            Ok(format_ink_detail(name, &ink))
-        }
-        InkAction::Add {
-            name,
-            description,
-            command,
-            secret,
-        } => {
-            let body = build_ink_body(
-                &serde_json::json!({}),
-                description.as_ref(),
-                command.as_ref(),
-                secret,
-            );
-            request_text(
-                client,
-                reqwest::Method::POST,
-                format!("{base}/api/v1/inks/{name}"),
-                token,
-                node,
-                Some(&body),
-            )
-            .await?;
-            Ok(format!("Created ink \"{name}\""))
-        }
-        InkAction::Update {
-            name,
-            description,
-            command,
-            secret,
-        } => {
-            let existing: serde_json::Value =
-                get_json(client, format!("{base}/api/v1/inks/{name}"), token, node).await?;
-            let body = build_ink_body(&existing, description.as_ref(), command.as_ref(), secret);
-            request_text(
-                client,
-                reqwest::Method::PUT,
-                format!("{base}/api/v1/inks/{name}"),
-                token,
-                node,
-                Some(&body),
-            )
-            .await?;
-            Ok(format!("Updated ink \"{name}\""))
-        }
-        InkAction::Remove { name } => {
-            request_text(
-                client,
-                reqwest::Method::DELETE,
-                format!("{base}/api/v1/inks/{name}"),
-                token,
-                node,
-                None,
-            )
-            .await?;
-            Ok(format!("Removed ink \"{name}\""))
-        }
-    }
-}
-
-/// Coverage stub for ink execution.
-#[cfg(coverage)]
-#[allow(clippy::unnecessary_wraps)]
-async fn execute_ink(
-    _client: &reqwest::Client,
-    _action: &InkAction,
     _base: &str,
     _token: Option<&str>,
     _node: &str,
@@ -1328,7 +1156,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
         Commands::Spawn {
             workdir,
             name,
-            ink,
             description,
             detach,
             idle_threshold,
@@ -1361,9 +1188,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             });
             if let Some(c) = &cmd {
                 body["command"] = serde_json::json!(c);
-            }
-            if let Some(i) = ink {
-                body["ink"] = serde_json::json!(i);
             }
             if let Some(d) = description {
                 body["description"] = serde_json::json!(d);
@@ -1628,9 +1452,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
         Commands::Worktree { action } => {
             execute_worktree(&client, action, &url, token.as_deref(), node).await
         }
-        Commands::Ink { action } => {
-            execute_ink(&client, action, &url, token.as_deref(), node).await
-        }
     }
 }
 
@@ -1718,12 +1539,10 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_spawn_with_ink() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--ink", "coder"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Spawn { ink, .. }) if ink.as_deref() == Some("coder")
-        ));
+    fn test_cli_parse_spawn_ink_flag_removed() {
+        // The ink preset registry was removed — `--ink` is no longer a recognized flag.
+        let result = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--ink", "coder"]);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -2281,7 +2100,6 @@ mod tests {
             command: Some(Commands::Spawn {
                 name: Some("test".into()),
                 workdir: Some("/tmp/repo".into()),
-                ink: None,
                 description: None,
                 detach: true,
                 idle_threshold: None,
@@ -2308,7 +2126,6 @@ mod tests {
             command: Some(Commands::Spawn {
                 name: Some("test".into()),
                 workdir: Some("/tmp/repo".into()),
-                ink: Some("coder".into()),
                 description: Some("Fix the bug".into()),
                 detach: true,
                 idle_threshold: None,
@@ -2334,7 +2151,6 @@ mod tests {
             command: Some(Commands::Spawn {
                 name: Some("full-opts".into()),
                 workdir: Some("/tmp/repo".into()),
-                ink: Some("coder".into()),
                 description: Some("Full options".into()),
                 detach: true,
                 idle_threshold: Some(120),
@@ -2360,7 +2176,6 @@ mod tests {
             command: Some(Commands::Spawn {
                 name: None,
                 workdir: Some("/tmp/my-project".into()),
-                ink: None,
                 description: None,
                 detach: true,
                 idle_threshold: None,
@@ -2386,7 +2201,6 @@ mod tests {
             command: Some(Commands::Spawn {
                 name: Some("test".into()),
                 workdir: Some("/tmp/repo".into()),
-                ink: None,
                 description: None,
                 detach: true,
                 idle_threshold: None,
@@ -2412,7 +2226,6 @@ mod tests {
             command: Some(Commands::Spawn {
                 name: Some("my-task".into()),
                 workdir: Some("/tmp/repo".into()),
-                ink: None,
                 description: None,
                 detach: true,
                 idle_threshold: None,
@@ -2438,7 +2251,6 @@ mod tests {
             command: Some(Commands::Spawn {
                 name: Some("test".into()),
                 workdir: Some("/tmp/repo".into()),
-                ink: None,
                 description: None,
                 detach: false,
                 idle_threshold: None,
@@ -2648,32 +2460,11 @@ mod tests {
         assert!(err.contains("localhost:1"));
     }
 
-    /// Regression: `pulpo ink list` (and the other schedule/secret/worktree/ink
+    /// Regression: `pulpo schedule list` (and the other schedule/secret/worktree
     /// subcommands) used bare `.send().await?` without `friendly_error`, so a
     /// stopped daemon printed a raw reqwest error. Routing them through the
     /// shared request helpers fixed that. Gated `not(coverage)` because the
     /// sub-executors are stubbed out under coverage builds.
-    #[cfg(not(coverage))]
-    #[tokio::test]
-    async fn test_execute_ink_list_connection_refused() {
-        let cli = Cli {
-            node: "localhost:1".into(),
-            token: None,
-            command: Some(Commands::Ink {
-                action: InkAction::List,
-            }),
-            path: None,
-        };
-        let result = execute(&cli).await;
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("Could not connect to pulpod"),
-            "Expected friendly error, got: {err}"
-        );
-        assert!(err.contains("localhost:1"));
-    }
-
-    /// Same regression coverage for `pulpo schedule list`.
     #[cfg(not(coverage))]
     #[tokio::test]
     async fn test_execute_schedule_list_connection_refused() {
@@ -2823,7 +2614,6 @@ mod tests {
             command: Some(Commands::Spawn {
                 name: Some("test".into()),
                 workdir: Some("/tmp/repo".into()),
-                ink: None,
                 description: None,
                 detach: true,
                 idle_threshold: None,
@@ -3012,7 +2802,6 @@ mod tests {
             command: Some(Commands::Spawn {
                 name: Some("test".into()),
                 workdir: Some("/tmp".into()),
-                ink: None,
                 description: None,
                 detach: true,
                 idle_threshold: None,
@@ -3840,6 +3629,26 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_schedule_add_with_budget_cost() {
+        let cli = Cli::try_parse_from([
+            "pulpo",
+            "schedule",
+            "add",
+            "nightly",
+            "0 3 * * *",
+            "--budget-cost",
+            "7.5",
+        ])
+        .unwrap();
+        assert!(matches!(
+            &cli.command,
+            Some(Commands::Schedule {
+                action: ScheduleAction::Add { budget_cost, .. }
+            }) if *budget_cost == Some(7.5)
+        ));
+    }
+
+    #[test]
     fn test_cli_parse_schedule_add_install_alias() {
         let cli =
             Cli::try_parse_from(["pulpo", "schedule", "install", "nightly", "0 3 * * *"]).unwrap();
@@ -4187,130 +3996,6 @@ mod tests {
         ));
     }
 
-    // -- Ink CLI parsing tests --
-
-    #[test]
-    fn test_cli_parse_ink_list() {
-        let cli = Cli::try_parse_from(["pulpo", "ink", "list"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Ink {
-                action: InkAction::List
-            })
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_ink_list_alias() {
-        let cli = Cli::try_parse_from(["pulpo", "ink", "ls"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Ink {
-                action: InkAction::List
-            })
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_ink_get() {
-        let cli = Cli::try_parse_from(["pulpo", "ink", "get", "coder"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Ink {
-                action: InkAction::Get { name }
-            }) if name == "coder"
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_ink_add() {
-        let cli = Cli::try_parse_from([
-            "pulpo",
-            "ink",
-            "add",
-            "coder",
-            "--description",
-            "A coder ink",
-            "--command",
-            "claude -p 'code'",
-            "--secret",
-            "GH_TOKEN",
-            "--secret",
-            "NPM_TOKEN",
-        ])
-        .unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Ink {
-                action: InkAction::Add { name, description, command, secret }
-            }) if name == "coder"
-                && description.as_deref() == Some("A coder ink")
-                && command.as_deref() == Some("claude -p 'code'")
-                && secret == &["GH_TOKEN", "NPM_TOKEN"]
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_ink_add_runtime_flag_removed() {
-        // --runtime was removed along with the docker session runtime
-        let result = Cli::try_parse_from(["pulpo", "ink", "add", "coder", "--runtime", "docker"]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cli_parse_ink_add_minimal() {
-        let cli = Cli::try_parse_from(["pulpo", "ink", "add", "bare"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Ink {
-                action: InkAction::Add { name, command, secret, .. }
-            }) if name == "bare" && command.is_none() && secret.is_empty()
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_ink_update() {
-        let cli = Cli::try_parse_from(["pulpo", "ink", "update", "coder", "--command", "new cmd"])
-            .unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Ink {
-                action: InkAction::Update { name, command, .. }
-            }) if name == "coder" && command.as_deref() == Some("new cmd")
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_ink_remove() {
-        let cli = Cli::try_parse_from(["pulpo", "ink", "remove", "coder"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Ink {
-                action: InkAction::Remove { name }
-            }) if name == "coder"
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_ink_remove_alias() {
-        let cli = Cli::try_parse_from(["pulpo", "ink", "rm", "coder"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Ink {
-                action: InkAction::Remove { name }
-            }) if name == "coder"
-        ));
-    }
-
-    #[test]
-    fn test_ink_action_debug() {
-        let action = InkAction::List;
-        let debug = format!("{action:?}");
-        assert!(debug.contains("List"));
-    }
-
-    // -- Ink format tests --
-
     // -- Schedule CLI new flags tests --
 
     #[test]
@@ -4355,6 +4040,21 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_schedule_add_ink_flag_removed() {
+        // The ink preset registry was removed — `--ink` is no longer a recognized flag.
+        let result = Cli::try_parse_from([
+            "pulpo",
+            "schedule",
+            "add",
+            "nightly",
+            "0 3 * * *",
+            "--ink",
+            "coder",
+        ]);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_cli_parse_schedule_add_worktree_base_implies_worktree() {
         let cli = Cli::try_parse_from([
             "pulpo",
@@ -4375,38 +4075,6 @@ mod tests {
     }
 
     // -- format_local_time tests --
-
-    // -- build_ink_body tests --
-
-    #[test]
-    fn test_build_ink_body_empty() {
-        let body = build_ink_body(&serde_json::json!({}), None, None, &[]);
-        assert_eq!(body, serde_json::json!({}));
-    }
-
-    #[test]
-    fn test_build_ink_body_all_fields() {
-        let body = build_ink_body(
-            &serde_json::json!({}),
-            Some(&"desc".into()),
-            Some(&"cmd".into()),
-            &["S1".into(), "S2".into()],
-        );
-        assert_eq!(body["description"], "desc");
-        assert_eq!(body["command"], "cmd");
-        assert_eq!(body["secrets"], serde_json::json!(["S1", "S2"]));
-    }
-
-    #[test]
-    fn test_build_ink_body_merges_with_base() {
-        let base = serde_json::json!({"description": "old", "command": "old_cmd"});
-        let body = build_ink_body(&base, None, Some(&"new_cmd".into()), &[]);
-        // description preserved from base, command overridden
-        assert_eq!(body["description"], "old");
-        assert_eq!(body["command"], "new_cmd");
-    }
-
-    // -- format_inks multibyte test --
 
     // -- format_token_count tests --
 

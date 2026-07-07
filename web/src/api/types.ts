@@ -57,15 +57,6 @@ export interface InterventionEvent {
   created_at: string;
 }
 
-export interface InkConfig {
-  description: string | null;
-  command: string | null;
-}
-
-export interface InksResponse {
-  inks: Record<string, InkConfig>;
-}
-
 export interface ListSessionsParams {
   status?: string;
   search?: string;
@@ -118,7 +109,6 @@ export interface ConfigResponse {
   peers: Record<string, PeerEntry>;
   watchdog: WatchdogConfigResponse;
   notifications: NotificationsConfigResponse;
-  inks: Record<string, InkConfig>;
 }
 
 export interface UpdateConfigRequest {
@@ -135,7 +125,6 @@ export interface UpdateConfigRequest {
   watchdog_idle_timeout_secs?: number;
   watchdog_idle_action?: string;
   webhooks?: WebhookEndpointUpdateRequest[];
-  inks?: Record<string, InkConfig>;
   peers?: Record<string, PeerEntry>;
 }
 
@@ -152,7 +141,6 @@ export interface CreateSessionRequest {
   name: string;
   workdir?: string;
   command?: string;
-  ink?: string;
   description?: string;
   metadata?: Record<string, string>;
   worktree?: boolean;
@@ -189,8 +177,11 @@ export interface ScheduleInfo {
   command: string;
   workdir: string;
   target_node: string | null;
+  /** Ink the schedule was created from (historical — the ink registry was removed). */
   ink: string | null;
   description: string | null;
+  /** Cost budget in USD applied to every session this schedule fires. */
+  budget_cost_usd?: number | null;
   enabled: boolean;
   last_run_at: string | null;
   last_session_id: string | null;
@@ -215,14 +206,13 @@ export interface CreateScheduleRequest {
   command?: string;
   workdir: string;
   target_node?: string;
-  ink?: string;
   description?: string;
+  budget_cost_usd?: number;
 }
 
 export interface SessionProjection {
   session_id: string;
   session_name: string;
-  ink: string | null;
   workdir: string;
   usage_source: string | null;
   auth_provider: string | null;
@@ -255,7 +245,7 @@ export interface AccountRollup {
   cost_is_exact: boolean;
 }
 
-/** Cost/token rollup for one attribution dimension value (an ink, or a repo). */
+/** Cost/token rollup for one attribution dimension value (a repo). */
 export interface DimensionRollup {
   label: string;
   session_count: number;
@@ -270,6 +260,5 @@ export interface UsageProjectionResponse {
   generated_at: string;
   sessions: SessionProjection[];
   accounts: AccountRollup[];
-  inks: DimensionRollup[];
   repos: DimensionRollup[];
 }

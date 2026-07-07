@@ -33,40 +33,6 @@ Bind modes:
 - `tailscale` — binds locally, auto-serves HTTPS via `tailscale serve`, peer discovery via Tailscale API
 - `container` — binds to `0.0.0.0`, no auth (trusts container network isolation)
 
-## Inks
-
-Inks are reusable command templates with optional secret defaults:
-
-```toml
-[inks.reviewer]
-description = "Code reviewer focused on correctness and security"
-command = "claude -p 'review this code for correctness, security, and performance'"
-
-[inks.quick-fix]
-description = "Quick fix with Codex"
-command = "codex --quiet 'Fix the issue quickly with minimal changes.'"
-
-[inks.work-coder]
-description = "Coder with secrets"
-command = "claude --dangerously-skip-permissions -p 'Implement the changes'"
-secrets = ["GH_WORK", "ANTHROPIC_KEY"]
-```
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `description` | string | Human-readable description |
-| `command` | string | Command template to run |
-| `secrets` | string[] | Default secrets to inject (merged with `--secret` on spawn) |
-
-Use with: `pulpo spawn auth-review --ink reviewer`
-
-Inks can also be managed via CLI: `pulpo ink list`, `pulpo ink add <NAME> --command ...`, etc.
-
-For a concrete example of using an ink with schedules, see
-[Nightly Code Review](/guides/nightly-code-review).
-For command examples across specific agent tools, see
-[Agent Examples](/guides/agent-examples).
-
 ## Watchdog
 
 The watchdog monitors sessions for memory pressure, idle detection, and ready session cleanup:

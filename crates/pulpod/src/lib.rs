@@ -306,14 +306,9 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let node_name = config.node.name.clone();
     let (event_tx, _) = broadcast::channel::<PulpoEvent>(256);
 
-    let manager = SessionManager::new(
-        backend,
-        store.clone(),
-        config.inks.clone(),
-        config.node.default_command.clone(),
-    )
-    .with_capture_session_output(config.node.capture_session_output)
-    .with_event_tx(event_tx.clone(), node_name.clone());
+    let manager = SessionManager::new(backend, store.clone(), config.node.default_command.clone())
+        .with_capture_session_output(config.node.capture_session_output)
+        .with_event_tx(event_tx.clone(), node_name.clone());
 
     // Auto-resume sessions that were active before a restart
     match manager.resume_lost_sessions().await {

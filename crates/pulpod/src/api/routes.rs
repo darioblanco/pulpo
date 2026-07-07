@@ -12,7 +12,6 @@ use super::auth;
 use super::config;
 use super::events;
 use super::health;
-use super::inks;
 use super::metrics;
 use super::node;
 use super::notifications;
@@ -99,14 +98,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/sessions/{id}/stream", get(ws::stream))
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
         .route("/api/v1/sessions/{id}/handoff", post(sessions::handoff))
-        .route("/api/v1/inks", get(inks::list))
-        .route(
-            "/api/v1/inks/{name}",
-            get(inks::get)
-                .post(inks::create)
-                .put(inks::update)
-                .delete(inks::delete),
-        )
         .route("/api/v1/push/vapid-key", get(push::get_vapid_key))
         .route("/api/v1/push/subscribe", post(push::subscribe_push))
         .route("/api/v1/push/unsubscribe", post(push::unsubscribe_push))
@@ -176,31 +167,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_inks_empty() {
+    async fn test_inks_route_removed() {
+        // The ink preset registry was removed — the route no longer exists, so it
+        // falls through to the SPA fallback (same as any other unknown path)
+        // rather than returning ink JSON.
         let server = test_server().await;
         let resp = server.get("/api/v1/inks").await;
-        resp.assert_status_ok();
-        let body = resp.text();
-        assert!(body.contains("\"inks\":{}"));
-    }
-
-    #[tokio::test]
-    async fn test_inks_with_entries() {
-        let server = test_support::test_server_with(|cfg| {
-            cfg.inks.insert(
-                "reviewer".into(),
-                crate::config::InkConfig {
-                    description: None,
-                    command: Some("Review code".into()),
-                    ..crate::config::InkConfig::default()
-                },
-            );
-        })
-        .await;
-        let resp = server.get("/api/v1/inks").await;
-        resp.assert_status_ok();
-        let body = resp.text();
-        assert!(body.contains("reviewer"));
+        assert!(!resp.text().contains("\"inks\""));
     }
 
     #[tokio::test]
@@ -801,7 +774,6 @@ mod tests {
             metadata: None,
             command: Some("echo test".into()),
             description: None,
-            ink: None,
             idle_threshold_secs: None,
             worktree: None,
             worktree_base: None,
@@ -852,7 +824,6 @@ mod tests {
             metadata: None,
             command: Some("echo test".into()),
             description: None,
-            ink: None,
             idle_threshold_secs: None,
             worktree: None,
             worktree_base: None,
@@ -937,7 +908,6 @@ mod tests {
             metadata: None,
             command: Some("echo test".into()),
             description: None,
-            ink: None,
             idle_threshold_secs: None,
             worktree: None,
             worktree_base: None,
@@ -973,7 +943,6 @@ mod tests {
             metadata: None,
             command: Some("echo test".into()),
             description: None,
-            ink: None,
             idle_threshold_secs: None,
             worktree: None,
             worktree_base: None,
@@ -1008,7 +977,6 @@ mod tests {
             metadata: None,
             command: Some("echo test".into()),
             description: None,
-            ink: None,
             idle_threshold_secs: None,
             worktree: None,
             worktree_base: None,
@@ -1053,7 +1021,6 @@ mod tests {
             metadata: None,
             command: Some("echo test".into()),
             description: None,
-            ink: None,
             idle_threshold_secs: None,
             worktree: None,
             worktree_base: None,
@@ -1096,7 +1063,6 @@ mod tests {
             metadata: None,
             command: Some("echo test".into()),
             description: None,
-            ink: None,
             idle_threshold_secs: None,
             worktree: None,
             worktree_base: None,

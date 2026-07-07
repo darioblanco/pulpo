@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type {
   Session,
-  InkConfig,
   CreateSessionRequest,
   ConfigResponse,
   VapidPublicKeyResponse,
@@ -28,15 +27,6 @@ describe('types', () => {
     };
     expect(session.command).toBe('claude code');
     expect(session.description).toBe('Fix the bug');
-  });
-
-  it('InkConfig has description and command fields', () => {
-    const ink: InkConfig = {
-      description: 'Code reviewer',
-      command: 'claude code --model opus-4',
-    };
-    expect(ink.description).toBe('Code reviewer');
-    expect(ink.command).toBe('claude code --model opus-4');
   });
 
   it('CreateSessionRequest has command and description fields', () => {
@@ -72,7 +62,6 @@ describe('types', () => {
         adopt_tmux: true,
       },
       notifications: { webhooks: [] },
-      inks: {},
     };
     expect(config.node.name).toBe('test');
     // Verify guards is not a property

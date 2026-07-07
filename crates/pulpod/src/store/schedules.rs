@@ -11,10 +11,10 @@ impl Store {
         sqlx::query(
             "INSERT INTO schedules (
                 id, name, cron, command, workdir, ink, description,
-                runtime, secrets, worktree, worktree_base, enabled,
+                runtime, secrets, worktree, worktree_base, budget_cost_usd, enabled,
                 last_run_at, last_session_id, last_attempted_at, last_error, created_at
              )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&schedule.id)
         .bind(&schedule.name)
@@ -27,6 +27,7 @@ impl Store {
         .bind(&secrets_json)
         .bind(schedule.worktree)
         .bind(&schedule.worktree_base)
+        .bind(schedule.budget_cost_usd)
         .bind(schedule.enabled)
         .bind(&schedule.last_run_at)
         .bind(&schedule.last_session_id)

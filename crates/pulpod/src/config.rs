@@ -18,8 +18,6 @@ pub struct Config {
     #[serde(default)]
     pub watchdog: WatchdogConfig,
     #[serde(default)]
-    pub inks: HashMap<String, InkConfig>,
-    #[serde(default)]
     pub plans: HashMap<String, PlanConfig>,
     #[serde(default)]
     pub notifications: NotificationsConfig,
@@ -44,6 +42,13 @@ pub struct Config {
     /// would otherwise reject them). It is ignored and dropped on save.
     #[serde(default, skip_serializing)]
     pub controller: Option<toml::Value>,
+    /// Retired `[inks.<name>]` preset registry configuration.
+    /// Inks were removed — command/secrets/runtime live directly on sessions and
+    /// schedules, and budgets moved onto schedules. This field only exists so
+    /// configs written before the removal still load (`deny_unknown_fields`
+    /// would otherwise reject them). It is ignored and dropped on save.
+    #[serde(default, skip_serializing)]
+    pub inks: Option<toml::Value>,
     #[serde(default)]
     pub metrics: MetricsConfig,
     /// Per-model cost rates, keyed by a model-ID substring (`[rates.<model>]`).
@@ -100,25 +105,6 @@ pub struct PlanConfig {
     /// Estimated weekly token allowance for this plan. `None` disables %-of-cap.
     #[serde(default)]
     pub weekly_token_allowance: Option<u64>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct InkConfig {
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub command: Option<String>,
-    /// Secret names to inject as environment variables.
-    #[serde(default)]
-    pub secrets: Vec<String>,
-    /// Runtime override (historical). The docker runtime was removed — inks
-    /// stored with `runtime = "docker"` still load, but spawning them is rejected.
-    #[serde(default)]
-    pub runtime: Option<String>,
-    /// Cost budget in USD applied to sessions spawned from this ink.
-    #[serde(default)]
-    pub budget_cost_usd: Option<f64>,
 }
 
 /// Notification configuration (webhooks for status updates).
@@ -435,7 +421,7 @@ pub struct NodeConfig {
     /// Scan interval in seconds for Tailscale peer discovery. Defaults to 30.
     #[serde(default = "default_discovery_interval_secs")]
     pub discovery_interval_secs: u64,
-    /// Default command used when spawning a session without an explicit command or ink.
+    /// Default command used when spawning a session without an explicit command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_command: Option<String>,
     /// Number of days to retain log files. Defaults to 7.
@@ -542,80 +528,6 @@ pub fn save(config: &Config, path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Built-in example inks for common engineering workflows.
-/// User-defined inks with the same name override these defaults.
-pub fn built_in_inks() -> HashMap<String, InkConfig> {
-    let mut inks = HashMap::new();
-    inks.insert(
-        "reviewer".to_owned(),
-        InkConfig {
-            description: Some("Code review — read-only analysis, detailed feedback".to_owned()),
-            command: Some(
-                "claude -p 'Review this code for bugs, security issues, and style'".to_owned(),
-            ),
-            ..InkConfig::default()
-        },
-    );
-    inks.insert(
-        "coder".to_owned(),
-        InkConfig {
-            description: Some(
-                "Implementation — full tool access, write production code".to_owned(),
-            ),
-            command: Some(
-                "claude --dangerously-skip-permissions -p 'Implement the requested changes'"
-                    .to_owned(),
-            ),
-            ..InkConfig::default()
-        },
-    );
-    inks.insert(
-        "quick-fix".to_owned(),
-        InkConfig {
-            description: Some(
-                "Fast bug fixes — focused, small targeted changes".to_owned(),
-            ),
-            command: Some(
-                "claude --dangerously-skip-permissions -p 'Fix the reported bug with minimal changes'"
-                    .to_owned(),
-            ),
-            ..InkConfig::default()
-        },
-    );
-    inks.insert(
-        "tester".to_owned(),
-        InkConfig {
-            description: Some(
-                "Test writing — generate comprehensive tests for existing code".to_owned(),
-            ),
-            command: Some(
-                "claude -p 'Write comprehensive tests for the specified code'".to_owned(),
-            ),
-            ..InkConfig::default()
-        },
-    );
-    inks.insert(
-        "refactor".to_owned(),
-        InkConfig {
-            description: Some(
-                "Refactoring — restructure code without changing behavior".to_owned(),
-            ),
-            command: Some(
-                "claude --dangerously-skip-permissions -p 'Refactor the specified code'".to_owned(),
-            ),
-            ..InkConfig::default()
-        },
-    );
-    inks
-}
-
-/// Merge built-in inks with user-defined inks. User inks override built-ins by name.
-fn merge_built_in_inks(user_inks: HashMap<String, InkConfig>) -> HashMap<String, InkConfig> {
-    let mut merged = built_in_inks();
-    merged.extend(user_inks);
-    merged
-}
-
 pub fn load(path: &str) -> Result<Config> {
     let expanded = shellexpand::tilde(path);
     let path = std::path::Path::new(expanded.as_ref());
@@ -623,9 +535,8 @@ pub fn load(path: &str) -> Result<Config> {
     if path.exists() {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read config from {}", path.display()))?;
-        let mut config: Config = toml::from_str(&content).context("Failed to parse config")?;
+        let config: Config = toml::from_str(&content).context("Failed to parse config")?;
         config.watchdog.validate()?;
-        config.inks = merge_built_in_inks(config.inks);
         Ok(config)
     } else {
         // Return defaults if no config file exists
@@ -641,7 +552,6 @@ pub fn load(path: &str) -> Result<Config> {
                 log_retain_days: default_log_retain_days(),
                 capture_session_output: default_capture_session_output(),
             },
-            inks: built_in_inks(),
             ..Default::default()
         })
     }
@@ -713,12 +623,6 @@ output = 25.0
         let config = load("/nonexistent/path/config.toml").unwrap();
         assert_eq!(config.node.port, 7433);
         assert!(!config.node.name.is_empty());
-        // Built-in inks are included by default
-        assert!(config.inks.contains_key("reviewer"));
-        assert!(config.inks.contains_key("coder"));
-        assert!(config.inks.contains_key("quick-fix"));
-        assert!(config.inks.contains_key("tester"));
-        assert!(config.inks.contains_key("refactor"));
     }
 
     #[test]
@@ -1791,34 +1695,17 @@ idle_action = "pause"
     }
 
     #[test]
-    fn test_config_without_inks_section() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
+    fn test_load_config_with_legacy_inks_section() {
+        // Configs written before the ink removal still load; the section is
+        // tolerated and ignored.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
             r#"
 [node]
 name = "test"
 port = 7433
-data_dir = "/tmp"
-"#
-        )
-        .unwrap();
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        // Built-in inks are always present even without [inks] section
-        assert_eq!(config.inks.len(), 5);
-        assert!(config.inks.contains_key("reviewer"));
-    }
-
-    #[test]
-    fn test_config_with_inks_section() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test"
-port = 7433
-data_dir = "/tmp"
 
 [inks.reviewer]
 command = "claude -p 'Custom review'"
@@ -1826,63 +1713,55 @@ description = "Code review specialist"
 
 [inks.coder]
 command = "codex -p 'Do it'"
-"#
+"#,
         )
         .unwrap();
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        // 5 built-in inks + user overrides (reviewer and coder are overrides, so still 5)
-        assert_eq!(config.inks.len(), 5);
-        // User config overrides the built-in reviewer
-        let reviewer = &config.inks["reviewer"];
-        assert_eq!(reviewer.command, Some("claude -p 'Custom review'".into()));
-        assert_eq!(reviewer.description, Some("Code review specialist".into()));
-        // User config overrides the built-in coder (partial — only command set)
-        let coder = &config.inks["coder"];
-        assert_eq!(coder.command, Some("codex -p 'Do it'".into()));
-        assert!(coder.description.is_none());
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert!(config.inks.is_some(), "legacy [inks] section is parsed");
     }
 
     #[test]
-    fn test_ink_config_roundtrip() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("ink-rt.toml");
-        let mut inks = HashMap::new();
-        inks.insert(
-            "reviewer".into(),
-            InkConfig {
-                description: Some("Code reviewer".into()),
-                command: Some("claude -p 'Review only'".into()),
-                ..InkConfig::default()
-            },
-        );
-        let config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            inks,
-            ..Default::default()
-        };
+    fn test_save_drops_legacy_inks_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[inks.reviewer]
+command = "claude -p 'Custom review'"
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
         save(&config, &path).unwrap();
-        let loaded = load(path.to_str().unwrap()).unwrap();
-        // 1 user ink + 4 other built-ins (reviewer is overridden)
-        assert_eq!(loaded.inks.len(), 5);
-        let reviewer = &loaded.inks["reviewer"];
-        assert_eq!(reviewer.command, Some("claude -p 'Review only'".into()));
-        assert_eq!(reviewer.description, Some("Code reviewer".into()));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("[inks"),
+            "retired [inks] section is dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.inks.is_none());
     }
 
     #[test]
-    fn test_ink_config_debug_clone() {
-        let p = InkConfig {
-            description: None,
-            command: Some("claude -p 'test'".into()),
-            ..InkConfig::default()
-        };
-        let cloned = p.clone();
-        assert_eq!(format!("{p:?}"), format!("{cloned:?}"));
+    fn test_load_config_without_inks_section() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert!(config.inks.is_none());
     }
 
     #[test]
@@ -2122,159 +2001,6 @@ name = "test"
         let toml_str = toml::to_string(&config).unwrap();
         // tag should be skipped (None + skip_serializing_if)
         assert!(!toml_str.contains("tag"));
-    }
-
-    #[test]
-    fn test_built_in_inks_contains_expected_keys() {
-        let inks = built_in_inks();
-        assert!(inks.contains_key("reviewer"));
-        assert!(inks.contains_key("coder"));
-        assert!(inks.contains_key("quick-fix"));
-        assert!(inks.contains_key("tester"));
-        assert!(inks.contains_key("refactor"));
-        assert_eq!(inks.len(), 5);
-    }
-
-    #[test]
-    fn test_built_in_inks_have_descriptions() {
-        let inks = built_in_inks();
-        for (name, ink) in &inks {
-            assert!(
-                ink.description.is_some(),
-                "Built-in ink '{name}' missing description"
-            );
-        }
-    }
-
-    #[test]
-    fn test_built_in_inks_have_commands() {
-        let inks = built_in_inks();
-        for (name, ink) in &inks {
-            assert!(
-                ink.command.is_some(),
-                "Built-in ink '{name}' missing command"
-            );
-        }
-    }
-
-    #[test]
-    fn test_merge_built_in_inks_user_overrides() {
-        let mut user_inks = HashMap::new();
-        user_inks.insert(
-            "reviewer".to_owned(),
-            InkConfig {
-                description: Some("My custom reviewer".to_owned()),
-                command: Some("codex -p 'review'".to_owned()),
-                ..InkConfig::default()
-            },
-        );
-        let merged = merge_built_in_inks(user_inks);
-        // User's reviewer overrides built-in
-        assert_eq!(
-            merged["reviewer"].description.as_deref(),
-            Some("My custom reviewer")
-        );
-        assert_eq!(
-            merged["reviewer"].command.as_deref(),
-            Some("codex -p 'review'")
-        );
-        // Other built-ins still present
-        assert!(merged.contains_key("coder"));
-        assert!(merged.contains_key("quick-fix"));
-    }
-
-    #[test]
-    fn test_merge_built_in_inks_user_adds_new() {
-        let mut user_inks = HashMap::new();
-        user_inks.insert(
-            "my-custom".to_owned(),
-            InkConfig {
-                description: Some("Custom ink".to_owned()),
-                command: None,
-                ..InkConfig::default()
-            },
-        );
-        let merged = merge_built_in_inks(user_inks);
-        // User ink is added alongside built-ins
-        assert!(merged.contains_key("my-custom"));
-        assert!(merged.contains_key("reviewer"));
-        assert_eq!(merged.len(), 6);
-    }
-
-    #[test]
-    fn test_load_config_merges_built_in_inks() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test-node"
-port = 7433
-data_dir = "/tmp/pulpo-test"
-
-[inks.reviewer]
-description = "Overridden reviewer"
-command = "codex -p 'review'"
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        // User override wins
-        assert_eq!(
-            config.inks["reviewer"].description.as_deref(),
-            Some("Overridden reviewer")
-        );
-        assert_eq!(
-            config.inks["reviewer"].command.as_deref(),
-            Some("codex -p 'review'")
-        );
-        // Built-in inks still present
-        assert!(config.inks.contains_key("coder"));
-        assert!(config.inks.contains_key("quick-fix"));
-        assert!(config.inks.contains_key("tester"));
-        assert!(config.inks.contains_key("refactor"));
-    }
-
-    #[test]
-    fn test_ink_config_description_serialization() {
-        let ink = InkConfig {
-            description: Some("Test description".to_owned()),
-            command: Some("claude -p 'test'".to_owned()),
-            ..InkConfig::default()
-        };
-        let toml_str = toml::to_string(&ink).unwrap();
-        assert!(toml_str.contains("description = \"Test description\""));
-        let deserialized: InkConfig = toml::from_str(&toml_str).unwrap();
-        assert_eq!(
-            deserialized.description.as_deref(),
-            Some("Test description")
-        );
-    }
-
-    #[test]
-    fn test_ink_config_command_default_none() {
-        let ink: InkConfig = toml::from_str("").unwrap();
-        assert!(ink.command.is_none());
-    }
-
-    #[test]
-    fn test_ink_config_secrets_and_runtime() {
-        let toml_str = r#"
-            command = "claude"
-            secrets = ["GITHUB_TOKEN", "NPM_TOKEN"]
-            runtime = "docker"
-        "#;
-        let ink: InkConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(ink.secrets, vec!["GITHUB_TOKEN", "NPM_TOKEN"]);
-        assert_eq!(ink.runtime.as_deref(), Some("docker"));
-    }
-
-    #[test]
-    fn test_ink_config_secrets_default_empty() {
-        let ink: InkConfig = toml::from_str("").unwrap();
-        assert!(ink.secrets.is_empty());
-        assert!(ink.runtime.is_none());
     }
 
     // -- VAPID key generation tests --
@@ -2618,39 +2344,6 @@ port = 7433
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
         assert!(config.docker.is_none());
-    }
-
-    #[test]
-    fn test_ink_config_with_secrets_and_runtime_roundtrip() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("ink-secrets-rt.toml");
-        let mut inks = HashMap::new();
-        inks.insert(
-            "my-ink".into(),
-            InkConfig {
-                description: Some("Custom ink with secrets".into()),
-                command: Some("claude -p 'build'".into()),
-                secrets: vec!["GITHUB_TOKEN".into(), "NPM_TOKEN".into()],
-                runtime: Some("docker".into()),
-                budget_cost_usd: None,
-            },
-        );
-        let config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            inks,
-            ..Default::default()
-        };
-        save(&config, &path).unwrap();
-        let loaded = load(path.to_str().unwrap()).unwrap();
-        let ink = &loaded.inks["my-ink"];
-        assert_eq!(ink.secrets, vec!["GITHUB_TOKEN", "NPM_TOKEN"]);
-        assert_eq!(ink.runtime.as_deref(), Some("docker"));
-        assert_eq!(ink.command.as_deref(), Some("claude -p 'build'"));
     }
 
     // -- Controller mode config tests --
