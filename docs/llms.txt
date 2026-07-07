@@ -23,6 +23,7 @@ Primary docs:
 - /docs/reference/cli.md
 - /docs/reference/config.md
 - /docs/reference/api.md
+- /docs/reference/push.md
 - /docs/architecture/overview.md
 - /docs/operations/session-lifecycle.md
 - /docs/operations/release-and-distribution.md
@@ -46,6 +47,11 @@ Canonical runtime concepts:
 - There is no ink preset registry (removed July 2026) — command and secrets are set directly
   per session/schedule (`--secret`), and cost budgets are set with `--budget-cost` on both
   `pulpo spawn` and `pulpo schedule add`.
+- Web Push follows the standard Web Push protocol (VAPID + ECE) directly from `pulpod` to the
+  browser, no relay — any spec-compliant client can subscribe. Budget/burn `usage_alert`
+  pushes carry a short-lived, HMAC-signed "Stop session" action token; tapping it POSTs to the
+  unauthenticated `/api/v1/push/action` endpoint (the token itself is the capability). See
+  /docs/reference/push.md.
 
 Installation:
 - Homebrew: brew install darioblanco/tap/pulpo

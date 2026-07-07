@@ -73,6 +73,13 @@ The older `[[notifications.webhooks]]` form is deprecated but still read for bac
 (unioned with the top-level list). See the [config reference](/reference/config#webhooks)
 for the glob forms and the full event catalogue.
 
+**Web Push** is the other delivery channel — standard Web Push (VAPID + ECE), straight to
+the browser, no relay. Every subscriber gets lifecycle changes, budget/burn alerts, and
+interventions; budget/burn alerts additionally carry a **"Stop session" action button**
+right on the phone notification, so you can kill a runaway session from the lock screen
+without opening the app. See the [Push Notifications reference](/reference/push) for the
+subscribe flow, payload schema, and the action-token endpoint.
+
 ## Peers
 
 Manual peer entries coexist with automatic discovery:

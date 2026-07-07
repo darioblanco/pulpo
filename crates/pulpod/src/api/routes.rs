@@ -101,6 +101,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/push/vapid-key", get(push::get_vapid_key))
         .route("/api/v1/push/subscribe", post(push::subscribe_push))
         .route("/api/v1/push/unsubscribe", post(push::unsubscribe_push))
+        .route("/api/v1/push/action", post(push::action))
         .route("/api/v1/events", get(events::stream))
         .route(
             "/api/v1/schedules",
@@ -1462,6 +1463,7 @@ mod tests {
             cfg.notifications.vapid = crate::config::VapidConfig {
                 private_key: "test-priv-key".into(),
                 public_key: "test-pub-key".into(),
+                ..Default::default()
             };
         })
         .await

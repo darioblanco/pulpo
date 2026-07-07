@@ -175,3 +175,22 @@ for the full event catalogue.
 The nested `[[notifications.webhooks]]` form is **deprecated** but still read for
 back-compat: any endpoints there are unioned with the top-level `[[webhooks]]` list at
 startup. Prefer the top-level form for new configs. The fields are identical.
+
+## `[notifications.vapid]`
+
+The Web Push keys and action-token signing secret used by `pulpo`'s built-in push
+notifications (see the [Push Notifications reference](/reference/push) for the wire
+contract). Every field is auto-generated on first run and persisted here — there is
+nothing to configure by hand.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `private_key` | string | auto-generated | Base64url P-256 VAPID private key (32 bytes) |
+| `public_key` | string | auto-generated | Base64url P-256 VAPID public key (65 bytes), served by `GET /api/v1/push/vapid-key` |
+| `action_secret` | string | auto-generated | Base64url 256-bit HMAC secret signing the "Stop session" push action tokens |
+
+`action_secret` is generated independently of the VAPID key pair, so a config that
+already has VAPID keys from before this field existed still gets one backfilled on the
+next startup rather than left empty. None of these three fields is ever returned by
+`GET /api/v1/config` or `GET /api/v1/notifications` — only the public key is exposed,
+and only via the dedicated `/api/v1/push/vapid-key` endpoint.

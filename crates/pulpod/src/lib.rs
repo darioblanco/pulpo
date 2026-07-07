@@ -438,6 +438,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         Some(notifications::web_push::WebPushSink::new(
             store.clone(),
             config.notifications.vapid.private_key.clone(),
+            config.notifications.vapid.action_secret.clone(),
         ))
     } else {
         None
@@ -875,6 +876,9 @@ data_dir = "{}"
         assert!(!saved.notifications.vapid.public_key.is_empty());
         assert_eq!(saved.notifications.vapid.private_key.len(), 43);
         assert_eq!(saved.notifications.vapid.public_key.len(), 87);
+        // The push action-token HMAC secret is generated alongside the VAPID keys.
+        assert!(!saved.notifications.vapid.action_secret.is_empty());
+        assert_eq!(saved.notifications.vapid.action_secret.len(), 43);
 
         handle.shutdown();
     }
@@ -917,6 +921,9 @@ public_key = "existing-pub"
         assert_eq!(saved.notifications.vapid.private_key, "existing-priv");
         assert_eq!(saved.notifications.vapid.public_key, "existing-pub");
         assert_eq!(saved.auth.token, "existing-token");
+        // This config predates the action_secret field — it should be backfilled
+        // rather than left empty, without touching the pre-existing VAPID keys.
+        assert!(!saved.notifications.vapid.action_secret.is_empty());
 
         handle.shutdown();
     }

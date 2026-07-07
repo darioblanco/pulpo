@@ -103,6 +103,14 @@ schedule fires (watchdog alerts at 80%, stops at 100%).
 | GET | `/api/v1/push/vapid-key` | Get the public VAPID key |
 | POST | `/api/v1/push/subscribe` | Register a Web Push subscription |
 | POST | `/api/v1/push/unsubscribe` | Remove a Web Push subscription |
+| POST | `/api/v1/push/action` | Act on a push notification's action token (currently just `stop`) — **unauthenticated**, see below |
+
+Every subscription receives `lifecycle`, `usage_alert`, and `intervention` push
+notifications; `usage_alert` payloads additionally carry a short-lived, HMAC-signed
+action token that lets the "Stop session" button on the notification stop the session
+without the app's bearer token (`POST /api/v1/push/action` is exempt from
+`bind = "public"` auth for this reason — the token itself is the capability). Full
+payload schema, token format, and status codes: [Push Notifications reference](/reference/push).
 
 ## Events (SSE)
 
