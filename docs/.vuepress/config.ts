@@ -53,7 +53,7 @@ export default defineUserConfig({
         '/guides/worktrees',
         '/guides/secrets',
       ],
-      '/reference/': ['/reference/cli', '/reference/config', '/reference/api'],
+      '/reference/': ['/reference/cli', '/reference/config', '/reference/api', '/reference/push'],
       '/operations/': ['/operations/session-lifecycle', '/operations/release-and-distribution'],
     },
   }),

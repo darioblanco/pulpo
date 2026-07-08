@@ -126,7 +126,9 @@ pulpo spawn fix --budget-cost 10 -- claude -p "..."   # hard $10 cap, recorded a
 alert becomes a signed canonical event delivered to any number of `[[webhooks]]` (durable
 outbox, exponential backoff, HMAC; receivers dedupe on a stable event id), plus an optional
 Prometheus `/metrics` endpoint. Pulpo is the event plane; your Grafana / Datadog / SIEM /
-Slack is the dashboard.
+Slack is the dashboard. Budget and burn alerts also reach your phone directly via standard
+Web Push (no relay), with a **Stop session** button right on the lock-screen notification
+([docs](docs/reference/push.md)).
 
 **Run — durable and unattended.** Each agent runs in a `tmux` session with explicit lifecycle
 states that survive reboots, a watchdog for idle / memory / error / completion detection, and

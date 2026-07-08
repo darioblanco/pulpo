@@ -3,6 +3,13 @@ declare const self: ServiceWorkerGlobalScope;
 
 import { precacheAndRoute, createHandlerBoundToURL } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
+import {
+  STOP_ACTION,
+  buildNotificationOptions,
+  buildStopResultNotification,
+  postStopAction,
+  type PushPayload,
+} from './lib/push-sw';
 
 // Precache static assets (JS, CSS, images)
 precacheAndRoute(self.__WB_MANIFEST);
@@ -25,29 +32,39 @@ self.addEventListener('activate', (event) => {
 
 // Web Push notification handling
 self.addEventListener('push', (event) => {
-  const data = event.data?.json() ?? {};
-  const title = data.title ?? 'Pulpo';
-  const options: NotificationOptions = {
-    body: data.body ?? '',
-    icon: '/icons/icon-192x192.png',
-    badge: '/icons/icon-192x192.png',
-    data: { url: data.url ?? '/' },
-    tag: data.tag ?? 'pulpo-notification',
-  };
+  const data: PushPayload = event.data?.json() ?? {};
+  const { title, options } = buildNotificationOptions(data);
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
+/** Focus an existing tab on `url`, or open a new one. */
+async function focusOrOpenWindow(url: string): Promise<void> {
+  const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  for (const client of clients) {
+    if (new URL(client.url).pathname === url && 'focus' in client) {
+      await client.focus();
+      return;
+    }
+  }
+  await self.clients.openWindow(url);
+}
+
+/** POST the "Stop session" action token, then show a confirmation notification. */
+async function handleStopAction(actionToken: string): Promise<void> {
+  const result = await postStopAction(self.registration.scope, actionToken);
+  const { title, options } = buildStopResultNotification(result);
+  await self.registration.showNotification(title, options);
+}
+
 self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
-  const url = event.notification.data?.url ?? '/';
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) {
-        if (new URL(client.url).pathname === url && 'focus' in client) {
-          return client.focus();
-        }
-      }
-      return self.clients.openWindow(url);
-    }),
-  );
+  const { action, notification } = event;
+  notification.close();
+
+  const actionToken = notification.data?.actionToken as string | undefined;
+  if (action === STOP_ACTION && actionToken) {
+    event.waitUntil(handleStopAction(actionToken));
+    return;
+  }
+
+  event.waitUntil(focusOrOpenWindow(notification.data?.url ?? '/'));
 });

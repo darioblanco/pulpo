@@ -1,3 +1,4 @@
+pub mod action_token;
 pub mod outbox;
 pub mod web_push;
 pub mod webhook;
@@ -407,7 +408,7 @@ mod tests {
         // Web-push delivered inline; no subscriptions -> no-op, and webhook still enqueued.
         let store = test_store().await;
         let webhooks = vec![webhook_config("hook", vec![])];
-        let push = WebPushSink::new(store.clone(), "k".into());
+        let push = WebPushSink::new(store.clone(), "k".into(), "action-secret".into());
         let (event_tx, rx) = tokio::sync::broadcast::channel::<PulpoEvent>(16);
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 

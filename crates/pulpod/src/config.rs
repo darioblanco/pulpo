@@ -140,6 +140,14 @@ pub struct VapidConfig {
     /// Base64url-encoded P-256 uncompressed public key (65 bytes).
     #[serde(default)]
     pub public_key: String,
+    /// Base64url-encoded 256-bit HMAC secret for signing push action tokens
+    /// (the "Stop session" capability embedded in `usage_alert` push payloads).
+    /// Stored alongside the VAPID keys and generated the same way — a fresh
+    /// server-side secret on first run, auto-backfilled for configs that
+    /// already have VAPID keys but predate this field. Never exposed over the
+    /// API (unlike `public_key`, which `GET /api/v1/push/vapid-key` serves).
+    #[serde(default)]
+    pub action_secret: String,
 }
 
 /// Generic webhook endpoint configuration.
@@ -252,8 +260,14 @@ pub fn ensure_auth_token(config: &mut Config) -> bool {
 }
 
 /// If VAPID keys are empty, generate a new P-256 key pair. Returns `true` if new keys were generated.
+///
+/// Also backfills `action_secret` (the push action-token HMAC signing key)
+/// independently of the VAPID key pair, so an existing config that already has
+/// VAPID keys — but predates the push action-token feature — still gets a
+/// secret generated on the next startup. Returns `true` if *either* value was
+/// generated.
 pub fn ensure_vapid_keys(config: &mut Config) -> bool {
-    if config.notifications.vapid.private_key.is_empty()
+    let keys_generated = if config.notifications.vapid.private_key.is_empty()
         && config.notifications.vapid.public_key.is_empty()
     {
         let secret_key = p256::SecretKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
@@ -267,7 +281,18 @@ pub fn ensure_vapid_keys(config: &mut Config) -> bool {
         true
     } else {
         false
-    }
+    };
+
+    let secret_generated = if config.notifications.vapid.action_secret.is_empty() {
+        let secret_bytes: [u8; 32] = rand::random();
+        config.notifications.vapid.action_secret =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
+        true
+    } else {
+        false
+    };
+
+    keys_generated || secret_generated
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -2010,6 +2035,7 @@ name = "test"
         let vapid = VapidConfig::default();
         assert!(vapid.private_key.is_empty());
         assert!(vapid.public_key.is_empty());
+        assert!(vapid.action_secret.is_empty());
     }
 
     #[test]
@@ -2017,6 +2043,7 @@ name = "test"
         let vapid = VapidConfig {
             private_key: "priv".into(),
             public_key: "pub".into(),
+            action_secret: "secret".into(),
         };
         let cloned = vapid.clone();
         assert_eq!(format!("{vapid:?}"), format!("{cloned:?}"));
@@ -2036,10 +2063,13 @@ name = "test"
         assert!(config.notifications.vapid.private_key.is_empty());
         assert!(config.notifications.vapid.public_key.is_empty());
 
+        assert!(config.notifications.vapid.action_secret.is_empty());
+
         let generated = ensure_vapid_keys(&mut config);
         assert!(generated);
         assert!(!config.notifications.vapid.private_key.is_empty());
         assert!(!config.notifications.vapid.public_key.is_empty());
+        assert!(!config.notifications.vapid.action_secret.is_empty());
     }
 
     #[test]
@@ -2059,6 +2089,8 @@ name = "test"
         assert_eq!(config.notifications.vapid.private_key.len(), 43);
         // Public key: 65 bytes → 87 chars base64url (no padding)
         assert_eq!(config.notifications.vapid.public_key.len(), 87);
+        // Action secret: 32 bytes → 43 chars base64url (no padding)
+        assert_eq!(config.notifications.vapid.action_secret.len(), 43);
     }
 
     #[test]
@@ -2077,6 +2109,7 @@ name = "test"
         for key in [
             &config.notifications.vapid.private_key,
             &config.notifications.vapid.public_key,
+            &config.notifications.vapid.action_secret,
         ] {
             assert!(
                 key.chars()
@@ -2099,6 +2132,7 @@ name = "test"
                 vapid: VapidConfig {
                     private_key: "existing-private".into(),
                     public_key: "existing-public".into(),
+                    action_secret: "existing-secret".into(),
                 },
                 ..Default::default()
             },
@@ -2108,6 +2142,30 @@ name = "test"
         assert!(!generated);
         assert_eq!(config.notifications.vapid.private_key, "existing-private");
         assert_eq!(config.notifications.vapid.public_key, "existing-public");
+        assert_eq!(config.notifications.vapid.action_secret, "existing-secret");
+    }
+
+    #[test]
+    fn test_ensure_vapid_keys_backfills_action_secret_only() {
+        // A config saved before the push action-token feature existed: VAPID keys
+        // are already present, but action_secret predates the field and is empty.
+        // The keys must survive untouched while the secret gets backfilled.
+        let mut config = Config {
+            notifications: NotificationsConfig {
+                vapid: VapidConfig {
+                    private_key: "existing-private".into(),
+                    public_key: "existing-public".into(),
+                    action_secret: String::new(),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let generated = ensure_vapid_keys(&mut config);
+        assert!(generated);
+        assert_eq!(config.notifications.vapid.private_key, "existing-private");
+        assert_eq!(config.notifications.vapid.public_key, "existing-public");
+        assert!(!config.notifications.vapid.action_secret.is_empty());
     }
 
     #[test]
@@ -2119,6 +2177,10 @@ name = "test"
         let mut config2 = config1.clone();
         ensure_vapid_keys(&mut config1);
         ensure_vapid_keys(&mut config2);
+        assert_ne!(
+            config1.notifications.vapid.action_secret,
+            config2.notifications.vapid.action_secret
+        );
         assert_ne!(
             config1.notifications.vapid.private_key,
             config2.notifications.vapid.private_key
@@ -2141,11 +2203,13 @@ name = "test"
         ensure_vapid_keys(&mut config);
         let private_key = config.notifications.vapid.private_key.clone();
         let public_key = config.notifications.vapid.public_key.clone();
+        let action_secret = config.notifications.vapid.action_secret.clone();
 
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
         assert_eq!(loaded.notifications.vapid.private_key, private_key);
         assert_eq!(loaded.notifications.vapid.public_key, public_key);
+        assert_eq!(loaded.notifications.vapid.action_secret, action_secret);
     }
 
     #[test]
@@ -2153,6 +2217,7 @@ name = "test"
         let config = NotificationsConfig::default();
         assert!(config.vapid.private_key.is_empty());
         assert!(config.vapid.public_key.is_empty());
+        assert!(config.vapid.action_secret.is_empty());
     }
 
     #[test]

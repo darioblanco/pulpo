@@ -31,6 +31,21 @@ pub(super) fn conflict(msg: &str) -> ApiError {
     error_response(StatusCode::CONFLICT, msg)
 }
 
+/// Used by `POST /api/v1/push/action` when the caller's action token fails
+/// signature/expiry/action verification. Deliberately generic — never echoes
+/// *why* the token was rejected, to avoid giving an attacker an oracle.
+pub(super) fn unauthorized(msg: &str) -> ApiError {
+    error_response(StatusCode::UNAUTHORIZED, msg)
+}
+
+/// Used by `POST /api/v1/push/action` when the token itself is valid (and not
+/// expired) but its target session no longer exists — distinct from a plain
+/// 404 because the *token* was valid, only its target is gone (e.g. the
+/// session was already purged after the daemon's own auto-stop fired).
+pub(super) fn gone(msg: &str) -> ApiError {
+    error_response(StatusCode::GONE, msg)
+}
+
 /// Map a `SessionManager` lifecycle error (create/stop/resume) to the right status
 /// code by matching the well-known substrings baked into its `anyhow` error
 /// messages. The message text is always passed through unchanged.
@@ -88,6 +103,20 @@ mod tests {
         let (status, Json(err)) = conflict("taken");
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(err.error, "taken");
+    }
+
+    #[test]
+    fn test_unauthorized() {
+        let (status, Json(err)) = unauthorized("invalid or expired action token");
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(err.error, "invalid or expired action token");
+    }
+
+    #[test]
+    fn test_gone() {
+        let (status, Json(err)) = gone("session not found: abc");
+        assert_eq!(status, StatusCode::GONE);
+        assert_eq!(err.error, "session not found: abc");
     }
 
     #[test]

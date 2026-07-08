@@ -37,7 +37,11 @@ const fn is_loopback(addr: &SocketAddr) -> bool {
 ///
 /// The length check does leak whether lengths match, but both tokens are generated
 /// by the same code path and are always the same length.
-fn constant_time_eq(a: &str, b: &str) -> bool {
+///
+/// `pub(crate)` so [`crate::notifications::action_token`] can reuse it for
+/// comparing push action-token HMAC signatures — same threat model (a
+/// server-known secret compared against caller-supplied input).
+pub(crate) fn constant_time_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -51,6 +55,9 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 ///
 /// Exempt paths:
 /// - `GET /api/v1/health` — monitoring, peer probing
+/// - `POST /api/v1/push/action` — the push action token itself is the
+///   capability (see [`crate::api::push::action`]); a service worker has no
+///   way to attach a bearer token
 /// - `/api/v1/auth/*` from loopback — local token retrieval
 /// - Static files (fallback) — web UI assets must load
 pub async fn require_auth(
@@ -75,6 +82,12 @@ pub async fn require_auth(
 
     // Health endpoint is always exempt
     if path == "/api/v1/health" {
+        return next.run(req).await;
+    }
+
+    // The push action endpoint is exempt from *every* client, not just loopback —
+    // its HMAC-signed action token is itself the capability (see doc comment above).
+    if path == "/api/v1/push/action" {
         return next.run(req).await;
     }
 
@@ -362,6 +375,33 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let resp = call_middleware(state, req, None).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_middleware_public_push_action_exempt_no_connect_info() {
+        let state = make_state(BindMode::Public, "tok").await;
+        let req = Request::builder()
+            .uri("/api/v1/push/action")
+            .method("POST")
+            .body(Body::empty())
+            .unwrap();
+        // No ConnectInfo, no bearer token — still exempt (the token in the body
+        // is the capability, not the caller's network origin).
+        let resp = call_middleware(state, req, None).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_middleware_public_push_action_exempt_remote() {
+        let state = make_state(BindMode::Public, "tok").await;
+        let req = Request::builder()
+            .uri("/api/v1/push/action")
+            .method("POST")
+            .body(Body::empty())
+            .unwrap();
+        let addr: SocketAddr = "192.168.1.100:12345".parse().unwrap();
+        let resp = call_middleware(state, req, Some(addr)).await;
         assert_eq!(resp.status(), StatusCode::OK);
     }
 

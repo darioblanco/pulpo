@@ -269,6 +269,25 @@ pub struct PushUnsubscribeRequest {
     pub endpoint: String,
 }
 
+/// `POST /api/v1/push/action` body.
+///
+/// The short-lived, HMAC-signed capability token carried in a `usage_alert`
+/// push payload's `action.token` field. The endpoint is deliberately
+/// unauthenticated (no bearer token): the token itself is the capability,
+/// since a service worker cannot read the app's auth token.
+#[derive(Debug, Deserialize)]
+pub struct PushActionRequest {
+    pub token: String,
+}
+
+/// `POST /api/v1/push/action` success response — enough for the client to show
+/// a confirmation notification without a follow-up lookup.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PushActionResponse {
+    pub session_id: String,
+    pub session_name: String,
+}
+
 use crate::session::InterventionCode;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1284,6 +1303,38 @@ mod tests {
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("PushUnsubscribeRequest"));
+    }
+
+    #[test]
+    fn test_push_action_request_deserialize() {
+        let json = r#"{"token":"abc.def"}"#;
+        let req: PushActionRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.token, "abc.def");
+    }
+
+    #[test]
+    fn test_push_action_request_missing_token() {
+        let result = serde_json::from_str::<PushActionRequest>("{}");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_push_action_request_debug() {
+        let req = PushActionRequest { token: "t".into() };
+        let debug = format!("{req:?}");
+        assert!(debug.contains("PushActionRequest"));
+    }
+
+    #[test]
+    fn test_push_action_response_serialize_roundtrip() {
+        let resp = PushActionResponse {
+            session_id: "sid".into(),
+            session_name: "fix-auth".into(),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let back: PushActionResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.session_id, "sid");
+        assert_eq!(back.session_name, "fix-auth");
     }
 
     #[test]
