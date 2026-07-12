@@ -1,4 +1,4 @@
-.PHONY: all check fmt lint test test-rust e2e coverage coverage-rust coverage-web build build-web-if-missing clean setup hooks install release release-tarball service-install service-uninstall service-install-linux service-uninstall-linux deploy-server dev dev-stop dev-web test-web-watch ci
+.PHONY: all check fmt lint test test-rust e2e coverage coverage-rust coverage-web build build-web-if-missing clean sweep setup hooks install release release-tarball service-install service-uninstall service-install-linux service-uninstall-linux deploy-server dev dev-stop dev-web test-web-watch ci
 
 # Run all checks (what pre-commit runs)
 all: fmt lint test
@@ -9,6 +9,7 @@ all: fmt lint test
 setup: hooks
 	rustup component add rustfmt clippy llvm-tools-preview
 	cargo install cargo-llvm-cov
+	cargo install cargo-sweep --locked
 	cd web && npm install
 	@echo "Setup complete."
 
@@ -233,3 +234,12 @@ ci: fmt-check lint test coverage
 clean:
 	cargo clean
 	rm -rf web/build web/node_modules .pulpo/data
+
+# Prune stale build artifacts (target/, target/llvm-cov-target/, etc.) without
+# nuking the whole cache: drop anything untouched for 7+ days, then drop
+# anything built by a toolchain rustup no longer has installed. Safe to run
+# when target/ doesn't exist yet (cargo-sweep just finds nothing to do).
+# Requires cargo-sweep (installed by `make setup`).
+sweep:
+	cargo sweep --recursive --time 7 .
+	cargo sweep --recursive --installed .

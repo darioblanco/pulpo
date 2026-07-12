@@ -23,3 +23,8 @@ else
 fi
 
 echo "==> All checks passed."
+
+# Prune stale build artifacts (>7 days) so target/ doesn't pile up (non-blocking)
+if command -v cargo-sweep >/dev/null 2>&1; then
+  cargo sweep --recursive --time 7 . >/dev/null 2>&1 || true
+fi
