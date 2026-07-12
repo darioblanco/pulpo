@@ -226,6 +226,7 @@ describe('api', () => {
 | `make check` | Quick compile check (fastest feedback loop) |
 | `make ci` | Full CI pipeline: fmt-check + lint + test + coverage |
 | `make clean` | Remove all build artifacts + dev data (.pulpo/data/) |
+| `make sweep` | Prune build artifacts older than 7 days (cargo-sweep) |
 
 ## Project Layout
 
