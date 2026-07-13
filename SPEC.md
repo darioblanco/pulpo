@@ -165,7 +165,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 - **ACTIVE**: agent is working — terminal output is changing
 - **IDLE**: agent needs attention — waiting for user input or at its prompt
 - **READY**: agent process exited — task is done. Detected by `[pulpo] Agent exited` marker
-- **STOPPED**: session was terminated by user, watchdog (memory/idle), or ready TTL cleanup
+- **STOPPED**: session was terminated by user, watchdog (memory/idle), ready TTL cleanup, or the session's shell exited cleanly (exit markers present)
 - **LOST**: tmux process disappeared with no exit markers (crash, reboot, external kill mid-run). A session whose shell exited normally (exit markers present) resolves to STOPPED instead — exiting a session is a clean end, not a loss.
 
 ### State Quick Reference
@@ -176,12 +176,12 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 | `active`   | Agent is working                | Session started / output changed  | `logs`, `attach`, `stop`        |
 | `idle`     | Agent waiting for input         | Watchdog detected waiting pattern | `attach` to interact, or `stop` |
 | `ready`    | Agent exited                    | `[pulpo] Agent exited` detected   | `resume`                        |
-| `stopped`  | Session terminated              | User, watchdog, or TTL cleanup    | `spawn` new                     |
-| `lost`     | tmux process disappeared        | Daemon restart / reboot / crash   | `resume` (auto-attaches)        |
+| `stopped`  | Session terminated              | User, watchdog, TTL cleanup, or a clean shell exit | `resume` or `spawn` new |
+| `lost`     | tmux process disappeared, no exit marker | Daemon restart / reboot / crash | `resume` (auto-attaches)      |
 
 Key distinctions:
 - **Idle** is a live state — the agent process is running but waiting. **Ready** means the agent exited.
-- **Ready** is resumable (restarts the agent). **Stopped** is not resumable (requires fresh `spawn`).
+- **Ready**, **Stopped**, and **Lost** are all resumable via `resume` (restarts the agent).
 - **Lost** means the tmux process is gone but may be recoverable via `resume`.
 
 ### Persistence (what survives a reboot)
@@ -238,12 +238,13 @@ Two recovery flows cover the common failure modes:
 
 #### 1. Reboot / crash → lost → resume
 
-When `pulpod` starts, it attempts to auto-resume sessions that were `active` or `idle` before the restart. If the backend session is gone and Pulpo cannot recreate it immediately, later liveness checks mark the session **lost**.
+When `pulpod` starts, it attempts to auto-resume sessions that were `active` or `idle` before the restart. If the backend session is gone and Pulpo cannot recreate it immediately, later liveness checks mark the session **lost** — unless an exit marker (`{data_dir}/exit/{id}.code`/`.clean`, written by the session's own wrapper shell) is found, in which case the session resolves to **stopped** instead: it ended cleanly on its own, even if that happened while the daemon wasn't running to see it.
 
 ```
 Machine reboots → pulpod starts → tries to auto-resume prior active/idle sessions
                                                       │
-                                                      └─ if backend is still gone, session becomes LOST
+                                                      ├─ exit marker present → session becomes STOPPED (clean end)
+                                                      └─ no exit marker, backend still gone → session becomes LOST
                                                                                           │
 User runs: pulpo resume <name> ────────────────────────────────────────────────────────────┘
     → recreates the backend session if needed
@@ -251,11 +252,11 @@ User runs: pulpo resume <name> ────────────────�
     → session goes to ACTIVE
 ```
 
-`resume` works for `lost` and `ready` sessions. `stopped` sessions require a fresh `spawn`.
+`resume` works for `lost`, `ready`, and `stopped` sessions.
 
-#### 2. Watchdog stop → stopped → manual spawn
+#### 2. Watchdog stop → stopped → manual spawn (or resume)
 
-The watchdog stops a session and records an intervention. The session stays `stopped` — the user decides whether to `spawn` a new session.
+The watchdog stops a session and records an intervention. The session stays `stopped` — the user decides whether to `spawn` a fresh session or `resume` this one.
 
 ```
 Watchdog detects issue → stops session → records intervention → session is STOPPED
@@ -277,9 +278,9 @@ Watchdog detects issue → stops session → records intervention → session is
 | Symptom                                   | Likely cause                    | Fix                                                       |
 | ----------------------------------------- | ------------------------------- | --------------------------------------------------------- |
 | Session stuck in `creating`               | tmux failed to start            | Check `tmux -V` (need 3.2+), check logs                   |
-| Session is `lost` after reboot            | Backend session is gone         | `pulpo resume <name>`                                     |
-| Session is `stopped`, wasn't manual       | Watchdog or prior failure path  | Check `pulpo interventions <name>`, then `spawn` new      |
-| `resume` fails with "cannot be resumed"   | Session is still active/idle or was stopped | Use `pulpo spawn` or wait for the running session |
+| Session is `lost` after reboot            | Backend session is gone, no exit marker | `pulpo resume <name>`                              |
+| Session is `stopped`, wasn't manual       | Watchdog intervention, or the session's shell exited cleanly | Check `pulpo interventions <name>`; `resume` or `spawn` new |
+| `resume` fails with "cannot be resumed"   | Session is still active/idle/creating | Use `pulpo spawn` or wait for the running session |
 | Watchdog keeps stopping sessions          | Memory threshold too low        | Raise `memory_threshold` or reduce concurrent sessions    |
 | No output in `pulpo logs`                 | Session just started            | Wait, or use `--follow` to stream: `pulpo logs -f <name>` |
 
@@ -354,7 +355,7 @@ POST   /sessions              Create a new session
 GET    /sessions              List all sessions
 GET    /sessions/:id          Get session details
 POST   /sessions/:id/stop     Stop a session (status → stopped)
-POST   /sessions/:id/resume   Resume a lost or ready session
+POST   /sessions/:id/resume   Resume a lost, ready, or stopped session
 POST   /sessions/:id/input    Send input to the session terminal
 GET    /sessions/:id/output   Get recent output (polling)
 WS     /sessions/:id/stream   Stream terminal output (WebSocket)
@@ -438,7 +439,7 @@ GET    /events                SSE event stream
 | `POST`   | `/sessions`                     | Create a new session           |
 | `GET`    | `/sessions/:id`                 | Get session details            |
 | `POST`   | `/sessions/:id/stop`            | Stop a session (status → stopped) |
-| `POST`   | `/sessions/:id/resume`          | Resume a lost or ready session |
+| `POST`   | `/sessions/:id/resume`          | Resume a lost, ready, or stopped session |
 | `POST`   | `/sessions/:id/input`           | Send input to the terminal     |
 | `GET`    | `/sessions/:id/output`          | Get recent output              |
 | `GET`    | `/sessions/:id/output/download` | Download full output           |

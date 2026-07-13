@@ -153,12 +153,39 @@ events = ["lifecycle.ready", "lifecycle.stopped", "lifecycle.lost"]
 See the [config reference](/reference/config#webhooks) for `min_severity` and the full
 event catalogue. The legacy `[[notifications.webhooks]]` form still works.
 
+## Exit Markers
+
+Two marker files under `{data_dir}/exit/` are what let the daemon distinguish an
+intentional end (a session that finished on its own) from tmux disappearing out from
+under a still-running session:
+
+| Marker | Written by | Meaning |
+|--------|-----------|---------|
+| `{id}.code` | The wrapped agent command, immediately after it exits (`$?`) | The agent process finished; contains its exit code |
+| `{id}.clean` | The main/fallback shell, as the very last thing it does before exiting | The session's shell ended normally (covers both the agent-wrapper's fallback shell and bare-shell spawns) |
+
+Both are written directly by the wrapper shell script itself (not by the daemon), so
+their presence is race-free and daemon-uptime-independent — they're read fresh from
+disk every time the daemon checks, even hours after being written or across a daemon
+restart. Presence of *either* marker means the session ended on its own; absence of
+both means tmux vanished mid-run. Markers are removed when a session is purged or
+resumed (a resume reuses the same session id, so stale markers from a *previous* run
+are cleared first) and orphaned markers (no matching session row) are swept by `pulpo
+cleanup`.
+
 ## Corner Cases
 
-- **Agent exits but `exec bash` keeps tmux alive**: This is intentional. The `[pulpo] Agent exited (session: <name>). Run: pulpo resume <name>` marker distinguishes "agent done" from "shell still running". The Ready state reflects the agent's completion while keeping the tmux shell accessible for inspection.
+- **User exits the lingering shell — no longer `Lost`**: Previously, typing `exit` in a
+  finished session's fallback shell (or in a bare-shell session) made the tmux process
+  disappear while the daemon still though the session was `Active`/`Idle`, so it was
+  classified `Lost` — indistinguishable from a crash. The wrapper now writes an exit
+  marker as the last thing it does before the shell process ends, so this case now
+  correctly resolves to `Stopped` (with `exit_code` recorded when available).
 
-- **Long-running session never exits**: Some sessions cycle Active ⇄ Idle indefinitely. They become Ready only when the command exits (causing `[pulpo] Agent exited`), or Stopped by user/watchdog.
+- **Long-running session never exits**: Some sessions cycle Active ⇄ Idle indefinitely. They become Ready only when the command exits (the `.code` marker appears, or — for sessions with no wrapper — the `[pulpo] Agent exited` text is detected), or Stopped by user/watchdog/clean shell exit.
 
-- **Lost on daemon restart**: When the daemon starts, all Active and Idle sessions whose tmux sessions are gone are marked Lost. The user can resume them with `pulpo resume` (which auto-attaches).
+- **Adopted external tmux sessions have no exit marker, ever**: Sessions auto-adopted from tmux (`adopt_tmux = true`) were never spawned via the wrapper, so no marker will ever exist for their session id. Their Ready detection relies entirely on the `[pulpo] Agent exited` text scrape, and if their backend disappears they resolve to `Lost` — never `Stopped` — regardless of how they actually ended.
 
-- **Ready + TTL → Stopped**: When `ready_ttl_secs > 0`, ready sessions are automatically cleaned up after the grace period. This prevents tmux shell accumulation. The status changes from Ready to Stopped, blocking further resume.
+- **Lost on daemon restart**: When the daemon starts, Active/Idle sessions whose tmux sessions are gone are checked against their exit markers just like any other staleness check: with a marker present they resolve to `Stopped` retroactively (even if the session ended while the daemon was down); with no marker they're marked Lost. The user can resume either with `pulpo resume` (which auto-attaches).
+
+- **Ready + TTL → Stopped**: When `ready_ttl_secs > 0`, ready sessions are automatically cleaned up after the grace period. This prevents tmux shell accumulation. The status changes from Ready to Stopped, blocking further resume. Note: with `ready_ttl_secs` at its default of `0` (disabled), a `Ready` session whose tmux process later dies has no automatic path to `Stopped` from this cleanup — it depends on the exit-marker classification above instead.
