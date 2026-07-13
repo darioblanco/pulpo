@@ -16,6 +16,13 @@ const AGENT_PROCESSES: &[&str] = &["claude", "codex", "gemini", "opencode"];
 const SHELL_PROCESSES: &[&str] = &["bash", "zsh", "sh", "fish", "nu"];
 
 /// Determine the status for an adopted tmux session based on its running process.
+///
+/// Adopted sessions were never spawned via `wrap_command` (they weren't spawned by
+/// pulpo at all), so no exit marker (`{data_dir}/exit/{id}.code`/`.clean`) will ever
+/// exist for their session id. Their `Ready` detection therefore relies entirely on
+/// the text-pattern scrape (`detect_agent_exited`) in `watchdog::idle`, and if their
+/// backend disappears they resolve to `Lost` — the same as any other session with no
+/// exit marker — never `Stopped`.
 pub(super) fn classify_adopted_process(process: &str) -> SessionStatus {
     let lower = process.to_lowercase();
     if AGENT_PROCESSES.iter().any(|agent| lower.contains(agent)) {

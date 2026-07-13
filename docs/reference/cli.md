@@ -12,7 +12,7 @@ pulpo attach <NAME>                       Attach to a session terminal
 pulpo input <NAME> [TEXT]                 Send text input to a session
 pulpo stop <NAME>                         Stop a running session
 pulpo cleanup                             Remove all stopped and lost sessions
-pulpo resume <NAME>                       Resume a lost or ready session (auto-attaches)
+pulpo resume <NAME>                       Resume a lost, ready, or stopped session (auto-attaches)
 pulpo interventions <NAME>                Show watchdog interventions
 pulpo usage                               Show token/cost burn rate, time-to-cap, and quota
 pulpo usage --scan                        Scan ALL local agent history (Claude + Codex + pi):

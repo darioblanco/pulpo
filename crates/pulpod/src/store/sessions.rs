@@ -218,6 +218,19 @@ impl Store {
         Ok(())
     }
 
+    /// Record a session's exit code (from its `.code` exit marker) once its backend
+    /// has been found dead and the session resolved to `Stopped` (clean end) rather
+    /// than `Lost`. See `SessionManager::check_and_mark_stale`.
+    pub async fn update_session_exit_code(&self, id: &str, exit_code: i32) -> Result<()> {
+        sqlx::query("UPDATE sessions SET exit_code = ?, updated_at = ? WHERE id = ?")
+            .bind(exit_code)
+            .bind(Utc::now().to_rfc3339())
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn delete_session(&self, id: &str) -> Result<()> {
         sqlx::query("DELETE FROM sessions WHERE id = ?")
             .bind(id)

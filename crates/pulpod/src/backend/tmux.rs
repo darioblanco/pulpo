@@ -971,13 +971,16 @@ mod tests {
         // Test the full wrap_command flow: create a wrapped command and run it
         // through tmux, just like pulpod does in production.
         let id = uuid::Uuid::new_v4();
+        let data_dir = tempfile::tempdir().unwrap();
         let wrapped = crate::session::manager::wrap_command_for_test(
             "echo WRAPPED_OK",
             &id,
             "integ-wrapped",
             None,
+            data_dir.path().to_str().unwrap(),
         );
-        // wrap_command adds `exec $SHELL -l` fallback, so the session stays alive
+        // wrap_command runs a fallback shell (not exec'd) so the session stays alive
+        // and the wrapper can still write the `.clean` marker once it exits.
         let output = tmux_run_and_capture("pulpo-integ-wrapped", &wrapped, None);
         assert!(
             output.contains("WRAPPED_OK"),
@@ -991,16 +994,71 @@ mod tests {
         // Single-quoted arguments (e.g. claude -p 'fix the bug') are the most
         // common source of quoting bugs. Verify they survive the wrapping.
         let id = uuid::Uuid::new_v4();
+        let data_dir = tempfile::tempdir().unwrap();
         let wrapped = crate::session::manager::wrap_command_for_test(
             "echo 'QUOTED_OK'",
             &id,
             "integ-quotes",
             None,
+            data_dir.path().to_str().unwrap(),
         );
         let output = tmux_run_and_capture("pulpo-integ-quotes", &wrapped, None);
         assert!(
             output.contains("QUOTED_OK"),
             "tmux should handle single-quoted args: {output}"
+        );
+    }
+
+    #[cfg(not(coverage))]
+    #[test]
+    fn test_tmux_session_wrapped_command_writes_exit_code_marker() {
+        // Proves the marker-writing half of the new wrap_command end-to-end against a
+        // real tmux session — the `.code` marker must land on disk at the exact path
+        // `wrap_command` computed, containing the wrapped command's exit code. This is
+        // a stronger check than the historical "did the echo text show up" tests above:
+        // it verifies the mechanism the daemon now relies on to classify a dead-backend
+        // session as `Stopped` (clean end) instead of `Lost`.
+        let tmux = resolve_tmux_path();
+        let session_name = "pulpo-integ-exit-marker";
+        let _ = run_tmux(build_kill_command(&tmux, session_name), "cleanup");
+
+        let id = uuid::Uuid::new_v4();
+        // A data_dir with a space, to also prove the defensive quoting survives a
+        // real tmux → shell round-trip, not just `sh -n` parsing.
+        let data_dir = tempfile::Builder::new()
+            .prefix("pulpo marker test ")
+            .tempdir()
+            .unwrap();
+        let data_dir_str = data_dir.path().to_str().unwrap();
+        let wrapped = crate::session::manager::wrap_command_for_test(
+            "true",
+            &id,
+            "integ-marker",
+            None,
+            data_dir_str,
+        );
+
+        run_tmux(
+            build_create_command(&tmux, session_name, "/tmp", &wrapped, None),
+            "create test session",
+        )
+        .unwrap_or_else(|e| panic!("failed to create tmux session '{session_name}': {e}"));
+
+        let code_marker =
+            crate::session::utils::exit_code_marker_path(data_dir_str, &id.to_string());
+        let mut found = String::new();
+        for _ in 0..100 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if let Ok(content) = std::fs::read_to_string(&code_marker) {
+                found = content;
+                break;
+            }
+        }
+        let _ = run_tmux(build_kill_command(&tmux, session_name), "cleanup");
+        assert_eq!(
+            found.trim(),
+            "0",
+            "exit code marker should record the wrapped command's exit code at {code_marker:?}"
         );
     }
 
