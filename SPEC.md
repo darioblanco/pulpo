@@ -112,7 +112,7 @@ pulpo spawn my-api --workdir ~/repos/my-api -- claude "Fix the auth bug"
 pulpo list
 pulpo logs my-api
 pulpo stop my-api
-pulpo resume my-api         # resume lost or ready session (auto-attaches)
+pulpo resume my-api         # resume lost, ready, or stopped session (auto-attaches)
 pulpo nodes                 # list all pulpod peers on the Tailnet
 pulpo list --node server    # list sessions on a remote node
 
@@ -166,7 +166,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 - **IDLE**: agent needs attention — waiting for user input or at its prompt
 - **READY**: agent process exited — task is done. Detected by `[pulpo] Agent exited` marker
 - **STOPPED**: session was terminated by user, watchdog (memory/idle), or ready TTL cleanup
-- **LOST**: tmux process disappeared unexpectedly (crash, reboot)
+- **LOST**: tmux process disappeared with no exit markers (crash, reboot, external kill mid-run). A session whose shell exited normally (exit markers present) resolves to STOPPED instead — exiting a session is a clean end, not a loss.
 
 ### State Quick Reference
 

@@ -32,9 +32,9 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 | **Creating** | tmux session is being set up | No |
 | **Active** | Agent is working — terminal output is changing | No |
 | **Idle** | Agent needs attention — waiting for input or at its prompt | No |
-| **Ready** | Agent process exited — task is done | Yes (resumable) |
-| **Stopped** | Session was terminated by user, watchdog, or TTL cleanup | Yes (not resumable) |
-| **Lost** | tmux process disappeared unexpectedly (crash, reboot) | Yes (resumable) |
+| **Ready** | Agent process exited — task is done (exit code recorded); fallback shell still alive | Yes (resumable) |
+| **Stopped** | Session ended intentionally: `pulpo stop`, watchdog intervention, TTL cleanup, or the user exited the session's shell (exit markers present) | Yes (resumable) |
+| **Lost** | tmux process disappeared with no exit markers — crash, reboot, or external kill mid-run | Yes (resumable) |
 
 ## Transitions
 
@@ -53,17 +53,34 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 - **Detection**: New output in the terminal means the agent (or user) resumed work.
 
 ### Active/Idle → Ready
-- **Trigger**: Watchdog detects `[pulpo] Agent exited` marker in captured output.
-- **Detection**: Non-shell tmux commands are wrapped with an exit marker and a fallback login shell. The watchdog checks for the marker before any idle logic. The fallback shell keeps the tmux session alive for inspection.
+- **Trigger**: The wrapper's `{id}.code` exit-marker file appears (written the moment the
+  agent command finishes, containing its exit code), or — fallback for sessions without a
+  wrapper, e.g. adopted external tmux sessions — the `[pulpo] Agent exited` text in
+  captured output.
+- **Detection**: The watchdog checks the marker (deterministic) before any output
+  scraping or idle logic. The agent's exit code is persisted to the session. The fallback
+  shell keeps the tmux session alive for inspection.
 - **Side effects**: SSE event emitted.
 
 ### Active/Idle → Stopped
-- **Trigger**: User runs `pulpo stop`, watchdog memory intervention, or watchdog idle timeout with `action: kill`.
-- **Detection**: Explicit stop command or watchdog policy.
+- **Trigger**: User runs `pulpo stop`, a watchdog intervention (memory/budget/burn/idle
+  kill) — or the session's shell exits normally (the user typed `exit`, or closed tmux
+  after the agent finished).
+- **Detection**: Explicit stop and interventions act directly. The clean-shell-exit case
+  is classified by the exit markers the command wrapper writes under `{data_dir}/exit/`:
+  `{id}.code` (agent finished, exit code inside) and `{id}.clean` (shell ended normally).
+  When the tmux session is gone and either marker exists, the session resolves to
+  **Stopped** (exit code persisted) instead of Lost. Markers are removed on purge and
+  swept by `pulpo cleanup`.
 
 ### Active/Idle → Lost
-- **Trigger**: `is_alive()` returns false for a session that was Active or Idle.
-- **Detection**: On `get_session` or `list_sessions`, if the backend (tmux) session is gone, the session is marked Lost. A 5-second grace period protects freshly spawned sessions from false positives.
+- **Trigger**: `is_alive()` returns false for a session that was Active or Idle **and no
+  exit marker exists** — the tmux process died without the wrapper running to completion
+  (crash, reboot, `tmux kill-session`/`kill-server` mid-run).
+- **Detection**: On `get_session` or `list_sessions`, if the backend (tmux) session is
+  gone the markers are consulted; with none present the session is marked Lost. A
+  5-second grace period protects freshly spawned sessions from false positives. Adopted
+  external sessions (no wrapper, no markers) always resolve to Lost.
 
 ### Ready → Stopped
 - **Trigger**: `ready_ttl_secs` expires (if configured > 0).
@@ -75,7 +92,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 |-----------|---------|--------------|
 | **Lost** | Yes | Recreates tmux session, re-executes the session command |
 | **Ready** | Yes | Re-executes the command in the tmux session (or recreates if gone) |
-| **Stopped** | No | Error: "session cannot be resumed" |
+| **Stopped** | Yes | Recreates tmux session, re-executes the session command |
 | **Active/Idle** | No | Error: session is still running |
 | **Creating** | No | Error: session is still running |
 

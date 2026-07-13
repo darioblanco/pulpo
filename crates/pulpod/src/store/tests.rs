@@ -428,6 +428,36 @@ async fn test_update_session_status() {
 }
 
 #[tokio::test]
+async fn test_update_session_exit_code() {
+    let store = test_store().await;
+    let session = make_session("exit-code-test");
+    store.insert_session(&session).await.unwrap();
+
+    store
+        .update_session_exit_code(&session.id.to_string(), 130)
+        .await
+        .unwrap();
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.exit_code, Some(130));
+}
+
+#[tokio::test]
+async fn test_update_session_exit_code_after_table_dropped() {
+    let store = test_store().await;
+    sqlx::query("DROP TABLE sessions")
+        .execute(store.pool())
+        .await
+        .unwrap();
+    let result = store.update_session_exit_code("test-id", 1).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
 async fn test_delete_session() {
     let store = test_store().await;
     let session = make_session("delete-test");

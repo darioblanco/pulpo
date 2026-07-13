@@ -13,10 +13,14 @@ use crate::backend::Backend;
 #[cfg(not(coverage))]
 use crate::session::utils::create_worktree;
 use crate::session::utils::{
-    DOCKER_RUNTIME_REMOVED, find_orphan_session_logs, find_orphan_worktree_dirs,
+    DOCKER_RUNTIME_REMOVED, exit_dir, find_orphan_exit_markers, find_orphan_session_logs,
+    find_orphan_worktree_dirs, has_exit_marker, read_exit_code_marker, remove_exit_markers,
     remove_session_log, session_log_path, validate_runtime, validate_session_name,
     validate_workdir, worktrees_dir, wrap_command, write_secrets_file,
 };
+#[cfg(test)]
+#[allow(unused_imports)]
+use crate::session::utils::{exit_clean_marker_path, exit_code_marker_path};
 use crate::store::Store;
 
 pub(crate) use crate::session::utils::cleanup_worktree;
@@ -327,6 +331,7 @@ impl SessionManager {
             &name,
             secrets_file.as_deref(),
             req.term_program.as_deref(),
+            self.store.data_dir(),
         );
 
         // Fold the explicit cost budget into the session metadata so the watchdog can
@@ -446,7 +451,14 @@ impl SessionManager {
         effective_workdir: &str,
         create_id: &str,
     ) -> Result<()> {
-        let final_command = wrap_command(&session.command, &session.id, &session.name, None, None);
+        let final_command = wrap_command(
+            &session.command,
+            &session.id,
+            &session.name,
+            None,
+            None,
+            self.store.data_dir(),
+        );
         self.backend
             .create_session(create_id, effective_workdir, &final_command)
     }
@@ -509,6 +521,13 @@ impl SessionManager {
         effective_workdir: &str,
         create_id: &str,
     ) -> Result<()> {
+        // `resume_session`/`resume_lost_sessions` reuse the same session id when
+        // recreating the backend (unlike `create_session`, which always mints a fresh
+        // UUID). Purge any stale `.code`/`.clean` markers left over from a *previous*
+        // run of this session id first — otherwise the next watchdog idle-check tick
+        // could immediately (and wrongly) treat the freshly-resumed, actively-running
+        // session as already finished.
+        remove_exit_markers(self.store.data_dir(), &session.id.to_string());
         self.recreate_backend_session(session, effective_workdir, create_id)?;
         self.refresh_backend_session_id(session).await;
         Ok(())
@@ -573,6 +592,7 @@ impl SessionManager {
             }
         }
         remove_session_log(self.store.data_dir(), &session_id);
+        remove_exit_markers(self.store.data_dir(), &session_id);
         self.store.delete_session(&session_id).await?;
         self.emit_session_deleted(session);
         Ok(())
@@ -666,6 +686,16 @@ impl SessionManager {
     ///
     /// Checks both `Active` and `Idle` sessions — after a reboot, tmux
     /// sessions are gone but DB status may still say Idle.
+    ///
+    /// When the backend is dead, the exit markers written by `wrap_command`
+    /// (`{data_dir}/exit/{id}.code` and `{id}.clean`) decide the terminal state:
+    /// their presence means the wrapped shell ran to completion on its own — an
+    /// intentional end — so the session resolves to `Stopped` (with `exit_code`
+    /// recorded when the `.code` marker parsed). Their absence means tmux
+    /// disappeared out from under a still-running session (crash, `kill-session`,
+    /// `kill-server`, reboot) with no evidence of a clean end, so it resolves to
+    /// `Lost`, unchanged from before. Markers are read fresh from disk on every
+    /// call, so this is race-free even across a daemon restart.
     async fn check_and_mark_stale(&self, session: &mut Session) -> Result<bool> {
         if session.status != SessionStatus::Active && session.status != SessionStatus::Idle {
             return Ok(false);
@@ -681,11 +711,33 @@ impl SessionManager {
         if alive {
             return Ok(false);
         }
-        self.store
-            .update_session_status(&session.id.to_string(), SessionStatus::Lost)
-            .await?;
-        session.status = SessionStatus::Lost;
+        self.resolve_dead_backend_session(session).await?;
         Ok(true)
+    }
+
+    /// Shared tail of `check_and_mark_stale` and `resume_lost_sessions`: a session's
+    /// backend has been found dead — resolve it to `Stopped` (clean end, per an exit
+    /// marker) or `Lost` (no evidence of a clean end), persisting `exit_code` when the
+    /// `.code` marker parsed to a number.
+    async fn resolve_dead_backend_session(&self, session: &mut Session) -> Result<()> {
+        let id = session.id.to_string();
+        let data_dir = self.store.data_dir();
+        if has_exit_marker(data_dir, &id) {
+            if let Some(code) = read_exit_code_marker(data_dir, &id) {
+                self.store.update_session_exit_code(&id, code).await?;
+                session.exit_code = Some(code);
+            }
+            self.store
+                .update_session_status(&id, SessionStatus::Stopped)
+                .await?;
+            session.status = SessionStatus::Stopped;
+        } else {
+            self.store
+                .update_session_status(&id, SessionStatus::Lost)
+                .await?;
+            session.status = SessionStatus::Lost;
+        }
+        Ok(())
     }
 
     pub async fn stop_session(&self, id: &str, purge: bool) -> Result<()> {
@@ -733,6 +785,9 @@ impl SessionManager {
             if remove_session_log(&data_dir, &session.id.to_string()) {
                 logs_cleaned += 1;
             }
+            if remove_exit_markers(&data_dir, &session.id.to_string()) {
+                logs_cleaned += 1;
+            }
         }
         let ids: Vec<String> = dead_sessions.iter().map(|s| s.id.to_string()).collect();
         if !ids.is_empty() {
@@ -766,6 +821,11 @@ impl SessionManager {
         let logs_dir = std::path::Path::new(&data_dir).join("logs");
         for log in find_orphan_session_logs(&logs_dir, &known_ids) {
             if std::fs::remove_file(&log).is_ok() {
+                logs_cleaned += 1;
+            }
+        }
+        for marker in find_orphan_exit_markers(&exit_dir(&data_dir), &known_ids) {
+            if std::fs::remove_file(&marker).is_ok() {
                 logs_cleaned += 1;
             }
         }
@@ -803,8 +863,13 @@ impl SessionManager {
             .ok_or_else(|| anyhow!("session not found: {id}"))?;
 
         let previous_status = session.status;
-        if previous_status != SessionStatus::Lost && previous_status != SessionStatus::Ready {
-            bail!("session cannot be resumed (status: {previous_status})");
+        if previous_status != SessionStatus::Lost
+            && previous_status != SessionStatus::Ready
+            && previous_status != SessionStatus::Stopped
+        {
+            bail!(
+                "session cannot be resumed (status: {previous_status}) — only stopped, lost, or ready sessions can be resumed"
+            );
         }
 
         // Historical docker-runtime sessions remain readable but cannot be resumed.
@@ -852,7 +917,7 @@ impl SessionManager {
     pub async fn resume_lost_sessions(&self) -> Result<usize> {
         let sessions = self.store.list_sessions().await?;
         let mut resumed = 0;
-        for session in sessions {
+        for mut session in sessions {
             if session.status != SessionStatus::Active && session.status != SessionStatus::Idle {
                 continue;
             }
@@ -871,6 +936,15 @@ impl SessionManager {
             let backend_id = self.resolve_backend_id(&session);
             let alive = self.backend.is_alive(&backend_id).unwrap_or(false);
             if alive {
+                continue;
+            }
+            // The session ended cleanly while the daemon wasn't polling it (either it
+            // exited before pulpod stopped, or after — the marker is written by the
+            // wrapper shell itself, independent of daemon uptime). Resolve it to
+            // Stopped instead of blindly auto-resuming (re-launching the original
+            // command) — this must be checked *before* the resume attempt below.
+            if has_exit_marker(self.store.data_dir(), &session.id.to_string()) {
+                self.resolve_dead_backend_session(&mut session).await?;
                 continue;
             }
             // Backend is dead — resume the session
@@ -908,6 +982,7 @@ impl SessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::utils::{exit_clean_marker_path, exit_code_marker_path};
     use pulpo_common::event::SessionEvent;
     use std::sync::Mutex;
 
@@ -1149,10 +1224,10 @@ mod tests {
     fn test_wrap_command_escapes_session_name() {
         // Even if validation is bypassed, wrap_command should escape the name
         let id = uuid::Uuid::new_v4();
-        let wrapped = wrap_command("echo test", &id, "safe-name", None, None);
+        let wrapped = wrap_command("echo test", &id, "safe-name", None, None, "/tmp");
         assert!(wrapped.contains("PULPO_SESSION_NAME=safe-name"));
         // Verify single quotes in name would be escaped (defense-in-depth)
-        let wrapped = wrap_command("echo test", &id, "name'inject", None, None);
+        let wrapped = wrap_command("echo test", &id, "name'inject", None, None, "/tmp");
         assert!(!wrapped.contains("name'inject"));
         assert!(wrapped.contains("name'\\''inject"));
     }
@@ -1743,14 +1818,19 @@ mod tests {
     #[test]
     fn test_wrap_command_basic() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo hello", &id, "test-session", None, None);
+        let cmd = wrap_command("echo hello", &id, "test-session", None, None, "/tmp");
         assert!(cmd.contains("-l -c"));
         assert!(cmd.contains("echo hello"));
         assert!(cmd.contains("[pulpo] Agent exited (session: test-session)"));
         assert!(cmd.contains("Run: pulpo resume test-session"));
-        // Fallback shell uses $SHELL (or /bin/bash), run as login shell
-        assert!(cmd.contains("exec "));
-        assert!(cmd.contains(" -l'"));
+        // Fallback shell uses $SHELL (or /bin/bash), run as a login shell — NOT exec'd,
+        // so the wrapper regains control afterward to write the `.clean` marker.
+        assert!(cmd.contains(" -l; : > "));
+        assert!(!cmd.contains("exec "));
+        // Exit-code marker: `$?` captured immediately, then written to `{id}.code`.
+        assert!(cmd.contains("ec=$?"));
+        assert!(cmd.contains(&format!("{id}.code")));
+        assert!(cmd.contains(&format!("{id}.clean")));
         assert!(cmd.contains(&format!("PULPO_SESSION_ID={id}")));
         assert!(cmd.contains("PULPO_SESSION_NAME=test-session"));
     }
@@ -1758,7 +1838,14 @@ mod tests {
     #[test]
     fn test_wrap_command_single_quotes() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude -p 'Fix the bug'", &id, "my-task", None, None);
+        let cmd = wrap_command(
+            "claude -p 'Fix the bug'",
+            &id,
+            "my-task",
+            None,
+            None,
+            "/tmp",
+        );
         assert!(cmd.contains("-l -c"));
         // Single quotes should be properly escaped
         assert!(cmd.contains("claude -p"));
@@ -1774,7 +1861,7 @@ mod tests {
         // Verify the wrapped command has balanced single quotes so it doesn't
         // cause "unmatched '" errors when tmux passes it to the shell.
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude", &id, "test-session", None, None);
+        let cmd = wrap_command("claude", &id, "test-session", None, None, "/tmp");
 
         // Count single quotes outside of escaped sequences (\')
         // The '\'' pattern (end-quote, escaped-quote, start-quote) is valid.
@@ -1794,7 +1881,7 @@ mod tests {
         // quoting bugs. The wrapped command is a complete shell invocation like
         // `/bin/zsh -l -c '...'`, so we parse it as a whole.
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("true", &id, "test-session", None, None);
+        let cmd = wrap_command("true", &id, "test-session", None, None, "/tmp");
 
         let output = std::process::Command::new("sh")
             .args(["-n", "-c", &cmd])
@@ -1812,7 +1899,14 @@ mod tests {
     fn test_wrap_command_with_quotes_executes_without_parse_error() {
         // Same test but with a command containing single quotes (common with claude -p).
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo 'hello world'", &id, "quoted-session", None, None);
+        let cmd = wrap_command(
+            "echo 'hello world'",
+            &id,
+            "quoted-session",
+            None,
+            None,
+            "/tmp",
+        );
 
         let output = std::process::Command::new("sh")
             .args(["-n", "-c", &cmd])
@@ -1844,20 +1938,27 @@ mod tests {
     #[test]
     fn test_wrap_command_shell_no_exit_marker() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("bash", &id, "my-shell", None, None);
-        assert!(cmd.contains("exec bash"));
+        let cmd = wrap_command("bash", &id, "my-shell", None, None, "/tmp");
+        // Bare-shell spawns are NOT exec'd — the wrapper must regain control to
+        // write the `.clean` marker after the interactive shell exits.
+        assert!(cmd.contains("bash;"));
+        assert!(!cmd.contains("exec bash"));
         assert!(cmd.contains(&format!("PULPO_SESSION_ID={id}")));
         assert!(cmd.contains("PULPO_SESSION_NAME=my-shell"));
-        // Shell sessions should NOT have exit marker or fallback bash
+        // Shell sessions should NOT have the agent-exit hint, nor an exit-code marker
+        // (only `.clean` is written on this path).
         assert!(!cmd.contains("[pulpo] Agent exited"));
         assert!(!cmd.contains("Run: pulpo resume"));
+        assert!(!cmd.contains(&format!("{id}.code")));
+        assert!(cmd.contains(&format!("{id}.clean")));
     }
 
     #[test]
     fn test_wrap_command_shell_with_path() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("/usr/bin/zsh", &id, "zsh-session", None, None);
-        assert!(cmd.contains("exec /usr/bin/zsh"));
+        let cmd = wrap_command("/usr/bin/zsh", &id, "zsh-session", None, None, "/tmp");
+        assert!(cmd.contains("/usr/bin/zsh;"));
+        assert!(!cmd.contains("exec /usr/bin/zsh"));
         assert!(!cmd.contains("[pulpo] Agent exited"));
     }
 
@@ -1865,7 +1966,7 @@ mod tests {
     fn test_wrap_command_with_secrets_file() {
         let id = uuid::Uuid::new_v4();
         let secrets_path = "/tmp/pulpo-secrets-test.sh";
-        let cmd = wrap_command("echo hello", &id, "test", Some(secrets_path), None);
+        let cmd = wrap_command("echo hello", &id, "test", Some(secrets_path), None, "/tmp");
         // Command should source the secrets file and delete it — NOT contain secret values
         assert!(cmd.contains(". /tmp/pulpo-secrets-test.sh && rm -f /tmp/pulpo-secrets-test.sh"));
         assert!(cmd.contains("echo hello"));
@@ -1877,15 +1978,16 @@ mod tests {
     fn test_wrap_command_shell_with_secrets_file() {
         let id = uuid::Uuid::new_v4();
         let secrets_path = "/tmp/pulpo-secrets-shell.sh";
-        let cmd = wrap_command("bash", &id, "my-shell", Some(secrets_path), None);
+        let cmd = wrap_command("bash", &id, "my-shell", Some(secrets_path), None, "/tmp");
         assert!(cmd.contains(". /tmp/pulpo-secrets-shell.sh && rm -f /tmp/pulpo-secrets-shell.sh"));
-        assert!(cmd.contains("exec bash"));
+        assert!(cmd.contains("bash;"));
+        assert!(!cmd.contains("exec bash"));
     }
 
     #[test]
     fn test_wrap_command_no_secrets_file() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo hello", &id, "test", None, None);
+        let cmd = wrap_command("echo hello", &id, "test", None, None, "/tmp");
         // Without secrets, no source/rm prefix should appear
         assert!(!cmd.contains(". /tmp/pulpo-secrets"));
         assert!(!cmd.contains("rm -f"));
@@ -1893,16 +1995,39 @@ mod tests {
     }
 
     #[test]
+    fn test_wrap_command_data_dir_with_spaces_is_escaped_and_parses() {
+        // data_dir may contain spaces (e.g. "/Users/dario/My Documents/.pulpo") — the
+        // exit-marker directory must be quoted defensively, just like session names.
+        let id = uuid::Uuid::new_v4();
+        let data_dir = "/tmp/pulpo test dir";
+        let cmd = wrap_command("echo hi", &id, "test", None, None, data_dir);
+        assert!(cmd.contains(&format!("{id}.code")));
+        assert!(cmd.contains(&format!("{id}.clean")));
+        assert!(cmd.contains("pulpo test dir"));
+
+        // The whole wrapped command must still parse as valid shell despite the space.
+        let output = std::process::Command::new("sh")
+            .args(["-n", "-c", &cmd])
+            .output()
+            .expect("failed to spawn shell");
+        assert!(
+            output.status.success(),
+            "wrapped command with spaced data_dir has shell syntax errors:\n  command: {cmd}\n  stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
     fn test_wrap_command_term_program() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude", &id, "test-session", None, Some("ghostty"));
+        let cmd = wrap_command("claude", &id, "test-session", None, Some("ghostty"), "/tmp");
         assert!(cmd.contains("export TERM_PROGRAM='ghostty'"));
     }
 
     #[test]
     fn test_wrap_command_no_term_program() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude", &id, "test-session", None, None);
+        let cmd = wrap_command("claude", &id, "test-session", None, None, "/tmp");
         assert!(!cmd.contains("TERM_PROGRAM"));
     }
 
@@ -2231,7 +2356,14 @@ mod tests {
     #[test]
     fn test_wrap_command_secrets_source_before_env_vars() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo test", &id, "sess", Some("/tmp/secrets.sh"), None);
+        let cmd = wrap_command(
+            "echo test",
+            &id,
+            "sess",
+            Some("/tmp/secrets.sh"),
+            None,
+            "/tmp",
+        );
         // The source-and-delete must come BEFORE the env var exports
         let source_pos = cmd.find(". /tmp/secrets.sh").unwrap();
         let env_pos = cmd.find("PULPO_SESSION_ID").unwrap();
@@ -2245,7 +2377,7 @@ mod tests {
     fn test_wrap_command_secrets_source_and_delete_pattern() {
         let id = uuid::Uuid::new_v4();
         let path = "/tmp/pulpo-secrets-test.sh";
-        let cmd = wrap_command("my-agent", &id, "sess", Some(path), None);
+        let cmd = wrap_command("my-agent", &id, "sess", Some(path), None, "/tmp");
         // Pattern: `. <file> && rm -f <file>; `
         assert!(cmd.contains(&format!(". {path} && rm -f {path}; ")));
     }
@@ -2979,7 +3111,7 @@ mod tests {
     #[test]
     fn test_wrap_command_double_quotes() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo \"hello world\"", &id, "test", None, None);
+        let cmd = wrap_command("echo \"hello world\"", &id, "test", None, None, "/tmp");
         assert!(cmd.contains("echo \"hello world\""));
         assert!(cmd.contains("-l -c"));
     }
@@ -2987,21 +3119,21 @@ mod tests {
     #[test]
     fn test_wrap_command_backticks() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo `date`", &id, "test", None, None);
+        let cmd = wrap_command("echo `date`", &id, "test", None, None, "/tmp");
         assert!(cmd.contains("echo `date`"));
     }
 
     #[test]
     fn test_wrap_command_dollar_variables() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo $HOME $USER", &id, "test", None, None);
+        let cmd = wrap_command("echo $HOME $USER", &id, "test", None, None, "/tmp");
         assert!(cmd.contains("echo $HOME $USER"));
     }
 
     #[test]
     fn test_wrap_command_empty_string() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("", &id, "test", None, None);
+        let cmd = wrap_command("", &id, "test", None, None, "/tmp");
         // Empty command is not a shell command, so gets agent wrapper
         assert!(cmd.contains("-l -c"));
         assert!(cmd.contains("[pulpo] Agent exited"));
@@ -3011,7 +3143,7 @@ mod tests {
     fn test_wrap_command_very_long() {
         let id = uuid::Uuid::new_v4();
         let long_cmd = "echo ".to_owned() + &"a".repeat(10_000);
-        let cmd = wrap_command(&long_cmd, &id, "test", None, None);
+        let cmd = wrap_command(&long_cmd, &id, "test", None, None, "/tmp");
         assert!(cmd.contains(&"a".repeat(10_000)));
         assert!(cmd.contains("-l -c"));
     }
@@ -3311,5 +3443,324 @@ mod tests {
         let se = unwrap_session_event(event);
         assert_eq!(se.status, "active");
         assert_eq!(se.previous_status.as_deref(), Some("lost"));
+    }
+
+    // ───────────────────────────────────────────────────────────
+    // Exit-marker classification: Stopped vs Lost (fix/lifecycle-truth)
+    // ───────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_dead_backend_with_code_marker_resolves_stopped_with_exit_code() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr.create_session(make_req("code-marker")).await.unwrap();
+        let data_dir = mgr.store().data_dir().to_owned();
+        let code_path = exit_code_marker_path(&data_dir, &session.id.to_string());
+        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+        std::fs::write(&code_path, "0").unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert_eq!(fetched.exit_code, Some(0));
+    }
+
+    #[tokio::test]
+    async fn test_dead_backend_with_clean_marker_only_resolves_stopped_no_exit_code() {
+        // Bare-shell spawns only ever get a `.clean` marker (no `.code`) — the
+        // exit_code stays unset, but the classification must still be Stopped.
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr
+            .create_session(make_req("clean-marker-only"))
+            .await
+            .unwrap();
+        let data_dir = mgr.store().data_dir().to_owned();
+        let clean_path = exit_clean_marker_path(&data_dir, &session.id.to_string());
+        std::fs::create_dir_all(clean_path.parent().unwrap()).unwrap();
+        std::fs::write(&clean_path, "").unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert!(fetched.exit_code.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_adopted_style_session_with_no_marker_becomes_lost() {
+        // Regression lock: an "adopted"-style session (a `backend_session_id` present,
+        // but never spawned via `wrap_command`, so no exit marker for its id ever
+        // exists) must still resolve to Lost when its backend dies — this should
+        // already pass given the `has_exit_marker` false branch; it locks in that the
+        // marker-aware classification doesn't change behavior for sessions with no
+        // wrapper (see `watchdog::adopt::classify_adopted_process`).
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "adopted-external".into(),
+            workdir: "/tmp".into(),
+            command: "claude".into(),
+            status: SessionStatus::Active,
+            backend_session_id: Some("adopted-external".into()),
+            created_at: Utc::now() - chrono::Duration::hours(1),
+            ..Default::default()
+        };
+        mgr.store().insert_session(&session).await.unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Lost);
+        assert!(fetched.exit_code.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_from_stopped_succeeds() {
+        let (mgr, _, pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr
+            .create_session(make_req("stopped-resume"))
+            .await
+            .unwrap();
+        let id = session.id.to_string();
+        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let resumed = mgr.resume_session(&id).await.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_rejects_active_with_updated_message() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let session = mgr
+            .create_session(make_req("active-resume-reject"))
+            .await
+            .unwrap();
+        let err = mgr
+            .resume_session(&session.id.to_string())
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("cannot be resumed"), "got: {msg}");
+        assert!(
+            msg.contains("only stopped, lost, or ready sessions can be resumed"),
+            "got: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_rejects_creating_with_updated_message() {
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+        let session = mgr
+            .create_session(make_req("creating-resume-reject"))
+            .await
+            .unwrap();
+        let id = session.id.to_string();
+        sqlx::query("UPDATE sessions SET status = 'creating' WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = mgr.resume_session(&id).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("only stopped, lost, or ready sessions can be resumed")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_resolves_clean_exit_to_stopped_instead_of_resuming() {
+        // Daemon-down ordering fix: the session ended cleanly (marker dropped directly,
+        // simulating the wrapper having already run while pulpod was down) — the next
+        // resume_lost_sessions pass (simulating a restart) must resolve it to Stopped
+        // rather than blindly auto-resuming (re-launching the original command).
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = mgr
+            .create_session(make_req("daemon-down-clean"))
+            .await
+            .unwrap();
+        let data_dir = mgr.store().data_dir().to_owned();
+        let code_path = exit_code_marker_path(&data_dir, &session.id.to_string());
+        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+        std::fs::write(&code_path, "42").unwrap();
+
+        *backend.alive.lock().unwrap() = false;
+        backend.calls.lock().unwrap().clear();
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(
+            resumed, 0,
+            "a cleanly-exited session must not be auto-resumed"
+        );
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert_eq!(fetched.exit_code, Some(42));
+
+        // No new backend session was created for it.
+        let calls = backend.calls.lock().unwrap();
+        assert!(!calls.iter().any(|c| c.starts_with("create:")));
+        drop(calls);
+    }
+
+    #[tokio::test]
+    async fn test_resume_purges_stale_exit_markers_before_recreating_backend() {
+        // resume_session/resume_lost_sessions reuse the same session id when
+        // recreating the backend (unlike create_session, which always mints a fresh
+        // UUID). A stale marker left over from a *previous* run of this same id must
+        // be purged before the backend is recreated — otherwise the next watchdog
+        // idle-check tick would see it and immediately (and wrongly) treat the
+        // freshly-resumed, genuinely-running session as already finished, since
+        // check_session_idle's marker check does not consult backend aliveness.
+        let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr
+            .create_session(make_req("stale-marker-resume"))
+            .await
+            .unwrap();
+        let id = session.id.to_string();
+        let data_dir = mgr.store().data_dir().to_owned();
+        let clean_path = exit_clean_marker_path(&data_dir, &id);
+        std::fs::create_dir_all(clean_path.parent().unwrap()).unwrap();
+        std::fs::write(&clean_path, "").unwrap();
+        sqlx::query("UPDATE sessions SET status = 'lost' WHERE id = ?")
+            .bind(&id)
+            .execute(mgr.store().pool())
+            .await
+            .unwrap();
+        assert!(has_exit_marker(&data_dir, &id));
+
+        mgr.resume_session(&id).await.unwrap();
+
+        assert!(
+            !has_exit_marker(&data_dir, &id),
+            "stale exit markers must be purged before the backend is recreated on resume"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_handoff_session_from_stopped_source_succeeds() {
+        // handoff_session has no status guard on the source today — a common real
+        // path is now: session exits cleanly -> auto-Stopped -> user hands off to a
+        // follow-up session. Lock this in as a regression test (don't add a guard).
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+        let source = mgr.create_session(make_req("plan-auth")).await.unwrap();
+        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE id = ?")
+            .bind(source.id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let handed_off = mgr
+            .handoff_session(&source.id.to_string(), make_handoff_req())
+            .await
+            .unwrap();
+        assert_eq!(handed_off.name, "plan-auth-2");
+    }
+
+    #[tokio::test]
+    async fn test_stale_grace_period_delays_classification_then_resolves_stopped() {
+        // Within the grace period, check_and_mark_stale must not fire at all — even
+        // though a marker already exists (agent exited fast + user exited the shell
+        // within the grace window). Once the window passes, the next check correctly
+        // resolves Stopped (not Lost) using the marker that was there all along.
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmpdir = Box::leak(Box::new(tmpdir));
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let backend = Arc::new(MockBackend::new().with_alive(false));
+        // Default stale_grace_secs (5s) — NOT with_no_stale_grace.
+        let mgr = SessionManager::new(backend, store, None);
+
+        let session = mgr.create_session(make_req("grace-window")).await.unwrap();
+        let id = session.id.to_string();
+        let data_dir = mgr.store().data_dir().to_owned();
+        let code_path = exit_code_marker_path(&data_dir, &id);
+        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+        std::fs::write(&code_path, "0").unwrap();
+
+        // Still within the grace period — no transition yet.
+        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Active);
+
+        // Backdate created_at past the grace window and check again.
+        sqlx::query("UPDATE sessions SET created_at = ? WHERE id = ?")
+            .bind((Utc::now() - chrono::Duration::seconds(10)).to_rfc3339())
+            .bind(&id)
+            .execute(mgr.store().pool())
+            .await
+            .unwrap();
+
+        let fetched = mgr.get_session(&id).await.unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert_eq!(fetched.exit_code, Some(0));
+    }
+
+    #[tokio::test]
+    async fn test_purge_session_removes_exit_markers() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let s = mgr.create_session(make_req("purge-markers")).await.unwrap();
+        let data_dir = mgr.store().data_dir().to_owned();
+        let id = s.id.to_string();
+        let code_path = exit_code_marker_path(&data_dir, &id);
+        let clean_path = exit_clean_marker_path(&data_dir, &id);
+        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+        std::fs::write(&code_path, "0").unwrap();
+        std::fs::write(&clean_path, "").unwrap();
+
+        mgr.stop_session(&id, true).await.unwrap();
+
+        assert!(!code_path.exists());
+        assert!(!clean_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_dead_sessions_removes_exit_markers() {
+        let (mgr, _, pool) = test_manager(MockBackend::new()).await;
+        let s = mgr
+            .create_session(make_req("cleanup-markers"))
+            .await
+            .unwrap();
+        let data_dir = mgr.store().data_dir().to_owned();
+        let id = s.id.to_string();
+        let code_path = exit_code_marker_path(&data_dir, &id);
+        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+        std::fs::write(&code_path, "0").unwrap();
+        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let resp = mgr.cleanup_dead_sessions().await.unwrap();
+        assert_eq!(resp.sessions_deleted, 1);
+        assert!(resp.logs_cleaned >= 1, "got: {resp:?}");
+        assert!(!code_path.exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_sweeps_orphan_exit_markers() {
+        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
+        let data_dir = mgr.store().data_dir().to_owned();
+        let exit_dir_path = exit_dir(&data_dir);
+        std::fs::create_dir_all(&exit_dir_path).unwrap();
+        let orphan_id = uuid::Uuid::new_v4();
+        let orphan_code = exit_dir_path.join(format!("{orphan_id}.code"));
+        std::fs::write(&orphan_code, "0").unwrap();
+
+        let resp = mgr.cleanup_dead_sessions().await.unwrap();
+        assert_eq!(resp.logs_cleaned, 1);
+        assert!(!orphan_code.exists());
     }
 }

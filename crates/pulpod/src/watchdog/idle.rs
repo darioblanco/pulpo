@@ -69,8 +69,15 @@ pub(super) async fn check_session_idle(
         }
     };
 
-    if detect_agent_exited(&current_output) {
-        handle_session_ready(store, session, ready_ctx).await;
+    // The `.code` exit marker (written by `wrap_command` immediately after the
+    // wrapped agent command exits) is a deterministic, race-free alternative to the
+    // historical text-scrape below. The text scrape stays in place for compatibility
+    // — e.g. adopted external tmux sessions have no `wrap_command` wrapper and thus
+    // no marker, ever, and must keep relying on it (see `watchdog::adopt`).
+    let marker_exit_code =
+        crate::session::utils::read_exit_code_marker(store.data_dir(), &session.id.to_string());
+    if marker_exit_code.is_some() || detect_agent_exited(&current_output) {
+        handle_session_ready(store, session, ready_ctx, marker_exit_code).await;
         return;
     }
 
@@ -145,12 +152,34 @@ pub(super) async fn check_session_idle(
     .await;
 }
 
-pub(super) async fn handle_session_ready(store: &Store, session: &Session, ctx: &ReadyContext) {
+/// Transition a session to `Ready`: the agent process has exited but the wrapper's
+/// fallback shell is still lingering in tmux (still resumable, still alive). `exit_code`
+/// is `Some` when the `.code` exit marker was found and parsed (see `check_session_idle`);
+/// it is persisted alongside the status update so the exit code is visible even before
+/// the session eventually resolves to `Stopped`/`Lost`.
+pub(super) async fn handle_session_ready(
+    store: &Store,
+    session: &Session,
+    ctx: &ReadyContext,
+    exit_code: Option<i32>,
+) {
     let previous = session.status;
     info!(
         session_name = %session.name,
         "Agent exited, transitioning to ready"
     );
+    if let Some(code) = exit_code {
+        #[allow(unused_variables)]
+        if let Err(error) = store
+            .update_session_exit_code(&session.id.to_string(), code)
+            .await
+        {
+            coverage_warn!(
+                session_name = %session.name,
+                "Failed to record exit code: {error}"
+            );
+        }
+    }
     #[allow(unused_variables)]
     if let Err(error) = store
         .update_session_status(&session.id.to_string(), SessionStatus::Ready)

@@ -1265,6 +1265,55 @@ async fn test_idle_detection_not_yet_timed_out() {
 }
 
 #[tokio::test]
+async fn test_code_marker_transitions_active_session_to_ready_with_exit_code() {
+    // Matrix cells 1/2: the `.code` marker (not output scraping) deterministically
+    // moves a still-alive session to Ready and records the agent's exit code.
+    let backend = Arc::new(MockBackend::new().with_output("agent output, no exit hint"));
+    let store = test_store().await;
+
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "marker-ready".into(),
+        workdir: "/tmp/repo".into(),
+        command: "echo hello".into(),
+        status: SessionStatus::Active,
+        backend_session_id: Some("marker-ready".into()),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+    let exit_dir = crate::session::utils::exit_dir(store.data_dir());
+    std::fs::create_dir_all(&exit_dir).unwrap();
+    std::fs::write(
+        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string()),
+        "3",
+    )
+    .unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+    check_idle_sessions(
+        &(backend as Arc<dyn Backend>),
+        &store,
+        &idle_config,
+        &test_ready_ctx(),
+        &[],
+    )
+    .await;
+
+    let updated = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.status, SessionStatus::Ready);
+    assert_eq!(updated.exit_code, Some(3));
+}
+
+#[tokio::test]
 async fn test_idle_detection_already_marked_stays() {
     let backend = Arc::new(MockBackend::new());
     let store = test_store().await;
@@ -2406,6 +2455,94 @@ fn test_detect_agent_exited_partial() {
 }
 
 #[tokio::test]
+async fn test_ready_transition_via_exit_code_marker_zero() {
+    // No `[pulpo] Agent exited` text in captured output at all — the deterministic
+    // `.code` exit marker (written by `wrap_command`) is what triggers Ready here.
+    let backend = Arc::new(MockBackend::new().with_output("still working...\n$ "));
+    let store = test_store().await;
+    let session = create_running_session(&store, "marker-finish").await;
+    let marker_path =
+        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string());
+    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
+    std::fs::write(&marker_path, "0").unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+
+    let dyn_backend: Arc<dyn Backend> = backend;
+    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Ready);
+    assert_eq!(fetched.exit_code, Some(0));
+}
+
+#[tokio::test]
+async fn test_ready_transition_via_exit_code_marker_nonzero_persists_value() {
+    let backend = Arc::new(MockBackend::new().with_output("still working...\n$ "));
+    let store = test_store().await;
+    let session = create_running_session(&store, "marker-fail").await;
+    let marker_path =
+        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string());
+    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
+    std::fs::write(&marker_path, "127").unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+
+    let dyn_backend: Arc<dyn Backend> = backend;
+    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Ready);
+    assert_eq!(fetched.exit_code, Some(127));
+}
+
+#[tokio::test]
+async fn test_ready_transition_text_pattern_still_works_without_marker() {
+    // Regression lock: the historical text-scrape path must keep working unchanged
+    // for sessions with no exit marker at all (e.g. adopted external tmux sessions).
+    let backend = Arc::new(MockBackend::new().with_output("work done\n[pulpo] Agent exited\n$ "));
+    let store = test_store().await;
+    let session = create_running_session(&store, "text-pattern-only").await;
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+
+    let dyn_backend: Arc<dyn Backend> = backend;
+    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Ready);
+    // No `.code` marker was ever written, so exit_code stays unset.
+    assert!(fetched.exit_code.is_none());
+}
+
+#[tokio::test]
 async fn test_ready_transition_on_agent_exit() {
     // Backend returns output containing agent exit marker
     let backend = Arc::new(MockBackend::new().with_output("work done\n[pulpo] Agent exited\n$ "));
@@ -2484,7 +2621,7 @@ async fn test_handle_session_ready_store_failure_emits_no_event() {
         .await
         .unwrap();
 
-    handle_session_ready(&store, &session, &ctx).await;
+    handle_session_ready(&store, &session, &ctx, None).await;
     assert!(matches!(
         rx.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
@@ -2719,7 +2856,7 @@ async fn test_ready_transitions_to_ready() {
         event_tx: None,
         node_name: "n".into(),
     };
-    handle_session_ready(&store, &session, &ctx).await;
+    handle_session_ready(&store, &session, &ctx, None).await;
 
     let fetched = store
         .get_session(&session.id.to_string())

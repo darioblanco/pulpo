@@ -88,4 +88,29 @@ echo "==> usage endpoint"
 echo "==> stopping session"
 "$PULPO" --node "$NODE" stop "$SESSION" --purge || fail "stop failed"
 
+echo "==> lifecycle: user exit resolves to stopped (not lost)"
+LIFE="e2e-lifecycle-$$"
+FAST="$TMP/fast-agent.sh"
+printf 'echo LIFECYCLE_AGENT_DONE
+' >"$FAST"
+"$PULPO" --node "$NODE" spawn "$LIFE" -d --workdir /tmp -- sh "$FAST" || fail "lifecycle spawn failed"
+# wait for the agent to finish (the wrapper then lingers in a fallback shell)
+for _ in $(seq 1 60); do
+  "$PULPO" --node "$NODE" logs "$LIFE" 2>/dev/null | grep -q LIFECYCLE_AGENT_DONE && break
+  sleep 0.25
+done
+# user types `exit` in the lingering shell → tmux ends cleanly
+tmux send-keys -t "pulpo-$LIFE" "exit" Enter 2>/dev/null || tmux send-keys -t "$LIFE" "exit" Enter   || fail "could not send exit keys to tmux"
+stopped=0
+for _ in $(seq 1 80); do
+  status=$("$PULPO" --node "$NODE" list --all 2>/dev/null | grep "$LIFE" | tr '[:upper:]' '[:lower:]')
+  case "$status" in
+    *stopped*) stopped=1; break ;;
+    *lost*) fail "lifecycle regression: user exit classified as LOST" ;;
+  esac
+  sleep 0.25
+done
+[ "$stopped" -eq 1 ] || fail "session did not resolve to stopped after user exit"
+"$PULPO" --node "$NODE" stop "$LIFE" --purge >/dev/null 2>&1 || true
+
 echo "E2E SMOKE PASSED"

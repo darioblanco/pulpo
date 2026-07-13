@@ -40,7 +40,7 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | POST | `/api/v1/sessions` | Create (spawn) a new session |
 | GET | `/api/v1/sessions/:id` | Get session details |
 | POST | `/api/v1/sessions/:id/stop` | Stop a running session (add ?purge=true to also remove record) |
-| POST | `/api/v1/sessions/:id/resume` | Resume a lost or ready session |
+| POST | `/api/v1/sessions/:id/resume` | Resume a lost, ready, or stopped session |
 | GET | `/api/v1/sessions/:id/output` | Get captured terminal output |
 | GET | `/api/v1/sessions/:id/output/download` | Download full output as file |
 | POST | `/api/v1/sessions/:id/input` | Send text input to a session |

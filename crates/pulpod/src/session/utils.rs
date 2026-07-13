@@ -243,6 +243,79 @@ pub fn find_orphan_session_logs(logs_dir: &Path, known_ids: &HashSet<String>) ->
     orphans
 }
 
+/// Directory holding per-session exit markers (`{data_dir}/exit`).
+pub fn exit_dir(data_dir: &str) -> PathBuf {
+    Path::new(data_dir).join("exit")
+}
+
+/// Path to a session's exit-code marker: `{data_dir}/exit/{id}.code`.
+pub fn exit_code_marker_path(data_dir: &str, id: &str) -> PathBuf {
+    exit_dir(data_dir).join(format!("{id}.code"))
+}
+
+/// Path to a session's clean-exit marker: `{data_dir}/exit/{id}.clean`.
+pub fn exit_clean_marker_path(data_dir: &str, id: &str) -> PathBuf {
+    exit_dir(data_dir).join(format!("{id}.clean"))
+}
+
+/// Read a session's recorded exit code from its `.code` marker, if present and parseable.
+pub fn read_exit_code_marker(data_dir: &str, id: &str) -> Option<i32> {
+    std::fs::read_to_string(exit_code_marker_path(data_dir, id))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// True when either exit marker exists — evidence the wrapped shell ran to
+/// completion (an intentional end), as opposed to the tmux process disappearing
+/// mid-run (crash / `kill-session` / `kill-server` / reboot).
+pub fn has_exit_marker(data_dir: &str, id: &str) -> bool {
+    exit_code_marker_path(data_dir, id).exists() || exit_clean_marker_path(data_dir, id).exists()
+}
+
+/// Remove both exit marker files for a session (best-effort). Returns true if at
+/// least one was actually removed.
+pub fn remove_exit_markers(data_dir: &str, id: &str) -> bool {
+    let a = {
+        let p = exit_code_marker_path(data_dir, id);
+        p.exists() && std::fs::remove_file(&p).is_ok()
+    };
+    let b = {
+        let p = exit_clean_marker_path(data_dir, id);
+        p.exists() && std::fs::remove_file(&p).is_ok()
+    };
+    a || b
+}
+
+/// Find orphaned exit-marker files: `{uuid}.code`/`{uuid}.clean` in `exit_dir` whose
+/// UUID is not a known session id. Mirrors `find_orphan_session_logs`.
+pub fn find_orphan_exit_markers(exit_dir: &Path, known_ids: &HashSet<String>) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(exit_dir) else {
+        return Vec::new();
+    };
+    let mut orphans = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(stem) = name
+            .strip_suffix(".code")
+            .or_else(|| name.strip_suffix(".clean"))
+        else {
+            continue;
+        };
+        if uuid::Uuid::parse_str(stem).is_err() {
+            continue;
+        }
+        if !known_ids.contains(stem) {
+            orphans.push(path);
+        }
+    }
+    orphans
+}
+
 /// Write secrets to a sourced-and-deleted file under the pulpo data dir.
 pub fn write_secrets_file(
     session_id: &uuid::Uuid,
@@ -298,17 +371,42 @@ pub fn wrap_command_for_test(
     session_id: &uuid::Uuid,
     session_name: &str,
     secrets_file: Option<&str>,
+    data_dir: &str,
 ) -> String {
-    wrap_command(command, session_id, session_name, secrets_file, None)
+    wrap_command(
+        command,
+        session_id,
+        session_name,
+        secrets_file,
+        None,
+        data_dir,
+    )
 }
 
-/// Wrap an agent command with env vars, exit marker, and fallback shell.
+/// Wrap a command with env vars, exit markers, and (for agent commands) a fallback shell.
+///
+/// Two exit markers are written under `{data_dir}/exit/`, read fresh from disk by the
+/// daemon whenever it next checks (race-free even across a daemon restart):
+///   - `{id}.code`  — the wrapped agent command's exit code (`$?`), agent path only.
+///   - `{id}.clean` — written by the main/fallback shell as the very last thing it
+///     does before exiting normally, on **both** paths.
+///
+/// Presence of either marker is what lets the daemon tell "the session ended on its
+/// own" (`Stopped`) apart from "tmux disappeared out from under a live session"
+/// (`Lost`) — see `SessionManager::check_and_mark_stale`.
+///
+/// `exec` is deliberately NOT used on either path (unlike the historical wrapper):
+/// exec'ing would replace the wrapper shell's process image, so nothing could run
+/// after the wrapped command / fallback shell exits. Running it as a plain (non-exec'd)
+/// command lets the wrapper shell regain control and write the `.clean` marker right
+/// before it terminates.
 pub fn wrap_command(
     command: &str,
     session_id: &uuid::Uuid,
     session_name: &str,
     secrets_file: Option<&str>,
     term_program: Option<&str>,
+    data_dir: &str,
 ) -> String {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_owned());
     let secrets_source =
@@ -319,18 +417,25 @@ pub fn wrap_command(
         format!("export TERM_PROGRAM='{safe_tp}'; ")
     });
 
+    // Quote the exit-marker directory defensively — data_dir may contain spaces —
+    // using the same `'\''` shell-escape idiom already relied on for safe_name/safe_tp.
+    let exit_dir_str = exit_dir(data_dir).to_string_lossy().into_owned();
+    let safe_exit_dir = exit_dir_str.replace('\'', "'\\''");
+    let code_path = format!("{safe_exit_dir}/{session_id}.code");
+    let clean_path = format!("{safe_exit_dir}/{session_id}.clean");
+
     let env = format!(
-        "{secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={safe_name}; {term_program_export}export BROWSER=true; \
+        "mkdir -p '\\''{safe_exit_dir}'\\''; {secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={safe_name}; {term_program_export}export BROWSER=true; \
          open() {{ case \"$1\" in http://*|https://*) return 0;; *) command open \"$@\";; esac; }}; "
     );
 
     if is_shell_command(command) {
         let escaped = command.replace('\'', "'\\''");
-        return format!("{shell} -l -c '{env}exec {escaped}'");
+        return format!("{shell} -l -c '{env}{escaped}; : > '\\''{clean_path}'\\'''");
     }
     let escaped = command.replace('\'', "'\\''");
     format!(
-        "{shell} -l -c '{env}{escaped}; echo '\\''[pulpo] Agent exited (session: {safe_name}). Run: pulpo resume {safe_name}'\\''; exec {shell} -l'"
+        "{shell} -l -c '{env}{escaped}; ec=$?; echo \"$ec\" > '\\''{code_path}'\\''; echo '\\''[pulpo] Agent exited (session: {safe_name}). Run: pulpo resume {safe_name}'\\''; {shell} -l; : > '\\''{clean_path}'\\'''"
     )
 }
 
@@ -418,6 +523,149 @@ mod cleanup_tests {
         let tmp = tempfile::tempdir().unwrap();
         let missing = tmp.path().join("nope");
         assert!(find_orphan_session_logs(&missing, &HashSet::new()).is_empty());
+    }
+
+    #[test]
+    fn test_exit_dir_format() {
+        assert_eq!(exit_dir("/data"), Path::new("/data/exit"));
+    }
+
+    #[test]
+    fn test_exit_code_marker_path_format() {
+        let p = exit_code_marker_path("/data", "abc");
+        assert_eq!(p, Path::new("/data/exit/abc.code"));
+    }
+
+    #[test]
+    fn test_exit_clean_marker_path_format() {
+        let p = exit_clean_marker_path("/data", "abc");
+        assert_eq!(p, Path::new("/data/exit/abc.clean"));
+    }
+
+    #[test]
+    fn test_read_exit_code_marker_absent_is_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().to_str().unwrap();
+        assert!(read_exit_code_marker(data_dir, "no-such-id").is_none());
+    }
+
+    #[test]
+    fn test_read_exit_code_marker_parses_value() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().to_str().unwrap();
+        let id = "11111111-1111-1111-1111-111111111111";
+        let path = exit_code_marker_path(data_dir, id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "0\n").unwrap();
+        assert_eq!(read_exit_code_marker(data_dir, id), Some(0));
+    }
+
+    #[test]
+    fn test_read_exit_code_marker_nonzero_value() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().to_str().unwrap();
+        let id = "11111111-1111-1111-1111-111111111112";
+        let path = exit_code_marker_path(data_dir, id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "130\n").unwrap();
+        assert_eq!(read_exit_code_marker(data_dir, id), Some(130));
+    }
+
+    #[test]
+    fn test_read_exit_code_marker_unparseable_is_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().to_str().unwrap();
+        let id = "11111111-1111-1111-1111-111111111113";
+        let path = exit_code_marker_path(data_dir, id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "not-a-number").unwrap();
+        assert!(read_exit_code_marker(data_dir, id).is_none());
+    }
+
+    #[test]
+    fn test_has_exit_marker_absent_is_false() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().to_str().unwrap();
+        assert!(!has_exit_marker(data_dir, "no-such-id"));
+    }
+
+    #[test]
+    fn test_has_exit_marker_true_with_only_clean_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().to_str().unwrap();
+        let id = "22222222-2222-2222-2222-222222222221";
+        let path = exit_clean_marker_path(data_dir, id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "").unwrap();
+        assert!(has_exit_marker(data_dir, id));
+    }
+
+    #[test]
+    fn test_has_exit_marker_true_with_only_code_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().to_str().unwrap();
+        let id = "22222222-2222-2222-2222-222222222222";
+        let path = exit_code_marker_path(data_dir, id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "0").unwrap();
+        assert!(has_exit_marker(data_dir, id));
+    }
+
+    #[test]
+    fn test_remove_exit_markers_removes_both_and_reports_false_when_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().to_str().unwrap();
+        let id = "33333333-3333-3333-3333-333333333331";
+        // Absent → false.
+        assert!(!remove_exit_markers(data_dir, id));
+
+        let code_path = exit_code_marker_path(data_dir, id);
+        let clean_path = exit_clean_marker_path(data_dir, id);
+        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+        std::fs::write(&code_path, "0").unwrap();
+        std::fs::write(&clean_path, "").unwrap();
+
+        assert!(remove_exit_markers(data_dir, id));
+        assert!(!code_path.exists());
+        assert!(!clean_path.exists());
+        // Idempotent — a second call finds nothing left to remove.
+        assert!(!remove_exit_markers(data_dir, id));
+    }
+
+    #[test]
+    fn test_find_orphan_exit_markers_skips_known_and_non_uuid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let exit = tmp.path();
+        let known = "44444444-4444-4444-4444-444444444441";
+        let orphan = "44444444-4444-4444-4444-444444444442";
+        std::fs::write(exit.join(format!("{known}.code")), b"0").unwrap();
+        std::fs::write(exit.join(format!("{orphan}.code")), b"0").unwrap();
+        std::fs::write(exit.join(format!("{orphan}.clean")), b"").unwrap();
+        std::fs::write(exit.join("notes.txt"), b"e").unwrap();
+
+        let mut known_ids = HashSet::new();
+        known_ids.insert(known.to_owned());
+
+        let mut orphans = find_orphan_exit_markers(exit, &known_ids);
+        orphans.sort();
+        assert_eq!(orphans.len(), 2);
+        assert!(
+            orphans
+                .iter()
+                .any(|p| p.file_name().unwrap() == format!("{orphan}.code").as_str())
+        );
+        assert!(
+            orphans
+                .iter()
+                .any(|p| p.file_name().unwrap() == format!("{orphan}.clean").as_str())
+        );
+    }
+
+    #[test]
+    fn test_find_orphan_exit_markers_missing_dir_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nope");
+        assert!(find_orphan_exit_markers(&missing, &HashSet::new()).is_empty());
     }
 }
 
