@@ -49,15 +49,28 @@ fn tmux_session_name(name: &str) -> String {
     name.to_owned()
 }
 
+/// Start building a tmux `Command`, threading `-L <socket>` in first (before any
+/// subcommand) when a non-default socket is requested. `socket: None` preserves the
+/// exact production behavior (connects to tmux's default server).
+#[cfg_attr(coverage, allow(dead_code))]
+fn tmux_command(tmux: &str, socket: Option<&str>) -> Command {
+    let mut cmd = Command::new(tmux);
+    if let Some(name) = socket {
+        cmd.args(["-L", name]);
+    }
+    cmd
+}
+
 #[cfg_attr(coverage, allow(dead_code))]
 fn build_create_command(
     tmux: &str,
+    socket: Option<&str>,
     session_name: &str,
     working_dir: &str,
     command: &str,
     user_path: Option<&str>,
 ) -> Command {
-    let mut cmd = Command::new(tmux);
+    let mut cmd = tmux_command(tmux, socket);
     // Set the user's full PATH on the tmux process so the tmux server (and all
     // sessions it spawns) inherit it. This avoids quoting issues with embedding
     // PATH inside the shell command string, and works regardless of shell type.
@@ -77,44 +90,53 @@ fn build_create_command(
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_set_mouse_command(tmux: &str, session_name: &str) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_set_mouse_command(tmux: &str, socket: Option<&str>, session_name: &str) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args(["set-option", "-t", session_name, "mouse", "on"]);
     cmd
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_set_clipboard_command(tmux: &str, session_name: &str) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_set_clipboard_command(tmux: &str, socket: Option<&str>, session_name: &str) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args(["set-option", "-t", session_name, "set-clipboard", "on"]);
     cmd
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_allow_passthrough_command(tmux: &str, session_name: &str) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_allow_passthrough_command(
+    tmux: &str,
+    socket: Option<&str>,
+    session_name: &str,
+) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args(["set-option", "-t", session_name, "allow-passthrough", "on"]);
     cmd
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_kill_command(tmux: &str, session_name: &str) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_kill_command(tmux: &str, socket: Option<&str>, session_name: &str) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args(["kill-session", "-t", session_name]);
     cmd
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_has_session_command(tmux: &str, session_name: &str) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_has_session_command(tmux: &str, socket: Option<&str>, session_name: &str) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args(["has-session", "-t", session_name]);
     cmd
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_capture_command(tmux: &str, session_name: &str, lines: usize) -> Command {
+fn build_capture_command(
+    tmux: &str,
+    socket: Option<&str>,
+    session_name: &str,
+    lines: usize,
+) -> Command {
     let start = -i64::try_from(lines).unwrap_or(i64::MAX);
-    let mut cmd = Command::new(tmux);
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args([
         "capture-pane",
         "-t",
@@ -127,15 +149,25 @@ fn build_capture_command(tmux: &str, session_name: &str, lines: usize) -> Comman
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_send_keys_command(tmux: &str, session_name: &str, text: &str) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_send_keys_command(
+    tmux: &str,
+    socket: Option<&str>,
+    session_name: &str,
+    text: &str,
+) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args(["send-keys", "-t", session_name, text, "Enter"]);
     cmd
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_pipe_pane_command(tmux: &str, session_name: &str, log_path: &str) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_pipe_pane_command(
+    tmux: &str,
+    socket: Option<&str>,
+    session_name: &str,
+    log_path: &str,
+) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args([
         "pipe-pane",
         "-t",
@@ -147,8 +179,14 @@ fn build_pipe_pane_command(tmux: &str, session_name: &str, log_path: &str) -> Co
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_resize_command(tmux: &str, session_name: &str, cols: u16, rows: u16) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_resize_command(
+    tmux: &str,
+    socket: Option<&str>,
+    session_name: &str,
+    cols: u16,
+    rows: u16,
+) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args([
         "resize-window",
         "-t",
@@ -162,15 +200,15 @@ fn build_resize_command(tmux: &str, session_name: &str, cols: u16, rows: u16) ->
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_list_sessions_command(tmux: &str) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_list_sessions_command(tmux: &str, socket: Option<&str>) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args(["list-sessions", "-F", "#{session_id}\t#{session_name}"]);
     cmd
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_pane_info_command(tmux: &str, session_name: &str) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_pane_info_command(tmux: &str, socket: Option<&str>, session_name: &str) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args([
         "list-panes",
         "-t",
@@ -195,8 +233,8 @@ pub fn parse_list_sessions(output: &str) -> Vec<(String, String)> {
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_query_session_id_command(tmux: &str, name: &str) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_query_session_id_command(tmux: &str, socket: Option<&str>, name: &str) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args(["display-message", "-t", name, "-p", "#{session_id}"]);
     cmd
 }
@@ -212,15 +250,21 @@ pub fn parse_session_id(output: &str) -> Option<String> {
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_pane_pid_command(tmux: &str, backend_id: &str) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_pane_pid_command(tmux: &str, socket: Option<&str>, backend_id: &str) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args(["list-panes", "-t", backend_id, "-F", "#{pane_pid}"]);
     cmd
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_set_env_command(tmux: &str, session_name: &str, key: &str, value: &str) -> Command {
-    let mut cmd = Command::new(tmux);
+fn build_set_env_command(
+    tmux: &str,
+    socket: Option<&str>,
+    session_name: &str,
+    key: &str,
+    value: &str,
+) -> Command {
+    let mut cmd = tmux_command(tmux, socket);
     cmd.args(["set-environment", "-t", session_name, key, value]);
     cmd
 }
@@ -278,6 +322,12 @@ pub struct TmuxBackend {
     /// `~/.cargo/bin`. We resolve the real PATH once and set it on every
     /// tmux command so sessions can find tools like `claude`.
     user_path: Option<String>,
+    /// Optional tmux socket name (`tmux -L <name> …`). `None` connects to tmux's
+    /// default server — production behavior is unchanged. Tests use
+    /// [`TmuxBackend::with_socket`] to run against an isolated, throwaway tmux
+    /// server so they never interfere with (or get killed alongside) the
+    /// developer's real tmux session.
+    socket_name: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -293,6 +343,21 @@ impl TmuxBackend {
         Self {
             tmux_path: resolve_tmux_path(),
             user_path: resolve_user_path(),
+            socket_name: None,
+        }
+    }
+
+    /// Build a backend that talks to an isolated tmux server via `tmux -L <name>`,
+    /// instead of the default server. Intended for tests: each test should use a
+    /// unique socket name (e.g. `pulpo-test-{short_uuid}`) and tear it down with
+    /// `tmux -L <name> kill-server` in cleanup, so real-tmux integration tests never
+    /// touch (or get disrupted by) the developer's own tmux server, and can run in
+    /// parallel with each other.
+    pub fn with_socket(socket_name: impl Into<String>) -> Self {
+        Self {
+            tmux_path: resolve_tmux_path(),
+            user_path: resolve_user_path(),
+            socket_name: Some(socket_name.into()),
         }
     }
 }
@@ -345,9 +410,11 @@ impl Backend for TmuxBackend {
     }
 
     fn create_session(&self, backend_id: &str, working_dir: &str, command: &str) -> Result<()> {
+        let socket = self.socket_name.as_deref();
         run_tmux(
             build_create_command(
                 &self.tmux_path,
+                socket,
                 backend_id,
                 working_dir,
                 command,
@@ -358,15 +425,15 @@ impl Backend for TmuxBackend {
         // Best-effort session options — if the command exits instantly and kills
         // the tmux server, these will fail but the session was already dead anyway.
         let _ = run_tmux(
-            build_set_mouse_command(&self.tmux_path, backend_id),
+            build_set_mouse_command(&self.tmux_path, socket, backend_id),
             "enable tmux mouse mode",
         );
         let _ = run_tmux(
-            build_set_clipboard_command(&self.tmux_path, backend_id),
+            build_set_clipboard_command(&self.tmux_path, socket, backend_id),
             "enable tmux clipboard",
         );
         let _ = run_tmux(
-            build_allow_passthrough_command(&self.tmux_path, backend_id),
+            build_allow_passthrough_command(&self.tmux_path, socket, backend_id),
             "enable tmux passthrough",
         );
         Ok(())
@@ -374,31 +441,42 @@ impl Backend for TmuxBackend {
 
     fn kill_session(&self, backend_id: &str) -> Result<()> {
         run_tmux(
-            build_kill_command(&self.tmux_path, backend_id),
+            build_kill_command(&self.tmux_path, self.socket_name.as_deref(), backend_id),
             "kill tmux session",
         )?;
         Ok(())
     }
 
     fn is_alive(&self, backend_id: &str) -> Result<bool> {
-        let output = build_has_session_command(&self.tmux_path, backend_id)
-            .stderr(Stdio::piped())
-            .output()
-            .context("Failed to check tmux session")?;
+        let output =
+            build_has_session_command(&self.tmux_path, self.socket_name.as_deref(), backend_id)
+                .stderr(Stdio::piped())
+                .output()
+                .context("Failed to check tmux session")?;
         Ok(output.status.success())
     }
 
     fn capture_output(&self, backend_id: &str, lines: usize) -> Result<String> {
-        let output: Output = build_capture_command(&self.tmux_path, backend_id, lines)
-            .stderr(Stdio::piped())
-            .output()
-            .context("Failed to capture tmux pane")?;
+        let output: Output = build_capture_command(
+            &self.tmux_path,
+            self.socket_name.as_deref(),
+            backend_id,
+            lines,
+        )
+        .stderr(Stdio::piped())
+        .output()
+        .context("Failed to capture tmux pane")?;
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
     fn send_input(&self, backend_id: &str, text: &str) -> Result<()> {
         run_tmux(
-            build_send_keys_command(&self.tmux_path, backend_id, text),
+            build_send_keys_command(
+                &self.tmux_path,
+                self.socket_name.as_deref(),
+                backend_id,
+                text,
+            ),
             "send input to tmux session",
         )?;
         Ok(())
@@ -406,7 +484,12 @@ impl Backend for TmuxBackend {
 
     fn setup_logging(&self, backend_id: &str, log_path: &str) -> Result<()> {
         run_tmux(
-            build_pipe_pane_command(&self.tmux_path, backend_id, log_path),
+            build_pipe_pane_command(
+                &self.tmux_path,
+                self.socket_name.as_deref(),
+                backend_id,
+                log_path,
+            ),
             "setup pipe-pane logging",
         )?;
         Ok(())
@@ -414,7 +497,13 @@ impl Backend for TmuxBackend {
 
     fn resize(&self, backend_id: &str, cols: u16, rows: u16) -> Result<()> {
         run_tmux(
-            build_resize_command(&self.tmux_path, backend_id, cols, rows),
+            build_resize_command(
+                &self.tmux_path,
+                self.socket_name.as_deref(),
+                backend_id,
+                cols,
+                rows,
+            ),
             "resize tmux window",
         )?;
         Ok(())
@@ -423,17 +512,25 @@ impl Backend for TmuxBackend {
     fn spawn_attach(&self, backend_id: &str) -> Result<tokio::process::Child> {
         let mut cmd = tokio::process::Command::new("script");
         let tmux = &self.tmux_path;
+        let mut tmux_args: Vec<String> = Vec::new();
+        if let Some(socket) = &self.socket_name {
+            tmux_args.push("-L".to_owned());
+            tmux_args.push(socket.clone());
+        }
+        tmux_args.push("attach-session".to_owned());
+        tmux_args.push("-t".to_owned());
+        tmux_args.push(backend_id.to_owned());
 
         #[cfg(target_os = "macos")]
-        cmd.args(["-q", "/dev/null", tmux, "attach-session", "-t", backend_id]);
+        {
+            cmd.arg("-q").arg("/dev/null").arg(tmux).args(&tmux_args);
+        }
 
         #[cfg(not(target_os = "macos"))]
-        cmd.args([
-            "-q",
-            "-c",
-            &format!("{tmux} attach-session -t {backend_id}"),
-            "/dev/null",
-        ]);
+        {
+            let joined = format!("{tmux} {}", tmux_args.join(" "));
+            cmd.args(["-q", "-c", &joined, "/dev/null"]);
+        }
 
         cmd.env_remove("TMUX");
         cmd.env("TERM", "xterm-256color");
@@ -446,7 +543,7 @@ impl Backend for TmuxBackend {
 
     fn query_backend_id(&self, name: &str) -> Result<String> {
         let output = run_tmux(
-            build_query_session_id_command(&self.tmux_path, name),
+            build_query_session_id_command(&self.tmux_path, self.socket_name.as_deref(), name),
             "query tmux session ID",
         )?;
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -455,7 +552,7 @@ impl Backend for TmuxBackend {
 
     fn pane_command_line(&self, backend_id: &str) -> Result<String> {
         let output = run_tmux(
-            build_pane_pid_command(&self.tmux_path, backend_id),
+            build_pane_pid_command(&self.tmux_path, self.socket_name.as_deref(), backend_id),
             "get pane PID",
         )?;
         let pid = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -474,7 +571,7 @@ impl Backend for TmuxBackend {
     }
 
     fn list_sessions(&self) -> Result<Vec<(String, String)>> {
-        let output = build_list_sessions_command(&self.tmux_path)
+        let output = build_list_sessions_command(&self.tmux_path, self.socket_name.as_deref())
             .stderr(Stdio::piped())
             .output()
             .context("Failed to list tmux sessions")?;
@@ -488,7 +585,7 @@ impl Backend for TmuxBackend {
 
     fn pane_info(&self, backend_id: &str) -> Result<(String, String)> {
         let output = run_tmux(
-            build_pane_info_command(&self.tmux_path, backend_id),
+            build_pane_info_command(&self.tmux_path, self.socket_name.as_deref(), backend_id),
             "get pane info",
         )?;
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -497,7 +594,13 @@ impl Backend for TmuxBackend {
 
     fn set_env(&self, backend_id: &str, key: &str, value: &str) -> Result<()> {
         run_tmux(
-            build_set_env_command(&self.tmux_path, backend_id, key, value),
+            build_set_env_command(
+                &self.tmux_path,
+                self.socket_name.as_deref(),
+                backend_id,
+                key,
+                value,
+            ),
             "set tmux environment variable",
         )?;
         Ok(())
@@ -519,7 +622,7 @@ mod tests {
 
     #[test]
     fn test_build_create_command() {
-        let cmd = build_create_command(T, "pulpo-test", "/tmp/repo", "claude", None);
+        let cmd = build_create_command(T, None, "pulpo-test", "/tmp/repo", "claude", None);
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
@@ -540,6 +643,7 @@ mod tests {
     fn test_build_create_command_with_user_path() {
         let cmd = build_create_command(
             T,
+            None,
             "test",
             "/tmp",
             "claude",
@@ -557,16 +661,48 @@ mod tests {
     }
 
     #[test]
+    fn test_build_create_command_with_socket() {
+        // `-L <socket>` must come before the subcommand, so tmux applies it to the
+        // whole invocation rather than misparsing it as a `new-session` argument.
+        let cmd = build_create_command(T, Some("pulpo-test-sock"), "sess", "/tmp", "claude", None);
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            vec![
+                "-L",
+                "pulpo-test-sock",
+                "new-session",
+                "-d",
+                "-s",
+                "sess",
+                "-c",
+                "/tmp",
+                "claude"
+            ]
+        );
+    }
+
+    #[test]
     fn test_build_kill_command() {
-        let cmd = build_kill_command(T, "pulpo-test");
+        let cmd = build_kill_command(T, None, "pulpo-test");
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(args, vec!["kill-session", "-t", "pulpo-test"]);
     }
 
     #[test]
+    fn test_build_kill_command_with_socket() {
+        let cmd = build_kill_command(T, Some("pulpo-test-sock"), "pulpo-test");
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            vec!["-L", "pulpo-test-sock", "kill-session", "-t", "pulpo-test"]
+        );
+    }
+
+    #[test]
     fn test_build_has_session_command() {
-        let cmd = build_has_session_command(T, "pulpo-test");
+        let cmd = build_has_session_command(T, None, "pulpo-test");
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(args, vec!["has-session", "-t", "pulpo-test"]);
@@ -574,7 +710,7 @@ mod tests {
 
     #[test]
     fn test_build_capture_command() {
-        let cmd = build_capture_command(T, "pulpo-test", 100);
+        let cmd = build_capture_command(T, None, "pulpo-test", 100);
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
@@ -585,7 +721,7 @@ mod tests {
 
     #[test]
     fn test_build_capture_command_large_lines() {
-        let cmd = build_capture_command(T, "pulpo-test", usize::MAX);
+        let cmd = build_capture_command(T, None, "pulpo-test", usize::MAX);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         // Should handle overflow gracefully
         let start_str = args[5].to_str().unwrap();
@@ -594,7 +730,7 @@ mod tests {
 
     #[test]
     fn test_build_set_mouse_command() {
-        let cmd = build_set_mouse_command(T, "pulpo-test");
+        let cmd = build_set_mouse_command(T, None, "pulpo-test");
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(args, vec!["set-option", "-t", "pulpo-test", "mouse", "on"]);
@@ -602,7 +738,7 @@ mod tests {
 
     #[test]
     fn test_build_set_clipboard_command() {
-        let cmd = build_set_clipboard_command(T, "pulpo-test");
+        let cmd = build_set_clipboard_command(T, None, "pulpo-test");
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
@@ -613,7 +749,7 @@ mod tests {
 
     #[test]
     fn test_build_allow_passthrough_command() {
-        let cmd = build_allow_passthrough_command(T, "pulpo-test");
+        let cmd = build_allow_passthrough_command(T, None, "pulpo-test");
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
@@ -624,7 +760,7 @@ mod tests {
 
     #[test]
     fn test_build_send_keys_command() {
-        let cmd = build_send_keys_command(T, "pulpo-test", "hello world");
+        let cmd = build_send_keys_command(T, None, "pulpo-test", "hello world");
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
@@ -635,7 +771,7 @@ mod tests {
 
     #[test]
     fn test_build_pipe_pane_command() {
-        let cmd = build_pipe_pane_command(T, "pulpo-test", "/tmp/logs/session.log");
+        let cmd = build_pipe_pane_command(T, None, "pulpo-test", "/tmp/logs/session.log");
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
@@ -652,7 +788,7 @@ mod tests {
 
     #[test]
     fn test_build_resize_command() {
-        let cmd = build_resize_command(T, "pulpo-test", 120, 40);
+        let cmd = build_resize_command(T, None, "pulpo-test", 120, 40);
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
@@ -663,7 +799,7 @@ mod tests {
 
     #[test]
     fn test_build_list_sessions_command() {
-        let cmd = build_list_sessions_command(T);
+        let cmd = build_list_sessions_command(T, None);
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
@@ -673,8 +809,24 @@ mod tests {
     }
 
     #[test]
+    fn test_build_list_sessions_command_with_socket() {
+        let cmd = build_list_sessions_command(T, Some("pulpo-test-sock"));
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            vec![
+                "-L",
+                "pulpo-test-sock",
+                "list-sessions",
+                "-F",
+                "#{session_id}\t#{session_name}"
+            ]
+        );
+    }
+
+    #[test]
     fn test_build_set_env_command() {
-        let cmd = build_set_env_command(T, "my-session", "PULPO_SESSION_ID", "abc-123");
+        let cmd = build_set_env_command(T, None, "my-session", "PULPO_SESSION_ID", "abc-123");
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
@@ -691,7 +843,7 @@ mod tests {
 
     #[test]
     fn test_build_pane_info_command() {
-        let cmd = build_pane_info_command(T, "my-session");
+        let cmd = build_pane_info_command(T, None, "my-session");
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
@@ -708,13 +860,27 @@ mod tests {
 
     #[test]
     fn test_build_query_session_id_command() {
-        let cmd = build_query_session_id_command(T, "my-session");
+        let cmd = build_query_session_id_command(T, None, "my-session");
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(
             args,
             vec!["display-message", "-t", "my-session", "-p", "#{session_id}"]
         );
+    }
+
+    #[test]
+    fn test_tmux_command_prepends_socket_flag_before_subcommand() {
+        let cmd = tmux_command(T, Some("my-sock"));
+        assert_eq!(cmd.get_program(), T);
+        let args: Vec<&OsStr> = cmd.get_args().collect();
+        assert_eq!(args, vec!["-L", "my-sock"]);
+    }
+
+    #[test]
+    fn test_tmux_command_no_socket_adds_no_args() {
+        let cmd = tmux_command(T, None);
+        assert!(cmd.get_args().next().is_none());
     }
 
     #[test]
@@ -733,7 +899,7 @@ mod tests {
 
     #[test]
     fn test_build_pane_pid_command() {
-        let cmd = build_pane_pid_command(T, "$5");
+        let cmd = build_pane_pid_command(T, None, "$5");
         assert_eq!(cmd.get_program(), T);
         let args: Vec<&OsStr> = cmd.get_args().collect();
         assert_eq!(args, vec!["list-panes", "-t", "$5", "-F", "#{pane_pid}"]);
@@ -741,7 +907,14 @@ mod tests {
 
     #[test]
     fn test_build_create_command_with_absolute_path() {
-        let cmd = build_create_command("/opt/homebrew/bin/tmux", "sess", "/tmp", "echo hi", None);
+        let cmd = build_create_command(
+            "/opt/homebrew/bin/tmux",
+            None,
+            "sess",
+            "/tmp",
+            "echo hi",
+            None,
+        );
         assert_eq!(cmd.get_program(), "/opt/homebrew/bin/tmux");
     }
 
@@ -816,12 +989,21 @@ mod tests {
     fn test_tmux_backend_new() {
         let backend = TmuxBackend::new();
         assert!(!backend.tmux_path.is_empty());
+        assert!(backend.socket_name.is_none());
     }
 
     #[test]
     fn test_tmux_backend_default() {
         let backend = TmuxBackend::default();
         assert!(!backend.tmux_path.is_empty());
+        assert!(backend.socket_name.is_none());
+    }
+
+    #[test]
+    fn test_tmux_backend_with_socket() {
+        let backend = TmuxBackend::with_socket("pulpo-test-abc123");
+        assert!(!backend.tmux_path.is_empty());
+        assert_eq!(backend.socket_name.as_deref(), Some("pulpo-test-abc123"));
     }
 
     #[test]
@@ -904,11 +1086,11 @@ mod tests {
         let tmux = resolve_tmux_path();
 
         // Kill any leftover session with this name (best-effort)
-        let _ = run_tmux(build_kill_command(&tmux, session_name), "cleanup");
+        let _ = run_tmux(build_kill_command(&tmux, None, session_name), "cleanup");
 
         // Create the session
         run_tmux(
-            build_create_command(&tmux, session_name, "/tmp", command, user_path),
+            build_create_command(&tmux, None, session_name, "/tmp", command, user_path),
             "create test session",
         )
         .unwrap_or_else(|e| panic!("failed to create tmux session '{session_name}': {e}"));
@@ -918,7 +1100,7 @@ mod tests {
         for _ in 0..100 {
             std::thread::sleep(std::time::Duration::from_millis(100));
             if let Ok(o) = run_tmux(
-                build_capture_command(&tmux, session_name, 50),
+                build_capture_command(&tmux, None, session_name, 50),
                 "capture output",
             ) {
                 output = String::from_utf8_lossy(&o.stdout).trim().to_owned();
@@ -929,7 +1111,7 @@ mod tests {
         }
 
         // Kill the session
-        let _ = run_tmux(build_kill_command(&tmux, session_name), "cleanup");
+        let _ = run_tmux(build_kill_command(&tmux, None, session_name), "cleanup");
 
         output
     }
@@ -1019,8 +1201,15 @@ mod tests {
         // it verifies the mechanism the daemon now relies on to classify a dead-backend
         // session as `Stopped` (clean end) instead of `Lost`.
         let tmux = resolve_tmux_path();
-        let session_name = "pulpo-integ-exit-marker";
-        let _ = run_tmux(build_kill_command(&tmux, session_name), "cleanup");
+        // Isolated throwaway server + unique name: immune to parallel-suite
+        // collisions and to slow login-shell startup contending on the default
+        // server during a full `make ci` run.
+        let socket = format!("pulpo-test-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+        let session_name = format!(
+            "pulpo-integ-exit-marker-{}",
+            &uuid::Uuid::new_v4().to_string()[..8]
+        );
+        let session_name = session_name.as_str();
 
         let id = uuid::Uuid::new_v4();
         // A data_dir with a space, to also prove the defensive quoting survives a
@@ -1039,7 +1228,7 @@ mod tests {
         );
 
         run_tmux(
-            build_create_command(&tmux, session_name, "/tmp", &wrapped, None),
+            build_create_command(&tmux, Some(&socket), session_name, "/tmp", &wrapped, None),
             "create test session",
         )
         .unwrap_or_else(|e| panic!("failed to create tmux session '{session_name}': {e}"));
@@ -1047,14 +1236,18 @@ mod tests {
         let code_marker =
             crate::session::utils::exit_code_marker_path(data_dir_str, &id.to_string());
         let mut found = String::new();
-        for _ in 0..100 {
+        // 30s deadline: the wrapper runs a full login shell before the command,
+        // which can be slow under gate-level CPU contention.
+        for _ in 0..300 {
             std::thread::sleep(std::time::Duration::from_millis(100));
             if let Ok(content) = std::fs::read_to_string(&code_marker) {
                 found = content;
                 break;
             }
         }
-        let _ = run_tmux(build_kill_command(&tmux, session_name), "cleanup");
+        let _ = std::process::Command::new(&tmux)
+            .args(["-L", &socket, "kill-server"])
+            .output();
         assert_eq!(
             found.trim(),
             "0",

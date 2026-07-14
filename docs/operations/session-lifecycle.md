@@ -19,10 +19,10 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
                    └─│   IDLE   │          └──────────┘
                      └──────────┘                ▲
                                                  │
-                                          watchdog / user
+                                  watchdog / user / dead backend + exit marker
                    ┌──────────┐
-                   │   LOST   │◀── tmux disappeared (crash/reboot)
-                   └──────────┘
+                   │   LOST   │◀── dead backend, no exit marker
+                   └──────────┘         (from Active, Idle, or Ready)
 ```
 
 ## States
@@ -62,10 +62,12 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
   shell keeps the tmux session alive for inspection.
 - **Side effects**: SSE event emitted.
 
-### Active/Idle → Stopped
+### Active/Idle/Ready → Stopped
 - **Trigger**: User runs `pulpo stop`, a watchdog intervention (memory/budget/burn/idle
   kill) — or the session's shell exits normally (the user typed `exit`, or closed tmux
-  after the agent finished).
+  after the agent finished). This applies to **Active**, **Idle**, and **Ready**
+  sessions alike: a `Ready` session's fallback shell dying counts the same as an
+  `Active`/`Idle` session's tmux disappearing.
 - **Detection**: Explicit stop and interventions act directly. The clean-shell-exit case
   is classified by the exit markers the command wrapper writes under `{data_dir}/exit/`:
   `{id}.code` (agent finished, exit code inside) and `{id}.clean` (shell ended normally).
@@ -73,18 +75,22 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
   **Stopped** (exit code persisted) instead of Lost. Markers are removed on purge and
   swept by `pulpo cleanup`.
 
-### Active/Idle → Lost
-- **Trigger**: `is_alive()` returns false for a session that was Active or Idle **and no
-  exit marker exists** — the tmux process died without the wrapper running to completion
-  (crash, reboot, `tmux kill-session`/`kill-server` mid-run).
+### Active/Idle/Ready → Lost
+- **Trigger**: `is_alive()` returns false for a session that was Active, Idle, or Ready
+  **and no exit marker exists** — the tmux process died without the wrapper running to
+  completion (crash, reboot, `tmux kill-session`/`kill-server` mid-run).
 - **Detection**: On `get_session` or `list_sessions`, if the backend (tmux) session is
   gone the markers are consulted; with none present the session is marked Lost. A
-  5-second grace period protects freshly spawned sessions from false positives. Adopted
-  external sessions (no wrapper, no markers) always resolve to Lost.
+  5-second grace period protects freshly spawned sessions from false positives (in
+  practice irrelevant for `Ready`, since a session can only reach `Ready` well after
+  its grace window has passed). Adopted external sessions (no wrapper, no markers)
+  always resolve to Lost.
 
-### Ready → Stopped
+### Ready → Stopped (TTL)
 - **Trigger**: `ready_ttl_secs` expires (if configured > 0).
 - **Detection**: Watchdog checks `updated_at` of Ready sessions against the TTL on each tick. After expiry, stops the tmux shell and marks Stopped.
+- This is independent of, and runs alongside, the dead-backend sweep above — whichever
+  condition is met first (TTL expiry vs. tmux dying on its own) resolves the session.
 
 ## Resume Semantics
 
@@ -186,6 +192,21 @@ cleanup`.
 
 - **Adopted external tmux sessions have no exit marker, ever**: Sessions auto-adopted from tmux (`adopt_tmux = true`) were never spawned via the wrapper, so no marker will ever exist for their session id. Their Ready detection relies entirely on the `[pulpo] Agent exited` text scrape, and if their backend disappears they resolve to `Lost` — never `Stopped` — regardless of how they actually ended.
 
-- **Lost on daemon restart**: When the daemon starts, Active/Idle sessions whose tmux sessions are gone are checked against their exit markers just like any other staleness check: with a marker present they resolve to `Stopped` retroactively (even if the session ended while the daemon was down); with no marker they're marked Lost. The user can resume either with `pulpo resume` (which auto-attaches).
+- **Lost on daemon restart**: When the daemon starts, Active/Idle/Ready sessions whose
+  tmux sessions are gone are checked against their exit markers just like any other
+  staleness check: with a marker present they resolve to `Stopped` retroactively (even
+  if the session ended while the daemon was down); with no marker they're marked Lost.
+  For `Ready` this check runs eagerly inside `resume_lost_sessions` itself (not lazily
+  on the next `get_session`/`list_sessions` call) — a dead `Ready` session is *never*
+  auto-resumed (re-launching the original command would make no sense for a session
+  whose agent already finished); it only ever resolves to `Stopped` or `Lost`. The user
+  can resume a resolved session with `pulpo resume` (which auto-attaches).
 
-- **Ready + TTL → Stopped**: When `ready_ttl_secs > 0`, ready sessions are automatically cleaned up after the grace period. This prevents tmux shell accumulation. The status changes from Ready to Stopped, blocking further resume. Note: with `ready_ttl_secs` at its default of `0` (disabled), a `Ready` session whose tmux process later dies has no automatic path to `Stopped` from this cleanup — it depends on the exit-marker classification above instead.
+- **Ready + TTL → Stopped**: When `ready_ttl_secs > 0`, ready sessions are automatically
+  cleaned up after the grace period. This prevents tmux shell accumulation. The status
+  changes from Ready to Stopped, blocking further resume. With `ready_ttl_secs` at its
+  default of `0` (disabled), a `Ready` session whose tmux process later dies is still
+  reclassified — it goes through the same exit-marker sweep as `Active`/`Idle` sessions
+  (`Stopped` with a marker present, `Lost` without one), so it never gets stuck as
+  `Ready` forever. (Previously this classification only covered `Active`/`Idle`, so a
+  dead `Ready` session with `ready_ttl_secs = 0` stayed `Ready` indefinitely — fixed.)
