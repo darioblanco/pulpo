@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.1.0](https://github.com/darioblanco/pulpo/compare/v0.0.44...v0.1.0) (2026-07-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **lifecycle:** exiting a session is a clean Stop, not Lost — exit markers + QA matrix ([#94](https://github.com/darioblanco/pulpo/issues/94))
+* remove inks — the ink preset registry (command+description+secrets+runtime+budget) ([#91](https://github.com/darioblanco/pulpo/issues/91))
+* remove controller/node relay mode — every pulpod is standalone ([#84](https://github.com/darioblanco/pulpo/issues/84))
+* **notifications:** `[notifications.discord]` is no longer honored. Existing configs still load (the section is ignored and dropped on save), but Discord webhook notifications no longer fire. Use `[[notifications.webhooks]]` (or the upcoming universal webhooks) instead.
+* **runtime:** --runtime docker (spawn) and the docker runtime on inks and schedules are rejected; the CLI --runtime flag is removed. Historical docker sessions remain readable and listable.
+* **mcp:** the `pulpod mcp` subcommand and the MCP STDIO server are gone. MCP clients must switch to the REST API.
+* **contrib:** contrib/discord-bot and its Docker image workflow are removed. Use webhook notifications or the REST/SSE API instead.
+* **web:** the /worktrees route is gone; worktree sessions are visible on the dashboard and their git state on the session detail view.
+
+### Features
+
+* **budget:** minimal per-session cost cap with watchdog enforcement (B3) ([bf06811](https://github.com/darioblanco/pulpo/commit/bf06811674d91a6411bf84f9a6949cf2ef038e16))
+* **cli,handoff:** -w short flag for --worktree; `pulpo handoff` (alias h) ([#89](https://github.com/darioblanco/pulpo/issues/89)) ([bde2d9f](https://github.com/darioblanco/pulpo/commit/bde2d9f55d1842d42dca92edf07071fb753c9da2))
+* **contrib:** remove the Discord bot ([#50](https://github.com/darioblanco/pulpo/issues/50)) ([3b3c840](https://github.com/darioblanco/pulpo/commit/3b3c84092f254bf855dd792d19cb734e77f155d3))
+* **events:** canonical event envelope + EventSink dispatcher (webhooks emit signed envelope for lifecycle + usage alerts) ([#57](https://github.com/darioblanco/pulpo/issues/57)) ([907e909](https://github.com/darioblanco/pulpo/commit/907e909150621ffbd721bc84a096ab798f652b62))
+* **events:** durable webhook outbox with retry + exponential backoff ([#58](https://github.com/darioblanco/pulpo/issues/58)) ([f214416](https://github.com/darioblanco/pulpo/commit/f214416a6b796ac1d14f36ea987a6ceb4f1fd00b))
+* **events:** universal webhook routing — top-level [[webhooks]] with type.subtype globs + min_severity ([#60](https://github.com/darioblanco/pulpo/issues/60)) ([b7ca59b](https://github.com/darioblanco/pulpo/commit/b7ca59bd03750cb1d844bb3af234c85d8caca1f3))
+* **mcp:** remove the MCP server ([#52](https://github.com/darioblanco/pulpo/issues/52)) ([5db75d2](https://github.com/darioblanco/pulpo/commit/5db75d214424245a0cb05d58816b267c53a3b98d))
+* **metrics:** add toggleable Prometheus /metrics endpoint ([#59](https://github.com/darioblanco/pulpo/issues/59)) ([7775ea8](https://github.com/darioblanco/pulpo/commit/7775ea8445ccdbe17d938a8f5a274753c84778b9))
+* **monitoring:** burn-velocity governor (alert-only, opt-in stop) ([#61](https://github.com/darioblanco/pulpo/issues/61)) ([3b80adb](https://github.com/darioblanco/pulpo/commit/3b80adbd8022ed185515513ac8295471a0760e82))
+* **monitoring:** real usage alerts via SSE + in-app toast (M1) ([3ed02d2](https://github.com/darioblanco/pulpo/commit/3ed02d2b33691b8966dbde116d7683f58559e7e7))
+* **notifications:** remove the Discord webhook notifier ([#56](https://github.com/darioblanco/pulpo/issues/56)) ([e8d412d](https://github.com/darioblanco/pulpo/commit/e8d412d48458121f8271d1d6efc0cfeca4241830))
+* **push:** deliver usage_alert/intervention alerts + actionable Stop button ([#92](https://github.com/darioblanco/pulpo/issues/92)) ([f354a14](https://github.com/darioblanco/pulpo/commit/f354a14d155e4f1c056a845627eb07a2064dca08))
+* **runtime:** remove the Docker session runtime ([#53](https://github.com/darioblanco/pulpo/issues/53)) ([4ce8b09](https://github.com/darioblanco/pulpo/commit/4ce8b0915ba882c5ba0d2a046d352d83cbf5e997))
+* **usage:** --scan polish — by-model split, --since window, --json output ([#78](https://github.com/darioblanco/pulpo/issues/78)) ([0bff828](https://github.com/darioblanco/pulpo/commit/0bff828009edccf3022387d998edf25e96d4bf5e))
+* **usage:** `pulpo usage --scan` — read-only cross-agent spend from all local history ([#76](https://github.com/darioblanco/pulpo/issues/76)) ([d6b9e10](https://github.com/darioblanco/pulpo/commit/d6b9e105a13f529c1316803b2d21c2588678f505))
+* **usage:** burn-rate projection endpoint, CLI, and per-plan config (B1) ([#55](https://github.com/darioblanco/pulpo/issues/55)) ([7642dbf](https://github.com/darioblanco/pulpo/commit/7642dbf7a4c4ae32912fb968a4d94a7c1e9be288))
+* **usage:** config-overridable per-model rates ([rates.&lt;model&gt;]) ([#63](https://github.com/darioblanco/pulpo/issues/63)) ([fa5564a](https://github.com/darioblanco/pulpo/commit/fa5564abca016a4b9281397e208e0f1045c2574a))
+* **usage:** distinguish exact vs estimated cost in CLI and web ([#65](https://github.com/darioblanco/pulpo/issues/65)) ([cb75d2f](https://github.com/darioblanco/pulpo/commit/cb75d2f47f82a5b955cc6b0f527a4e91edd61473))
+* **usage:** per-ink and per-repo cost rollups (the attribution differentiator) ([#72](https://github.com/darioblanco/pulpo/issues/72)) ([ec785ee](https://github.com/darioblanco/pulpo/commit/ec785ee0845107237eaa9b3a0cef25b6862a1bde))
+* **usage:** pi reader — exact BYOK cost in `pulpo usage --scan` ([#79](https://github.com/darioblanco/pulpo/issues/79)) ([e4c4de4](https://github.com/darioblanco/pulpo/commit/e4c4de482c1d11a464771b2f96e05b3793fc55af))
+* **usage:** pool attribution — subscription vs headless (B2) ([1b6bfd0](https://github.com/darioblanco/pulpo/commit/1b6bfd02666a732e631ff1579c7e8e46c59f8219))
+* **usage:** read exact token usage from agent session files ([#46](https://github.com/darioblanco/pulpo/issues/46)) ([b119be0](https://github.com/darioblanco/pulpo/commit/b119be019229c92118a3811d8820b41eca61ec93))
+* **usage:** worktree-aware repo rollup in `pulpo usage --scan` ([#77](https://github.com/darioblanco/pulpo/issues/77)) ([c9b0c12](https://github.com/darioblanco/pulpo/commit/c9b0c1275dcfd69d980c3ecd0a8c3cfff5028b15))
+* **web:** remove the worktrees page ([#51](https://github.com/darioblanco/pulpo/issues/51)) ([9761c67](https://github.com/darioblanco/pulpo/commit/9761c6700d5838d89a10779a65313bd98548ea58))
+* **web:** usage gauge page consuming the projection endpoint ([a6960d4](https://github.com/darioblanco/pulpo/commit/a6960d488dcca877e1f23f4a11b5cd58d95f6e4b))
+
+
+### Bug Fixes
+
+* **ci:** make the web coverage gate honest and enforced ([#47](https://github.com/darioblanco/pulpo/issues/47)) ([04593c9](https://github.com/darioblanco/pulpo/commit/04593c9e1bfc52d2a5cfd62a14752611776ba6e9))
+* **cleanup:** stop unbounded session-log writes and reclaim leaked worktrees ([#62](https://github.com/darioblanco/pulpo/issues/62)) ([6f61b41](https://github.com/darioblanco/pulpo/commit/6f61b4153dca16e3e733647ff9de885c4f6ce3bb))
+* CLI --node footgun, Codex pool detection, emit intervention events ([#68](https://github.com/darioblanco/pulpo/issues/68)) ([3c3bf08](https://github.com/darioblanco/pulpo/commit/3c3bf08378042146e6f5eee47fcbeb720b608a9f))
+* **lifecycle:** exiting a session is a clean Stop, not Lost — exit markers + QA matrix ([#94](https://github.com/darioblanco/pulpo/issues/94)) ([8d09046](https://github.com/darioblanco/pulpo/commit/8d09046d7816fedb4a2f9169e2ec632dbdc522ff))
+* **watchdog:** UTF-8 panic in output scraper; add e2e smoke harness (QA) ([#74](https://github.com/darioblanco/pulpo/issues/74)) ([073de77](https://github.com/darioblanco/pulpo/commit/073de77fc18823666d12b9a6f950201ff8e72106))
+* **web:** quality sweep — updateConfig error handling, dead code, dep prune ([#86](https://github.com/darioblanco/pulpo/issues/86)) ([a5c5516](https://github.com/darioblanco/pulpo/commit/a5c551669f6f5c1cacb8b7851657f3de30ab07bb))
+
+
+### Code Refactoring
+
+* remove controller/node relay mode — every pulpod is standalone ([#84](https://github.com/darioblanco/pulpo/issues/84)) ([5cbb50b](https://github.com/darioblanco/pulpo/commit/5cbb50b1321a197780239d35ab958f4251147f37))
+* remove inks — the ink preset registry (command+description+secrets+runtime+budget) ([#91](https://github.com/darioblanco/pulpo/issues/91)) ([e1af79f](https://github.com/darioblanco/pulpo/commit/e1af79f5fc1da9c0ff46ef07f63eee1e453d6308))
+
 ## [0.0.44](https://github.com/darioblanco/pulpo/compare/v0.0.43...v0.0.44) (2026-04-10)
 
 
