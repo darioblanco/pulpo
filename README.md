@@ -103,7 +103,8 @@ code change.
 ```bash
 pulpo usage --scan              # zero-setup: scan ALL local Claude + Codex + pi history →
                                 # total spend by agent and repo (no sessions routed through pulpo)
-pulpo usage                     # live burn rate ($/hr, tokens/hr), time-to-cap, quota
+pulpo usage                     # live per-session burn: tokens, cost, $/hr, quota
+                                # (tokens/hr and time-to-cap in --json)
 ```
 
 `pulpo usage --scan` is the fastest way in: it reads the agents' *own* session files and
@@ -115,8 +116,9 @@ and not *this checkout* (add `--by-worktree` to keep each checkout separate). Na
 window with `--since <days>`, or pipe the raw numbers somewhere with `--json`.
 
 **Control — pull the plug before the wall.** Per-session and per-schedule cost caps that
-alert at 80% and stop at 100%, plus a burn-velocity governor that catches the catastrophic
-2 a.m. runaway a flat budget misses. Alert-only by default; opt in to auto-stop.
+alert at 80% and hard-stop at 100%, plus a burn-velocity governor that catches the
+catastrophic 2 a.m. runaway a flat budget misses — the governor alerts by default, with
+opt-in auto-stop.
 
 ```bash
 pulpo spawn fix --budget-cost 10 -- claude -p "..."   # hard $10 cap, recorded as an intervention
@@ -125,14 +127,15 @@ pulpo spawn fix --budget-cost 10 -- claude -p "..."   # hard $10 cap, recorded a
 **Monitor — forward to your own stack.** Every lifecycle change, intervention, and usage/cost
 alert becomes a signed canonical event delivered to any number of `[[webhooks]]` (durable
 outbox, exponential backoff, HMAC; receivers dedupe on a stable event id), plus an optional
-Prometheus `/metrics` endpoint. Pulpo is the event plane; your Grafana / Datadog / SIEM /
+Prometheus metrics endpoint (`/api/v1/metrics`). Pulpo is the event plane; your Grafana / Datadog / SIEM /
 Slack is the dashboard. Budget and burn alerts also reach your phone directly via standard
 Web Push (no relay), with a **Stop session** button right on the lock-screen notification
 ([docs](docs/reference/push.md)).
 
 **Run — durable and unattended.** Each agent runs in a `tmux` session with explicit lifecycle
-states that survive reboots, a watchdog for idle / memory / error / completion detection, and
-per-session git worktrees so parallel agents on one repo never collide.
+states that survive reboots (drop into the live terminal anytime with `pulpo attach`), a
+watchdog for idle / memory / error / completion detection, and per-session git worktrees so
+parallel agents on one repo never collide.
 
 That model works for Claude Code, Codex, Gemini CLI, Aider, shell scripts, and any other
 terminal command — Pulpo is not tied to one vendor or one model.
@@ -168,7 +171,7 @@ no central server required, and nothing breaks if you only ever run one machine.
 There is deliberately no control plane joining machines together. Reach any node directly —
 `pulpo --node <name|host:port>` from the CLI, a saved connection in the web UI, or SSH/tmux
 — see [Control Your Agents From Anywhere](docs/guides/remote-control.md). For a view across
-machines, point every node's **event forwarding** (`[[webhooks]]` + `/metrics`) at a
+machines, point every node's **event forwarding** (`[[webhooks]]` + Prometheus metrics) at a
 collector you already run, and aggregate there. This is the supported cross-node story: it
 adds no single point of failure and integrates with your existing observability.
 
@@ -176,10 +179,11 @@ adds no single point of failure and integrates with your existing observability.
 
 - **Exact usage metering**: structured readers for Claude Code, Codex & pi (tokens, cost, cache, quota; pi in `--scan` only for now), cross-account / cross-agent rollups, `[rates.<model>]` config, output-scraping fallback for other agents.
 - **Cost control**: per-session / per-schedule budget caps (alert 80%, stop 100%) and a burn-velocity ($/hr) governor — alert-first, opt-in stop.
-- **Monitoring backbone**: signed canonical events to multiple webhooks with a durable outbox + backoff; toggleable Prometheus `/metrics`; SSE stream; web push.
+- **Monitoring backbone**: signed canonical events to multiple webhooks with a durable outbox + backoff; toggleable Prometheus metrics; SSE stream; web push.
 - **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots; adopts external tmux sessions.
 - **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error/completion patterns, git telemetry (branch, diff; PR URL detected from output).
 - **Execution isolation**: per-session git worktrees for parallel work on one repo.
+- **Scheduled runs**: cron-based schedules (`pulpo schedule`) with the same budgets and worktree support; `pulpo secret` injects secrets into sessions as env vars.
 - **Sovereign access**: single binary with embedded web UI/PWA, CLI, REST API; Tailscale transport for private remote access.
 - **Command-agnostic**: any terminal agent or command.
 
@@ -205,7 +209,7 @@ The daemon owns the truth; every surface reflects or operates on the same sessio
 | Live burn rate + projection | Yes | No | Post-hoc |
 | Budget enforcement (auto-stop) | Yes | No | No |
 | Alerts before the wall | Yes | No | No |
-| Forward events to your stack | Webhooks + `/metrics` | No | No |
+| Forward events to your stack | Webhooks + Prometheus | No | No |
 | Self-hosted, data stays local | Yes | n/a | Yes |
 | Runs the sessions | Yes | n/a | No (reads logs) |
 
