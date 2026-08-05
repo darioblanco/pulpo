@@ -202,7 +202,7 @@ pub enum Commands {
 
     /// Show token/cost burn rate, time-to-cap, and quota for sessions on this node
     Usage {
-        /// Scan ALL local agent history (Claude + Codex) instead of pulpo-managed
+        /// Scan ALL local agent history (Claude + Codex + pi) instead of pulpo-managed
         /// sessions — total spend by agent, model, and repo, no sessions routed through pulpo.
         #[arg(long)]
         scan: bool,
