@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use pulpo_common::event::PulpoEvent;
@@ -6,8 +7,7 @@ use tracing::{debug, info};
 
 use super::{
     IdleAction, IdleConfig, ReadyContext, build_session_event, detect_agent_exited,
-    detect_and_store_output_metadata, detect_waiting_for_input, harness_owns_state,
-    resolve_backend_id,
+    detect_and_store_output_metadata, detect_waiting_for_input, owned_signals, resolve_backend_id,
 };
 use crate::backend::Backend;
 use crate::store::Store;
@@ -94,10 +94,10 @@ pub(super) async fn check_session_idle(
         return;
     }
 
-    let events_owned = harness_owns_state(session);
-    let exact_usage = crate::usage::read_exact_usage_for_session(session);
-    detect_and_store_output_metadata(store, session, &current_output, exact_usage, events_owned)
-        .await;
+    let signals = owned_signals(session);
+    let exact_usage =
+        crate::usage::read_exact_usage_for_session(session, Path::new(store.data_dir()));
+    detect_and_store_output_metadata(store, session, &current_output, exact_usage, signals).await;
 
     let output_changed = session.output_snapshot.as_deref() != Some(current_output.as_str());
     if output_changed {
@@ -105,7 +105,7 @@ pub(super) async fn check_session_idle(
         return;
     }
 
-    if !events_owned && session.status == SessionStatus::Active {
+    if !signals.lifecycle && session.status == SessionStatus::Active {
         let immediate = detect_waiting_for_input(&current_output, extra_waiting_patterns);
         let last_change = session.last_output_at.unwrap_or(session.created_at);
         let sustained = (now - last_change).num_seconds()

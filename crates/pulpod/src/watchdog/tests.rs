@@ -3389,7 +3389,7 @@ async fn test_detect_and_store_pr_url() {
     let session = create_running_session(&store, "pr-detect").await;
 
     let output = "Pushing...\nremote: Create a pull request:\nremote:   https://github.com/owner/repo/pull/42\n";
-    detect_and_store_output_metadata(&store, &session, output, None, false).await;
+    detect_and_store_output_metadata(&store, &session, output, None, HarnessSignals::none()).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3409,7 +3409,7 @@ async fn test_detect_and_store_branch() {
     let session = create_running_session(&store, "branch-detect").await;
 
     let output = "To github.com:owner/repo.git\n * [new branch]      feature/x -> feature/x\n";
-    detect_and_store_output_metadata(&store, &session, output, None, false).await;
+    detect_and_store_output_metadata(&store, &session, output, None, HarnessSignals::none()).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3439,7 +3439,7 @@ async fn test_detect_skips_if_already_stored() {
         .unwrap();
 
     let output = "https://github.com/owner/repo/pull/99\n";
-    detect_and_store_output_metadata(&store, &session, output, None, false).await;
+    detect_and_store_output_metadata(&store, &session, output, None, HarnessSignals::none()).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3457,7 +3457,7 @@ async fn test_detect_no_match() {
     let session = create_running_session(&store, "no-match").await;
 
     let output = "$ cargo test\nrunning tests...\nall passed\n";
-    detect_and_store_output_metadata(&store, &session, output, None, false).await;
+    detect_and_store_output_metadata(&store, &session, output, None, HarnessSignals::none()).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3473,7 +3473,7 @@ async fn test_detect_both_pr_and_branch() {
     let session = create_running_session(&store, "both-detect").await;
 
     let output = "remote: Create a pull request for 'feat/x' on GitHub:\nremote:   https://github.com/owner/repo/pull/5\n";
-    detect_and_store_output_metadata(&store, &session, output, None, false).await;
+    detect_and_store_output_metadata(&store, &session, output, None, HarnessSignals::none()).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3494,7 +3494,7 @@ async fn test_detect_and_store_rate_limit() {
     let session = create_running_session(&store, "rate-limit-detect").await;
 
     let output = "Working...\nError: Rate limit exceeded. Please wait.\n";
-    detect_and_store_output_metadata(&store, &session, output, None, false).await;
+    detect_and_store_output_metadata(&store, &session, output, None, HarnessSignals::none()).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3513,7 +3513,7 @@ async fn test_detect_rate_limit_updates_on_every_tick() {
 
     // First detection
     let output1 = "Error: too many requests\n";
-    detect_and_store_output_metadata(&store, &session, output1, None, false).await;
+    detect_and_store_output_metadata(&store, &session, output1, None, HarnessSignals::none()).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3535,7 +3535,8 @@ async fn test_detect_rate_limit_updates_on_every_tick() {
         .await
         .unwrap()
         .unwrap();
-    detect_and_store_output_metadata(&store, &session2, output2, None, false).await;
+    detect_and_store_output_metadata(&store, &session2, output2, None, HarnessSignals::none())
+        .await;
 
     let fetched2 = store
         .get_session(&session.id.to_string())
@@ -3558,7 +3559,7 @@ async fn test_detect_no_rate_limit() {
     let session = create_running_session(&store, "no-rate-limit").await;
 
     let output = "$ cargo test\nrunning tests...\nall passed\n";
-    detect_and_store_output_metadata(&store, &session, output, None, false).await;
+    detect_and_store_output_metadata(&store, &session, output, None, HarnessSignals::none()).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3576,7 +3577,7 @@ async fn test_rate_limit_not_cleared_after_recovery() {
 
     // First: detect rate limit
     let output1 = "Error: Rate limit exceeded\n";
-    detect_and_store_output_metadata(&store, &session, output1, None, false).await;
+    detect_and_store_output_metadata(&store, &session, output1, None, HarnessSignals::none()).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3594,7 +3595,8 @@ async fn test_rate_limit_not_cleared_after_recovery() {
         .await
         .unwrap()
         .unwrap();
-    detect_and_store_output_metadata(&store, &session2, output2, None, false).await;
+    detect_and_store_output_metadata(&store, &session2, output2, None, HarnessSignals::none())
+        .await;
 
     let fetched2 = store
         .get_session(&session.id.to_string())
@@ -3615,7 +3617,7 @@ async fn test_detect_gitlab_mr_in_output_metadata() {
     let session = create_running_session(&store, "gitlab-detect").await;
 
     let output = "Created: https://gitlab.com/group/project/-/merge_requests/42\n";
-    detect_and_store_output_metadata(&store, &session, output, None, false).await;
+    detect_and_store_output_metadata(&store, &session, output, None, HarnessSignals::none()).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3635,7 +3637,7 @@ async fn test_detect_bitbucket_pr_in_output_metadata() {
     let session = create_running_session(&store, "bitbucket-detect").await;
 
     let output = "PR: https://bitbucket.org/owner/repo/pull-requests/7\n";
-    detect_and_store_output_metadata(&store, &session, output, None, false).await;
+    detect_and_store_output_metadata(&store, &session, output, None, HarnessSignals::none()).await;
 
     let fetched = store
         .get_session(&session.id.to_string())

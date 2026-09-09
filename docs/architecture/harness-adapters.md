@@ -29,6 +29,7 @@ pub trait HarnessAdapter: Send + Sync {
     fn resume_command(&self, original_command: &str, harness_session_id: &str) -> Option<String>;
     fn parse_event(&self, raw: &serde_json::Value) -> Result<Option<HarnessEvent>>;
     fn emits_events(&self) -> bool;
+    fn owned_signals(&self) -> HarnessSignals { HarnessSignals::all() } // default impl
 }
 ```
 
@@ -53,11 +54,16 @@ pub trait HarnessAdapter: Send + Sync {
   }
   ```
 
+- **`owned_signals`** — which watchdog scrollback heuristics this adapter's own events
+  replace, once they're flowing (see [Watchdog bypass](#watchdog-bypass)). Defaults to
+  "all"; an adapter missing some signals (Codex has no error/rate-limit hook) overrides
+  it so the watchdog keeps covering those from scrollback.
+
 `HarnessRegistry` (`harness/registry.rs`) holds adapters in priority order and
 resolves a command line via `shell_words::split` + basename of `argv[0]` — handling
 `env FOO=bar claude`, absolute paths, etc. `GenericAdapter` always matches last: no
-rewrite, no resume id, no events. Adding Codex/pi/Gemini support later means writing
-one more adapter and registering it — the trait and registry don't need to change.
+rewrite, no resume id, no events. Adding pi/Gemini support later means writing one
+more adapter and registering it — the trait and registry don't need to change.
 
 ## Shipped: the Claude Code adapter
 
@@ -105,6 +111,76 @@ produces `claude --resume <id> <remaining args>`. That command is run through
 > to keyword-matching the human-readable `message` text — worth re-verifying against a
 > real fired hook and tightening if the field name turns out to differ.
 
+## Shipped: the Codex adapter
+
+`harness/codex.rs` mirrors the Claude adapter's isolated-file approach at one remove.
+Codex has no `--settings`-equivalent flag and no confirmed way to inject a `[hooks]`
+table via `-c`, but `CODEX_HOME` governs `config.toml`, `auth.json`, `history.jsonl`,
+and the `sessions/` directory together — so the adapter redirects the whole thing per
+pulpo session instead of writing one settings file.
+
+**Requires Codex CLI ≥ the fix in [PR #24317](https://github.com/openai/codex/pull/24317)**
+(verified against 0.153.0): `--dangerously-bypass-hook-trust` was broken for the
+interactive TUI in 0.131.0–0.133.0 ([issue #24093](https://github.com/openai/codex/issues/24093))
+— without a working bypass flag, the first hook fires a blocking "Hooks need review" TUI
+prompt pulpo can't answer, and the adapter's spawn rewrite is ineffective.
+
+**On spawn** (no existing `resume` subcommand, `--dangerously-bypass-hook-trust` flag,
+or `CODEX_HOME=` prefix — see below): creates
+`<data_dir>/harness/<session_id>/codex-home/`, copies the real `auth.json` in (from
+`$CODEX_HOME` if pulpod's own process has that env var, else `~/.codex`; skipped
+silently if absent), writes `config.toml` (the user's real one, if any, plus pulpo's
+`notify` line and `[[hooks.<Event>]]` tables for `SessionStart`, `UserPromptSubmit`,
+`Stop`, `SessionEnd`, and `PermissionRequest`), and rewrites the command to
+`codex --dangerously-bypass-hook-trust <original args>` with `CODEX_HOME` set to that
+directory. Unlike Claude, Codex has no flag to preset a session/thread id at launch —
+`harness_session_id` is `None` until a `SessionStart` hook (or the `notify` fallback,
+see below) reports it.
+
+Each hook command is `<pulpo-bin> hook codex --event <Name>` — a deliberate deviation
+from relying on an unconfirmed event-name field in Codex's own hook JSON (unlike
+Claude's `hook_event_name`), reusing the `--event` mechanism `pulpo hook` already
+offers generically.
+
+**`notify` and the `codex-notify` CLI variant**: Codex's `notify` config delivers its
+JSON as a trailing argv element, not stdin, so the adapter also wires
+`notify = ["sh", "-c", "'<pulpo-bin>' hook codex-notify \"$0\""]`. See the
+[CLI reference](/reference/cli#hook-internal) for `pulpo hook codex-notify`'s contract —
+it maps `agent-turn-complete` to `TurnFinished` and, when the payload carries a
+session/thread id, also posts a synthetic `SessionStart`-shaped event first so pulpo
+learns the harness session id even if the `SessionStart` hook itself never fired.
+
+**On resume**: `resume_command` strips any existing `resume <id>`/`--last`, then
+produces `codex resume <id> <remaining args>`. `prepare_spawn` runs again on that
+command and **reuses the same `codex-home` directory** (`create_dir_all` is a no-op
+when it already exists) — Codex's session rollout files live under it, so resuming
+must keep using the same isolated `CODEX_HOME`. The adapter tells its own
+`resume_command` output apart from a user directly resuming a session pulpo has never
+isolated (redirecting `CODEX_HOME` for the latter would break it — the target wouldn't
+exist under a fresh, empty isolated dir) by checking whether this session's
+`codex-home` directory already exists.
+
+**Event mapping**: `SessionStart` → `SessionStarted`, `UserPromptSubmit` → `Working`,
+`Stop` → `TurnFinished`, `SessionEnd` → `SessionEnded`, `PermissionRequest` →
+`NeedsInput{Permission}` (the hook itself never emits `hookSpecificOutput`, so pulpo
+stays observational and the real TUI approval prompt still runs), notify
+`agent-turn-complete` → `TurnFinished`. `PreToolUse`/`PostToolUse`/`PreCompact`/
+`PostCompact`/`SubagentStart`/`SubagentStop`/`Interrupt` exist but map to `Ok(None)` —
+out of scope for pulpo's state machine today.
+
+> No Codex hook distinguishes "asked a clarifying question" from "finished the turn"
+> (both are `Stop`), and no hook or notify event carries API-error/429/quota
+> information — `SessionEnd.reason` is documented as always `"other"` today. **Because
+> of this, Codex sessions keep the scrollback-based `detect_rate_limit`/`detect_error`
+> heuristics running even once its lifecycle hooks are flowing** — see
+> [Watchdog bypass](#watchdog-bypass) below for the mechanism. Exact
+> error/rate-limit detection for Codex stays heuristic until Codex ships an error hook.
+>
+> Also UNVERIFIED: the exact field spelling in Codex's `notify` payload for the
+> session/thread id and turn summary — `parse_event` and the CLI's
+> `codex-notify` handler both check `thread_id`/`thread-id` and
+> `last_assistant_message`/`last-assistant-message`.
+
 ## Event ingestion
 
 `POST /api/v1/sessions/{id}/harness-events` (see the [API reference](/reference/api))
@@ -144,17 +220,37 @@ additive, not a state-machine rename. See
 ## Watchdog bypass
 
 Once a session's `harness_last_event_at` is set (events are flowing), the watchdog
-stops applying scrollback heuristics to it: no waiting-for-input pattern matching, no
-rate-limit/error-status scraping, no time-based Active→Idle transition. Hook events
-own those signals instead. Everything else keeps running unconditionally — memory
+stops applying scrollback heuristics **that the session's own harness adapter owns**:
+`HarnessAdapter::owned_signals()` returns a [`HarnessSignals`] value (`lifecycle`,
+`rate_limit`, `error`) saying which of the following the adapter's own events replace:
+
+- `lifecycle` — waiting-for-input pattern matching and the time-based Active→Idle
+  transition.
+- `rate_limit` — `detect_rate_limit` scrollback scraping.
+- `error` — `detect_error` scrollback scraping.
+
+The default implementation returns "all" — correct for an adapter (Claude's) whose
+hooks cover lifecycle, errors, and rate limits alike. An adapter missing some of those
+signals overrides it: **Codex has no error/rate-limit hook**, so
+`CodexAdapter::owned_signals()` returns "lifecycle only," and `detect_rate_limit`/
+`detect_error` keep running from scrollback for Codex sessions even while its
+lifecycle events (`SessionStart`/`Stop`/`PermissionRequest`/...) are flowing.
+
+Everything else keeps running unconditionally regardless of ownership — memory
 intervention, git telemetry, PR/branch detection, and `idle_timeout` (alert/kill after
 N seconds idle) all still apply to harness-managed sessions exactly as they do to any
 other. Sessions without events (a generic/unrecognized command, or a harness whose
-hook installation silently failed) keep today's heuristics unchanged, since
-`harness_last_event_at` never gets set for them.
+hook installation silently failed) keep today's heuristics unchanged for every signal,
+since `harness_last_event_at` never gets set for them —
+`watchdog::owned_signals(session)` treats "events not flowing" as owning nothing,
+regardless of what the adapter would otherwise claim.
 
-The switch is one helper, `watchdog::harness_owns_state(session)`, checked in one
-place (`watchdog/idle.rs::check_session_idle`).
+`watchdog::owned_signals(session)` is the one helper that combines
+`harness_owns_state` (is `harness_last_event_at` set) with the adapter's own
+`owned_signals()` (via a small process-wide `HarnessRegistry`); it's checked in one
+place (`watchdog/idle.rs::check_session_idle`, which passes the result into
+`detect_and_store_output_metadata` and gates the waiting-for-input/time-based-idle
+block directly).
 
 ## Persistence
 
@@ -170,9 +266,13 @@ cleanup path that already reclaims worktrees and exit markers.
 
 ## What's not here yet
 
-Codex and pi adapters are follow-up work on top of this branch — the trait and
-registry are built to make that a matter of writing one more adapter, not touching
-core daemon code. A `working / needs_input / done / exited / lost` rename of
-`SessionStatus` itself (cleaner than overloading `Idle` + a `needs_input` metadata
-flag) is a deliberate follow-up once hook-driven events are proven in the field, not
-part of this change.
+A pi adapter is follow-up work on top of this branch — the trait and registry are
+built to make that a matter of writing one more adapter, not touching core daemon
+code. A `working / needs_input / done / exited / lost` rename of `SessionStatus`
+itself (cleaner than overloading `Idle` + a `needs_input` metadata flag) is a
+deliberate follow-up once hook-driven events are proven in the field, not part of this
+change.
+
+Exact rate-limit/error detection for Codex sessions is still heuristic (scrollback
+scraping) rather than hook-driven, since Codex has no such hook today — see the
+Codex adapter section above and [Watchdog bypass](#watchdog-bypass).

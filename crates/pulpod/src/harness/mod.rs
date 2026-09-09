@@ -12,8 +12,10 @@
 //! - [`generic::GenericAdapter`] — the harness-agnostic fallback: no rewrite, no
 //!   resume id, no events. Always matches, always last in the registry.
 //! - [`claude::ClaudeAdapter`] — the first concrete adapter (Claude Code hooks).
+//! - [`codex::CodexAdapter`] — the Codex CLI adapter (isolated `CODEX_HOME` + hooks).
 
 pub mod claude;
+pub mod codex;
 pub mod generic;
 pub mod registry;
 
@@ -116,6 +118,63 @@ impl SpawnPlan {
     }
 }
 
+/// Which of the watchdog's scrollback-heuristic signals an adapter's own lifecycle
+/// events replace (spec: harness-adapter watchdog bypass, made granular per adapter).
+///
+/// Once a session's `harness_last_event_at` is set (see `watchdog::harness_owns_state`),
+/// the watchdog stops applying a signal's heuristic only when the adapter says it
+/// owns that signal. An adapter that never fires an error/rate-limit-shaped event
+/// (Codex today has no such hook) must leave those fields `false` so
+/// `detect_rate_limit`/`detect_error` keep running from scrollback even while its
+/// other events flow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HarnessSignals {
+    /// Waiting-for-input pattern matching and the time-based Active→Idle transition.
+    pub lifecycle: bool,
+    /// Rate-limit scrollback scraping (`detect_rate_limit`).
+    pub rate_limit: bool,
+    /// Error-status scrollback scraping (`detect_error`).
+    pub error: bool,
+}
+
+impl HarnessSignals {
+    /// Every heuristic is replaced by the adapter's own events. The default for any
+    /// adapter that doesn't override [`HarnessAdapter::owned_signals`] — correct for
+    /// an adapter (like Claude's) whose hooks cover lifecycle, errors, and rate
+    /// limits alike.
+    #[must_use]
+    pub const fn all() -> Self {
+        Self {
+            lifecycle: true,
+            rate_limit: true,
+            error: true,
+        }
+    }
+
+    /// Only lifecycle (turn/session boundaries, permission/idle prompts) is covered
+    /// by the adapter's own events; error and rate-limit detection stay heuristic.
+    /// What Codex uses today — it has no error/rate-limit hook.
+    #[must_use]
+    pub const fn lifecycle_only() -> Self {
+        Self {
+            lifecycle: true,
+            rate_limit: false,
+            error: false,
+        }
+    }
+
+    /// Nothing is owned — every heuristic stays active. What the watchdog treats a
+    /// session as when its harness isn't actually emitting events yet.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            lifecycle: false,
+            rate_limit: false,
+            error: false,
+        }
+    }
+}
+
 /// A harness adapter: translates between one agent CLI's conventions and pulpo's
 /// normalized lifecycle events.
 pub trait HarnessAdapter: Send + Sync {
@@ -149,6 +208,15 @@ pub trait HarnessAdapter: Send + Sync {
     /// Whether this adapter emits events at all (`generic` = false). Used by the
     /// watchdog to decide whether to keep using scrollback heuristics.
     fn emits_events(&self) -> bool;
+
+    /// Which scrollback-heuristic signals this adapter's own events replace, once
+    /// they're flowing (see [`HarnessSignals`]). Defaults to "all" — correct for an
+    /// adapter whose hooks cover lifecycle, errors, and rate limits alike (Claude);
+    /// an adapter missing some of those signals (Codex has no error/rate-limit hook)
+    /// overrides this so the watchdog keeps covering them from scrollback.
+    fn owned_signals(&self) -> HarnessSignals {
+        HarnessSignals::all()
+    }
 }
 
 /// The concrete session/metadata changes to apply for one [`HarnessEvent`].
@@ -244,6 +312,40 @@ pub fn transition_for_event(event: &HarnessEvent, backend_alive: bool) -> StateU
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_harness_signals_all() {
+        let signals = HarnessSignals::all();
+        assert!(signals.lifecycle);
+        assert!(signals.rate_limit);
+        assert!(signals.error);
+    }
+
+    #[test]
+    fn test_harness_signals_lifecycle_only() {
+        let signals = HarnessSignals::lifecycle_only();
+        assert!(signals.lifecycle);
+        assert!(!signals.rate_limit);
+        assert!(!signals.error);
+    }
+
+    #[test]
+    fn test_harness_signals_none() {
+        let signals = HarnessSignals::none();
+        assert!(!signals.lifecycle);
+        assert!(!signals.rate_limit);
+        assert!(!signals.error);
+    }
+
+    #[test]
+    fn test_owned_signals_default_is_all() {
+        // GenericAdapter doesn't override it — the trait default applies.
+        assert_eq!(
+            generic::GenericAdapter.owned_signals(),
+            HarnessSignals::all()
+        );
+        assert_eq!(claude::ClaudeAdapter.owned_signals(), HarnessSignals::all());
+    }
 
     #[test]
     fn test_needs_input_reason_display() {

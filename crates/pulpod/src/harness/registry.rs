@@ -5,7 +5,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use super::HarnessAdapter;
+use super::HarnessSignals;
 use super::claude::ClaudeAdapter;
+use super::codex::CodexAdapter;
 use super::generic::GenericAdapter;
 
 /// Holds adapters in priority order.
@@ -21,7 +23,11 @@ pub struct HarnessRegistry {
 impl Default for HarnessRegistry {
     fn default() -> Self {
         Self {
-            adapters: vec![Arc::new(ClaudeAdapter), Arc::new(GenericAdapter)],
+            adapters: vec![
+                Arc::new(ClaudeAdapter),
+                Arc::new(CodexAdapter),
+                Arc::new(GenericAdapter),
+            ],
         }
     }
 }
@@ -53,6 +59,26 @@ impl HarnessRegistry {
     fn generic(&self) -> Arc<dyn HarnessAdapter> {
         self.get("generic")
             .unwrap_or_else(|| Arc::new(GenericAdapter))
+    }
+
+    /// Resolve which scrollback-heuristic signals remain safe for the watchdog to
+    /// apply to a session, given its own harness id (as stored on the session) and
+    /// whether its hook events are actually flowing yet (`harness_last_event_at` is
+    /// set — see `watchdog::harness_owns_state`). Events not yet flowing, or an
+    /// unrecognized/absent harness id, own nothing (every heuristic stays active) —
+    /// the same fallback the pre-adapter watchdog behavior had.
+    #[must_use]
+    pub fn owned_signals_for(
+        &self,
+        harness_id: Option<&str>,
+        events_flowing: bool,
+    ) -> HarnessSignals {
+        if !events_flowing {
+            return HarnessSignals::none();
+        }
+        harness_id
+            .and_then(|id| self.get(id))
+            .map_or(HarnessSignals::all(), |adapter| adapter.owned_signals())
     }
 }
 
@@ -153,7 +179,13 @@ mod tests {
     #[test]
     fn test_registry_falls_back_to_generic_for_unknown_agent() {
         let registry = HarnessRegistry::default();
-        assert_eq!(registry.resolve("codex exec 'fix'").id(), "generic");
+        assert_eq!(registry.resolve("gemini chat").id(), "generic");
+    }
+
+    #[test]
+    fn test_registry_resolves_codex() {
+        let registry = HarnessRegistry::default();
+        assert_eq!(registry.resolve("codex exec 'fix'").id(), "codex");
     }
 
     #[test]
@@ -172,7 +204,55 @@ mod tests {
     fn test_registry_get_by_id() {
         let registry = HarnessRegistry::default();
         assert_eq!(registry.get("claude").unwrap().id(), "claude");
+        assert_eq!(registry.get("codex").unwrap().id(), "codex");
         assert_eq!(registry.get("generic").unwrap().id(), "generic");
-        assert!(registry.get("codex").is_none());
+        assert!(registry.get("gemini").is_none());
+    }
+
+    // -- owned_signals_for --
+
+    #[test]
+    fn test_owned_signals_for_events_not_flowing_is_none() {
+        let registry = HarnessRegistry::default();
+        assert_eq!(
+            registry.owned_signals_for(Some("claude"), false),
+            HarnessSignals::none()
+        );
+    }
+
+    #[test]
+    fn test_owned_signals_for_claude_events_flowing_is_all() {
+        let registry = HarnessRegistry::default();
+        assert_eq!(
+            registry.owned_signals_for(Some("claude"), true),
+            HarnessSignals::all()
+        );
+    }
+
+    #[test]
+    fn test_owned_signals_for_codex_events_flowing_is_lifecycle_only() {
+        let registry = HarnessRegistry::default();
+        assert_eq!(
+            registry.owned_signals_for(Some("codex"), true),
+            HarnessSignals::lifecycle_only()
+        );
+    }
+
+    #[test]
+    fn test_owned_signals_for_unknown_harness_events_flowing_is_all() {
+        let registry = HarnessRegistry::default();
+        assert_eq!(
+            registry.owned_signals_for(Some("gemini"), true),
+            HarnessSignals::all()
+        );
+    }
+
+    #[test]
+    fn test_owned_signals_for_no_harness_id_events_flowing_is_all() {
+        let registry = HarnessRegistry::default();
+        assert_eq!(
+            registry.owned_signals_for(None, true),
+            HarnessSignals::all()
+        );
     }
 }

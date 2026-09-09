@@ -3,6 +3,7 @@ use pulpo_common::session::{Session, SessionStatus, meta};
 use tracing::info;
 
 use super::output_patterns;
+use crate::harness::HarnessSignals;
 use crate::store::Store;
 use crate::usage::ExactUsage;
 
@@ -15,19 +16,22 @@ use crate::usage::ExactUsage;
 /// for usage fields. Once a session has ever had an exact source, scraped values are
 /// never written again (mixing the two would corrupt the totals).
 ///
-/// `harness_owns_state` is true when the session's `harness_last_event_at` is set
-/// (hook events are flowing for it): rate-limit and error-status scraping are then
-/// skipped entirely — a harness's own `StopFailure` event owns that signal instead
-/// (see `watchdog::idle` and `harness::transition_for_event`). PR/branch detection
-/// and usage tracking are unaffected; they aren't part of the scrollback-heuristic
-/// state machine hooks replace.
+/// `signals` (see `harness::HarnessSignals`, resolved by `watchdog::owned_signals`)
+/// says which of rate-limit and error-status scraping stay skipped: each is skipped
+/// only when the session's own harness adapter says it owns that signal — a
+/// harness's own `StopFailure`-shaped event owns it instead (see `watchdog::idle`
+/// and `harness::transition_for_event`). An adapter with hooks for lifecycle but not
+/// errors/rate-limits (Codex has neither hook) leaves the corresponding heuristic
+/// running even while its other events flow. PR/branch detection and usage tracking
+/// are unaffected; they aren't part of the scrollback-heuristic state machine hooks
+/// replace.
 #[allow(clippy::too_many_lines)]
 pub(super) async fn detect_and_store_output_metadata(
     store: &Store,
     session: &Session,
     output: &str,
     exact_usage: Option<ExactUsage>,
-    harness_owns_state: bool,
+    signals: HarnessSignals,
 ) {
     let has_pr = session.meta_str(meta::PR_URL).is_some();
     if !has_pr && let Some(pr_url) = output_patterns::extract_pr_url(output) {
@@ -69,44 +73,45 @@ pub(super) async fn detect_and_store_output_metadata(
         }
     }
 
-    // Rate-limit and error-status scraping: skipped entirely once the harness owns
-    // this session's state — its own `Failed` event (StopFailure) is authoritative,
-    // and scrollback heuristics would otherwise fight with it.
-    if !harness_owns_state {
-        if let Some(rate_msg) = output_patterns::detect_rate_limit(output) {
-            let timestamp = chrono::Utc::now().to_rfc3339();
-            #[allow(unused_variables)]
-            if let Err(error) = store
-                .update_session_metadata_field(&session.id.to_string(), meta::RATE_LIMIT, &rate_msg)
-                .await
-            {
-                coverage_warn!(
-                    session_name = %session.name,
-                    "Failed to store rate_limit metadata: {error}"
-                );
-            }
-            #[allow(unused_variables)]
-            if let Err(error) = store
-                .update_session_metadata_field(
-                    &session.id.to_string(),
-                    meta::RATE_LIMIT_AT,
-                    &timestamp,
-                )
-                .await
-            {
-                coverage_warn!(
-                    session_name = %session.name,
-                    "Failed to store rate_limit_at metadata: {error}"
-                );
-            } else {
-                info!(
-                    session_name = %session.name,
-                    rate_limit = %rate_msg,
-                    "Detected rate limit from session output"
-                );
-            }
+    // Rate-limit scraping: skipped only once the session's own harness adapter owns
+    // that signal — its own `Failed{rate_limited: true}`-shaped event is
+    // authoritative then, and scrollback heuristics would otherwise fight with it.
+    // An adapter with no rate-limit hook (Codex today) leaves this running.
+    if !signals.rate_limit
+        && let Some(rate_msg) = output_patterns::detect_rate_limit(output)
+    {
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        #[allow(unused_variables)]
+        if let Err(error) = store
+            .update_session_metadata_field(&session.id.to_string(), meta::RATE_LIMIT, &rate_msg)
+            .await
+        {
+            coverage_warn!(
+                session_name = %session.name,
+                "Failed to store rate_limit metadata: {error}"
+            );
         }
+        #[allow(unused_variables)]
+        if let Err(error) = store
+            .update_session_metadata_field(&session.id.to_string(), meta::RATE_LIMIT_AT, &timestamp)
+            .await
+        {
+            coverage_warn!(
+                session_name = %session.name,
+                "Failed to store rate_limit_at metadata: {error}"
+            );
+        } else {
+            info!(
+                session_name = %session.name,
+                rate_limit = %rate_msg,
+                "Detected rate limit from session output"
+            );
+        }
+    }
 
+    // Error-status scraping: same per-signal gate, independent of rate-limit above —
+    // an adapter could in principle own one signal without the other.
+    if !signals.error {
         let current_error = output_patterns::detect_error(output);
         let stored_error = session.meta_str(meta::ERROR_STATUS);
         match (&current_error, stored_error) {
@@ -550,7 +555,14 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        detect_and_store_output_metadata(&store, &fetched, "all green now", None, false).await;
+        detect_and_store_output_metadata(
+            &store,
+            &fetched,
+            "all green now",
+            None,
+            HarnessSignals::none(),
+        )
+        .await;
 
         let updated = store
             .get_session(&session.id.to_string())
@@ -578,8 +590,14 @@ mod tests {
         let store = test_store().await;
         let session = insert_session(&store, "exact-write").await;
 
-        detect_and_store_output_metadata(&store, &session, "", Some(exact_usage_fixture()), false)
-            .await;
+        detect_and_store_output_metadata(
+            &store,
+            &session,
+            "",
+            Some(exact_usage_fixture()),
+            HarnessSignals::none(),
+        )
+        .await;
 
         let updated = store
             .get_session(&session.id.to_string())
@@ -615,8 +633,14 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        detect_and_store_output_metadata(&store, &fetched, "", Some(exact_usage_fixture()), false)
-            .await;
+        detect_and_store_output_metadata(
+            &store,
+            &fetched,
+            "",
+            Some(exact_usage_fixture()),
+            HarnessSignals::none(),
+        )
+        .await;
 
         let updated = store
             .get_session(&session.id.to_string())
@@ -649,7 +673,8 @@ mod tests {
             ..exact_usage_fixture()
         };
 
-        detect_and_store_output_metadata(&store, &session, "", Some(exact), false).await;
+        detect_and_store_output_metadata(&store, &session, "", Some(exact), HarnessSignals::none())
+            .await;
 
         let updated = store
             .get_session(&session.id.to_string())
@@ -685,8 +710,14 @@ mod tests {
     async fn test_exact_usage_noop_when_values_unchanged() {
         let store = test_store().await;
         let session = insert_session(&store, "exact-noop").await;
-        detect_and_store_output_metadata(&store, &session, "", Some(exact_usage_fixture()), false)
-            .await;
+        detect_and_store_output_metadata(
+            &store,
+            &session,
+            "",
+            Some(exact_usage_fixture()),
+            HarnessSignals::none(),
+        )
+        .await;
         let after_first = store
             .get_session(&session.id.to_string())
             .await
@@ -699,7 +730,7 @@ mod tests {
             &after_first,
             "",
             Some(exact_usage_fixture()),
-            false,
+            HarnessSignals::none(),
         )
         .await;
 
@@ -715,8 +746,14 @@ mod tests {
     async fn test_scraper_disabled_once_exact_source_recorded() {
         let store = test_store().await;
         let session = insert_session(&store, "scraper-gate").await;
-        detect_and_store_output_metadata(&store, &session, "", Some(exact_usage_fixture()), false)
-            .await;
+        detect_and_store_output_metadata(
+            &store,
+            &session,
+            "",
+            Some(exact_usage_fixture()),
+            HarnessSignals::none(),
+        )
+        .await;
         let fetched = store
             .get_session(&session.id.to_string())
             .await
@@ -725,7 +762,8 @@ mod tests {
 
         // Exact reader unavailable this tick, but scrapeable text is on screen.
         let output = "Tokens: 999,999 sent, 888 received. Cost: $42.00 session.\n";
-        detect_and_store_output_metadata(&store, &fetched, output, None, false).await;
+        detect_and_store_output_metadata(&store, &fetched, output, None, HarnessSignals::none())
+            .await;
 
         let updated = store
             .get_session(&session.id.to_string())
@@ -742,7 +780,8 @@ mod tests {
         let session = insert_session(&store, "scraper-fallback").await;
 
         let output = "Tokens: 1,234 sent, 567 received. Cost: $0.03 message, $0.06 session.\n";
-        detect_and_store_output_metadata(&store, &session, output, None, false).await;
+        detect_and_store_output_metadata(&store, &session, output, None, HarnessSignals::none())
+            .await;
 
         let updated = store
             .get_session(&session.id.to_string())

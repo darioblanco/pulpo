@@ -1367,7 +1367,7 @@ async fn test_harness_events_unknown_harness_id() {
     let state = test_state().await;
     let session = create_claude_session(&state, "harness-unknown").await;
     let req = HarnessEventRequest {
-        harness: "codex".into(),
+        harness: "gemini".into(),
         event: serde_json::json!({}),
     };
     let result = harness_events(State(state), Path(session.id.to_string()), Json(req)).await;

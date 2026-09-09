@@ -290,7 +290,8 @@ pulpo/
 │   │   │   ├── mod.rs            # HarnessAdapter trait, HarnessEvent, state transitions
 │   │   │   ├── registry.rs       # HarnessRegistry: resolve a command line to an adapter
 │   │   │   ├── generic.rs        # Fallback adapter: no rewrite, no events
-│   │   │   └── claude.rs         # Claude Code adapter (hooks, --session-id/--resume)
+│   │   │   ├── claude.rs         # Claude Code adapter (hooks, --session-id/--resume)
+│   │   │   └── codex.rs          # Codex adapter (isolated CODEX_HOME + hooks/notify)
 │   │   └── discovery/            # Peer discovery (Tailscale)
 │   │       ├── mod.rs            # Discovery types + constants
 │   │       └── tailscale.rs      # Tailscale API peer discovery
