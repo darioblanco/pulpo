@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { cn, formatDuration, formatMemory, formatRelativeTime, statusColors } from './utils';
+import {
+  cn,
+  formatDuration,
+  formatMemory,
+  formatRelativeTime,
+  formatSessionStatus,
+  statusColors,
+} from './utils';
 
 describe('cn', () => {
   it('merges class names', () => {
@@ -113,6 +120,32 @@ describe('formatMemory', () => {
 
   it('rounds to nearest GB', () => {
     expect(formatMemory(4000)).toBe('4 GB');
+  });
+});
+
+describe('formatSessionStatus', () => {
+  it('renders needs input with reason when idle and blocked', () => {
+    expect(formatSessionStatus({ status: 'idle', metadata: { needs_input: 'permission' } })).toBe(
+      'needs input (permission)',
+    );
+  });
+
+  it('renders plain idle when not blocked', () => {
+    expect(formatSessionStatus({ status: 'idle', metadata: null })).toBe('idle');
+  });
+
+  it('renders plain idle when metadata has no needs_input key', () => {
+    expect(formatSessionStatus({ status: 'idle', metadata: { other: 'x' } })).toBe('idle');
+  });
+
+  it('does not apply needs_input to non-idle statuses', () => {
+    expect(formatSessionStatus({ status: 'active', metadata: { needs_input: 'permission' } })).toBe(
+      'active',
+    );
+  });
+
+  it('passes through other statuses unchanged', () => {
+    expect(formatSessionStatus({ status: 'stopped', metadata: null })).toBe('stopped');
   });
 });
 

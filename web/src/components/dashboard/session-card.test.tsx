@@ -544,6 +544,19 @@ describe('SessionCard', () => {
     expect(screen.queryByTestId('error-status-badge')).not.toBeInTheDocument();
   });
 
+  // Needs-input status label
+
+  it('renders needs-input status distinctly from plain idle', () => {
+    renderCard(makeSession({ status: 'idle', metadata: { needs_input: 'permission' } }));
+    expect(screen.getByTestId('session-status')).toHaveTextContent('needs input (permission)');
+  });
+
+  it('renders plain idle when not blocked on input', () => {
+    renderCard(makeSession({ status: 'idle', metadata: null }));
+    expect(screen.getByTestId('session-status')).toHaveTextContent('idle');
+    expect(screen.getByTestId('session-status')).not.toHaveTextContent('needs input');
+  });
+
   // Git diff stats badge
 
   it('shows git diff badge when insertions/deletions present', () => {

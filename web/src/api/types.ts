@@ -44,6 +44,14 @@ export interface Session {
   git_ahead?: number | null;
   /** 'docker' only appears on historical sessions — the docker runtime was removed. */
   runtime?: 'tmux' | 'docker';
+  /** Harness adapter id (e.g. "claude"), set at spawn time when the command matched
+   * a known harness. Absent for sessions spawned before harness adapters existed. */
+  harness?: string | null;
+  /** The harness's own session/thread id (e.g. Claude Code's `--session-id`). */
+  harness_session_id?: string | null;
+  /** When the harness last reported a lifecycle event. Presence means hook events
+   * own this session's state (see docs/architecture/harness-adapters.md). */
+  harness_last_event_at?: string | null;
   last_output_at: string | null;
   output_snippet?: string | null;
   created_at: string;

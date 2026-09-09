@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import type { Session } from '@/api/types';
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -54,4 +55,18 @@ export const statusDotColors: Record<string, string> = {
 
 export function isTerminal(status: string): boolean {
   return status === 'stopped' || status === 'ready' || status === 'lost';
+}
+
+/**
+ * Status label: "needs input (<reason>)" when a harness hook reported the session is
+ * blocked on the human (permission, question, idle prompt) — distinct from plain
+ * "idle" (done with the turn, nothing pending). Anything else renders as the plain
+ * status string.
+ */
+export function formatSessionStatus(session: Pick<Session, 'status' | 'metadata'>): string {
+  const needsInput = session.metadata?.needs_input;
+  if (session.status === 'idle' && needsInput) {
+    return `needs input (${needsInput})`;
+  }
+  return session.status;
 }
