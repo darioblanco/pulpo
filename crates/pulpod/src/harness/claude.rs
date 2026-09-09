@@ -20,7 +20,11 @@ use serde_json::Value;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use super::{HarnessAdapter, HarnessEvent, NeedsInputReason, SpawnContext, SpawnPlan};
+#[cfg(test)]
+use super::resolve_pulpo_bin_from;
+use super::{
+    HarnessAdapter, HarnessEvent, NeedsInputReason, SpawnContext, SpawnPlan, resolve_pulpo_bin,
+};
 
 /// Flags that mean session identity is already fully pinned down (by the user, or by
 /// a previous pulpo rewrite) — pulpo must never double-inject on top of these.
@@ -300,26 +304,6 @@ fn rewrite_spawn(
         files: vec![settings_path],
         harness_session_id,
     })
-}
-
-/// Resolve the absolute path of the running `pulpo` binary — the sibling of the
-/// running `pulpod` binary — falling back to the plain `pulpo` (resolved via `$PATH`
-/// at hook-invocation time) when that sibling doesn't exist.
-fn resolve_pulpo_bin() -> String {
-    resolve_pulpo_bin_from(std::env::current_exe().ok().as_deref())
-}
-
-/// Testable core of [`resolve_pulpo_bin`]: given a (possibly absent) current-exe
-/// path, resolve its `pulpo` sibling if it exists on disk.
-fn resolve_pulpo_bin_from(current_exe: Option<&Path>) -> String {
-    current_exe
-        .and_then(Path::parent)
-        .map(|dir| dir.join("pulpo"))
-        .filter(|candidate| candidate.is_file())
-        .map_or_else(
-            || "pulpo".to_owned(),
-            |candidate| candidate.to_string_lossy().into_owned(),
-        )
 }
 
 /// Build the `--settings` JSON that wires every lifecycle hook of interest to

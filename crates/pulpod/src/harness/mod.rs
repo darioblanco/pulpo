@@ -12,9 +12,12 @@
 //! - [`generic::GenericAdapter`] — the harness-agnostic fallback: no rewrite, no
 //!   resume id, no events. Always matches, always last in the registry.
 //! - [`claude::ClaudeAdapter`] — the first concrete adapter (Claude Code hooks).
+//! - [`pi::PiAdapter`] — pi (`@earendil-works/pi-coding-agent`) adapter (extension
+//!   events, `--session-id`).
 
 pub mod claude;
 pub mod generic;
+pub mod pi;
 pub mod registry;
 
 use std::path::{Path, PathBuf};
@@ -114,6 +117,30 @@ impl SpawnPlan {
             harness_session_id: None,
         }
     }
+}
+
+/// Resolve the absolute path of the running `pulpo` binary — the sibling of the
+/// running `pulpod` binary — falling back to the plain `pulpo` (resolved via `$PATH`
+/// at hook-invocation time) when that sibling doesn't exist.
+///
+/// Shared by every adapter that needs to embed pulpo's own binary path into a
+/// generated hook/extension file (`claude.rs`'s `--settings` JSON, `pi.rs`'s
+/// `pulpo.ts`).
+pub(crate) fn resolve_pulpo_bin() -> String {
+    resolve_pulpo_bin_from(std::env::current_exe().ok().as_deref())
+}
+
+/// Testable core of [`resolve_pulpo_bin`]: given a (possibly absent) current-exe
+/// path, resolve its `pulpo` sibling if it exists on disk.
+pub(crate) fn resolve_pulpo_bin_from(current_exe: Option<&Path>) -> String {
+    current_exe
+        .and_then(Path::parent)
+        .map(|dir| dir.join("pulpo"))
+        .filter(|candidate| candidate.is_file())
+        .map_or_else(
+            || "pulpo".to_owned(),
+            |candidate| candidate.to_string_lossy().into_owned(),
+        )
 }
 
 /// A harness adapter: translates between one agent CLI's conventions and pulpo's

@@ -16,7 +16,7 @@ Do not expand scope into desktop/mobile clients unless explicitly requested.
 See `ROADMAP.md` "What's Next" section. In priority order:
 
 1. **Cost tracking (P5.1)** — token parsing exists, need cost rates, per-session budgets, auto-stop
-2. ~~Agent completion callbacks~~ — superseded by harness adapters (shipped for Claude Code; Codex and pi in progress, see `docs/architecture/harness-adapters.md`)
+2. ~~Agent completion callbacks~~ — superseded by harness adapters (shipped for Claude Code and pi — pi unverified in the field; Codex in progress, see `docs/architecture/harness-adapters.md`)
 3. **Landing page + demo video**
 
 **Do NOT build:** mDNS/seed discovery (removed), MCP server (removed), Kubernetes backend, team/multi-user features. The ocean gamification UI was extracted to a separate `pulpo-ocean` repo (with history) — do not re-add canvas/game code to this repo.
