@@ -1887,6 +1887,186 @@ async fn test_check_session_idle_without_backend_session_id() {
 }
 
 // ───────────────────────────────────────────────────────────
+// Harness watchdog bypass (spec §5): a session with `harness_last_event_at` set
+// skips scrollback heuristics entirely — hook events own its state instead.
+// ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_harness_owns_state_true_when_last_event_at_set() {
+    let session = Session {
+        harness_last_event_at: Some(chrono::Utc::now()),
+        ..Default::default()
+    };
+    assert!(harness_owns_state(&session));
+}
+
+#[test]
+fn test_harness_owns_state_false_when_unset() {
+    assert!(!harness_owns_state(&Session::default()));
+}
+
+#[tokio::test]
+async fn test_check_session_idle_bypasses_waiting_pattern_and_time_based_idle() {
+    // Output unchanged, well past the idle threshold, AND matches a waiting-pattern
+    // — without the bypass this would immediately go Idle. With `harness_last_event_at`
+    // set, hook events own the state: the session must stay Active.
+    let backend = Arc::new(MockBackend::new().with_output("Do you want to proceed?"));
+    let store = test_store().await;
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "harness-bypass".into(),
+        workdir: "/tmp/repo".into(),
+        command: "claude -p fix".into(),
+        status: SessionStatus::Active,
+        backend_session_id: Some("harness-bypass".into()),
+        output_snapshot: Some("Do you want to proceed?".into()),
+        last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+        harness: Some("claude".into()),
+        harness_last_event_at: Some(chrono::Utc::now()),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+    let now = chrono::Utc::now();
+    let timeout = chrono::Duration::seconds(600);
+    let dyn_backend: Arc<dyn Backend> = backend;
+
+    check_session_idle(
+        &dyn_backend,
+        &store,
+        &idle_config,
+        &session,
+        now,
+        timeout,
+        &test_ready_ctx(),
+        &[],
+    )
+    .await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fetched.status,
+        SessionStatus::Active,
+        "harness-owned session must not idle via scrollback heuristics"
+    );
+}
+
+#[tokio::test]
+async fn test_check_session_idle_bypasses_rate_limit_and_error_scraping() {
+    let backend = Arc::new(MockBackend::new().with_output("Error: rate limit exceeded (429)"));
+    let store = test_store().await;
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "harness-bypass-scrape".into(),
+        workdir: "/tmp/repo".into(),
+        command: "claude -p fix".into(),
+        status: SessionStatus::Active,
+        backend_session_id: Some("harness-bypass-scrape".into()),
+        harness: Some("claude".into()),
+        harness_last_event_at: Some(chrono::Utc::now()),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+    let now = chrono::Utc::now();
+    let timeout = chrono::Duration::seconds(600);
+    let dyn_backend: Arc<dyn Backend> = backend;
+
+    check_session_idle(
+        &dyn_backend,
+        &store,
+        &idle_config,
+        &session,
+        now,
+        timeout,
+        &test_ready_ctx(),
+        &[],
+    )
+    .await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fetched.meta_str(pulpo_common::session::meta::RATE_LIMIT),
+        None
+    );
+    assert_eq!(
+        fetched.meta_str(pulpo_common::session::meta::ERROR_STATUS),
+        None
+    );
+}
+
+#[tokio::test]
+async fn test_check_session_idle_without_harness_events_keeps_scraping() {
+    // Regression guard: a session with no `harness_last_event_at` (generic harness,
+    // or hooks never fired) must keep today's scrollback heuristics unchanged.
+    let backend = Arc::new(MockBackend::new().with_output("Error: rate limit exceeded (429)"));
+    let store = test_store().await;
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "no-harness-events".into(),
+        workdir: "/tmp/repo".into(),
+        command: "claude -p fix".into(),
+        status: SessionStatus::Active,
+        backend_session_id: Some("no-harness-events".into()),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+    let now = chrono::Utc::now();
+    let timeout = chrono::Duration::seconds(600);
+    let dyn_backend: Arc<dyn Backend> = backend;
+
+    check_session_idle(
+        &dyn_backend,
+        &store,
+        &idle_config,
+        &session,
+        now,
+        timeout,
+        &test_ready_ctx(),
+        &[],
+    )
+    .await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        fetched
+            .meta_str(pulpo_common::session::meta::RATE_LIMIT)
+            .is_some()
+    );
+}
+
+// ───────────────────────────────────────────────────────────
 // Stale / dead edge-case tests
 // ───────────────────────────────────────────────────────────
 
@@ -3209,7 +3389,7 @@ async fn test_detect_and_store_pr_url() {
     let session = create_running_session(&store, "pr-detect").await;
 
     let output = "Pushing...\nremote: Create a pull request:\nremote:   https://github.com/owner/repo/pull/42\n";
-    detect_and_store_output_metadata(&store, &session, output, None).await;
+    detect_and_store_output_metadata(&store, &session, output, None, false).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3229,7 +3409,7 @@ async fn test_detect_and_store_branch() {
     let session = create_running_session(&store, "branch-detect").await;
 
     let output = "To github.com:owner/repo.git\n * [new branch]      feature/x -> feature/x\n";
-    detect_and_store_output_metadata(&store, &session, output, None).await;
+    detect_and_store_output_metadata(&store, &session, output, None, false).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3259,7 +3439,7 @@ async fn test_detect_skips_if_already_stored() {
         .unwrap();
 
     let output = "https://github.com/owner/repo/pull/99\n";
-    detect_and_store_output_metadata(&store, &session, output, None).await;
+    detect_and_store_output_metadata(&store, &session, output, None, false).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3277,7 +3457,7 @@ async fn test_detect_no_match() {
     let session = create_running_session(&store, "no-match").await;
 
     let output = "$ cargo test\nrunning tests...\nall passed\n";
-    detect_and_store_output_metadata(&store, &session, output, None).await;
+    detect_and_store_output_metadata(&store, &session, output, None, false).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3293,7 +3473,7 @@ async fn test_detect_both_pr_and_branch() {
     let session = create_running_session(&store, "both-detect").await;
 
     let output = "remote: Create a pull request for 'feat/x' on GitHub:\nremote:   https://github.com/owner/repo/pull/5\n";
-    detect_and_store_output_metadata(&store, &session, output, None).await;
+    detect_and_store_output_metadata(&store, &session, output, None, false).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3314,7 +3494,7 @@ async fn test_detect_and_store_rate_limit() {
     let session = create_running_session(&store, "rate-limit-detect").await;
 
     let output = "Working...\nError: Rate limit exceeded. Please wait.\n";
-    detect_and_store_output_metadata(&store, &session, output, None).await;
+    detect_and_store_output_metadata(&store, &session, output, None, false).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3333,7 +3513,7 @@ async fn test_detect_rate_limit_updates_on_every_tick() {
 
     // First detection
     let output1 = "Error: too many requests\n";
-    detect_and_store_output_metadata(&store, &session, output1, None).await;
+    detect_and_store_output_metadata(&store, &session, output1, None, false).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3355,7 +3535,7 @@ async fn test_detect_rate_limit_updates_on_every_tick() {
         .await
         .unwrap()
         .unwrap();
-    detect_and_store_output_metadata(&store, &session2, output2, None).await;
+    detect_and_store_output_metadata(&store, &session2, output2, None, false).await;
 
     let fetched2 = store
         .get_session(&session.id.to_string())
@@ -3378,7 +3558,7 @@ async fn test_detect_no_rate_limit() {
     let session = create_running_session(&store, "no-rate-limit").await;
 
     let output = "$ cargo test\nrunning tests...\nall passed\n";
-    detect_and_store_output_metadata(&store, &session, output, None).await;
+    detect_and_store_output_metadata(&store, &session, output, None, false).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3396,7 +3576,7 @@ async fn test_rate_limit_not_cleared_after_recovery() {
 
     // First: detect rate limit
     let output1 = "Error: Rate limit exceeded\n";
-    detect_and_store_output_metadata(&store, &session, output1, None).await;
+    detect_and_store_output_metadata(&store, &session, output1, None, false).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3414,7 +3594,7 @@ async fn test_rate_limit_not_cleared_after_recovery() {
         .await
         .unwrap()
         .unwrap();
-    detect_and_store_output_metadata(&store, &session2, output2, None).await;
+    detect_and_store_output_metadata(&store, &session2, output2, None, false).await;
 
     let fetched2 = store
         .get_session(&session.id.to_string())
@@ -3435,7 +3615,7 @@ async fn test_detect_gitlab_mr_in_output_metadata() {
     let session = create_running_session(&store, "gitlab-detect").await;
 
     let output = "Created: https://gitlab.com/group/project/-/merge_requests/42\n";
-    detect_and_store_output_metadata(&store, &session, output, None).await;
+    detect_and_store_output_metadata(&store, &session, output, None, false).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
@@ -3455,7 +3635,7 @@ async fn test_detect_bitbucket_pr_in_output_metadata() {
     let session = create_running_session(&store, "bitbucket-detect").await;
 
     let output = "PR: https://bitbucket.org/owner/repo/pull-requests/7\n";
-    detect_and_store_output_metadata(&store, &session, output, None).await;
+    detect_and_store_output_metadata(&store, &session, output, None, false).await;
 
     let fetched = store
         .get_session(&session.id.to_string())
