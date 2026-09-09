@@ -16,7 +16,7 @@ Do not expand scope into desktop/mobile clients unless explicitly requested.
 See `ROADMAP.md` "What's Next" section. In priority order:
 
 1. **Cost tracking (P5.1)** — token parsing exists, need cost rates, per-session budgets, auto-stop
-2. **Agent completion callbacks** — `PULPO_CALLBACK_URL` env var for reliable idle detection
+2. ~~Agent completion callbacks~~ — superseded by harness adapters (shipped for Claude Code; Codex and pi in progress, see `docs/architecture/harness-adapters.md`)
 3. **Landing page + demo video**
 
 **Do NOT build:** mDNS/seed discovery (removed), ocean gamification features, MCP server (removed), Kubernetes backend, team/multi-user features.

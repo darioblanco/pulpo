@@ -46,6 +46,7 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | POST | `/api/v1/sessions/:id/input` | Send text input to a session |
 | GET | `/api/v1/sessions/:id/interventions` | List watchdog interventions |
 | GET | `/api/v1/sessions/:id/stream` | WebSocket terminal stream |
+| POST | `/api/v1/sessions/:id/harness-events` | Ingest a harness lifecycle event (posted by `pulpo hook <harness>`) |
 | POST | `/api/v1/sessions/cleanup` | Remove all stopped and lost sessions |
 
 ### Create Session (POST /api/v1/sessions)
@@ -73,6 +74,26 @@ receives it. To spawn on another machine, send the request to that machine direc
 the CLI or an HTTP client at its address, e.g. `pulpo --node gpu-box spawn ...`).
 `GET /api/v1/sessions/:id/stream` is local-only by the same principle; remote terminal
 proxying is intentionally out of scope.
+
+### Harness Events (POST /api/v1/sessions/:id/harness-events)
+
+```json
+{
+  "harness": "claude",
+  "event": { "hook_event_name": "Stop", "session_id": "...", "...": "..." }
+}
+```
+
+`harness` is the adapter id (currently only `"claude"`); `event` is the raw JSON payload
+exactly as the harness's hook runner produced it, passed through unchanged. The daemon
+resolves the session's harness adapter, translates the payload into a normalized
+lifecycle event, applies the resulting state transition (see
+[Harness Adapters](/architecture/harness-adapters)), and emits the existing SSE `session`
+event — no separate notification channel. Returns `204 No Content` on success, `404` if
+the session doesn't exist, `400` for an unrecognized `harness` id.
+
+This endpoint isn't meant to be called directly — it's what `pulpo hook <harness>`
+(injected into the harness's own hook config at spawn time) posts to.
 
 ## Schedules
 
