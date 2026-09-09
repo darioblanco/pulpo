@@ -56,6 +56,7 @@ pub(super) fn gone(msg: &str) -> ApiError {
 /// - "cannot be resumed" → 400
 /// - "docker runtime was removed" → 400
 /// - "worktree no longer exists" (handoff, source worktree missing on disk) → 400
+/// - "unknown harness" (harness-events endpoint, unrecognized `harness` id) → 400
 /// - anything else → 500
 pub(super) fn map_manager_err(e: &anyhow::Error) -> ApiError {
     let msg = e.to_string();
@@ -66,6 +67,7 @@ pub(super) fn map_manager_err(e: &anyhow::Error) -> ApiError {
     } else if msg.contains("cannot be resumed")
         || msg.contains("docker runtime was removed")
         || msg.contains("worktree no longer exists")
+        || msg.contains("unknown harness")
     {
         bad_request(&msg)
     } else {
@@ -153,6 +155,13 @@ mod tests {
         let e = anyhow::anyhow!(
             "source session's worktree no longer exists on disk: /tmp/x — cannot hand off"
         );
+        let (status, _) = map_manager_err(&e);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_map_manager_err_unknown_harness() {
+        let e = anyhow::anyhow!("unknown harness: codex");
         let (status, _) = map_manager_err(&e);
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }

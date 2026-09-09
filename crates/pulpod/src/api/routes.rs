@@ -95,6 +95,10 @@ pub fn build(state: Arc<AppState>) -> Router {
             "/api/v1/sessions/{id}/interventions",
             get(sessions::list_interventions),
         )
+        .route(
+            "/api/v1/sessions/{id}/harness-events",
+            post(sessions::harness_events),
+        )
         .route("/api/v1/sessions/{id}/stream", get(ws::stream))
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
         .route("/api/v1/sessions/{id}/handoff", post(sessions::handoff))
@@ -420,6 +424,52 @@ mod tests {
             .json(&serde_json::json!({"text": "hello"}))
             .await;
         resp.assert_status(StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn test_harness_events_route_applies_transition() {
+        let server = test_server().await;
+        let create_resp = server
+            .post("/api/v1/sessions")
+            .json(&serde_json::json!({
+                "name": "harness-route-test",
+                "workdir": "/tmp",
+                "command": "claude -p 'fix'"
+            }))
+            .await;
+        let created: serde_json::Value = serde_json::from_str(&create_resp.text()).unwrap();
+        let id = created["session"]["id"].as_str().unwrap();
+
+        let resp = server
+            .post(&format!("/api/v1/sessions/{id}/harness-events"))
+            .json(&serde_json::json!({
+                "harness": "claude",
+                "event": {"hook_event_name": "UserPromptSubmit"}
+            }))
+            .await;
+        resp.assert_status(StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn test_harness_events_route_not_found() {
+        let server = test_server().await;
+        let resp = server
+            .post("/api/v1/sessions/nonexistent/harness-events")
+            .json(&serde_json::json!({"harness": "claude", "event": {}}))
+            .await;
+        resp.assert_status(StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_harness_events_route_bad_payload() {
+        // Missing the required `harness` field entirely — axum's Json extractor
+        // rejects it before the handler ever runs.
+        let server = test_server().await;
+        let resp = server
+            .post("/api/v1/sessions/some-id/harness-events")
+            .json(&serde_json::json!({"event": {}}))
+            .await;
+        assert!(resp.status_code().is_client_error());
     }
 
     #[tokio::test]
@@ -1119,6 +1169,16 @@ mod tests {
         let server = authed_test_server().await;
         // Protected endpoint without auth → 401
         let resp = server.get("/api/v1/sessions").await;
+        resp.assert_status(StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_required_no_token_harness_events() {
+        let server = authed_test_server().await;
+        let resp = server
+            .post("/api/v1/sessions/some-id/harness-events")
+            .json(&serde_json::json!({"harness": "claude", "event": {}}))
+            .await;
         resp.assert_status(StatusCode::UNAUTHORIZED);
     }
 
