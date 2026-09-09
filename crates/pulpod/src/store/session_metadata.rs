@@ -83,6 +83,60 @@ impl Store {
         Ok(())
     }
 
+    /// Record the harness adapter id resolved at spawn time (e.g. "claude"), and its
+    /// up-front session id when the adapter already knows one (e.g. Claude's
+    /// pre-generated `--session-id`) — so resume works even if the `SessionStart`
+    /// hook never fires.
+    pub async fn update_session_harness(
+        &self,
+        id: &str,
+        harness: &str,
+        harness_session_id: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE sessions SET harness = ?, harness_session_id = COALESCE(?, harness_session_id), updated_at = ? WHERE id = ?",
+        )
+        .bind(harness)
+        .bind(harness_session_id)
+        .bind(Utc::now().to_rfc3339())
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Store the harness's own session/thread id, learned from a `SessionStarted`
+    /// event (may arrive after spawn-time already set it, or be the first time it's
+    /// known for adapters that don't generate one up front).
+    pub async fn update_session_harness_session_id(
+        &self,
+        id: &str,
+        harness_session_id: &str,
+    ) -> Result<()> {
+        sqlx::query("UPDATE sessions SET harness_session_id = ?, updated_at = ? WHERE id = ?")
+            .bind(harness_session_id)
+            .bind(Utc::now().to_rfc3339())
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Stamp `harness_last_event_at = now` — called on every ingested harness event,
+    /// regardless of whether it maps to a recognized [`crate::harness::HarnessEvent`].
+    /// Its presence tells the watchdog that hook events are flowing for this session,
+    /// so scrollback heuristics should be skipped.
+    pub async fn touch_harness_last_event_at(&self, id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query("UPDATE sessions SET harness_last_event_at = ?, updated_at = ? WHERE id = ?")
+            .bind(&now)
+            .bind(&now)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn clear_session_idle_since(&self, id: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query("UPDATE sessions SET idle_since = NULL, updated_at = ? WHERE id = ?")

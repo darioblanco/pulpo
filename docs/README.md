@@ -109,9 +109,10 @@ run.
 4. [Core Concepts](/architecture/core-concepts) for the vocabulary
 5. [Architecture Overview](/architecture/overview) for the mental model
 6. [Session Lifecycle](/operations/session-lifecycle) for behavior guarantees
-7. [Configuration Guide](/guides/configuration) for operational setup
-8. [Config Reference](/reference/config) for every config key, including `[rates.<model>]`
-9. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
+7. [Harness Adapters](/architecture/harness-adapters) for how agent lifecycle events replace scrollback scraping
+8. [Configuration Guide](/guides/configuration) for operational setup
+9. [Config Reference](/reference/config) for every config key, including `[rates.<model>]`
+10. [CLI Reference](/reference/cli) or [API Reference](/reference/api) for exact commands
 
 ## Quick Links
 
@@ -123,6 +124,7 @@ run.
 - [Core Concepts](/architecture/core-concepts)
 - [Architecture Overview](/architecture/overview)
 - [Session Lifecycle](/operations/session-lifecycle)
+- [Harness Adapters](/architecture/harness-adapters)
 - [Configuration Guide](/guides/configuration)
 - [Discovery Guide](/guides/discovery)
 - [Control Your Agents From Anywhere](/guides/remote-control)

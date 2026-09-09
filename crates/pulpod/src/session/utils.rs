@@ -192,6 +192,19 @@ pub fn worktrees_dir(data_dir: &str) -> PathBuf {
     Path::new(data_dir).join("worktrees")
 }
 
+/// Directory holding one session's harness adapter files (e.g. Claude's
+/// `claude-settings.json`): `{data_dir}/harness/{id}`.
+pub fn harness_dir(data_dir: &str, id: &str) -> PathBuf {
+    Path::new(data_dir).join("harness").join(id)
+}
+
+/// Remove a session's harness adapter directory (best-effort, idempotent). Returns
+/// `true` when a directory actually existed and was removed.
+pub fn cleanup_harness_dir(data_dir: &str, id: &str) -> bool {
+    let dir = harness_dir(data_dir, id);
+    dir.exists() && std::fs::remove_dir_all(&dir).is_ok()
+}
+
 /// Find orphaned worktree directories: immediate subdirectories of `worktrees_dir`
 /// whose absolute path is not referenced by any live session. These belong to
 /// sessions that were already deleted from the database but whose directory leaked.
@@ -452,6 +465,28 @@ mod cleanup_tests {
     #[test]
     fn test_worktrees_dir_format() {
         assert_eq!(worktrees_dir("/data"), Path::new("/data/worktrees"));
+    }
+
+    #[test]
+    fn test_harness_dir_format() {
+        assert_eq!(harness_dir("/data", "abc"), Path::new("/data/harness/abc"));
+    }
+
+    #[test]
+    fn test_cleanup_harness_dir_removes_existing_and_reports_false_when_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().to_str().unwrap();
+        let id = "11111111-1111-1111-1111-111111111111";
+        // Absent → false.
+        assert!(!cleanup_harness_dir(data_dir, id));
+
+        let dir = harness_dir(data_dir, id);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("claude-settings.json"), b"{}").unwrap();
+        assert!(cleanup_harness_dir(data_dir, id));
+        assert!(!dir.exists());
+        // Idempotent — a second call finds nothing left to remove.
+        assert!(!cleanup_harness_dir(data_dir, id));
     }
 
     #[test]

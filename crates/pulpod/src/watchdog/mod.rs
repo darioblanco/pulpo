@@ -49,6 +49,19 @@ fn resolve_backend_id(session: &Session, backend: &dyn Backend) -> String {
         .unwrap_or_else(|| backend.session_id(&session.name))
 }
 
+/// True when a harness adapter owns this session's state — its `harness_last_event_at`
+/// is set, meaning lifecycle hook events are flowing for it. The single switch for the
+/// watchdog bypass (spec §5): when true, `detect_waiting_for_input`, `detect_rate_limit`,
+/// `detect_error`, and the time-based Active→Idle transition are all skipped — hook
+/// events own those signals instead. Memory intervention, git telemetry, PR detection,
+/// and `idle_timeout` still apply regardless (see `watchdog::idle::handle_idle_session`,
+/// which runs unconditionally for every session). Sessions without events (generic
+/// harness, or a harness whose hooks failed to install) keep today's heuristics
+/// unchanged, since `harness_last_event_at` never gets set for them.
+pub(super) const fn harness_owns_state(session: &Session) -> bool {
+    session.harness_last_event_at.is_some()
+}
+
 /// List all sessions from the store, warning (with the caller's `context` label)
 /// and returning an empty list on error so watchdog checks degrade gracefully
 /// instead of aborting the tick.

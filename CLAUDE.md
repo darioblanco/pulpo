@@ -191,6 +191,7 @@ describe('api', () => {
 - **Async**: All I/O is async via `tokio`. Backend trait methods are sync (tmux commands are fast) but called from async context via `tokio::task::spawn_blocking` when needed.
 - **Naming**: Session names are kebab-case, **validated server-side** by `validate_session_name()` in `session/manager.rs` (`[a-z0-9-]`, max 128 chars). This is security-critical — session names are interpolated into shell commands in `wrap_command`. Schedule names follow the same rules. Any new code path that accepts session/schedule names MUST validate them.
 - **Exit markers**: `wrap_command` writes `{data_dir}/exit/{id}.code` (agent exit code) and `{id}.clean` (shell ended normally). A dead tmux session WITH a marker resolves to `Stopped` (clean end); without → `Lost` (crash). Markers are purged with the session and swept by `pulpo cleanup`.
+- **Harness adapters**: `session/manager.rs` resolves a `HarnessAdapter` (`harness/`) at spawn/resume time to rewrite the command so the harness (currently Claude Code) reports lifecycle events to `pulpo hook <harness>` → `POST /api/v1/sessions/{id}/harness-events`. Once a session's `harness_last_event_at` is set, the watchdog stops applying scrollback heuristics to it (see `watchdog::harness_owns_state`) — hook events own its state instead. See `docs/architecture/harness-adapters.md`.
 - **Session IDs**: `backend_session_id` stores the tmux `$N` session ID (monotonically increasing, never reused while tmux server runs). At startup, name-based IDs are upgraded to `$N` IDs.
 - **Database**: SQLite via `sqlx`. Versioned schema migrations live in `crates/pulpod/migrations/`; `store/mod.rs` contains the runtime store API only. Use `sqlx::query!` macro for compile-time checked queries when possible.
 - **Config**: TOML config at `~/.pulpo/config.toml`. All fields have sensible defaults — pulpod runs with zero config. Key watchdog config fields: `idle_threshold_secs` (seconds of unchanged output before Active→Idle, default 60), `waiting_patterns` (extra user-defined patterns appended to the 29 built-in waiting-for-input patterns).
@@ -285,6 +286,11 @@ pulpo/
 │   │   ├── watchdog/             # Resource monitoring
 │   │   │   ├── mod.rs            # Watchdog loop (memory + idle detection)
 │   │   │   └── memory.rs         # System memory probing
+│   │   ├── harness/               # Harness adapters (agent lifecycle events)
+│   │   │   ├── mod.rs            # HarnessAdapter trait, HarnessEvent, state transitions
+│   │   │   ├── registry.rs       # HarnessRegistry: resolve a command line to an adapter
+│   │   │   ├── generic.rs        # Fallback adapter: no rewrite, no events
+│   │   │   └── claude.rs         # Claude Code adapter (hooks, --session-id/--resume)
 │   │   └── discovery/            # Peer discovery (Tailscale)
 │   │       ├── mod.rs            # Discovery types + constants
 │   │       └── tailscale.rs      # Tailscale API peer discovery

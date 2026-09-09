@@ -85,6 +85,13 @@ pub(super) fn row_to_session(row: &SqliteRow) -> Result<Session> {
             let s: Option<String> = row.try_get("runtime").unwrap_or(None);
             s.and_then(|s| s.parse().ok()).unwrap_or_default()
         },
+        harness: row.try_get("harness").unwrap_or(None),
+        harness_session_id: row.try_get("harness_session_id").unwrap_or(None),
+        harness_last_event_at: {
+            let s: Option<String> = row.try_get("harness_last_event_at").unwrap_or(None);
+            s.map(|s| DateTime::parse_from_rfc3339(&s).map(|dt| dt.with_timezone(&Utc)))
+                .transpose()?
+        },
         created_at: DateTime::parse_from_rfc3339(&created_str)?.with_timezone(&Utc),
         updated_at: DateTime::parse_from_rfc3339(&updated_str)?.with_timezone(&Utc),
     })
@@ -298,6 +305,103 @@ mod tests {
         assert_eq!(session.git_deletions, Some(0));
         assert_eq!(session.git_ahead, Some(0));
         assert_eq!(session.runtime, Runtime::default());
+    }
+
+    #[tokio::test]
+    async fn test_row_to_session_parses_harness_fields() {
+        let pool = memory_pool().await;
+        let row = sqlx::query(
+            r"
+            SELECT
+                ? AS id,
+                'sess' AS name,
+                '/tmp/repo' AS workdir,
+                'claude' AS command,
+                NULL AS description,
+                'active' AS status,
+                NULL AS exit_code,
+                'backend-1' AS backend_session_id,
+                NULL AS output_snapshot,
+                '{}' AS metadata,
+                NULL AS ink,
+                NULL AS intervention_code,
+                NULL AS intervention_reason,
+                NULL AS intervention_at,
+                NULL AS last_output_at,
+                NULL AS idle_since,
+                NULL AS idle_threshold_secs,
+                NULL AS worktree_path,
+                NULL AS worktree_branch,
+                NULL AS git_branch,
+                NULL AS git_commit,
+                NULL AS git_files_changed,
+                NULL AS git_insertions,
+                NULL AS git_deletions,
+                NULL AS git_ahead,
+                'tmux' AS runtime,
+                'claude' AS harness,
+                'sid-abc' AS harness_session_id,
+                '2024-01-01T00:00:00Z' AS harness_last_event_at,
+                '2024-01-01T00:00:00Z' AS created_at,
+                '2024-01-01T00:00:00Z' AS updated_at
+            ",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let session = row_to_session(&row).unwrap();
+        assert_eq!(session.harness.as_deref(), Some("claude"));
+        assert_eq!(session.harness_session_id.as_deref(), Some("sid-abc"));
+        assert!(session.harness_last_event_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_row_to_session_invalid_harness_last_event_at_returns_error() {
+        let pool = memory_pool().await;
+        let row = sqlx::query(
+            r"
+            SELECT
+                ? AS id,
+                'sess' AS name,
+                '/tmp/repo' AS workdir,
+                'claude' AS command,
+                NULL AS description,
+                'active' AS status,
+                NULL AS exit_code,
+                'backend-1' AS backend_session_id,
+                NULL AS output_snapshot,
+                '{}' AS metadata,
+                NULL AS ink,
+                NULL AS intervention_code,
+                NULL AS intervention_reason,
+                NULL AS intervention_at,
+                NULL AS last_output_at,
+                NULL AS idle_since,
+                NULL AS idle_threshold_secs,
+                NULL AS worktree_path,
+                NULL AS worktree_branch,
+                NULL AS git_branch,
+                NULL AS git_commit,
+                NULL AS git_files_changed,
+                NULL AS git_insertions,
+                NULL AS git_deletions,
+                NULL AS git_ahead,
+                'tmux' AS runtime,
+                'claude' AS harness,
+                'sid-abc' AS harness_session_id,
+                'not-a-date' AS harness_last_event_at,
+                '2024-01-01T00:00:00Z' AS created_at,
+                '2024-01-01T00:00:00Z' AS updated_at
+            ",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert!(row_to_session(&row).is_err());
     }
 
     #[tokio::test]

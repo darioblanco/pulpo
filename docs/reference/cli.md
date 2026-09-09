@@ -126,6 +126,27 @@ pulpo secret delete <NAME>                Delete a secret (alias: rm)
 
 Secrets are environment variables injected into sessions. Names must be uppercase alphanumeric with underscores (e.g., `GITHUB_TOKEN`). Values are never returned by the API.
 
+## Hook (internal)
+
+```text
+pulpo hook <harness> [--event <NAME>]     Report a harness lifecycle event to the daemon
+```
+
+Not meant to be run by hand — a [harness adapter](/architecture/harness-adapters) (e.g.
+the Claude Code adapter) injects this as the command for its own hook config at spawn
+time, so the harness itself invokes it whenever a lifecycle event fires (a turn
+finishes, the agent needs a permission decision, the session ends, ...).
+
+- Reads the event JSON from stdin (or treats it as `{}` if stdin is empty/unparseable).
+- Resolves the session from the `PULPO_SESSION_ID` environment variable, which the
+  session wrapper already exports into every pulpo-managed process. If it's unset (the
+  harness is running outside pulpo), the hook exits immediately without a network call.
+- `--event <NAME>` fills in `hook_event_name` in the payload when the harness's own
+  JSON doesn't already carry one; pulpo's own Claude settings never need it.
+- POSTs to `/api/v1/sessions/{id}/harness-events` with a 2-second timeout.
+- **Always exits 0 and prints nothing on success** — a hook must never block or break
+  the agent it's wired into, regardless of what the daemon does or doesn't do.
+
 ## Global Options
 
 ```text

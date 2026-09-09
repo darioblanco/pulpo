@@ -30,6 +30,20 @@ fn format_branch(session: &Session) -> String {
     format!("{branch}{suffix}")
 }
 
+/// Status label: `needs input (<reason>)` when the session is idle because a harness
+/// hook reported it's blocked on the human, distinct from plain `idle` (done with the
+/// turn, nothing pending). Anything else renders as the plain status string.
+fn format_status(session: &Session) -> String {
+    use pulpo_common::session::{SessionStatus, meta};
+
+    if session.status == SessionStatus::Idle
+        && let Some(reason) = session.meta_str(meta::NEEDS_INPUT)
+    {
+        return format!("needs input ({reason})");
+    }
+    session.status.to_string()
+}
+
 /// Build a display name with badges: [wt] [PR] [!]
 fn format_name(session: &Session) -> String {
     use pulpo_common::session::meta;
@@ -99,7 +113,7 @@ pub fn format_sessions(sessions: &[Session]) -> String {
             (
                 s.id.to_string()[..8].to_owned(),
                 format_name(s),
-                s.status.to_string(),
+                format_status(s),
                 format_usage(s),
                 format_branch(s),
                 s.command.clone(),
@@ -109,7 +123,7 @@ pub fn format_sessions(sessions: &[Session]) -> String {
 
     let w_id = 8;
     let w_name = rows.iter().map(|r| r.1.len()).max().unwrap_or(4).max(4);
-    let w_status = 8;
+    let w_status = rows.iter().map(|r| r.2.len()).max().unwrap_or(8).max(8);
     let w_usage = rows.iter().map(|r| r.3.len()).max().unwrap_or(5).max(5);
     let w_branch = rows.iter().map(|r| r.4.len()).max().unwrap_or(6).max(6);
 
@@ -594,6 +608,62 @@ mod tests {
         }];
         let output = format_sessions(&sessions);
         assert!(output.contains("[!]"));
+    }
+
+    #[test]
+    fn test_format_status_needs_input_distinct_from_plain_idle() {
+        use pulpo_common::session::SessionStatus;
+
+        let mut meta = std::collections::HashMap::new();
+        meta.insert("needs_input".into(), "permission".into());
+        let blocked = Session {
+            status: SessionStatus::Idle,
+            metadata: Some(meta),
+            ..Default::default()
+        };
+        assert_eq!(format_status(&blocked), "needs input (permission)");
+
+        let plain_idle = Session {
+            status: SessionStatus::Idle,
+            ..Default::default()
+        };
+        assert_eq!(format_status(&plain_idle), "idle");
+    }
+
+    #[test]
+    fn test_format_status_needs_input_only_applies_to_idle() {
+        // needs_input metadata lingering on a non-idle session (shouldn't happen in
+        // practice — Working/SessionStarted clear it — but format defensively) must
+        // not override an Active/other status label.
+        let mut meta = std::collections::HashMap::new();
+        meta.insert("needs_input".into(), "permission".into());
+        let session = Session {
+            status: pulpo_common::session::SessionStatus::Active,
+            metadata: Some(meta),
+            ..Default::default()
+        };
+        assert_eq!(format_status(&session), "active");
+    }
+
+    #[test]
+    fn test_format_sessions_renders_needs_input_badge() {
+        use pulpo_common::session::SessionStatus;
+
+        let mut meta = std::collections::HashMap::new();
+        meta.insert("needs_input".into(), "question".into());
+        let sessions = vec![Session {
+            name: "blocked-sess".into(),
+            workdir: "/tmp/repo".into(),
+            command: "claude -p fix".into(),
+            status: SessionStatus::Idle,
+            metadata: Some(meta),
+            ..Default::default()
+        }];
+        let output = format_sessions(&sessions);
+        assert!(
+            output.contains("needs input (question)"),
+            "should render needs-input badge: {output}"
+        );
     }
 
     #[test]
