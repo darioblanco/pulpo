@@ -76,6 +76,17 @@ pub struct SendInputRequest {
     pub text: String,
 }
 
+/// `POST /api/v1/sessions/{id}/harness-events` request body.
+///
+/// Posted by `pulpo hook <harness>`. `event` is the raw JSON payload as received from
+/// the harness (e.g. a Claude Code hook's stdin JSON), passed through unchanged for
+/// the adapter to parse.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HarnessEventRequest {
+    pub harness: String,
+    pub event: serde_json::Value,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct OutputQuery {
     pub lines: Option<usize>,
@@ -826,6 +837,31 @@ mod tests {
         };
         let debug = format!("{req:?}");
         assert!(debug.contains("test"));
+    }
+
+    #[test]
+    fn test_harness_event_request_deserialize() {
+        let json = r#"{"harness":"claude","event":{"hook_event_name":"Stop"}}"#;
+        let req: HarnessEventRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.harness, "claude");
+        assert_eq!(req.event["hook_event_name"], "Stop");
+    }
+
+    #[test]
+    fn test_harness_event_request_missing_harness() {
+        let json = r#"{"event":{}}"#;
+        assert!(serde_json::from_str::<HarnessEventRequest>(json).is_err());
+    }
+
+    #[test]
+    fn test_harness_event_request_clone_and_debug() {
+        let req = HarnessEventRequest {
+            harness: "claude".into(),
+            event: serde_json::json!({"a": 1}),
+        };
+        let cloned = req.clone();
+        assert_eq!(cloned.harness, "claude");
+        assert!(format!("{req:?}").contains("claude"));
     }
 
     #[test]
