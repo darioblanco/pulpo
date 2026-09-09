@@ -99,11 +99,16 @@ produces `claude --resume <id> <remaining args>`. That command is run through
 (`permission_prompt` → Permission, `idle_prompt` → Idle, `agent_needs_input`/
 `elicitation_*` → Question). Anything else is `Ok(None)` — pulpo doesn't care about it.
 
-> The exact JSON field a `Notification` hook uses to carry its matcher tag couldn't be
-> independently confirmed from the CLI surface alone. `parse_event` checks a few
-> plausible field names (`matcher`, `notification_type`, `type`) before falling back
-> to keyword-matching the human-readable `message` text — worth re-verifying against a
-> real fired hook and tightening if the field name turns out to differ.
+> Verified 2026-09-09 against Claude Code v2.1.266 with a real permission prompt: the
+> `Notification` payload carries `"notification_type": "permission_prompt"` plus a
+> human-readable `"message"`. `parse_event` reads `notification_type` (and tolerates
+> `matcher`/`type`) before falling back to keyword-matching `message`.
+>
+> Known gap: Claude's *workspace trust* dialog ("Yes, I trust this folder") is shown
+> before `SessionStart` fires, so no hook can report it. Until events flow the watchdog
+> still applies the scrollback heuristics, and the built-in waiting patterns include that
+> dialog's wording, so the session is reported as waiting for input anyway. `Stop` does
+> not fire for a turn that was interrupted (Esc); `SessionEnd` still does.
 
 ## Event ingestion
 

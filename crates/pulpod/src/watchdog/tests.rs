@@ -2419,6 +2419,14 @@ fn test_detect_waiting_claude_code() {
 }
 
 #[test]
+fn test_detect_waiting_claude_trust_dialog() {
+    // Shown before Claude's SessionStart hook fires, so only scrollback can catch it.
+    let output = "Quick safety check: Is this a project you created or one you trust?\n\
+                  \u{276f} No, exit\n  Yes, I trust this folder\n  Enter to confirm \u{b7} Esc to cancel";
+    assert!(detect_waiting_for_input(output, &[]));
+}
+
+#[test]
 fn test_detect_waiting_extra_patterns() {
     let extras = vec!["custom prompt>".to_string()];
     assert!(detect_waiting_for_input(
