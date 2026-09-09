@@ -291,6 +291,7 @@ pulpo/
 │   │   │   ├── registry.rs       # HarnessRegistry: resolve a command line to an adapter
 │   │   │   ├── generic.rs        # Fallback adapter: no rewrite, no events
 │   │   │   ├── claude.rs         # Claude Code adapter (hooks, --session-id/--resume)
+│   │   │   ├── codex.rs          # Codex adapter (isolated CODEX_HOME + hooks/notify)
 │   │   │   ├── pi.rs             # pi adapter (pulpo.ts extension, --session-id)
 │   │   │   └── pulpo.ts.tmpl     # pi extension file template (embedded via include_str!)
 │   │   └── discovery/            # Peer discovery (Tailscale)

@@ -145,6 +145,79 @@ pub async fn execute_hook_with_stdin(
     String::new()
 }
 
+/// Codex's `notify` mechanism delivers its JSON payload as a trailing argv element
+/// rather than stdin — `harness::codex::CodexAdapter` wires `notify` to
+/// `sh -c '<pulpo-bin> hook codex-notify "$0"'`, which turns the appended payload
+/// into `$0`, i.e. this command's `payload` argument (see `Commands::Hook`). This is
+/// the `pulpo hook codex-notify <payload>` entry point: posts the raw payload to the
+/// daemon as harness "codex" (`CodexAdapter::parse_event` maps its `type` field,
+/// `agent-turn-complete`, to `TurnFinished`) and — when the payload carries a
+/// session/thread id — posts a synthetic `SessionStart`-shaped event first, so pulpo
+/// learns the harness session id even if the `SessionStart` hook itself never fired.
+/// Same always-exit-0/2s-timeout/silent contract as [`execute_hook`]; `session_id`
+/// is `None` under the same circumstances (`PULPO_SESSION_ID` unset).
+pub async fn execute_codex_notify_hook(
+    cli: &Cli,
+    session_id: Option<&str>,
+    raw_payload: &str,
+) -> String {
+    let Some(session_id) = session_id else {
+        return String::new();
+    };
+
+    let client = reqwest::Client::new();
+    let (resolved_node, peer_token) = resolve_node(&client, &cli.node).await;
+    let base = base_url(&resolved_node);
+    let token = resolve_token(&client, &base, &resolved_node, cli.token.as_deref())
+        .await
+        .or(peer_token);
+
+    let payload = parse_hook_event_json(raw_payload);
+    if let Some(thread_id) = extract_notify_thread_id(&payload) {
+        let synthetic = serde_json::json!({
+            "hook_event_name": "SessionStart",
+            "session_id": thread_id,
+            "source": "notify",
+        })
+        .to_string();
+        post_hook_event(
+            &client,
+            &base,
+            token.as_deref(),
+            session_id,
+            "codex",
+            None,
+            &synthetic,
+        )
+        .await;
+    }
+
+    post_hook_event(
+        &client,
+        &base,
+        token.as_deref(),
+        session_id,
+        "codex",
+        None,
+        raw_payload,
+    )
+    .await;
+
+    String::new()
+}
+
+/// Extract a Codex `notify` payload's session/thread id, checking both `thread_id`
+/// (`snake_case`, as documented) and `thread-id` (`kebab-case` — Codex's other
+/// notify fields are known to use kebab-case elsewhere, and the exact convention
+/// here wasn't independently confirmed). Returns `None` when neither is present.
+fn extract_notify_thread_id(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("thread_id")
+        .or_else(|| payload.get("thread-id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,6 +230,7 @@ mod tests {
             command: Some(Commands::Hook {
                 harness: "claude".into(),
                 event: None,
+                payload: None,
             }),
             path: None,
         }
@@ -346,5 +420,127 @@ mod tests {
         let cli = test_cli("127.0.0.1:1".into());
         let result = execute_hook(&cli, None, "claude", None).await;
         assert_eq!(result, "");
+    }
+
+    // -- extract_notify_thread_id --
+
+    #[test]
+    fn test_extract_notify_thread_id_snake_case() {
+        let payload = serde_json::json!({"thread_id": "thread-1"});
+        assert_eq!(
+            extract_notify_thread_id(&payload).as_deref(),
+            Some("thread-1")
+        );
+    }
+
+    #[test]
+    fn test_extract_notify_thread_id_kebab_case() {
+        let payload = serde_json::json!({"thread-id": "thread-1"});
+        assert_eq!(
+            extract_notify_thread_id(&payload).as_deref(),
+            Some("thread-1")
+        );
+    }
+
+    #[test]
+    fn test_extract_notify_thread_id_prefers_snake_case_when_both_present() {
+        let payload = serde_json::json!({"thread_id": "snake", "thread-id": "kebab"});
+        assert_eq!(extract_notify_thread_id(&payload).as_deref(), Some("snake"));
+    }
+
+    #[test]
+    fn test_extract_notify_thread_id_missing() {
+        let payload = serde_json::json!({"type": "agent-turn-complete"});
+        assert!(extract_notify_thread_id(&payload).is_none());
+    }
+
+    // -- execute_codex_notify_hook --
+
+    #[tokio::test]
+    async fn test_execute_codex_notify_hook_no_session_id_is_noop() {
+        // No network call is even attempted — an unreachable node would otherwise
+        // hang/error, proving this short-circuits before touching the network.
+        let cli = test_cli("127.0.0.1:1".into());
+        let result = execute_codex_notify_hook(&cli, None, "{}").await;
+        assert_eq!(result, "");
+    }
+
+    #[tokio::test]
+    async fn test_execute_codex_notify_hook_daemon_unreachable_still_returns_empty() {
+        let cli = test_cli("127.0.0.1:1".into());
+        let result = execute_codex_notify_hook(&cli, Some("sess-1"), "{}").await;
+        assert_eq!(result, "");
+    }
+
+    #[tokio::test]
+    async fn test_execute_codex_notify_hook_posts_synthetic_session_start_then_raw_payload() {
+        use axum::{Router, http::StatusCode, routing::post};
+
+        let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::<serde_json::Value>::new()));
+        let received_clone = received.clone();
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}/harness-events",
+            post(move |body: axum::extract::Json<serde_json::Value>| {
+                let received = received_clone.clone();
+                async move {
+                    received.lock().unwrap().push(body.0);
+                    StatusCode::NO_CONTENT
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+        let cli = test_cli(node);
+
+        let raw_payload = r#"{"type":"agent-turn-complete","thread_id":"thread-1","last_assistant_message":"Done"}"#;
+        let result = execute_codex_notify_hook(&cli, Some("sess-1"), raw_payload).await;
+        assert_eq!(result, "");
+
+        let posted = received.lock().unwrap().clone();
+        assert_eq!(
+            posted.len(),
+            2,
+            "expected a synthetic SessionStart post + the raw notify post"
+        );
+        assert_eq!(posted[0]["harness"], "codex");
+        assert_eq!(posted[0]["event"]["hook_event_name"], "SessionStart");
+        assert_eq!(posted[0]["event"]["session_id"], "thread-1");
+        assert_eq!(posted[0]["event"]["source"], "notify");
+        assert_eq!(posted[1]["harness"], "codex");
+        assert_eq!(posted[1]["event"]["type"], "agent-turn-complete");
+        assert_eq!(posted[1]["event"]["thread_id"], "thread-1");
+        assert_eq!(posted[1]["event"]["last_assistant_message"], "Done");
+    }
+
+    #[tokio::test]
+    async fn test_execute_codex_notify_hook_no_thread_id_skips_synthetic_post() {
+        use axum::{Router, http::StatusCode, routing::post};
+
+        let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::<serde_json::Value>::new()));
+        let received_clone = received.clone();
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}/harness-events",
+            post(move |body: axum::extract::Json<serde_json::Value>| {
+                let received = received_clone.clone();
+                async move {
+                    received.lock().unwrap().push(body.0);
+                    StatusCode::NO_CONTENT
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
+        let node = format!("127.0.0.1:{}", addr.port());
+        let cli = test_cli(node);
+
+        let raw_payload = r#"{"type":"agent-turn-complete","last_assistant_message":"Done"}"#;
+        execute_codex_notify_hook(&cli, Some("sess-1"), raw_payload).await;
+
+        let posted = received.lock().unwrap().clone();
+        assert_eq!(posted.len(), 1, "no thread id — only the raw notify post");
+        assert_eq!(posted[0]["event"]["type"], "agent-turn-complete");
     }
 }

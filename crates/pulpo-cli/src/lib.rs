@@ -248,9 +248,14 @@ pub enum Commands {
     /// run by hand). Reads the event JSON from stdin, resolves the session from
     /// `PULPO_SESSION_ID`, and always exits 0 without printing anything: a hook must
     /// never block or break the agent it's wired into.
+    ///
+    /// `harness` "codex-notify" is a special case: Codex's `notify` mechanism
+    /// delivers its JSON as a trailing argv element rather than stdin (see
+    /// `harness::codex`), so that payload is read from `payload` instead.
     #[command(hide = true)]
     Hook {
-        /// Harness id (e.g. "claude")
+        /// Harness id (e.g. "claude", "codex", or "codex-notify" for Codex's
+        /// notify mechanism)
         harness: String,
 
         /// Event name to use when the stdin payload doesn't already carry one
@@ -258,6 +263,11 @@ pub enum Commands {
         /// the payload's own `hook_event_name` field already says which event fired)
         #[arg(long = "event")]
         event: Option<String>,
+
+        /// The event JSON, passed as an argument instead of stdin — only used for
+        /// harness "codex-notify" (Codex's `notify` config delivers its payload as
+        /// the final argv element, not stdin)
+        payload: Option<String>,
     },
 }
 
@@ -1059,10 +1069,21 @@ pub async fn execute(cli: &Cli) -> Result<String> {
     // start the daemon (if `PULPO_SESSION_ID` is set, pulpod is already running —
     // it's what spawned this session), never block, and never fail the process it's
     // wired into. See `hook::execute_hook` for the full contract.
-    if let Some(Commands::Hook { harness, event }) = &cli.command {
+    if let Some(Commands::Hook {
+        harness,
+        event,
+        payload,
+    }) = &cli.command
+    {
         let session_id = std::env::var(hook::SESSION_ID_ENV)
             .ok()
             .filter(|value| !value.is_empty());
+        if harness == "codex-notify" {
+            let raw_payload = payload.clone().unwrap_or_default();
+            return Ok(
+                hook::execute_codex_notify_hook(cli, session_id.as_deref(), &raw_payload).await,
+            );
+        }
         return Ok(hook::execute_hook(cli, session_id.as_deref(), harness, event.as_deref()).await);
     }
 
@@ -2814,6 +2835,25 @@ mod tests {
             command: Some(Commands::Hook {
                 harness: "claude".into(),
                 event: None,
+                payload: None,
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_execute_codex_notify_hook_is_intercepted_before_node_preamble() {
+        // Same guarantee as the "claude" hook path above, for the "codex-notify"
+        // dispatch branch specifically.
+        let cli = Cli {
+            node: "127.0.0.1:1".into(),
+            token: None,
+            command: Some(Commands::Hook {
+                harness: "codex-notify".into(),
+                event: None,
+                payload: Some(r#"{"type":"agent-turn-complete"}"#.into()),
             }),
             path: None,
         };

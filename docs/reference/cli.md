@@ -130,25 +130,39 @@ Secrets are environment variables injected into sessions. Names must be uppercas
 
 ```text
 pulpo hook <harness> [--event <NAME>]     Report a harness lifecycle event to the daemon
+pulpo hook codex-notify <payload>         Codex's notify variant: payload as an argument, not stdin
 ```
 
 Not meant to be run by hand — a [harness adapter](/architecture/harness-adapters) (the
-Claude Code adapter's `--settings` hooks, or the pi adapter's `pulpo.ts` extension)
-injects this as the command its own hook/event config invokes, so the harness itself
-runs it whenever a lifecycle event fires (a turn finishes, the agent needs a
-permission decision, the session ends, ...).
+Claude Code adapter's `--settings` hooks, the Codex adapter's hooks/notify config, or the
+pi adapter's `pulpo.ts` extension) injects this as the command its own hook/event config
+invokes, so the harness itself runs it whenever a lifecycle event fires (a turn finishes,
+the agent needs a permission decision, the session ends, ...).
 
 - Reads the event JSON from stdin (or treats it as `{}` if stdin is empty/unparseable).
 - Resolves the session from the `PULPO_SESSION_ID` environment variable, which the
   session wrapper already exports into every pulpo-managed process. If it's unset (the
   harness is running outside pulpo), the hook exits immediately without a network call.
 - `--event <NAME>` fills in `hook_event_name` in the payload when the harness's own
-  JSON doesn't already carry one; pulpo's own Claude settings never need it (pi's
-  `pulpo.ts` always passes `--event <name>` too, alongside its own `event` field in the
-  JSON body — either is enough to identify the event).
+  JSON doesn't already carry one; pulpo's own Claude settings never need it. The Codex
+  adapter uses this for every hook it wires (`pulpo hook codex --event SessionStart`,
+  `--event Stop`, ...) since Codex's own hook payload has no confirmed field naming
+  which event fired. pi's `pulpo.ts` always passes `--event <name>` too, alongside its
+  own `event` field in the JSON body — either is enough to identify the event.
 - POSTs to `/api/v1/sessions/{id}/harness-events` with a 2-second timeout.
 - **Always exits 0 and prints nothing on success** — a hook must never block or break
   the agent it's wired into, regardless of what the daemon does or doesn't do.
+
+**`codex-notify` variant:** Codex's `notify` mechanism delivers its JSON payload as a
+trailing argv element rather than stdin, so `harness "codex-notify"` is a special case:
+the payload is read from the `<payload>` argument instead. The Codex adapter wires
+`notify = ["sh", "-c", "'<pulpo-bin>' hook codex-notify \"$0\""]` in its isolated
+`config.toml`, which turns Codex's appended JSON into `$0` and, in turn, this command's
+argument. It posts the raw payload to the daemon as harness `"codex"` (mapped to
+`TurnFinished` on `agent-turn-complete`) and, when the payload carries a session/thread
+id, first posts a synthetic `SessionStart`-shaped event so pulpo learns the harness
+session id even if the `SessionStart` hook itself never fired. Same
+always-exit-0/2s-timeout/silent contract as the general form.
 
 ## Global Options
 

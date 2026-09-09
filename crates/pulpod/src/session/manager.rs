@@ -4434,7 +4434,7 @@ mod tests {
         let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
         let session = harness_session(&mgr).await;
         let err = mgr
-            .apply_harness_event(&session.id.to_string(), "codex", &serde_json::json!({}))
+            .apply_harness_event(&session.id.to_string(), "gemini", &serde_json::json!({}))
             .await
             .unwrap_err();
         assert!(err.to_string().contains("unknown harness"));
