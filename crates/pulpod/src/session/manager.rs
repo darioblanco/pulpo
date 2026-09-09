@@ -972,10 +972,15 @@ impl SessionManager {
                 self.resolve_dead_backend_session(&mut session).await?;
                 continue;
             }
-            // Backend is dead — resume the session
-            let create_id = self.resume_create_id(&session, &backend_id, false);
+            // Backend is dead — resume the session. Use the session name for the new
+            // tmux session, not the stale $N backend ID (see resume_session above —
+            // the old backend_session_id may point to a dead tmux session that no
+            // longer exists, and reusing it verbatim as the new session's *name*
+            // produces tmux sessions literally named "$4", "$5", etc. after a reboot).
+            let create_id = self.resume_create_id(&session, &backend_id, true);
+            let effective_workdir = Self::effective_resume_workdir(&session);
             if let Err(e) = self
-                .restore_session_backend(&session, &session.workdir, &create_id)
+                .restore_session_backend(&session, &effective_workdir, &create_id)
                 .await
             {
                 tracing::warn!(
@@ -2740,6 +2745,88 @@ mod tests {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let resumed = mgr.resume_lost_sessions().await.unwrap();
         assert_eq!(resumed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_uses_name_derived_id_not_stale_backend_id() {
+        // Regression test: after a reboot, `backend_session_id` may point at a
+        // tmux $N id from a session that no longer exists. Auto-resume must create
+        // the new tmux session named after the pulpo session (via
+        // `backend.session_id(&session.name)`), not by reusing that stale $N value
+        // as the new session's name — otherwise recreated sessions end up literally
+        // named "$4", "$5", etc.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "reboot-sess".into(),
+            workdir: "/tmp".into(),
+            command: "echo hello".into(),
+            status: SessionStatus::Active,
+            backend_session_id: Some("$4".into()),
+            created_at: Utc::now() - chrono::Duration::hours(1),
+            ..Default::default()
+        };
+        mgr.store().insert_session(&session).await.unwrap();
+
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 1);
+
+        let calls: Vec<String> = backend.calls.lock().unwrap().clone();
+        assert!(
+            calls.iter().any(|c| c.starts_with("create:reboot-sess:")),
+            "expected create call keyed by session name, not stale backend id; calls: {calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|c| c.starts_with("create:$4:")),
+            "must not reuse the stale backend id as the new tmux session name; calls: {calls:?}"
+        );
+
+        // The stale $N id must not linger in the DB either — refresh_backend_session_id
+        // (called by restore_session_backend for both resume paths) re-queries the
+        // backend by name and persists the fresh id.
+        let fetched = mgr
+            .store()
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        // MockBackend.query_backend_id() returns $N where N is the name length —
+        // "reboot-sess" is 11 characters.
+        assert_eq!(fetched.backend_session_id, Some("$11".into()));
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_uses_worktree_path_when_it_exists() {
+        // Regression test: resume_lost_sessions must resume into the worktree
+        // (when it still exists on disk), the same as the manual resume_session
+        // path — not blindly into the original session.workdir.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let worktree_dir = tempfile::tempdir().unwrap();
+        let worktree_path = worktree_dir.path().to_str().unwrap().to_owned();
+
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "worktree-sess".into(),
+            workdir: "/nonexistent/original/workdir".into(),
+            worktree_path: Some(worktree_path.clone()),
+            command: "echo hello".into(),
+            status: SessionStatus::Active,
+            backend_session_id: Some("worktree-sess".into()),
+            created_at: Utc::now() - chrono::Duration::hours(1),
+            ..Default::default()
+        };
+        mgr.store().insert_session(&session).await.unwrap();
+
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 1);
+
+        let calls: Vec<String> = backend.calls.lock().unwrap().clone();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.starts_with(&format!("create:worktree-sess:{worktree_path}:"))),
+            "expected the still-existing worktree path to be used as the resumed session's workdir; calls: {calls:?}"
+        );
     }
 
     #[tokio::test]
