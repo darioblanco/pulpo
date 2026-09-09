@@ -84,8 +84,9 @@ proxying is intentionally out of scope.
 }
 ```
 
-`harness` is the adapter id (currently only `"claude"`); `event` is the raw JSON payload
-exactly as the harness's hook runner produced it, passed through unchanged. The daemon
+`harness` is the adapter id (`"claude"` or `"pi"`; `"generic"` never emits events);
+`event` is the raw JSON payload exactly as the harness's hook runner produced it (for
+`"pi"`, whatever `pulpo.ts` posted), passed through unchanged. The daemon
 resolves the session's harness adapter, translates the payload into a normalized
 lifecycle event, applies the resulting state transition (see
 [Harness Adapters](/architecture/harness-adapters)), and emits the existing SSE `session`

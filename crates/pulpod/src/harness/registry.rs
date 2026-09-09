@@ -7,6 +7,7 @@ use std::sync::Arc;
 use super::HarnessAdapter;
 use super::claude::ClaudeAdapter;
 use super::generic::GenericAdapter;
+use super::pi::PiAdapter;
 
 /// Holds adapters in priority order.
 ///
@@ -21,7 +22,11 @@ pub struct HarnessRegistry {
 impl Default for HarnessRegistry {
     fn default() -> Self {
         Self {
-            adapters: vec![Arc::new(ClaudeAdapter), Arc::new(GenericAdapter)],
+            adapters: vec![
+                Arc::new(ClaudeAdapter),
+                Arc::new(PiAdapter),
+                Arc::new(GenericAdapter),
+            ],
         }
     }
 }
@@ -157,6 +162,28 @@ mod tests {
     }
 
     #[test]
+    fn test_registry_resolves_pi() {
+        let registry = HarnessRegistry::default();
+        assert_eq!(registry.resolve("pi -p hi").id(), "pi");
+    }
+
+    #[test]
+    fn test_registry_resolves_pi_via_env_prefix() {
+        let registry = HarnessRegistry::default();
+        assert_eq!(registry.resolve("env X=1 pi").id(), "pi");
+    }
+
+    #[test]
+    fn test_registry_does_not_resolve_npx_pi_to_pi_adapter() {
+        // `npx pi ...` has argv0 basename "npx", not "pi" — pulpo's basename
+        // resolution has no npx-aware unwrapping, so this intentionally falls
+        // through to `GenericAdapter`. Documented gap, not a bug (see
+        // `pi::tests::test_matches_does_not_match_npx_pi`).
+        let registry = HarnessRegistry::default();
+        assert_eq!(registry.resolve("npx pi -p hi").id(), "generic");
+    }
+
+    #[test]
     fn test_registry_falls_back_to_generic_for_bash() {
         let registry = HarnessRegistry::default();
         assert_eq!(registry.resolve("bash").id(), "generic");
@@ -172,6 +199,7 @@ mod tests {
     fn test_registry_get_by_id() {
         let registry = HarnessRegistry::default();
         assert_eq!(registry.get("claude").unwrap().id(), "claude");
+        assert_eq!(registry.get("pi").unwrap().id(), "pi");
         assert_eq!(registry.get("generic").unwrap().id(), "generic");
         assert!(registry.get("codex").is_none());
     }
