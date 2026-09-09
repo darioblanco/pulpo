@@ -19,7 +19,7 @@ See `ROADMAP.md` "What's Next" section. In priority order:
 2. **Agent completion callbacks** — `PULPO_CALLBACK_URL` env var for reliable idle detection
 3. **Landing page + demo video**
 
-**Do NOT build:** mDNS/seed discovery (removed), ocean gamification features, MCP server (removed), Kubernetes backend, team/multi-user features.
+**Do NOT build:** mDNS/seed discovery (removed), MCP server (removed), Kubernetes backend, team/multi-user features. The ocean gamification UI was extracted to a separate `pulpo-ocean` repo (with history) — do not re-add canvas/game code to this repo.
 
 ## Quick Reference
 

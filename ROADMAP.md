@@ -109,11 +109,6 @@ unchanged — see git history of this file for the full sovereignty section.)
 - MCP server — REST is the integration surface
 - Discord bot — archive to its own repo
 
-**Kept despite earlier plans (owner's call, 2026-06-12):**
-
-- Ocean gamification — stays for now, frozen (no new investment). Its canvas code is
-  excluded from web coverage (untestable under jsdom).
-
 ## Plan
 
 ### Track R — Removals (parallel, one PR each, no dependencies)
@@ -434,7 +429,7 @@ Core infrastructure:
 - Homebrew tap distribution, CLI auto-start daemon, node name resolution
 
 Shipped but scheduled for removal under Track R: Docker runtime, worktrees web-UI page,
-Tauri mobile builds, MCP server, Discord bot, voice experiments. (Ocean UI stays, frozen.)
+Tauri mobile builds, MCP server, Discord bot, voice experiments.
 
 ## Parked
 
@@ -456,6 +451,10 @@ Revisit only on real demand:
 
 ## Removed
 
+- ~~Ocean gamification UI~~ (2026-09) — the canvas-based octopus/session visualization
+  (`web/src/components/ocean/**`, `web/src/pages/ocean.tsx`) was frozen since 2026-06-12
+  and is now extracted to a separate `pulpo-ocean` repo, with its git history intact.
+  Sessions is the web UI's landing page again.
 - ~~mDNS + seed-based discovery~~ (v0.0.41) — Tailscale + manual peers cover real usage
 - ~~Provider-specific features, guard rails, culture system~~ — agents handle these
 - ~~Per-peer session tabs, fleet click-through, `target_node` on schedules,

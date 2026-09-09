@@ -131,7 +131,6 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 - **Usage**: cost/burn gauge — account cards + per-session table (the meter)
 - **Schedules**: cron schedule management
 - **Settings**: node config, peer management
-- **Ocean**: gamified canvas view (frozen — no new investment)
 
 ---
 
