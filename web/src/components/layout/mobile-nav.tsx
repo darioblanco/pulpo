@@ -1,4 +1,4 @@
-import { Waves, LayoutList, Clock, Settings, Wallet } from 'lucide-react';
+import { LayoutList, Clock, Settings, Wallet } from 'lucide-react';
 import { Link, useLocation } from 'react-router';
 
 const navItems = [
@@ -6,7 +6,6 @@ const navItems = [
   { to: '/usage', icon: Wallet, label: 'Usage' },
   { to: '/schedules', icon: Clock, label: 'Schedules' },
   { to: '/settings', icon: Settings, label: 'Settings' },
-  { to: '/ocean', icon: Waves, label: 'Ocean' },
 ];
 
 export function MobileNav() {
@@ -20,8 +19,11 @@ export function MobileNav() {
     >
       <div className="flex">
         {navItems.map((item) => {
+          // Sessions is also the landing page, rendered at "/" with no redirect.
           const isActive =
-            item.to === '/' ? location.pathname === '/' : location.pathname.startsWith(item.to);
+            item.to === '/sessions'
+              ? location.pathname === '/' || location.pathname.startsWith(item.to)
+              : location.pathname.startsWith(item.to);
           return (
             <Link
               key={item.to}

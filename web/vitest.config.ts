@@ -29,10 +29,6 @@ export default defineConfig({
         'src/components/ui/**',
         'src/hooks/use-mobile.ts',
         'src/api/types.ts',
-        // Ocean gamification: frozen feature whose canvas rendering is not
-        // measurable under jsdom.
-        'src/components/ocean/**',
-        'src/pages/ocean.tsx',
       ],
       thresholds: {
         lines: 90,

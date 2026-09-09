@@ -116,16 +116,6 @@ The watchdog inspects the last 5 lines of terminal output for these patterns (ca
 
 Add custom patterns via `waiting_patterns` in `[watchdog]` config — they are appended to the built-in list.
 
-## Ocean Visual Mapping
-
-| State | Color | Sprite | Behavior |
-|-------|-------|--------|----------|
-| Active | Lavender | active-swim | Full swimming animation |
-| Idle | Amber/Gold | idle-idle | Minimal movement, small radius |
-| Ready | Emerald | ready-idle | Stationary |
-| Stopped | Red | stopped-idle | Stationary (same sprite as Lost, recolored) |
-| Lost | Red | lost-idle | Stationary (same sprite as Stopped, recolored) |
-
 ## Configuration
 
 ### Watchdog (in `config.toml`)
