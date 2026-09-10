@@ -56,10 +56,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 function renderNodeCard(props: {
   name: string;
   nodeInfo: NodeInfo | null;
-  status: 'online' | 'offline' | 'unknown';
   sessions: Session[];
-  isLocal?: boolean;
-  address?: string;
   onRefresh?: () => void;
 }) {
   return render(
@@ -67,10 +64,7 @@ function renderNodeCard(props: {
       <NodeCard
         name={props.name}
         nodeInfo={props.nodeInfo}
-        status={props.status}
         sessions={props.sessions}
-        isLocal={props.isLocal}
-        address={props.address}
         onRefresh={props.onRefresh ?? vi.fn()}
       />
     </MemoryRouter>,
@@ -79,12 +73,12 @@ function renderNodeCard(props: {
 
 describe('NodeCard', () => {
   it('renders node name', () => {
-    renderNodeCard({ name: 'mac-studio', nodeInfo, status: 'online', sessions: [] });
+    renderNodeCard({ name: 'mac-studio', nodeInfo, sessions: [] });
     expect(screen.getByText('mac-studio')).toBeInTheDocument();
   });
 
   it('renders node info bar with hardware details', () => {
-    renderNodeCard({ name: 'mac-studio', nodeInfo, status: 'online', sessions: [] });
+    renderNodeCard({ name: 'mac-studio', nodeInfo, sessions: [] });
     const infoBar = screen.getByTestId('node-info-bar');
     expect(infoBar).toBeInTheDocument();
     expect(infoBar).toHaveTextContent('mac-studio.local');
@@ -95,74 +89,42 @@ describe('NodeCard', () => {
 
   it('shows GPU when present', () => {
     const withGpu: NodeInfo = { ...nodeInfo, gpu: 'NVIDIA RTX 4090' };
-    renderNodeCard({ name: 'gpu-node', nodeInfo: withGpu, status: 'online', sessions: [] });
+    renderNodeCard({ name: 'gpu-node', nodeInfo: withGpu, sessions: [] });
     expect(screen.getByText('NVIDIA RTX 4090')).toBeInTheDocument();
   });
 
   it('hides GPU when null', () => {
-    renderNodeCard({ name: 'mac-studio', nodeInfo, status: 'online', sessions: [] });
+    renderNodeCard({ name: 'mac-studio', nodeInfo, sessions: [] });
     expect(screen.queryByText('NVIDIA')).not.toBeInTheDocument();
   });
 
-  it('shows address when provided', () => {
-    renderNodeCard({
-      name: 'mac-studio',
-      nodeInfo,
-      status: 'online',
-      sessions: [],
-      address: '100.64.0.1:7433',
-    });
-    expect(screen.getByText('100.64.0.1:7433')).toBeInTheDocument();
-  });
-
-  it('hides address when not provided', () => {
-    renderNodeCard({ name: 'mac-studio', nodeInfo, status: 'online', sessions: [] });
-    expect(screen.queryByText(/:\d{4}$/)).not.toBeInTheDocument();
-  });
-
   it('does not render info bar when nodeInfo is null', () => {
-    renderNodeCard({ name: 'node', nodeInfo: null, status: 'offline', sessions: [] });
+    renderNodeCard({ name: 'node', nodeInfo: null, sessions: [] });
     expect(screen.queryByTestId('node-info-bar')).not.toBeInTheDocument();
   });
 
   it('shows local badge', () => {
-    renderNodeCard({ name: 'my-node', nodeInfo, status: 'online', sessions: [], isLocal: true });
+    renderNodeCard({ name: 'my-node', nodeInfo, sessions: [] });
     expect(screen.getByText('local')).toBeInTheDocument();
   });
 
   it('shows empty message when no sessions', () => {
-    renderNodeCard({ name: 'node', nodeInfo, status: 'online', sessions: [] });
+    renderNodeCard({ name: 'node', nodeInfo, sessions: [] });
     expect(screen.getByText('No active sessions on this node.')).toBeInTheDocument();
   });
 
-  it('shows offline message', () => {
-    renderNodeCard({ name: 'node', nodeInfo: null, status: 'offline', sessions: [] });
-    expect(screen.getByText(/Node is offline/)).toBeInTheDocument();
-  });
-
-  it('shows unknown status message', () => {
-    renderNodeCard({ name: 'node', nodeInfo: null, status: 'unknown', sessions: [] });
-    expect(screen.getByText(/Node is unknown/)).toBeInTheDocument();
-  });
-
-  it('renders session cards for online node with sessions', () => {
+  it('renders session cards when sessions are present', () => {
     renderNodeCard({
       name: 'node',
       nodeInfo,
-      status: 'online',
       sessions: [makeSession()],
     });
     expect(screen.getByText('my-api')).toBeInTheDocument();
   });
 
-  it('applies opacity class for offline nodes', () => {
-    renderNodeCard({ name: 'node', nodeInfo: null, status: 'offline', sessions: [] });
-    expect(screen.getByTestId('node-card').className).toContain('opacity-50');
-  });
-
   it('formats memory in MB for small values', () => {
     const smallMem: NodeInfo = { ...nodeInfo, memory_mb: 512 };
-    renderNodeCard({ name: 'node', nodeInfo: smallMem, status: 'online', sessions: [] });
+    renderNodeCard({ name: 'node', nodeInfo: smallMem, sessions: [] });
     expect(screen.getByTestId('node-info-bar')).toHaveTextContent('512 MB');
   });
 });

@@ -53,23 +53,20 @@ beforeEach(() => {
 });
 
 function renderDashboard() {
-  // Default mock: getPeers and getSessions both return data
+  // Default mock: getNode and getSessions both return data
   mockFetch.mockImplementation(async (url: string) => {
-    if (url.includes('/peers')) {
+    if (url.includes('/node')) {
       return {
         ok: true,
         json: () =>
           Promise.resolve({
-            local: {
-              name: 'mac-studio',
-              hostname: 'mac-studio.local',
-              os: 'macOS',
-              arch: 'arm64',
-              cpus: 12,
-              memory_mb: 65536,
-              gpu: null,
-            },
-            peers: [],
+            name: 'mac-studio',
+            hostname: 'mac-studio.local',
+            os: 'macOS',
+            arch: 'arm64',
+            cpus: 12,
+            memory_mb: 65536,
+            gpu: null,
           }),
       };
     }
@@ -188,21 +185,18 @@ describe('DashboardPage', () => {
     ];
 
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes('/peers')) {
+      if (url.includes('/node')) {
         return {
           ok: true,
           json: () =>
             Promise.resolve({
-              local: {
-                name: 'mac-studio',
-                hostname: 'mac-studio.local',
-                os: 'macOS',
-                arch: 'arm64',
-                cpus: 12,
-                memory_mb: 65536,
-                gpu: null,
-              },
-              peers: [],
+              name: 'mac-studio',
+              hostname: 'mac-studio.local',
+              os: 'macOS',
+              arch: 'arm64',
+              cpus: 12,
+              memory_mb: 65536,
+              gpu: null,
             }),
         };
       }
@@ -262,21 +256,18 @@ describe('DashboardPage', () => {
     ];
 
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes('/peers')) {
+      if (url.includes('/node')) {
         return {
           ok: true,
           json: () =>
             Promise.resolve({
-              local: {
-                name: 'mac-studio',
-                hostname: 'mac-studio.local',
-                os: 'macOS',
-                arch: 'arm64',
-                cpus: 12,
-                memory_mb: 65536,
-                gpu: null,
-              },
-              peers: [],
+              name: 'mac-studio',
+              hostname: 'mac-studio.local',
+              os: 'macOS',
+              arch: 'arm64',
+              cpus: 12,
+              memory_mb: 65536,
+              gpu: null,
             }),
         };
       }
@@ -347,21 +338,18 @@ describe('DashboardPage', () => {
     ];
 
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes('/peers')) {
+      if (url.includes('/node')) {
         return {
           ok: true,
           json: () =>
             Promise.resolve({
-              local: {
-                name: 'mac-studio',
-                hostname: 'mac-studio.local',
-                os: 'macOS',
-                arch: 'arm64',
-                cpus: 12,
-                memory_mb: 65536,
-                gpu: null,
-              },
-              peers: [],
+              name: 'mac-studio',
+              hostname: 'mac-studio.local',
+              os: 'macOS',
+              arch: 'arm64',
+              cpus: 12,
+              memory_mb: 65536,
+              gpu: null,
             }),
         };
       }
@@ -417,21 +405,18 @@ describe('DashboardPage', () => {
     ];
 
     mockFetch.mockImplementation(async (url: string) => {
-      if (url.includes('/peers')) {
+      if (url.includes('/node')) {
         return {
           ok: true,
           json: () =>
             Promise.resolve({
-              local: {
-                name: 'mac-studio',
-                hostname: 'mac-studio.local',
-                os: 'macOS',
-                arch: 'arm64',
-                cpus: 12,
-                memory_mb: 65536,
-                gpu: null,
-              },
-              peers: [],
+              name: 'mac-studio',
+              hostname: 'mac-studio.local',
+              os: 'macOS',
+              arch: 'arm64',
+              cpus: 12,
+              memory_mb: 65536,
+              gpu: null,
             }),
         };
       }

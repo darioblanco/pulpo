@@ -126,10 +126,10 @@ For the full workflow, see [Worktrees](/guides/worktrees).
 
 ## 10. Remote Nodes
 
-Spawn on another machine by name:
+Spawn on another machine by address:
 
 ```bash
-pulpo --node mac-mini spawn gpu-task -- python train.py
+pulpo --url mac-mini spawn gpu-task -- python train.py
 ```
 
 This is where Pulpo starts to feel different from a local session manager: the
@@ -153,7 +153,6 @@ curl -N http://localhost:7433/api/v1/events  # SSE stream
 - [Core Concepts](/architecture/core-concepts) — the smallest vocabulary for understanding Pulpo
 - [Architecture Overview](/architecture/overview) — the session/runtime/watchdog mental model
 - [Session Lifecycle](/operations/session-lifecycle) — exact transition behavior
-- [Configuration Guide](/guides/configuration) — watchdog, notifications, peers
+- [Configuration Guide](/guides/configuration) — watchdog, notifications, bind modes
 - [Examples](https://github.com/darioblanco/pulpo/tree/main/examples) — runnable CLI workflows
-- [Discovery Guide](/guides/discovery) — multi-node setup with Tailscale or manual peers
 - [CLI Reference](/reference/cli) — all commands, flags, and scripting recipes

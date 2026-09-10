@@ -21,9 +21,6 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | PUT | `/api/v1/watchdog` | Update watchdog config (live reload) |
 | GET | `/api/v1/notifications` | Notification config |
 | PUT | `/api/v1/notifications` | Update notification config |
-| GET | `/api/v1/peers` | List known peers |
-| POST | `/api/v1/peers` | Add a manual peer |
-| DELETE | `/api/v1/peers/:name` | Remove a manual peer |
 
 ## Auth
 
@@ -70,7 +67,7 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 
 There is no cross-node targeting — a create request always runs on the `pulpod` that
 receives it. To spawn on another machine, send the request to that machine directly (point
-the CLI or an HTTP client at its address, e.g. `pulpo --node gpu-box spawn ...`).
+the CLI or an HTTP client at its address, e.g. `pulpo --url gpu-box spawn ...`).
 `GET /api/v1/sessions/:id/stream` is local-only by the same principle; remote terminal
 proxying is intentionally out of scope.
 

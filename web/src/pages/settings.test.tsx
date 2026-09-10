@@ -10,9 +10,6 @@ import type { ConfigResponse } from '@/api/types';
 vi.mock('@/api/client', () => ({
   getConfig: vi.fn(),
   updateConfig: vi.fn(),
-  getPeers: vi.fn(),
-  addPeer: vi.fn(),
-  removePeer: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
@@ -26,7 +23,6 @@ vi.stubGlobal('localStorage', {
 
 const mockGetConfig = vi.mocked(api.getConfig);
 const mockUpdateConfig = vi.mocked(api.updateConfig);
-const mockGetPeers = vi.mocked(api.getPeers);
 
 const testConfig: ConfigResponse = {
   node: {
@@ -35,9 +31,7 @@ const testConfig: ConfigResponse = {
     data_dir: '~/.pulpo/data',
     bind: 'local',
     tag: null,
-    discovery_interval_secs: 60,
   },
-  peers: {},
   watchdog: {
     enabled: true,
     memory_threshold: 85,
@@ -52,20 +46,9 @@ const testConfig: ConfigResponse = {
   },
 };
 
-const testNode = {
-  name: 'mac-studio',
-  hostname: 'mac',
-  os: 'darwin',
-  arch: 'arm64',
-  cpus: 8,
-  memory_mb: 32000,
-  gpu: null,
-};
-
 beforeEach(() => {
   mockGetConfig.mockReset();
   mockUpdateConfig.mockReset();
-  mockGetPeers.mockReset();
 });
 
 function renderSettings() {
@@ -92,14 +75,12 @@ function clickTab(testId: string) {
 describe('SettingsPage', () => {
   it('shows loading skeleton initially', () => {
     mockGetConfig.mockResolvedValue(testConfig);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     renderSettings();
     expect(screen.getByTestId('loading-skeleton')).toBeInTheDocument();
   });
 
   it('loads and displays config', async () => {
     mockGetConfig.mockResolvedValue(testConfig);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     renderSettings();
 
     await waitFor(() => {
@@ -111,7 +92,6 @@ describe('SettingsPage', () => {
 
   it('loads all settings tabs', async () => {
     mockGetConfig.mockResolvedValue(testConfig);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     renderSettings();
 
     await waitFor(() => {
@@ -119,7 +99,6 @@ describe('SettingsPage', () => {
       expect(screen.getByTestId('settings-tab-node')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-watchdog')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-notifications')).toBeInTheDocument();
-      expect(screen.getByTestId('settings-tab-peers')).toBeInTheDocument();
     });
 
     // Node tab is default — node-settings should be visible
@@ -128,7 +107,6 @@ describe('SettingsPage', () => {
 
   it('shows settings for each tab when clicked', async () => {
     mockGetConfig.mockResolvedValue(testConfig);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     renderSettings();
 
     await waitFor(() => {
@@ -144,16 +122,10 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       expect(screen.getByTestId('notifications-settings')).toBeInTheDocument();
     });
-
-    clickTab('settings-tab-peers');
-    await waitFor(() => {
-      expect(screen.getByTestId('peer-settings')).toBeInTheDocument();
-    });
   });
 
   it('loads watchdog settings', async () => {
     mockGetConfig.mockResolvedValue(testConfig);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     renderSettings();
 
     await waitFor(() => {
@@ -182,7 +154,6 @@ describe('SettingsPage', () => {
       },
     };
     mockGetConfig.mockResolvedValue(configWithWebhook);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     renderSettings();
 
     await waitFor(() => {
@@ -208,7 +179,6 @@ describe('SettingsPage', () => {
 
   it('saves config successfully', async () => {
     mockGetConfig.mockResolvedValue(testConfig);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     mockUpdateConfig.mockResolvedValue({
       config: testConfig,
       restart_required: false,
@@ -237,7 +207,6 @@ describe('SettingsPage', () => {
 
   it('shows restart message when port changes', async () => {
     mockGetConfig.mockResolvedValue(testConfig);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     mockUpdateConfig.mockResolvedValue({
       config: testConfig,
       restart_required: true,
@@ -257,7 +226,6 @@ describe('SettingsPage', () => {
 
   it('shows error on save failure', async () => {
     mockGetConfig.mockResolvedValue(testConfig);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     mockUpdateConfig.mockRejectedValue(new Error('Save failed'));
     renderSettings();
 
@@ -287,7 +255,6 @@ describe('SettingsPage', () => {
       },
     };
     mockGetConfig.mockResolvedValue(configWithWebhook);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
     mockUpdateConfig.mockResolvedValue({
       config: configWithWebhook,
       restart_required: false,
@@ -308,22 +275,6 @@ describe('SettingsPage', () => {
           ],
         }),
       );
-    });
-  });
-
-  it('peers section shows disabled in local mode', async () => {
-    mockGetConfig.mockResolvedValue(testConfig);
-    mockGetPeers.mockResolvedValue({ local: testNode, peers: [] });
-    renderSettings();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('settings-tab-peers')).toBeInTheDocument();
-    });
-
-    clickTab('settings-tab-peers');
-
-    await waitFor(() => {
-      expect(screen.getByTestId('peers-disabled')).toBeInTheDocument();
     });
   });
 });

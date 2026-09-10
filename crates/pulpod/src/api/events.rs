@@ -37,11 +37,9 @@ mod tests {
     use crate::api::AppState;
     use crate::backend::StubBackend;
     use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
     use pulpo_common::event::{SessionDeletedEvent, SessionEvent};
-    use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_broadcast_session_event_received() {
@@ -51,7 +49,6 @@ mod tests {
         store.migrate().await.unwrap();
         let manager =
             SessionManager::new(Arc::new(StubBackend), store.clone(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
         let state = AppState::new(
             Config {
                 node: NodeConfig {
@@ -63,7 +60,6 @@ mod tests {
                 ..Default::default()
             },
             manager,
-            peer_registry,
             store,
         );
 

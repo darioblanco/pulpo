@@ -137,7 +137,6 @@ on that machine — Pulpo never stores them.
 Best docs to read next:
 
 - [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale)
-- [Discovery Guide](/guides/discovery)
 
 ## Quick Decision Table
 

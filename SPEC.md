@@ -43,9 +43,10 @@ exactly what you'd least want flowing through a third-party relay.
 ## Non-Goals
 
 - **Cross-node agent orchestration** — a controller/node control plane existed, was frozen,
-  then removed (July 2026; see Roadmap "Phase C"). Every `pulpod` is standalone, reached
-  directly (`pulpo --node <name>`); cross-node visibility is the event backbone (forward to
-  your own collector), not a bespoke controller.
+  then removed (July 2026; see Roadmap "Phase C"). A peer registry and Tailscale peer
+  discovery layered on top of it were removed later for the same reason (September 2026).
+  Every `pulpod` is standalone, reached directly (`pulpo --url <host:port>`); cross-node
+  visibility is the event backbone (forward to your own collector), not a bespoke controller.
 - Optimizing the **inference path** (prompt caching, per-request routing, context
   trimming) — that's the agent's job; Pulpo optimizes the *operation* of agents
 - Agent-to-agent communication; custom model hosting/serving
@@ -81,7 +82,7 @@ exactly what you'd least want flowing through a third-party relay.
   │  └──────┘  │  │  └──────┘  │  │  └──────┘                     │
   └────────────┘  └────────────┘  └────────────────────────────────┘
   ◄──────────────── every node bare-metal (bind=tailscale) ──────────────►
-                     each runs its own TS discovery loop
+                     each reachable directly over the tailnet
 ```
 
 `pulpod` is installed via Homebrew or systemd on every machine it supervises — there
@@ -100,7 +101,6 @@ Runs on every machine. Responsibilities:
 - **API server**: REST + WebSocket on a configurable port (default: 7433)
 - **Persistence**: SQLite for session state, output snapshots, conversation IDs
 - **Node info**: reports machine capabilities (OS, CPU, RAM, GPU)
-- **Peer discovery**: finds other `pulpod` instances on the Tailnet
 
 #### 2. `pulpo` — The CLI (Rust)
 
@@ -114,11 +114,10 @@ pulpo list
 pulpo logs my-api
 pulpo stop my-api
 pulpo resume my-api         # resume lost, ready, or stopped session (auto-attaches)
-pulpo nodes                 # list all pulpod peers on the Tailnet
-pulpo list --node server    # list sessions on a remote node
 
-# Remote usage (talks to remote pulpod)
-pulpo --node server spawn ml-train --workdir ~/repos/ml-model -- claude "Train it"
+# Remote usage (talks to a remote pulpod directly, e.g. over Tailscale)
+pulpo --url server spawn ml-train --workdir ~/repos/ml-model -- claude "Train it"
+pulpo --url server list
 ```
 
 #### 3. Web UI
@@ -131,7 +130,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 - **Session detail**: live terminal output, input field, metadata (incl. per-session cost/tokens)
 - **Usage**: cost/burn gauge — account cards + per-session table (the meter)
 - **Schedules**: cron schedule management
-- **Settings**: node config, peer management
+- **Settings**: node config, watchdog, notifications, secrets
 
 ---
 
@@ -302,45 +301,23 @@ pulpod
 
 ---
 
-## Peer Discovery
+## Multi-Machine Access (peer discovery removed)
 
-### Phase 1: Manual Configuration
+A manual `[peers]` config table and Tailscale-API-based peer auto-discovery both existed
+(Phase 3, below) but were removed (September 2026): they only produced a read-only list of
+other nodes' sessions with no way to act on them, which wasn't worth the config surface and
+health-probing machinery. Every `pulpod` is standalone with no directory of other nodes.
+Reach another node directly:
 
-`~/.pulpo/config.toml`:
-
-```toml
-[node]
-name = "mac-mini"         # This node's display name
-port = 7433
-
-[peers]
-# Other pulpod instances on your Tailnet
-macbook = "macbook:7433"
-server  = "server:7433"
+```bash
+pulpo --url mac-mini spawn ml-train --workdir ~/repos/ml-model -- claude "Train it"
 ```
 
-### Phase 2: Tailscale Auto-Discovery
-
-Query the Tailscale local API to find peers:
-
-```
-GET http://127.0.0.1:41112/localapi/v0/status
-```
-
-This returns all devices on the Tailnet. The daemon probes each peer on the
-known port (7433) to check if `pulpod` is running. No manual config needed.
-
-### API Between Nodes
-
-Each `pulpod` exposes the same REST API. The web UI (served by one node) fans
-out requests to all known peers:
-
-```
-GET /api/v1/sessions          → local sessions
-GET /api/v1/node              → local node info
-```
-
-The web UI aggregates these by calling each peer's API.
+`--url` accepts `host:port` or a full URL; a bare hostname gets the default port (`7433`)
+appended. The web UI does not aggregate across nodes — each node's dashboard shows only its
+own sessions. For a cross-machine view, point every node's `[[webhooks]]` at the same
+collector (see "Monitoring & event topology" in
+[docs/architecture/overview.md](docs/architecture/overview.md)).
 
 ---
 
@@ -413,14 +390,6 @@ The full `Session` object includes additional nullable fields: `exit_code`,
 GET    /node                  Node info (hostname, OS, memory, platform)
 ```
 
-### Peers
-
-```
-GET    /peers                 List known peers and their status
-POST   /peers                 Add a peer
-DELETE /peers/:name           Remove a peer
-```
-
 ### Events
 
 ```
@@ -446,9 +415,6 @@ GET    /events                SSE event stream
 | `GET`    | `/sessions/:id/interventions`   | List intervention events       |
 | `WS`     | `/sessions/:id/stream`          | Stream terminal output         |
 | `GET`    | `/node`                         | Node info                      |
-| `GET`    | `/peers`                        | List known peers               |
-| `POST`   | `/peers`                        | Add a peer                     |
-| `DELETE` | `/peers/:name`                  | Remove a peer                  |
 | `GET`    | `/config`                       | Get daemon config              |
 | `PUT`    | `/config`                       | Update daemon config           |
 | `GET`    | `/auth/token`                   | Get auth token (local only)    |
@@ -539,11 +505,9 @@ pulpo/
 │   │   ├── backend/            #   tmux.rs — terminal backend
 │   │   ├── session/            #   manager, state machine, output capture, PTY bridge
 │   │   ├── store/              #   SQLite persistence + migrations
-│   │   ├── notifications/      #   webhook + web-push notifiers
-│   │   ├── peers/              #   PeerRegistry + health probing
-│   │   └── discovery/          #   Tailscale peer discovery
+│   │   └── notifications/      #   webhook + web-push notifiers
 │   ├── pulpo-cli/src/          # CLI: thin client, clap commands
-│   └── pulpo-common/src/       # Shared types: Session, NodeInfo, PeerInfo,
+│   └── pulpo-common/src/       # Shared types: Session, NodeInfo,
 │                               #   SessionEvent, API request/response
 ├── web/                        # React 19 + Vite + Tailwind v4 + shadcn/ui
 ```
@@ -561,7 +525,7 @@ pulpo/
 | `clap`                 | CLI argument parsing                                |
 | `rust-embed`           | Embed web UI static files in binary                 |
 | `tokio-tungstenite`    | WebSocket support                                   |
-| `reqwest`              | HTTP client (for peer communication, Tailscale API) |
+| `reqwest`              | HTTP client (webhook delivery, CLI → daemon requests) |
 | `tracing`              | Structured logging                                  |
 | `uuid`                 | Session IDs                                         |
 | `toml`                 | Config file parsing                                 |
@@ -611,9 +575,11 @@ Ship the smallest useful thing first.
 
 ### Phase 3: Multi-Node ✅
 
-- Manual peer configuration via `[peers]` in config
-- Aggregated dashboard across all nodes
-- Remote session spawning from any node's UI
+- ~~Manual peer configuration via `[peers]` in config~~ — removed September 2026: read-only
+  peer list with no way to act on it wasn't worth the config surface
+- ~~Aggregated dashboard across all nodes~~ — never shipped past a per-peer status list;
+  the dashboard is single-node-first (see Roadmap)
+- Remote session spawning from any node's UI: reach a node's own UI directly instead
 
 ### Phase 4: Command-Agnostic Sessions ✅
 
@@ -631,14 +597,16 @@ Ship the smallest useful thing first.
 **Deliverables:**
 
 - ✅ Config API (`GET/PUT /api/v1/config`) with hot-reload and restart detection
-- ✅ Settings view with tabbar navigation (Node, Peers)
+- ✅ Settings view with tabbar navigation (Node, Watchdog, Secrets, Notifications)
 - ✅ Session list filtering (`status`, `search`, `sort`, `order` query params)
 - ✅ Session output download endpoint (`GET /api/v1/sessions/{id}/output/download`)
 - ✅ Session history view with search/filter bar
 - ✅ Chat view (Messages/Messagebar) with Terminal toggle
 - ✅ In-app toast + desktop Notification API for session status changes
-- ✅ Peer add/remove API (`POST /api/v1/peers`, `DELETE /api/v1/peers/{name}`)
-- ✅ Peer management in settings view (list, add, remove with status indicators)
+- ~~Peer add/remove API (`POST /api/v1/peers`, `DELETE /api/v1/peers/{name}`)~~ — removed
+  September 2026
+- ~~Peer management in settings view (list, add, remove with status indicators)~~ — removed
+  September 2026
 
 ### Phase 6: Mobile + Notifications
 
@@ -654,7 +622,8 @@ the primary management surface.
 
 - ✅ Token authentication + bind modes (local/public/tailscale)
 - ✅ QR code pairing for mobile clients
-- ✅ Tailscale auto-discovery
+- ~~Tailscale auto-discovery~~ — removed September 2026; `bind = "tailscale"` (HTTPS via
+  `tailscale serve`) stays
 - ✅ PWA install + Web Push notifications
 - ~~Tauri iOS/Android native builds~~ — retired June 2026 in favor of the PWA
 - ~~Voice commands (Siri Shortcuts / Google Assistant)~~ — retired June 2026
@@ -695,10 +664,6 @@ breach_count = 3
 idle_timeout_secs = 600
 idle_action = "alert"       # "alert" or "stop"
 
-[peers]
-macbook = "macbook:7433"
-server = "hetzner:7433"
-
 [[notifications.webhooks]]
 name = "primary"
 url = "https://example.com/hooks/pulpo"
@@ -727,10 +692,9 @@ events = ["active", "ready", "stopped"]   # optional filter; omit for all events
 
 ### Remote Access via Tailscale
 
-The recommended way to run multi-node pulpo is `bind = "tailscale"`. This
-automatically runs `tailscale serve` to proxy pulpod over HTTPS on your tailnet,
-enables automatic peer discovery via the Tailscale API, and skips token auth
-(WireGuard provides encryption and identity):
+The recommended way to reach a pulpo node from another machine is `bind = "tailscale"`. This
+automatically runs `tailscale serve` to proxy pulpod over HTTPS on your tailnet and skips
+token auth (WireGuard provides encryption and identity):
 
 ```toml
 [node]
@@ -741,7 +705,8 @@ bind = "tailscale"
 On startup, pulpod runs `tailscale serve --bg --https=443 http://127.0.0.1:{port}`
 and logs the HTTPS URL (e.g., `https://mac-mini.tailnet-name.ts.net`). On shutdown
 (or Ctrl+C), it runs `tailscale serve off` to clean up. Stale serve rules from a
-previous crash are also cleared on startup.
+previous crash are also cleared on startup. This is transport only — it does not
+enumerate or discover other nodes; reach each one with `pulpo --url <host:port>`.
 
 Use `public` bind mode only when you need direct LAN access without Tailscale
 (e.g., devices not on the tailnet).
@@ -752,6 +717,6 @@ Use `public` bind mode only when you need direct LAN access without Tailscale
 
 1. **License**: Dual MIT / Apache-2.0 (both license files in repo root).
 2. **Binary distribution**: GitHub Actions CI builds and tests on every push. `draft-release.yml` creates draft releases; `release.yml` publishes tagged releases with pre-built binaries for macOS (aarch64) and Linux (x86_64).
-3. **Tailscale dependency**: Optional enhancement, not required. Core works on localhost/LAN. Tailscale makes multi-node seamless but isn't a hard dependency.
+3. **Tailscale dependency**: Optional enhancement, not required. Core works on localhost/LAN. Tailscale makes remote access seamless but isn't a hard dependency.
 4. **Web UI bundling**: Embedded in binary via `rust-embed` — single binary distribution. Dev mode uses Vite dev server with API proxy.
 5. **tmux version requirements**: Minimum tmux 3.2+. Checked at daemon startup with a clear error message if too old or not installed.

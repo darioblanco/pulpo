@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   setApiConfig,
   getNode,
-  getPeers,
   getSessions,
   getSession,
   createSession,
@@ -14,9 +13,6 @@ import {
   getInterventionEvents,
   getConfig,
   updateConfig,
-  updateRemoteConfig,
-  addPeer,
-  removePeer,
   getPairingUrl,
   resolveWsUrl,
   resolveBaseUrl,
@@ -84,18 +80,6 @@ describe('getNode', () => {
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/node', {
       headers: { Authorization: 'Bearer my-secret' },
     });
-  });
-});
-
-describe('getPeers', () => {
-  it('fetches /api/v1/peers', async () => {
-    const peers = { local: { name: 'mac-mini' }, peers: [] };
-    mockFetch.mockResolvedValue(jsonResponse(peers));
-
-    const result = await getPeers();
-
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/peers', { headers: {} });
-    expect(result).toEqual(peers);
   });
 });
 
@@ -429,7 +413,6 @@ describe('getConfig', () => {
   it('fetches /api/v1/config', async () => {
     const config = {
       node: { name: 'mac-mini', port: 7433, data_dir: '~/.pulpo' },
-      peers: {},
       guards: { preset: 'standard' },
     };
     mockFetch.mockResolvedValue(jsonResponse(config));
@@ -446,7 +429,6 @@ describe('updateConfig', () => {
     const response = {
       config: {
         node: { name: 'new-name', port: 7433, data_dir: '~/.pulpo' },
-        peers: {},
         guards: { preset: 'standard' },
       },
       restart_required: false,
@@ -468,7 +450,6 @@ describe('updateConfig', () => {
     const response = {
       config: {
         node: { name: 'mac-mini', port: 9000, data_dir: '~/.pulpo' },
-        peers: {},
         guards: { preset: 'standard' },
       },
       restart_required: true,
@@ -498,109 +479,6 @@ describe('updateConfig', () => {
     });
 
     await expect(updateConfig({ port: 9000 })).rejects.toThrow('Failed to update config');
-  });
-});
-
-describe('updateRemoteConfig', () => {
-  it('sends PUT to remote address /api/v1/config', async () => {
-    const response = {
-      config: { node: { name: 'remote' }, peers: {}, guards: { preset: 'standard' } },
-      restart_required: false,
-    };
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(response) });
-
-    const data = {
-      node_name: 'macbook',
-      watchdog_enabled: true,
-    };
-    const result = await updateRemoteConfig('macbook:7433', data);
-
-    expect(mockFetch).toHaveBeenCalledWith('http://macbook:7433/api/v1/config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    expect(result).toEqual(response);
-  });
-
-  it('uses scheme from address when present', async () => {
-    const response = { config: {}, restart_required: false };
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(response) });
-
-    await updateRemoteConfig('https://remote:7433', { watchdog_enabled: true });
-
-    expect(mockFetch).toHaveBeenCalledWith('https://remote:7433/api/v1/config', expect.anything());
-  });
-
-  it('throws on error response', async () => {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      text: () => Promise.resolve(JSON.stringify({ error: 'unauthorized' })),
-      json: () => Promise.resolve({ error: 'unauthorized' }),
-    });
-
-    await expect(updateRemoteConfig('macbook:7433', {})).rejects.toThrow('unauthorized');
-  });
-
-  it('throws generic message when no error field', async () => {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      text: () => Promise.resolve(JSON.stringify({})),
-      json: () => Promise.resolve({}),
-    });
-
-    await expect(updateRemoteConfig('macbook:7433', {})).rejects.toThrow(
-      'Failed to update remote config',
-    );
-  });
-});
-
-describe('addPeer', () => {
-  it('posts to /api/v1/peers with name and address', async () => {
-    const resp = { local: {}, peers: [{ name: 'new', address: '10.0.0.1:7433' }] };
-    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve(resp) });
-
-    const result = await addPeer('new', '10.0.0.1:7433');
-
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/peers', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'new', address: '10.0.0.1:7433' }),
-    });
-    expect(result).toEqual(resp);
-  });
-
-  it('throws on conflict', async () => {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      text: () => Promise.resolve(JSON.stringify({ error: 'already exists' })),
-      json: () => Promise.resolve({ error: 'already exists' }),
-    });
-
-    await expect(addPeer('dup', 'x:7433')).rejects.toThrow('already exists');
-  });
-});
-
-describe('removePeer', () => {
-  it('sends DELETE to /api/v1/peers/:name', async () => {
-    mockFetch.mockResolvedValue({ ok: true });
-
-    await removePeer('old-node');
-
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/peers/old-node', {
-      method: 'DELETE',
-      headers: {},
-    });
-  });
-
-  it('throws on not found', async () => {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      text: () => Promise.resolve(JSON.stringify({ error: 'not found' })),
-      json: () => Promise.resolve({ error: 'not found' }),
-    });
-
-    await expect(removePeer('missing')).rejects.toThrow('not found');
   });
 });
 

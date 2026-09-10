@@ -105,10 +105,10 @@ Each run gets a fresh git worktree on its own branch, cleaned up when the sessio
 
 Schedules always fire on the node that holds them — there is no remote dispatch. To put
 this schedule on a different box, point the CLI at that node's `pulpod` with the global
-`--node` flag; the schedule is created directly there and fires locally:
+`--url` flag; the schedule is created directly there and fires locally:
 
 ```bash
-pulpo --node mac-mini schedule add nightly-review "0 3 * * *" \
+pulpo --url mac-mini schedule add nightly-review "0 3 * * *" \
   --workdir ~/repos/my-api \
   -- claude -p "Review this repository for bugs, regressions, risky changes, and missing tests. Summarize findings clearly."
 ```
@@ -120,7 +120,7 @@ Make sure the workdir path exists on `mac-mini`, not just on the machine you're 
 This recipe gets stronger when combined with:
 
 - [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale) for API keys and repo credentials
-- [Discovery Guide](/guides/discovery) if you run more than one machine
+- [Control Your Agents From Anywhere](/guides/remote-control) if you run more than one machine
 - notifications so you know when the overnight run is `ready`, `stopped`, or `lost`
 
 ## Related Commands

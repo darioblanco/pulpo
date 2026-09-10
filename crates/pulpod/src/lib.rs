@@ -5,11 +5,9 @@ pub mod api;
 pub mod auth_info;
 pub mod backend;
 pub mod config;
-pub mod discovery;
 pub mod harness;
 
 pub mod notifications;
-pub mod peers;
 pub mod platform;
 pub mod scheduler;
 pub mod session;
@@ -286,8 +284,6 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     #[cfg(not(coverage))]
     upgrade_backend_ids(&manager, &store).await;
 
-    let peer_registry = peers::PeerRegistry::new(&config.peers);
-
     let mut shutdown_handle = ShutdownHandle::new();
 
     // Start built-in scheduler
@@ -358,30 +354,6 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
 
     let bind_mode = config.node.bind;
 
-    // Start peer discovery based on bind mode
-    #[cfg(not(coverage))]
-    match bind_mode {
-        pulpo_common::auth::BindMode::Tailscale => {
-            let ts_registry = peer_registry.clone();
-            let own_name = config.node.name.clone();
-            let ts_tag = config.node.tag.clone();
-            let ts_interval = std::time::Duration::from_secs(config.node.discovery_interval_secs);
-            let (ts_shutdown_tx, ts_shutdown_rx) = watch::channel(false);
-            tokio::spawn(discovery::tailscale::run_tailscale_discovery(
-                ts_registry,
-                own_name,
-                ts_tag,
-                ts_interval,
-                ts_shutdown_rx,
-            ));
-            shutdown_handle.add_sender(ts_shutdown_tx);
-            info!("Tailscale discovery enabled");
-        }
-        // Public and Local: no automatic discovery.
-        // Use manual [peers] config for multi-node in these modes.
-        pulpo_common::auth::BindMode::Public | pulpo_common::auth::BindMode::Local => {}
-    }
-
     // Event forwarding: a single dispatcher converts bus events to the canonical
     // envelope and routes them — webhooks through the durable SQLite outbox
     // (delivered by a separate worker with retry + backoff, surviving restarts),
@@ -439,7 +411,6 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         config.clone(),
         config_path,
         manager.clone(),
-        peer_registry,
         event_tx.clone(),
         wd_tx,
         store.clone(),
@@ -975,7 +946,6 @@ port = 0
 data_dir = "{}"
 bind = "tailscale"
 tag = "pulpo"
-discovery_interval_secs = 60
 "#,
                 data_dir.display()
             ),

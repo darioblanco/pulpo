@@ -358,7 +358,6 @@ mod tests {
     use crate::api::AppState;
     use crate::backend::StubBackend;
     use crate::config::{Config, MetricsConfig, NodeConfig};
-    use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
     use axum::body::to_bytes;
@@ -381,8 +380,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        AppState::new(config, manager, peer_registry, store)
+        AppState::new(config, manager, store)
     }
 
     #[tokio::test]

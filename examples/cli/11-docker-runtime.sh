@@ -16,7 +16,7 @@
 #   The image must have the agent tools installed (claude, codex, etc.)
 set -euo pipefail
 
-NODE="${NODE:-localhost:7433}"
+URL="${URL:-localhost:7433}"
 
 echo "=== Basic Docker runtime session ==="
 echo "pulpo spawn docker-task --runtime docker --workdir ~/repos/my-api -- claude --dangerously-skip-permissions -p 'refactor the auth module'"
@@ -27,7 +27,7 @@ echo "pulpo spawn isolated --runtime docker --worktree --workdir ~/repos/my-api 
 echo ""
 
 echo "=== Docker runtime on a remote node ==="
-echo "pulpo --node gpu-box spawn ml-task --runtime docker -- python train.py"
+echo "pulpo --url gpu-box spawn ml-task --runtime docker -- python train.py"
 echo ""
 
 echo "=== Check Docker runtime sessions ==="

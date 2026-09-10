@@ -54,7 +54,7 @@ pub(crate) fn constant_time_eq(a: &str, b: &str) -> bool {
 /// Auth middleware: enforces Bearer token when `bind = "public"`.
 ///
 /// Exempt paths:
-/// - `GET /api/v1/health` — monitoring, peer probing
+/// - `GET /api/v1/health` — monitoring
 /// - `POST /api/v1/push/action` — the push action token itself is the
 ///   capability (see [`crate::api::push::action`]); a service worker has no
 ///   way to attach a bearer token
@@ -289,10 +289,8 @@ mod tests {
 
     use crate::backend::StubBackend;
     use crate::config::{AuthConfig, Config, NodeConfig};
-    use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
-    use std::collections::HashMap;
 
     async fn make_state(bind: BindMode, token: &str) -> Arc<AppState> {
         let tmpdir = tempfile::tempdir().unwrap();
@@ -314,8 +312,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        AppState::new(config, manager, peer_registry, store)
+        AppState::new(config, manager, store)
     }
 
     /// Build a minimal router with the auth middleware and a pass-through handler.

@@ -4,13 +4,13 @@
 # Spawn detached sessions and monitor them all.
 set -euo pipefail
 
-NODE="${NODE:-localhost:7433}"
+URL="${URL:-localhost:7433}"
 
 echo "=== Spawning agents across repos ==="
 
 # Review multiple repos in parallel
 for repo in my-api my-frontend my-infra; do
-  pulpo --node "${NODE}" spawn "${repo}-review" \
+  pulpo --url "${URL}" spawn "${repo}-review" \
     --workdir ~/repos/${repo} \
     --description "Nightly review of ${repo}" \
     --detach \
@@ -20,7 +20,7 @@ done
 
 echo ""
 echo "=== All sessions ==="
-pulpo --node "${NODE}" list
+pulpo --url "${URL}" list
 
 echo ""
 echo "=== Monitor all output ==="
@@ -31,7 +31,7 @@ done
 
 echo ""
 echo "=== Stream events (all sessions) ==="
-echo "  curl -N http://${NODE}/api/v1/events"
+echo "  curl -N http://${URL}/api/v1/events"
 
 echo ""
 echo "=== Kill all when done ==="

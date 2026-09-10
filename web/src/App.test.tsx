@@ -23,15 +23,14 @@ vi.stubGlobal('localStorage', {
 // Mock fetch
 vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ json: () => Promise.resolve([]) }));
 
-// The home route renders the sessions dashboard directly, which fetches peers +
-// sessions on mount. Give those calls well-shaped empty responses so the smoke test
-// renders cleanly (the raw fetch mock above returns `[]` for everything, which would
-// make `resp.peers` undefined).
+// The home route renders the sessions dashboard directly, which fetches the local
+// node info + sessions on mount. Give those calls well-shaped empty responses so
+// the smoke test renders cleanly.
 vi.mock('@/api/client', async () => {
   const actual = await vi.importActual<typeof import('@/api/client')>('@/api/client');
   return {
     ...actual,
-    getPeers: vi.fn().mockResolvedValue({ peers: [] }),
+    getNode: vi.fn().mockResolvedValue({ name: 'test-node' }),
     getSessions: vi.fn().mockResolvedValue([]),
   };
 });

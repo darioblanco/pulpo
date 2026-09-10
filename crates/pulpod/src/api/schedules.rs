@@ -207,11 +207,9 @@ mod tests {
     use crate::api::AppState;
     use crate::backend::StubBackend;
     use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
     use axum_test::TestServer;
-    use std::collections::HashMap;
 
     async fn test_server() -> TestServer {
         let tmpdir = tempfile::tempdir().unwrap();
@@ -229,8 +227,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry, store);
+        let state = AppState::new(config, manager, store);
         let app = crate::api::routes::build(state);
         TestServer::new(app).unwrap()
     }

@@ -169,7 +169,7 @@ Pulpo is **single-node-first**. Each node meters and governs its own sessions in
 no central server required, and nothing breaks if you only ever run one machine.
 
 There is deliberately no control plane joining machines together. Reach any node directly —
-`pulpo --node <name|host:port>` from the CLI, a saved connection in the web UI, or SSH/tmux
+`pulpo --url <host:port>` from the CLI, a saved connection in the web UI, or SSH/tmux
 — see [Control Your Agents From Anywhere](docs/guides/remote-control.md). For a view across
 machines, point every node's **event forwarding** (`[[webhooks]]` + Prometheus metrics) at a
 collector you already run, and aggregate there. This is the supported cross-node story: it

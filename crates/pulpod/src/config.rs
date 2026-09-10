@@ -4,7 +4,6 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use base64::Engine;
 use pulpo_common::auth::BindMode;
-use pulpo_common::peer::PeerEntry;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -14,8 +13,12 @@ pub struct Config {
     pub node: NodeConfig,
     #[serde(default)]
     pub auth: AuthConfig,
-    #[serde(default)]
-    pub peers: HashMap<String, PeerEntry>,
+    /// Retired `[peers]` table (manual peer configuration + Tailscale peer
+    /// discovery were removed). This field only exists so configs written
+    /// before the removal still load (`deny_unknown_fields` would otherwise
+    /// reject them). It is ignored and dropped on save.
+    #[serde(default, skip_serializing)]
+    pub peers: Option<toml::Value>,
     #[serde(default)]
     pub watchdog: WatchdogConfig,
     #[serde(default)]
@@ -37,10 +40,11 @@ pub struct Config {
     #[serde(default, skip_serializing)]
     pub docker: Option<toml::Value>,
     /// Retired `[controller]` mode configuration.
-    /// Controller/node relay mode was removed — every pulpod is standalone and
-    /// reached directly (peer registry + Tailscale). This field only exists so
-    /// configs written before the removal still load (`deny_unknown_fields`
-    /// would otherwise reject them). It is ignored and dropped on save.
+    /// Controller/node relay mode was removed — every pulpod is standalone,
+    /// reached directly via a saved daemon URL or Tailscale. This field only
+    /// exists so configs written before the removal still load
+    /// (`deny_unknown_fields` would otherwise reject them). It is ignored and
+    /// dropped on save.
     #[serde(default, skip_serializing)]
     pub controller: Option<toml::Value>,
     /// Retired `[inks.<name>]` preset registry configuration.
@@ -439,15 +443,19 @@ pub struct NodeConfig {
     pub port: u16,
     #[serde(default = "default_data_dir")]
     pub data_dir: String,
-    /// How the daemon binds to the network. Determines discovery method and auth requirements.
+    /// How the daemon binds to the network. Determines auth requirements and whether
+    /// `tailscale serve` is used to expose the dashboard over the tailnet.
     #[serde(default)]
     pub bind: BindMode,
-    /// Tailscale ACL tag to filter peers (e.g. `"pulpo"`). Only used with `tailscale` bind mode.
+    /// Tailscale ACL tag (e.g. `"pulpo"`). Reserved for future ACL-based scoping.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
-    /// Scan interval in seconds for Tailscale peer discovery. Defaults to 30.
-    #[serde(default = "default_discovery_interval_secs")]
-    pub discovery_interval_secs: u64,
+    /// Retired `discovery_interval_secs` key (Tailscale peer discovery was removed).
+    /// This field only exists so configs written before the removal still load
+    /// (`deny_unknown_fields` would otherwise reject them). It is ignored and
+    /// dropped on save.
+    #[serde(default, skip_serializing)]
+    pub discovery_interval_secs: Option<toml::Value>,
     /// Default command used when spawning a session without an explicit command.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_command: Option<String>,
@@ -471,16 +479,12 @@ impl Default for NodeConfig {
             data_dir: default_data_dir(),
             bind: BindMode::default(),
             tag: None,
-            discovery_interval_secs: default_discovery_interval_secs(),
+            discovery_interval_secs: None,
             default_command: None,
             log_retain_days: default_log_retain_days(),
             capture_session_output: default_capture_session_output(),
         }
     }
-}
-
-const fn default_discovery_interval_secs() -> u64 {
-    30
 }
 
 fn default_name() -> String {
@@ -581,7 +585,7 @@ pub fn load(path: &str) -> Result<Config> {
                 data_dir: default_data_dir(),
                 bind: BindMode::default(),
                 tag: None,
-                discovery_interval_secs: default_discovery_interval_secs(),
+                discovery_interval_secs: None,
                 default_command: None,
                 log_retain_days: default_log_retain_days(),
                 capture_session_output: default_capture_session_output(),
@@ -856,93 +860,9 @@ name = "partial"
     }
 
     #[test]
-    fn test_load_config_with_peers() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test-node"
-port = 7433
-data_dir = "/tmp/pulpo-test"
-
-[peers]
-win-pc = "192.168.1.100:7433"
-macbook = "10.0.0.5:7433"
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.peers.len(), 2);
-        assert_eq!(
-            config.peers["win-pc"],
-            PeerEntry::Simple("192.168.1.100:7433".into())
-        );
-        assert_eq!(
-            config.peers["macbook"],
-            PeerEntry::Simple("10.0.0.5:7433".into())
-        );
-    }
-
-    #[test]
-    fn test_load_config_without_peers_defaults_empty() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "old-config"
-port = 7433
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.node.name, "old-config");
-        assert!(config.peers.is_empty());
-    }
-
-    #[test]
-    fn test_load_config_with_empty_peers() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test"
-
-[peers]
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(config.peers.is_empty());
-    }
-
-    #[test]
-    fn test_missing_config_has_empty_peers() {
+    fn test_missing_config_has_no_peers() {
         let config = load("/nonexistent/peers/config.toml").unwrap();
-        assert!(config.peers.is_empty());
-    }
-
-    #[test]
-    fn test_config_debug_includes_peers() {
-        let mut peers = HashMap::new();
-        peers.insert("node-a".into(), PeerEntry::Simple("host:7433".into()));
-        let config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            peers,
-            ..Default::default()
-        };
-        let debug = format!("{config:?}");
-        assert!(debug.contains("node-a"));
+        assert!(config.peers.is_none());
     }
 
     #[test]
@@ -969,8 +889,6 @@ name = "test"
     fn test_save_and_load_roundtrip() {
         let tmpdir = tempfile::tempdir().unwrap();
         let path = tmpdir.path().join("roundtrip.toml");
-        let mut peers = HashMap::new();
-        peers.insert("remote".into(), PeerEntry::Simple("10.0.0.1:7433".into()));
         let config = Config {
             node: NodeConfig {
                 name: "roundtrip".into(),
@@ -978,17 +896,12 @@ name = "test"
                 data_dir: "/tmp/rt".into(),
                 ..NodeConfig::default()
             },
-            peers,
             ..Default::default()
         };
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
         assert_eq!(loaded.node.name, "roundtrip");
         assert_eq!(loaded.node.port, 9000);
-        assert_eq!(
-            loaded.peers["remote"],
-            PeerEntry::Simple("10.0.0.1:7433".into())
-        );
     }
 
     #[test]
@@ -1270,65 +1183,6 @@ token = "my-secret-token"
         let config = load("/nonexistent/auth/config.toml").unwrap();
         assert!(config.auth.token.is_empty());
         assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Local);
-    }
-
-    #[test]
-    fn test_load_config_with_peer_tokens() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "test"
-port = 7433
-
-[peers]
-mac = "mac:7433"
-
-[peers.win]
-address = "win:7433"
-token = "peer-secret"
-"#
-        )
-        .unwrap();
-
-        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert_eq!(config.peers.len(), 2);
-        assert_eq!(config.peers["mac"].address(), "mac:7433");
-        assert_eq!(config.peers["mac"].token(), None);
-        assert_eq!(config.peers["win"].address(), "win:7433");
-        assert_eq!(config.peers["win"].token(), Some("peer-secret"));
-    }
-
-    #[test]
-    fn test_save_and_load_roundtrip_with_peer_tokens() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("peer-tok.toml");
-        let mut peers = HashMap::new();
-        peers.insert("simple".into(), PeerEntry::Simple("s:1".into()));
-        peers.insert(
-            "full".into(),
-            PeerEntry::Full {
-                address: "f:1".into(),
-                token: Some("tok".into()),
-            },
-        );
-        let config = Config {
-            node: NodeConfig {
-                name: "rt".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            peers,
-            ..Default::default()
-        };
-        save(&config, &path).unwrap();
-        let loaded = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(loaded.peers["simple"].address(), "s:1");
-        assert_eq!(loaded.peers["simple"].token(), None);
-        assert_eq!(loaded.peers["full"].address(), "f:1");
-        assert_eq!(loaded.peers["full"].token(), Some("tok"));
     }
 
     #[test]
@@ -2003,7 +1857,7 @@ url = "https://example.com"
         assert_eq!(wh.secret, Some("key".into()));
     }
 
-    // -- Node bind/discovery config tests --
+    // -- Node bind config tests --
 
     #[test]
     fn test_node_config_default() {
@@ -2012,7 +1866,7 @@ url = "https://example.com"
         assert_eq!(node.port, 7433);
         assert_eq!(node.bind, pulpo_common::auth::BindMode::Local);
         assert!(node.tag.is_none());
-        assert_eq!(node.discovery_interval_secs, 30);
+        assert!(node.discovery_interval_secs.is_none());
     }
 
     #[test]
@@ -2026,14 +1880,94 @@ url = "https://example.com"
 name = "test"
 bind = "tailscale"
 tag = "pulpo"
-discovery_interval_secs = 60
 "#,
         )
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
         assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Tailscale);
         assert_eq!(config.node.tag, Some("pulpo".into()));
-        assert_eq!(config.node.discovery_interval_secs, 60);
+    }
+
+    /// Peer discovery over Tailscale was removed; `discovery_interval_secs` under
+    /// `[node]` is now a retired key. A config written before the removal that
+    /// still carries it must keep loading (`deny_unknown_fields` would otherwise
+    /// reject `NodeConfig`), and the key must be dropped on the next save.
+    #[test]
+    fn test_load_config_tolerates_legacy_discovery_interval_secs() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+bind = "tailscale"
+discovery_interval_secs = 60
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Tailscale);
+
+        save(&config, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("discovery_interval_secs"),
+            "retired discovery_interval_secs key is dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.node.discovery_interval_secs.is_none());
+    }
+
+    /// A config written before the peers/discovery removal may still carry a
+    /// top-level `[peers]` table. It must keep loading and be dropped on save —
+    /// same tolerate-and-drop treatment as `[docker]`/`[controller]`/`[inks]`.
+    #[test]
+    fn test_load_config_tolerates_legacy_peers_section() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+
+[peers]
+mac-mini = "10.0.0.1:7433"
+
+[peers.linux]
+address = "10.0.0.2:7433"
+token = "secret"
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert!(config.peers.is_some(), "legacy [peers] section is parsed");
+
+        save(&config, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("[peers"),
+            "retired [peers] section is dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.peers.is_none());
+    }
+
+    #[test]
+    fn test_load_config_without_peers_section() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert!(config.peers.is_none());
     }
 
     /// `bind = "container"` (deploying pulpod itself inside Docker/Podman) was
@@ -2108,7 +2042,7 @@ name = "test"
             data_dir: "/tmp".into(),
             bind: pulpo_common::auth::BindMode::Public,
             tag: None,
-            discovery_interval_secs: 30,
+            discovery_interval_secs: None,
             default_command: None,
             log_retain_days: 7,
             capture_session_output: false,

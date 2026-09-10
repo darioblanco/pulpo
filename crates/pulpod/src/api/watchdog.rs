@@ -254,7 +254,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_update_watchdog_pushes_config_to_channel() {
-        let (config, manager, peer_registry, store) = test_support::test_parts().await;
+        let (config, manager, store) = test_support::test_parts().await;
         let initial = crate::watchdog::WatchdogRuntimeConfig {
             threshold: 90,
             interval: std::time::Duration::from_secs(10),
@@ -270,7 +270,6 @@ mod tests {
             config,
             std::path::PathBuf::new(),
             manager,
-            peer_registry,
             event_tx,
             Some(config_tx),
             store,

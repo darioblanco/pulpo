@@ -41,7 +41,7 @@ src/
 ├── api/
 │   ├── types.ts                       # Shared TypeScript interfaces
 │   ├── client.ts                      # API fetch functions (20+)
-│   └── connection.ts                  # testConnection, discoverPeers
+│   └── connection.ts                  # testConnection
 ├── hooks/
 │   ├── use-connection.tsx             # Connection context (baseUrl, token, saved)
 │   └── use-sse.tsx                    # SSE event stream + session state
@@ -54,11 +54,11 @@ src/
 │   ├── dashboard/                     # Status summary, node/session cards, new session
 │   ├── session/                       # Chat view, terminal view (xterm.js)
 │   ├── history/                       # Session filter, session list
-│   ├── settings/                      # Node, guard, peer settings
+│   ├── settings/                      # Node, watchdog, notifications settings
 │   └── connect/                       # Connect form, saved connections
 └── pages/
     ├── dashboard.tsx                  # Real-time session dashboard
     ├── history.tsx                    # Session history with search/filter
-    ├── settings.tsx                   # Node, guards, peers config
+    ├── settings.tsx                   # Node, watchdog, notifications config
     └── connect.tsx                    # Connection screen (standalone)
 ```

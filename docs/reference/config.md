@@ -4,7 +4,10 @@ Default file: `~/.pulpo/config.toml`
 
 All sections are optional. Pulpo runs with zero config.
 
-Unknown config fields are rejected. Deprecated keys are not silently accepted.
+Unknown config fields are rejected. Specifically-retired keys (`[docker]`, `[controller]`,
+`[inks]`, `[peers]`, `node.discovery_interval_secs`) are the exception: they still parse from
+a config written before their removal, are ignored, and are dropped the next time the config
+is saved. Any other unrecognized field is rejected outright.
 Pre-`sqlx` legacy databases are unsupported; if startup reports an unsupported legacy schema,
 delete `~/.pulpo/state.db` and restart.
 
@@ -16,11 +19,14 @@ delete `~/.pulpo/state.db` and restart.
 | `port` | u16 | `7433` | HTTP listen port |
 | `data_dir` | string | `~/.pulpo` | Data directory for SQLite, logs |
 | `bind` | string | `"local"` | `"local"`, `"public"`, `"tailscale"` |
-| `tag` | string | — | Tailscale ACL tag for filtering (e.g. `"pulpo"`) |
-| `discovery_interval_secs` | u64 | `30` | How often to run peer discovery |
+| `tag` | string | — | Tailscale ACL tag (e.g. `"pulpo"`). Reserved for future ACL-based scoping. |
 | `default_command` | string | — | Default command when spawn has no explicit command |
 | `log_retain_days` | u32 | `7` | Days of rotated daemon logs (`logs/pulpod.log.*`) to keep (hourly rotation) |
 | `capture_session_output` | bool | `false` | Mirror each session's full terminal output to `logs/<id>.log` via `tmux pipe-pane`. Off by default — the capture is unbounded and fills the disk on long/chatty sessions. Enable only for debugging; the watchdog reads the live tail from tmux scrollback and persists the last snapshot in the database regardless. |
+
+`node.discovery_interval_secs` (retired): used to control Tailscale peer-discovery scan
+frequency. Peer discovery was removed — the key is tolerated in a config written before the
+removal (parsed, ignored, dropped on the next save) but has no effect.
 
 ## `[auth]`
 
@@ -33,7 +39,7 @@ Not needed for `local` or `tailscale` modes. Pulpo still auto-generates one on f
 ## `[controller]` (retired)
 
 Controller/node relay mode was removed — every `pulpod` is standalone, reached directly
-(`pulpo --node <name>`, a saved web UI connection, or SSH). A leftover `[controller]`
+(`pulpo --url <host:port>`, a saved web UI connection, or SSH). A leftover `[controller]`
 section from a config written before the removal is tolerated: it still parses, is ignored,
 and is dropped the next time the config is saved. Same treatment as the retired `[docker]`
 session-runtime section.
@@ -116,29 +122,16 @@ cache_write_5m = 6.25
 cache_write_1h = 10.0
 ```
 
-## `[peers]` / `[peers.<name>]`
+## `[peers]` (retired)
 
-Short form:
-
-```toml
-[peers]
-mac = "10.0.0.1:7433"
-```
-
-Extended form:
-
-```toml
-[peers.linux]
-address = "10.0.0.2:7433"
-token = "secret"
-```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `address` | string | — | `host:port` of the peer |
-| `token` | string | — | Auth token for this peer (optional) |
-
-`[peers]` is discovery and routing metadata used to resolve `--node <name>` to an address. It does not grant any node authority over another — there is no control plane.
+The manual peer registry and Tailscale peer discovery were removed — they only produced a
+read-only list of other nodes' sessions with no way to act on them, which wasn't worth the
+config surface and health-probing machinery. A leftover `[peers]` (or `[peers.<name>]`)
+section from a config written before the removal is tolerated: it still parses, is ignored,
+and is dropped the next time the config is saved. Same treatment as the retired `[docker]`
+and `[controller]` sections. Reach another node directly with `pulpo --url <host:port>`, a
+saved web UI connection, or SSH — see
+[Control Your Agents From Anywhere](/guides/remote-control).
 
 ## `[[webhooks]]`
 

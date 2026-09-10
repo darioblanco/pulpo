@@ -6,23 +6,23 @@
 # 2. Send text remotely via `pulpo input`
 set -euo pipefail
 
-NODE="${NODE:-localhost:7433}"
+URL="${URL:-localhost:7433}"
 NAME="${NAME:-my-api}"
 
 # Attach to the session's terminal (opens tmux)
 # Detach with Ctrl-b d
-pulpo --node "${NODE}" attach "${NAME}"
+pulpo --url "${URL}" attach "${NAME}"
 
 # Or send input without attaching (useful from phone/remote):
 
 # Send "yes" to approve a prompt
-pulpo --node "${NODE}" input "${NAME}" "yes"
+pulpo --url "${URL}" input "${NAME}" "yes"
 
 # Send Enter (empty input = Enter key)
-pulpo --node "${NODE}" input "${NAME}"
+pulpo --url "${URL}" input "${NAME}"
 
 # Send a multi-word response
-pulpo --node "${NODE}" input "${NAME}" "Apply all suggested changes"
+pulpo --url "${URL}" input "${NAME}" "Apply all suggested changes"
 
 # Check if the agent resumed after your input
-pulpo --node "${NODE}" logs "${NAME}" --lines 20
+pulpo --url "${URL}" logs "${NAME}" --lines 20

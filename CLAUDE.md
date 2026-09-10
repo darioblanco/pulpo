@@ -1,6 +1,7 @@
 # Pulpo Development Guide
 
-Agent session orchestrator — manages coding agents across Tailscale-connected machines.
+Agent session orchestrator — runs coding agents as durable background workers on a machine
+you own, reachable remotely over Tailscale.
 
 ## Architecture
 
@@ -266,7 +267,6 @@ pulpo/
 │   │   │   ├── health.rs         # Health check endpoint
 │   │   │   ├── sessions.rs       # Session CRUD handlers
 │   │   │   ├── node.rs           # Node info + memory detection
-│   │   │   ├── peers.rs          # Peers endpoint
 │   │   │   ├── ws.rs             # WebSocket terminal streaming
 │   │   │   ├── events.rs         # SSE event stream endpoint
 │   │   │   ├── static_files.rs   # rust-embed static file serving
@@ -286,9 +286,6 @@ pulpo/
 │   │   │   ├── web_push.rs       # Web Push notifications (VAPID)
 │   │   │   ├── outbox.rs         # Retry/backoff queue for webhook delivery
 │   │   │   └── action_token.rs   # Signed action tokens (push "Stop" action)
-│   │   ├── peers/                # Peer discovery
-│   │   │   ├── mod.rs            # PeerRegistry
-│   │   │   └── health.rs         # Peer health probing (cached on-demand)
 │   │   ├── watchdog/             # Resource monitoring
 │   │   │   ├── mod.rs            # Watchdog loop (memory + idle detection)
 │   │   │   ├── idle.rs           # Idle detection + status transitions
@@ -307,20 +304,16 @@ pulpo/
 │   │   │   ├── codex.rs          # Codex adapter (isolated CODEX_HOME + hooks/notify)
 │   │   │   ├── pi.rs             # pi adapter (pulpo.ts extension, --session-id)
 │   │   │   └── pulpo.ts.tmpl     # pi extension file template (embedded via include_str!)
-│   │   └── discovery/            # Peer discovery (Tailscale)
-│   │       ├── mod.rs            # Discovery types + constants
-│   │       └── tailscale.rs      # Tailscale API peer discovery
 │   ├── pulpo-cli/src/
 │   │   ├── main.rs               # Thin entry point (cfg(coverage) excluded)
 │   │   ├── lib.rs                # CLI logic: Cli, Commands, execute
 │   │   ├── hook.rs               # `pulpo hook <harness>` internal subcommand (lifecycle events → daemon)
 │   │   ├── format.rs             # Terminal output rendering (tables/reports)
-│   │   └── http.rs               # HTTP client helpers (auth, node/token resolution)
+│   │   └── http.rs               # HTTP client helpers (auth, base-URL/token resolution)
 │   └── pulpo-common/src/
 │       ├── lib.rs
 │       ├── session.rs            # Session, SessionStatus types
 │       ├── node.rs               # NodeInfo type
-│       ├── peer.rs               # PeerInfo, PeerStatus types
 │       ├── event.rs              # SessionEvent for SSE + notifications
 │       └── api.rs                # API request/response types
 └── web/                          # React 19 + Vite + Tailwind v4 + shadcn/ui
@@ -331,7 +324,7 @@ pulpo/
     │   ├── api/
     │   │   ├── types.ts          # Shared TypeScript interfaces
     │   │   ├── client.ts         # API fetch functions (20+)
-    │   │   └── connection.ts     # testConnection, discoverPeers
+    │   │   └── connection.ts     # testConnection
     │   ├── hooks/
     │   │   ├── use-connection.tsx # Connection context (baseUrl, token, saved)
     │   │   └── use-sse.tsx       # SSE event stream + session state
@@ -344,12 +337,12 @@ pulpo/
     │   │   ├── dashboard/        # Status summary, node/session cards, new session
     │   │   ├── session/          # Chat view, terminal view (ghostty-web)
     │   │   ├── history/          # Session filter (reused by dashboard)
-    │   │   ├── settings/         # Node, peer settings
+    │   │   ├── settings/         # Node, watchdog, notifications, secrets settings
     │   │   └── connect/          # Connect form, saved connections
     │   └── pages/
     │       ├── dashboard.tsx     # Sessions dashboard with status filters
     │       ├── schedules.tsx     # Schedule management
-    │       ├── settings.tsx      # Node, peers config
+    │       ├── settings.tsx      # Node, watchdog, notifications config
     │       └── connect.tsx       # Connection screen (standalone)
     ├── eslint.config.js
     ├── .prettierrc
