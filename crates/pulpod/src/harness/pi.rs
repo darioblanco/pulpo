@@ -6,8 +6,10 @@
 //! `ui_prompt_start`/`ui_prompt_end` nor `--session-id` — the three load-bearing
 //! primitives this adapter depends on). The active package is
 //! `@earendil-works/pi-coding-agent`; this adapter is verified against `0.85.1`'s
-//! shipped `dist/*.d.ts`, `dist/*.js`, and `docs/*.md` (static analysis only — see
-//! "Not runtime-tested" below).
+//! shipped `dist/*.d.ts`, `dist/*.js`, and `docs/*.md`, plus targeted runtime checks
+//! of the installed 0.85.1 binary (flag-conflict exit codes, subcommand dispatch, and
+//! the extension's own event-ordering fix — see "Not fully runtime-tested" below for
+//! what that runtime checking did and didn't cover).
 //!
 //! Injects a generated extension file (`-e <path>`, repeatable/always-safe to add)
 //! that wires pi's own event bus (`pi.on("session_start" | "agent_start" |
@@ -25,9 +27,15 @@
 //! Every other pi flag that selects a session by some other mechanism (`--session`,
 //! `--continue`/`-c`, `--resume`/`-r`, `--fork`, `--no-session`) makes `prepare_spawn`
 //! a full no-op — pulpo cannot safely force a specific id onto a command the user
-//! already pinned to a different session-selection mechanism, and `--session-id`
-//! combined with `--session`/`--continue`/`-c`/`--resume`/`-r` is a hard error in pi
-//! itself (`validateSessionIdFlags`, exit 1).
+//! already pinned to a different session-selection mechanism. `--session-id` combined
+//! with `--session`/`--continue`/`-c`/`--resume`/`-r` is a hard error in pi itself
+//! (`validateSessionIdFlags`, exit 1); `--session-id <existing-id> --fork <x>` is
+//! *also* a hard error (verified against 0.85.1: `createSessionManager` exits 1 with
+//! "Session already exists with id '<id>'" when `--fork` is combined with a
+//! `--session-id` that already has a session on disk) — and `resume_command`'s whole
+//! point is resuming an id that, by definition, already exists, so `--fork` is treated
+//! as a resume conflict alongside the others even though it is *not* rejected when
+//! `--session-id` names a brand-new id (used together to fork *into* a chosen id).
 //!
 //! `--session-id` itself is treated differently: because `resolve_resume_command`
 //! (`session/manager.rs`) calls [`resume_command`][HarnessAdapter::resume_command]
@@ -52,14 +60,29 @@
 //!   unverified). An older `pi` would silently not fire any of the events this
 //!   adapter wires up; it would still run (extension load failures for missing APIs
 //!   are pi's problem, not this adapter's), just without lifecycle reporting.
-//! - **Not runtime-tested**: everything here is static analysis of shipped
-//!   `.d.ts`/`.js`/docs, not a real `pi -e pulpo.ts` run.
+//! - **Not fully runtime-tested**: the `--session-id`/`--fork`/subcommand-dispatch
+//!   claims above and `pulpo.ts.tmpl`'s event-ordering fix (see its own doc comment)
+//!   were checked against a real installed `@earendil-works/pi-coding-agent@0.85.1`
+//!   binary (flag combinations and exit codes; the rendered extension loaded and ran
+//!   under `pi -e <path> -p ... --no-session`, confirming valid syntax and correct
+//!   `session_start`-before-`session_shutdown` ordering, including under an
+//!   artificially slow `session_start` hook that reliably reproduced the opposite,
+//!   broken order against the pre-fix version of the same file). No API key was
+//!   available, so the event mapping table's other events (`agent_start`,
+//!   `agent_settled`, `ui_prompt_start`/`end`) and the exact payload pi sends for them
+//!   remain unverified against a real model turn — only startup/shutdown fired.
 //! - **`resumed` on `session_start`**: pi cannot itself distinguish "opened an
 //!   existing session" from "created a fresh one with the given id" at process
 //!   `"startup"`; `resumed` is advisory only (pulpo's call site already knows the
 //!   real answer from which code path ran).
-//! - **`--session-id` file-creation timing**: unclear whether pi's session `.jsonl`
-//!   is touched on disk at process start or only on first appended entry.
+//! - **`--session-id` file-creation timing**: confirmed empirically (0.85.1, no API
+//!   key available): the session `.jsonl` is *not* written at process start — a
+//!   `--session-id` run that fails before any turn completes (e.g. missing API key)
+//!   leaves no file on disk at all, only the per-cwd session directory. A pulpo
+//!   session killed before its first turn therefore won't be found later by
+//!   exact-id lookup, and `--session-id` will silently create a new, empty session
+//!   instead of erroring — harmless (matches the adapter's own fresh-vs-resume
+//!   no-op behavior), just worth knowing.
 
 use std::path::Path;
 
@@ -93,10 +116,36 @@ const SESSION_SELECTION_FLAGS: &[&str] = &[
 ];
 
 /// The subset of [`SESSION_SELECTION_FLAGS`] pi itself rejects when combined with
-/// `--session-id` (`validateSessionIdFlags`, exit 1) — `resume_command` refuses to
-/// force a specific id onto a command carrying any of these, same "no-op on
-/// conflict" rule as `prepare_spawn`.
-const RESUME_CONFLICT_FLAGS: &[&str] = &["--session", "--continue", "-c", "--resume", "-r"];
+/// `--session-id` (`--session`/`--continue`/`-c`/`--resume`/`-r` via
+/// `validateSessionIdFlags`, exit 1; `--fork` via `createSessionManager`'s "Session
+/// already exists with id '<id>'" exit 1 — verified against 0.85.1, see the module
+/// doc) — `resume_command` refuses to force a specific id onto a command carrying any
+/// of these, same "no-op on conflict" rule as `prepare_spawn`. `--no-session` is
+/// deliberately excluded: pi does not reject it (it just silently produces a
+/// non-persisted session), so `resume_command` still rewrites it — a pointless but not
+/// broken combination, the caller's problem, not this adapter's.
+const RESUME_CONFLICT_FLAGS: &[&str] =
+    &["--session", "--continue", "-c", "--resume", "-r", "--fork"];
+
+/// `pi`'s own subcommands (verified via `pi --help`, 0.85.1: `install`, `remove`,
+/// `uninstall`, `update`, `list`, `config`, `auth`). Each one is dispatched by
+/// `main.js` matching `args[0]` *before* pi's normal chat-session argument parser
+/// (`parseArgs`) ever runs — so if `prepare_spawn` inserted `--session-id <id> -e
+/// <path>` right after `pi` (its usual placement for a chat invocation), the
+/// subcommand word would end up at `args[2]` instead of `args[0]` and silently stop
+/// being recognized as a subcommand at all: `pi update` would fall through to the
+/// normal parser and launch a chat session with `"update"` as the prompt/file
+/// argument, instead of actually running the update. `prepare_spawn` is a full no-op
+/// whenever the token immediately after `pi` is one of these.
+const KNOWN_SUBCOMMANDS: &[&str] = &[
+    "install",
+    "remove",
+    "uninstall",
+    "update",
+    "list",
+    "config",
+    "auth",
+];
 
 pub struct PiAdapter;
 
@@ -118,6 +167,21 @@ impl HarnessAdapter for PiAdapter {
             return Ok(SpawnPlan::unchanged(ctx.command));
         };
 
+        let Some(pi_idx) = pi_token_index(&tokens) else {
+            return Ok(SpawnPlan::unchanged(ctx.command));
+        };
+
+        if tokens
+            .get(pi_idx + 1)
+            .is_some_and(|token| KNOWN_SUBCOMMANDS.contains(&token.as_str()))
+        {
+            info!(
+                session = %ctx.session_name,
+                "pi adapter: command invokes a pi subcommand, spawning unchanged"
+            );
+            return Ok(SpawnPlan::unchanged(ctx.command));
+        }
+
         if has_flag(&tokens, SESSION_SELECTION_FLAGS) {
             info!(
                 session = %ctx.session_name,
@@ -125,10 +189,6 @@ impl HarnessAdapter for PiAdapter {
             );
             return Ok(SpawnPlan::unchanged(ctx.command));
         }
-
-        let Some(pi_idx) = pi_token_index(&tokens) else {
-            return Ok(SpawnPlan::unchanged(ctx.command));
-        };
 
         match rewrite_spawn(ctx, tokens, pi_idx) {
             Ok(plan) => Ok(plan),
@@ -225,14 +285,30 @@ fn rewrite_spawn(ctx: &SpawnContext, mut tokens: Vec<String>, pi_idx: usize) -> 
     let ext_arg = ext_path.to_string_lossy().into_owned();
 
     // If `--session-id` is already present (from a prior `resume_command` splice, or
-    // a user-supplied one), keep it exactly as-is and just wire up `-e`. Otherwise
-    // this is a genuinely fresh spawn: mint the id (reusing the pulpo session uuid —
-    // it already matches pi's id regex) and insert both flags after argv0.
-    let harness_session_id = if let Some(idx) = tokens.iter().position(|t| t == "--session-id") {
-        let existing = tokens.get(idx + 1).cloned();
-        let insert_at = idx + 1 + usize::from(existing.is_some());
-        tokens.splice(insert_at..insert_at, ["-e".to_owned(), ext_arg]);
-        existing
+    // a user-supplied one) *before* any `--` separator — after `--` it is a literal
+    // positional argument, not the flag — keep it exactly as-is and just wire up
+    // `-e`. Otherwise this is a genuinely fresh spawn: mint the id (reusing the pulpo
+    // session uuid — it already matches pi's id regex) and insert both flags after
+    // argv0.
+    let harness_session_id = if let Some(idx) = flag_scan_region(&tokens)
+        .iter()
+        .position(|t| t == "--session-id")
+    {
+        if let Some(existing) = tokens.get(idx + 1).cloned() {
+            tokens.splice(idx + 2..idx + 2, ["-e".to_owned(), ext_arg]);
+            Some(existing)
+        } else {
+            // Trailing valueless `--session-id` (the last token in the command):
+            // splicing `-e <path>` straight after it would produce
+            // `--session-id -e <path>`, which pi parses as `-e` *being* the
+            // (invalid) session id and rejects (verified against 0.85.1: "Error:
+            // Session id must be non-empty, contain only alphanumeric characters,
+            // '-', '_', and '.', ..."). Mint the pulpo id as its value instead, same
+            // as the no-`--session-id`-at-all branch below.
+            let sid = ctx.session_id.to_owned();
+            tokens.splice((idx + 1)..=idx, [sid.clone(), "-e".to_owned(), ext_arg]);
+            Some(sid)
+        }
     } else {
         let sid = ctx.session_id.to_owned();
         tokens.splice(
@@ -274,18 +350,55 @@ fn escape_ts_string(value: &str) -> String {
 /// necessarily rate-limited — narrowed here to pulpo's `rate_limited` flag).
 fn is_rate_limited(error: &str) -> bool {
     let lower = error.to_lowercase();
-    lower.contains("429")
+    contains_standalone_429(&lower)
         || lower.contains("too many requests")
         || ["rate limit", "ratelimit", "rate-limit", "rate_limit"]
             .iter()
             .any(|needle| lower.contains(needle))
 }
 
-/// True if `tokens` contains any of `flags`. Unlike Claude Code, pi's own CLI parser
+/// True if `text` contains the standalone number `429` — not merely as a substring of
+/// a longer digit run (e.g. `"request 14290 done"` must not match `"429"` inside
+/// `"14290"`). Checks that the byte immediately before and after each `"429"` match,
+/// when present, is not an ASCII digit.
+fn contains_standalone_429(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    while let Some(rel) = text[start..].find("429") {
+        let idx = start + rel;
+        let before_is_digit = idx > 0 && bytes[idx - 1].is_ascii_digit();
+        let after_idx = idx + 3;
+        let after_is_digit = bytes.get(after_idx).is_some_and(u8::is_ascii_digit);
+        if !before_is_digit && !after_is_digit {
+            return true;
+        }
+        start = idx + 1;
+    }
+    false
+}
+
+/// Slice of `tokens` up to (not including) a literal `--` separator, if one is
+/// present. Pi's own CLI convention (like any POSIX-style parser) is that `--` ends
+/// option parsing — everything after it is a positional argument (a chat message or
+/// `@file`), never a flag. [`has_flag`] and the `--session-id`-presence check in
+/// [`rewrite_spawn`] must scan only this region, or a positional value that happens to
+/// spell one of pulpo's own flags (e.g. `pi -- --resume`, a literal chat message) would
+/// be mistaken for the real flag.
+fn flag_scan_region(tokens: &[String]) -> &[String] {
+    tokens
+        .iter()
+        .position(|t| t == "--")
+        .map_or(tokens, |idx| &tokens[..idx])
+}
+
+/// True if `tokens` contains any of `flags`, ignoring anything at or past a literal
+/// `--` separator (see [`flag_scan_region`]). Unlike Claude Code, pi's own CLI parser
 /// (`dist/cli/args.js`) only ever accepts the space-separated form for its flags —
 /// no `--flag=value` — so an exact token match is sufficient.
 fn has_flag(tokens: &[String], flags: &[&str]) -> bool {
-    tokens.iter().any(|token| flags.contains(&token.as_str()))
+    flag_scan_region(tokens)
+        .iter()
+        .any(|token| flags.contains(&token.as_str()))
 }
 
 /// Index of the `pi` token in `tokens`, skipping a leading `env` invocation and its
@@ -488,6 +601,27 @@ mod tests {
     }
 
     #[test]
+    fn test_prepare_spawn_trailing_valueless_session_id_mints_id() {
+        // A `--session-id` as the very last token has no value to keep. Splicing
+        // `-e <path>` straight after it would produce `--session-id -e <path>`,
+        // which pi parses as `-e` *being* the (invalid) session id and rejects
+        // (verified against 0.85.1). Minting the pulpo id instead keeps the command
+        // syntactically valid.
+        let tmp = tempfile::tempdir().unwrap();
+        let plan = PiAdapter
+            .prepare_spawn(&ctx(tmp.path(), "pi --session-id"))
+            .unwrap();
+        let sid = "11111111-1111-1111-1111-111111111111";
+        assert_eq!(plan.harness_session_id.as_deref(), Some(sid));
+        let tokens = shell_words::split(&plan.command).unwrap();
+        assert_eq!(tokens[0], "pi");
+        assert_eq!(tokens[1], "--session-id");
+        assert_eq!(tokens[2], sid);
+        assert_eq!(tokens[3], "-e");
+        assert_eq!(tokens[4], plan.files[0].to_string_lossy());
+    }
+
+    #[test]
     fn test_prepare_spawn_fresh_and_resume_produce_identical_shape() {
         // The invariant the spec calls out explicitly: because `--session-id` is
         // idempotent create-or-open, a fresh spawn and `resume_command`'s output run
@@ -523,6 +657,89 @@ mod tests {
             assert!(plan.harness_session_id.is_none());
             assert!(plan.files.is_empty());
         }
+    }
+
+    #[test]
+    fn test_prepare_spawn_skips_for_each_known_subcommand() {
+        // `pi update`/`install`/etc. are dispatched by matching `args[0]` before pi's
+        // normal chat-session parser ever runs (verified via `pi --help`, 0.85.1).
+        // Inserting `--session-id <id> -e <path>` right after `pi` would push the
+        // subcommand word to `args[2]`, so it would stop being recognized as a
+        // subcommand at all and instead launch a chat session with the subcommand
+        // word as the prompt — `prepare_spawn` must no-op instead.
+        let tmp = tempfile::tempdir().unwrap();
+        for command in [
+            "pi install some-extension",
+            "pi remove some-extension",
+            "pi uninstall some-extension",
+            "pi update",
+            "pi list",
+            "pi config",
+            "pi auth print-api-key",
+        ] {
+            let plan = PiAdapter.prepare_spawn(&ctx(tmp.path(), command)).unwrap();
+            assert_eq!(plan.command, command, "expected no-op for {command:?}");
+            assert!(plan.harness_session_id.is_none());
+            assert!(plan.files.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_prepare_spawn_known_subcommand_with_env_prefix_is_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plan = PiAdapter
+            .prepare_spawn(&ctx(tmp.path(), "env FOO=bar pi update"))
+            .unwrap();
+        assert_eq!(plan.command, "env FOO=bar pi update");
+        assert!(plan.harness_session_id.is_none());
+    }
+
+    #[test]
+    fn test_prepare_spawn_subcommand_named_word_after_flags_is_not_a_subcommand() {
+        // Only the token immediately after `pi` counts as a subcommand — "update"
+        // appearing later (e.g. as a plain chat message/argument) must not trigger
+        // the no-op.
+        let tmp = tempfile::tempdir().unwrap();
+        let plan = PiAdapter
+            .prepare_spawn(&ctx(tmp.path(), "pi -p update"))
+            .unwrap();
+        assert!(plan.harness_session_id.is_some());
+    }
+
+    #[test]
+    fn test_prepare_spawn_ignores_session_selection_flags_after_double_dash() {
+        // Everything after a literal `--` is a positional argument (a chat message),
+        // never a flag — `pi -- --resume` must be treated as a fresh, ordinary spawn,
+        // not skipped as if `--resume` had actually been passed.
+        let tmp = tempfile::tempdir().unwrap();
+        let plan = PiAdapter
+            .prepare_spawn(&ctx(tmp.path(), "pi -- --resume"))
+            .unwrap();
+        assert!(plan.harness_session_id.is_some());
+        let tokens = shell_words::split(&plan.command).unwrap();
+        assert_eq!(tokens[0], "pi");
+        assert_eq!(tokens[1], "--session-id");
+        assert_eq!(&tokens[5..], ["--", "--resume"]);
+    }
+
+    #[test]
+    fn test_prepare_spawn_ignores_session_id_after_double_dash() {
+        // A `--session-id` that appears after `--` is a literal positional value, not
+        // pulpo's own flag — `rewrite_spawn` must mint a fresh id and insert its own
+        // `--session-id`/`-e` before the `--`, leaving the positional `--session-id
+        // foo` after it untouched.
+        let tmp = tempfile::tempdir().unwrap();
+        let plan = PiAdapter
+            .prepare_spawn(&ctx(tmp.path(), "pi -- --session-id foo"))
+            .unwrap();
+        let sid = "11111111-1111-1111-1111-111111111111";
+        assert_eq!(plan.harness_session_id.as_deref(), Some(sid));
+        let tokens = shell_words::split(&plan.command).unwrap();
+        assert_eq!(tokens[0], "pi");
+        assert_eq!(tokens[1], "--session-id");
+        assert_eq!(tokens[2], sid);
+        assert_eq!(tokens[3], "-e");
+        assert_eq!(&tokens[5..], ["--", "--session-id", "foo"]);
     }
 
     #[test]
@@ -630,11 +847,21 @@ mod tests {
     }
 
     #[test]
-    fn test_resume_command_fork_and_no_session_are_not_conflicts() {
-        // --fork and --no-session are not in pi's own validateSessionIdFlags
-        // conflict set, so resume_command still rewrites them (whether that
-        // combination is *useful* is the caller's problem, not this adapter's).
-        assert!(PiAdapter.resume_command("pi --fork abc", "sid-1").is_some());
+    fn test_resume_command_none_when_fork_flag_present() {
+        // Verified against 0.85.1: `pi --session-id <existing> --fork x` exits 1
+        // ("Session already exists with id '<id>'") — resume_command always resumes
+        // an id that, by definition, already has a session, so `--fork` is a hard
+        // conflict here even though `prepare_spawn`'s no-op rule and pi's own
+        // validateSessionIdFlags don't reject `--fork` combined with a *fresh*
+        // `--session-id`.
+        assert!(PiAdapter.resume_command("pi --fork abc", "sid-1").is_none());
+    }
+
+    #[test]
+    fn test_resume_command_no_session_is_not_a_conflict() {
+        // --no-session is not in pi's own validateSessionIdFlags conflict set, so
+        // resume_command still rewrites it (whether that combination is *useful* is
+        // the caller's problem, not this adapter's).
         assert!(
             PiAdapter
                 .resume_command("pi --no-session", "sid-1")
@@ -833,6 +1060,132 @@ mod tests {
         assert!(PiAdapter.parse_event(&raw).unwrap().is_none());
     }
 
+    #[test]
+    fn test_parse_event_agent_settled_429_is_not_rate_limited_when_embedded_in_a_longer_number() {
+        // Regression: a bare `.contains("429")` would false-positive on "14290".
+        let raw = serde_json::json!({"event": "agent_settled", "error": "request 14290 done"});
+        assert_eq!(
+            PiAdapter.parse_event(&raw).unwrap().unwrap(),
+            HarnessEvent::Failed {
+                error: "request 14290 done".into(),
+                rate_limited: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_event_round_trips_template_payload_field_names() {
+        // Exercises `parse_event` against JSON objects shaped exactly like what
+        // `pulpo.ts.tmpl` posts for every event it emits, using every field name the
+        // template uses (`event`, `session_id`, `session_file`, `cwd`, `reason`,
+        // `kind`, `title`, `last_assistant_message`, `stop_reason`, `error`) — a
+        // field-name drift between the JS template and this parser (e.g. camelCase
+        // vs. snake_case) would silently no-op every event and wouldn't be caught by
+        // tests built from ad-hoc JSON objects that only include the fields each
+        // match arm happens to read.
+        let session_start = serde_json::json!({
+            "event": "session_start",
+            "session_id": "sid-1",
+            "session_file": "/home/u/.pi/agent/sessions/--repo--/x.jsonl",
+            "cwd": "/repo",
+            "reason": "new",
+            "previous_session_file": null,
+        });
+        assert_eq!(
+            PiAdapter.parse_event(&session_start).unwrap().unwrap(),
+            HarnessEvent::SessionStarted {
+                harness_session_id: Some("sid-1".into()),
+                resumed: false,
+            }
+        );
+
+        let agent_start = serde_json::json!({
+            "event": "agent_start",
+            "session_id": "sid-1",
+            "session_file": "/home/u/.pi/agent/sessions/--repo--/x.jsonl",
+            "cwd": "/repo",
+        });
+        assert_eq!(
+            PiAdapter.parse_event(&agent_start).unwrap().unwrap(),
+            HarnessEvent::Working
+        );
+
+        let agent_settled_ok = serde_json::json!({
+            "event": "agent_settled",
+            "session_id": "sid-1",
+            "session_file": "/home/u/.pi/agent/sessions/--repo--/x.jsonl",
+            "cwd": "/repo",
+            "last_assistant_message": "Fixed the bug",
+            "stop_reason": "stop",
+            "error": null,
+        });
+        assert_eq!(
+            PiAdapter.parse_event(&agent_settled_ok).unwrap().unwrap(),
+            HarnessEvent::TurnFinished {
+                summary: Some("Fixed the bug".into())
+            }
+        );
+
+        let agent_settled_err = serde_json::json!({
+            "event": "agent_settled",
+            "session_id": "sid-1",
+            "session_file": "/home/u/.pi/agent/sessions/--repo--/x.jsonl",
+            "cwd": "/repo",
+            "last_assistant_message": null,
+            "stop_reason": "error",
+            "error": "rate limited: 429",
+        });
+        assert_eq!(
+            PiAdapter.parse_event(&agent_settled_err).unwrap().unwrap(),
+            HarnessEvent::Failed {
+                error: "rate limited: 429".into(),
+                rate_limited: true,
+            }
+        );
+
+        let ui_prompt_start = serde_json::json!({
+            "event": "ui_prompt_start",
+            "session_id": "sid-1",
+            "session_file": "/home/u/.pi/agent/sessions/--repo--/x.jsonl",
+            "cwd": "/repo",
+            "kind": "confirm",
+            "title": "Allow this action?",
+        });
+        assert_eq!(
+            PiAdapter.parse_event(&ui_prompt_start).unwrap().unwrap(),
+            HarnessEvent::NeedsInput {
+                reason: NeedsInputReason::Permission
+            }
+        );
+
+        let ui_prompt_end = serde_json::json!({
+            "event": "ui_prompt_end",
+            "session_id": "sid-1",
+            "session_file": "/home/u/.pi/agent/sessions/--repo--/x.jsonl",
+            "cwd": "/repo",
+            "kind": "confirm",
+            "title": "Allow this action?",
+        });
+        assert_eq!(
+            PiAdapter.parse_event(&ui_prompt_end).unwrap().unwrap(),
+            HarnessEvent::Working
+        );
+
+        let session_shutdown = serde_json::json!({
+            "event": "session_shutdown",
+            "session_id": "sid-1",
+            "session_file": "/home/u/.pi/agent/sessions/--repo--/x.jsonl",
+            "cwd": "/repo",
+            "reason": "quit",
+        });
+        assert_eq!(
+            PiAdapter.parse_event(&session_shutdown).unwrap().unwrap(),
+            HarnessEvent::SessionEnded {
+                reason: Some("quit".into())
+            }
+        );
+    }
+
     // -- small helpers --
 
     #[test]
@@ -848,6 +1201,54 @@ mod tests {
     fn test_has_flag_false_for_clean_command() {
         let tokens = vec!["pi".to_owned(), "-p".to_owned(), "hi".to_owned()];
         assert!(!has_flag(&tokens, SESSION_SELECTION_FLAGS));
+    }
+
+    #[test]
+    fn test_has_flag_ignores_tokens_after_double_dash() {
+        let tokens = vec!["pi".to_owned(), "--".to_owned(), "--resume".to_owned()];
+        assert!(!has_flag(&tokens, SESSION_SELECTION_FLAGS));
+    }
+
+    #[test]
+    fn test_has_flag_true_before_double_dash() {
+        let tokens = vec![
+            "pi".to_owned(),
+            "--resume".to_owned(),
+            "--".to_owned(),
+            "hello".to_owned(),
+        ];
+        assert!(has_flag(&tokens, SESSION_SELECTION_FLAGS));
+    }
+
+    #[test]
+    fn test_flag_scan_region_no_double_dash_returns_everything() {
+        let tokens = vec!["pi".to_owned(), "-p".to_owned(), "hi".to_owned()];
+        assert_eq!(flag_scan_region(&tokens), tokens.as_slice());
+    }
+
+    #[test]
+    fn test_flag_scan_region_stops_before_double_dash() {
+        let tokens = vec![
+            "pi".to_owned(),
+            "--model".to_owned(),
+            "x".to_owned(),
+            "--".to_owned(),
+            "--resume".to_owned(),
+        ];
+        assert_eq!(flag_scan_region(&tokens), &tokens[..3]);
+    }
+
+    #[test]
+    fn test_contains_standalone_429_bare_number() {
+        assert!(contains_standalone_429("429"));
+        assert!(contains_standalone_429("http 429 received"));
+    }
+
+    #[test]
+    fn test_contains_standalone_429_not_embedded_in_longer_number() {
+        assert!(!contains_standalone_429("request 14290 done"));
+        assert!(!contains_standalone_429("code 94290"));
+        assert!(!contains_standalone_429("id 4297"));
     }
 
     #[test]
