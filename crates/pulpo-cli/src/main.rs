@@ -5,7 +5,9 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = pulpo_cli::Cli::parse();
     let output = pulpo_cli::execute(&cli).await?;
-    println!("{output}");
+    if pulpo_cli::should_print_output(&output) {
+        println!("{output}");
+    }
     Ok(())
 }
 

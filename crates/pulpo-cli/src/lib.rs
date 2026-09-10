@@ -1510,9 +1510,32 @@ pub async fn execute(cli: &Cli) -> Result<String> {
     }
 }
 
+/// Whether `main` should print `execute`'s output.
+///
+/// Empty output — every `pulpo hook ...` invocation returns one, see
+/// [`hook::execute_hook`] — must never be printed, not even as a bare newline:
+/// `println!("")` still emits one, and for a `SessionStart`/`UserPromptSubmit` hook,
+/// Claude Code feeds a command hook's stdout straight back into its own context, so a
+/// stray blank line would leak into the conversation.
+#[must_use]
+pub const fn should_print_output(output: &str) -> bool {
+    !output.is_empty()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_should_print_output_true_for_nonempty() {
+        assert!(should_print_output("Detached from session \"x\"."));
+    }
+
+    #[test]
+    fn test_should_print_output_false_for_empty() {
+        // The `hook` subcommand's output — must never reach a bare `println!("")`.
+        assert!(!should_print_output(""));
+    }
 
     #[test]
     fn test_cli_parse_list() {
@@ -2828,7 +2851,11 @@ mod tests {
         // preamble (resolve_node/ensure_daemon_running) instead of being intercepted
         // up front, it could hang or error; the hook path must always resolve
         // cleanly (whatever PULPO_SESSION_ID happens to be in this environment,
-        // `execute` never propagates an error for the hook subcommand).
+        // `execute` never propagates an error for the hook subcommand). This test
+        // cannot hang on a real stdin read either way — `hook::read_hook_stdin` is
+        // stubbed to the empty-string "stdin-injecting" variant under `cfg(test)`
+        // regardless of `PULPO_SESSION_ID`, the same as `execute_hook_with_stdin`'s
+        // callers get explicitly.
         let cli = Cli {
             node: "127.0.0.1:1".into(),
             token: None,

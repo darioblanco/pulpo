@@ -69,7 +69,16 @@ pub async fn post_hook_event(
 /// run outside its normal harness-piped context) can never hang the async runtime;
 /// if it never completes the thread is abandoned (harmless — the process exits at the
 /// end of `execute_hook` regardless).
-#[cfg(not(coverage))]
+///
+/// Never compiled into a `cargo test` binary (see the `cfg(test)` stub below): a test
+/// process's own stdin is whatever the test runner happens to be attached to (a live
+/// TTY in an interactive `cargo test`, or — in this very codebase — potentially a
+/// pulpo-managed session's own stdin), and `execute()`'s hook dispatch resolves
+/// `PULPO_SESSION_ID` from the real environment rather than an injected value. A test
+/// that exercises that dispatch (not `execute_hook_with_stdin`, which never reads
+/// stdin at all) must never risk blocking on it regardless of what happens to be set
+/// in the environment it runs in.
+#[cfg(not(any(coverage, test)))]
 async fn read_hook_stdin() -> String {
     tokio::task::spawn_blocking(|| {
         use std::io::Read;
@@ -81,9 +90,12 @@ async fn read_hook_stdin() -> String {
     .unwrap_or_default()
 }
 
-/// No real stdin under coverage builds (nothing meaningful to read from the test
-/// binary's own stdin).
-#[cfg(coverage)]
+/// No real stdin under coverage or test builds — see the doc comment above.
+///
+/// `async` only to match the real variant's signature (`execute_hook` `.await`s it
+/// unconditionally regardless of which one is compiled in).
+#[cfg(any(coverage, test))]
+#[allow(clippy::unused_async)]
 async fn read_hook_stdin() -> String {
     String::new()
 }

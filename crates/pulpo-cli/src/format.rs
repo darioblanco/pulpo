@@ -387,7 +387,10 @@ pub fn format_worktree_sessions(sessions: &[&Session]) -> String {
         let path = s.worktree_path.as_deref().unwrap_or("-");
         lines.push(format!(
             "{:<20} {:<20} {:<10} {}",
-            s.name, branch, s.status, path
+            s.name,
+            branch,
+            format_status(s),
+            path
         ));
     }
     lines.join("\n")
@@ -498,6 +501,30 @@ mod tests {
         assert!(
             output.contains('-'),
             "branch should show dash when None: {output}"
+        );
+    }
+
+    #[test]
+    fn test_format_worktree_sessions_renders_needs_input_badge() {
+        use pulpo_common::session::SessionStatus;
+
+        let mut meta = std::collections::HashMap::new();
+        meta.insert("needs_input".into(), "permission".into());
+        let session = Session {
+            name: "blocked-wt".into(),
+            workdir: "/tmp/repo".into(),
+            command: "claude -p fix".into(),
+            status: SessionStatus::Idle,
+            worktree_path: Some("/home/user/.pulpo/worktrees/blocked-wt".into()),
+            worktree_branch: Some("blocked-wt".into()),
+            metadata: Some(meta),
+            ..Default::default()
+        };
+        let sessions = vec![&session];
+        let output = format_worktree_sessions(&sessions);
+        assert!(
+            output.contains("needs input (permission)"),
+            "should render needs-input badge like `pulpo ls`: {output}"
         );
     }
 
