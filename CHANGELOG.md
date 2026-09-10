@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/darioblanco/pulpo/compare/v0.1.0...v0.1.1) (2026-09-10)
+
+
+### Features
+
+* **harness:** hook-driven agent lifecycle + real resume for Claude Code, Codex, and pi ([#97](https://github.com/darioblanco/pulpo/issues/97)) ([d0eb280](https://github.com/darioblanco/pulpo/commit/d0eb280ea4f1bd92c75238c18544a6ac41e5866e))
+
 ## [0.1.0](https://github.com/darioblanco/pulpo/compare/v0.0.44...v0.1.0) (2026-07-14)
 
 
