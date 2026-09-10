@@ -9,6 +9,16 @@
  * child's own "error" event (e.g. ENOENT if `pulpo` isn't on PATH) is
  * swallowed instead of becoming an uncaught exception that could crash pi.
  *
+ * Events are serialized through a single promise `chain` instead of being
+ * fully fire-and-forget: pi awaits every handler in turn (including
+ * `session_shutdown` before it exits), so a handler that appends to `chain`
+ * and then awaits it blocks pi's own event loop just long enough for the
+ * *previous* event's child process to actually finish (or hit a 2.5s safety
+ * timeout) before the next event's handler returns. Without this, two
+ * detached children racing the OS process scheduler could report to the
+ * daemon out of order (reproduced: session_shutdown logged before
+ * session_start in print-mode runs).
+ *
  * Verified against @earendil-works/pi-coding-agent 0.85.1.
  */
 
@@ -18,6 +28,12 @@ import { spawn } from "node:child_process";
 // of its own binary; falls back to relying on PATH.
 const PULPO_BIN = "__PULPO_BIN_PATH__";
 
+// Serializes reportEvent calls so events reach the daemon in the order they
+// fired, instead of racing each other as independent detached processes. Each
+// handler below does `reportEvent(...); await chain;` — awaiting the tail of
+// this chain, which by then includes the promise the call just appended.
+let chain = Promise.resolve();
+
 function safe(fn) {
   try {
     return fn();
@@ -26,31 +42,52 @@ function safe(fn) {
   }
 }
 
-/** Fire-and-forget. Never throws. Never awaited by callers. */
+/**
+ * Appends one event report to `chain`. Never throws and never rejects `chain`
+ * itself (every failure path calls `resolve()` instead of `reject()`), so
+ * `await chain` in a handler can never turn into an uncaught rejection.
+ */
 function reportEvent(eventName, payload) {
-  try {
-    const child = spawn(PULPO_BIN, ["hook", "pi", "--event", eventName], {
-      stdio: ["pipe", "ignore", "ignore"],
-      detached: true,
-    });
-    // Required: an unhandled "error" (ENOENT, EPIPE, ...) on a detached
-    // child would otherwise surface as an uncaught exception in pi.
-    child.on("error", () => {});
-    try {
-      child.stdin.write(JSON.stringify(payload));
-    } catch {
-      /* ignore */
-    } finally {
-      try {
-        child.stdin.end();
-      } catch {
-        /* ignore */
-      }
-    }
-    child.unref();
-  } catch {
-    /* never let a hook failure affect the agent */
-  }
+  chain = chain.then(
+    () =>
+      new Promise((resolve) => {
+        try {
+          const child = spawn(PULPO_BIN, ["hook", "pi", "--event", eventName], {
+            stdio: ["pipe", "ignore", "ignore"],
+            detached: true,
+          });
+          // Required: an unhandled "error" (e.g. ENOENT if `pulpo` isn't on
+          // PATH) on the child process would otherwise surface as an
+          // uncaught exception in pi.
+          child.on("error", () => {});
+          // Required separately from the listener above: EPIPE from writing
+          // to a closed/broken pipe is emitted on the child's stdin stream,
+          // not on the child process itself, and would otherwise also
+          // surface as an uncaught exception.
+          child.stdin.on("error", () => {});
+          try {
+            child.stdin.write(JSON.stringify(payload));
+          } catch {
+            /* ignore */
+          } finally {
+            try {
+              child.stdin.end();
+            } catch {
+              /* ignore */
+            }
+          }
+          child.unref();
+          child.once("exit", resolve);
+          child.once("error", resolve);
+          // Safety net: never let one slow/stuck child stall the whole chain
+          // (and every handler awaiting it) indefinitely.
+          setTimeout(resolve, 2500);
+        } catch {
+          /* never let a hook failure affect the agent */
+          resolve();
+        }
+      }),
+  );
 }
 
 function truncate(text, max) {
@@ -111,6 +148,7 @@ export default function pulpoExtension(pi) {
         reason: event.reason,
         previous_session_file: event.previousSessionFile ?? null,
       });
+      await chain;
     } catch {
       /* never throw from a hook */
     }
@@ -119,6 +157,7 @@ export default function pulpoExtension(pi) {
   pi.on("agent_start", async (_event, ctx) => {
     try {
       reportEvent("agent_start", { event: "agent_start", ...base(ctx) });
+      await chain;
     } catch {
       /* never throw from a hook */
     }
@@ -144,6 +183,7 @@ export default function pulpoExtension(pi) {
         stop_reason: stopReason,
         error: stopReason === "error" ? errorMessage ?? "unknown error" : null,
       });
+      await chain;
     } catch {
       /* never throw from a hook */
     } finally {
@@ -159,6 +199,7 @@ export default function pulpoExtension(pi) {
         kind: event.kind ?? null,
         title: event.title ?? null,
       });
+      await chain;
     } catch {
       /* never throw from a hook */
     }
@@ -172,6 +213,7 @@ export default function pulpoExtension(pi) {
         kind: event.kind ?? null,
         title: event.title ?? null,
       });
+      await chain;
     } catch {
       /* never throw from a hook */
     }
@@ -188,6 +230,7 @@ export default function pulpoExtension(pi) {
         ...base(ctx),
         reason: event.reason,
       });
+      await chain;
     } catch {
       /* never throw from a hook */
     }

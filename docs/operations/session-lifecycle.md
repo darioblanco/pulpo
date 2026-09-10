@@ -104,10 +104,10 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 
 ## Waiting Patterns (Idle Detection)
 
-The watchdog inspects the last 5 lines of terminal output for these patterns (case-insensitive). 29 built-in patterns cover major coding agents and common CLI prompts:
+The watchdog inspects the last 5 lines of terminal output for these patterns (case-insensitive). The built-in patterns cover major coding agents and common CLI prompts:
 
 - **Generic**: `(y/n)`, `[Y/n]`, `[yes/no]`, `(yes/no)`, `Yes / No`, `Do you trust`, `Press Enter`, `approve this`, `Are you sure`, `Continue?`, `Confirm?`, `Proceed?`
-- **Claude Code**: `(Y)es`, `(N)o`, `(A)lways`, `Do you want to proceed`
+- **Claude Code**: `(Y)es`, `(N)o`, `(A)lways`, `Do you want to proceed`, `I trust this folder`, `Enter to confirm`
 - **Codex CLI**: `Allow command?`
 - **Gemini CLI**: `Allow?`, `Approve?`
 - **Aider**: `to the chat?`, `Apply edit?`, `shell command?`, `Create new file`
