@@ -149,13 +149,33 @@ pub async fn execute_hook_with_stdin(
 /// rather than stdin — `harness::codex::CodexAdapter` wires `notify` to
 /// `sh -c '<pulpo-bin> hook codex-notify "$0"'`, which turns the appended payload
 /// into `$0`, i.e. this command's `payload` argument (see `Commands::Hook`). This is
-/// the `pulpo hook codex-notify <payload>` entry point: posts the raw payload to the
-/// daemon as harness "codex" (`CodexAdapter::parse_event` maps its `type` field,
-/// `agent-turn-complete`, to `TurnFinished`) and — when the payload carries a
-/// session/thread id — posts a synthetic `SessionStart`-shaped event first, so pulpo
-/// learns the harness session id even if the `SessionStart` hook itself never fired.
-/// Same always-exit-0/2s-timeout/silent contract as [`execute_hook`]; `session_id`
-/// is `None` under the same circumstances (`PULPO_SESSION_ID` unset).
+/// the `pulpo hook codex-notify <payload>` entry point: posts the raw payload,
+/// unmodified, to the daemon as harness "codex" — `CodexAdapter::parse_event` maps
+/// its `type` field, `agent-turn-complete`, to a single `TurnFinished` event (the
+/// payload's own `thread_id`/`thread-id` field rides along in it, for whenever a
+/// future daemon-side change wants to learn the harness session id from it). Same
+/// always-exit-0/2s-timeout/silent contract as [`execute_hook`]; `session_id` is
+/// `None` under the same circumstances (`PULPO_SESSION_ID` unset).
+///
+/// Deviation from an earlier version of this adapter: it used to also post a
+/// synthetic `SessionStart`-shaped event first whenever the payload carried a
+/// thread id, so pulpo could learn `harness_session_id` even if the real
+/// `SessionStart` hook never fired. That synthetic event fired on *every*
+/// `agent-turn-complete` notification — not just the first — which flapped the
+/// session Active (via the synthetic `SessionStart`) then Idle (via the real
+/// `TurnFinished` that followed it) on every turn, and duplicated the `Stop`
+/// hook's own `TurnFinished` for the same turn boundary. Removed rather than
+/// fixed to fire once: `session::manager::apply_harness_event` only ever stores
+/// `harness_session_id` from a `SessionStarted`-shaped `HarnessEvent`
+/// (`harness::transition_for_event`), and this CLI process is a one-shot per
+/// invocation with no way to ask the daemon "do you already know this session's
+/// id?" before deciding whether to post one — teaching `transition_for_event` to
+/// pull `harness_session_id` out of other event kinds too would fix this at the
+/// root, but that function lives in `harness/mod.rs`, shared by every adapter, so
+/// it's out of scope here. Until then, a lost session whose `SessionStart` hook
+/// never fired is instead recovered by `harness::codex`'s own rollout-file
+/// discovery fallback (`codex resume --last`) on its next spawn/resume, rather than
+/// by this notify path guessing the id.
 pub async fn execute_codex_notify_hook(
     cli: &Cli,
     session_id: Option<&str>,
@@ -172,26 +192,6 @@ pub async fn execute_codex_notify_hook(
         .await
         .or(peer_token);
 
-    let payload = parse_hook_event_json(raw_payload);
-    if let Some(thread_id) = extract_notify_thread_id(&payload) {
-        let synthetic = serde_json::json!({
-            "hook_event_name": "SessionStart",
-            "session_id": thread_id,
-            "source": "notify",
-        })
-        .to_string();
-        post_hook_event(
-            &client,
-            &base,
-            token.as_deref(),
-            session_id,
-            "codex",
-            None,
-            &synthetic,
-        )
-        .await;
-    }
-
     post_hook_event(
         &client,
         &base,
@@ -204,18 +204,6 @@ pub async fn execute_codex_notify_hook(
     .await;
 
     String::new()
-}
-
-/// Extract a Codex `notify` payload's session/thread id, checking both `thread_id`
-/// (`snake_case`, as documented) and `thread-id` (`kebab-case` — Codex's other
-/// notify fields are known to use kebab-case elsewhere, and the exact convention
-/// here wasn't independently confirmed). Returns `None` when neither is present.
-fn extract_notify_thread_id(payload: &serde_json::Value) -> Option<String> {
-    payload
-        .get("thread_id")
-        .or_else(|| payload.get("thread-id"))
-        .and_then(serde_json::Value::as_str)
-        .map(str::to_owned)
 }
 
 #[cfg(test)]
@@ -424,36 +412,6 @@ mod tests {
 
     // -- extract_notify_thread_id --
 
-    #[test]
-    fn test_extract_notify_thread_id_snake_case() {
-        let payload = serde_json::json!({"thread_id": "thread-1"});
-        assert_eq!(
-            extract_notify_thread_id(&payload).as_deref(),
-            Some("thread-1")
-        );
-    }
-
-    #[test]
-    fn test_extract_notify_thread_id_kebab_case() {
-        let payload = serde_json::json!({"thread-id": "thread-1"});
-        assert_eq!(
-            extract_notify_thread_id(&payload).as_deref(),
-            Some("thread-1")
-        );
-    }
-
-    #[test]
-    fn test_extract_notify_thread_id_prefers_snake_case_when_both_present() {
-        let payload = serde_json::json!({"thread_id": "snake", "thread-id": "kebab"});
-        assert_eq!(extract_notify_thread_id(&payload).as_deref(), Some("snake"));
-    }
-
-    #[test]
-    fn test_extract_notify_thread_id_missing() {
-        let payload = serde_json::json!({"type": "agent-turn-complete"});
-        assert!(extract_notify_thread_id(&payload).is_none());
-    }
-
     // -- execute_codex_notify_hook --
 
     #[tokio::test]
@@ -473,7 +431,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_codex_notify_hook_posts_synthetic_session_start_then_raw_payload() {
+    async fn test_execute_codex_notify_hook_posts_only_the_raw_payload() {
+        // Regression guard: this must post exactly one event — the raw notify
+        // payload, unmodified — never a synthetic `SessionStart` alongside it (see
+        // this function's doc comment for why the earlier two-post behavior was
+        // removed rather than fixed).
         use axum::{Router, http::StatusCode, routing::post};
 
         let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::<serde_json::Value>::new()));
@@ -499,23 +461,15 @@ mod tests {
         assert_eq!(result, "");
 
         let posted = received.lock().unwrap().clone();
-        assert_eq!(
-            posted.len(),
-            2,
-            "expected a synthetic SessionStart post + the raw notify post"
-        );
+        assert_eq!(posted.len(), 1, "exactly one event must be posted");
         assert_eq!(posted[0]["harness"], "codex");
-        assert_eq!(posted[0]["event"]["hook_event_name"], "SessionStart");
-        assert_eq!(posted[0]["event"]["session_id"], "thread-1");
-        assert_eq!(posted[0]["event"]["source"], "notify");
-        assert_eq!(posted[1]["harness"], "codex");
-        assert_eq!(posted[1]["event"]["type"], "agent-turn-complete");
-        assert_eq!(posted[1]["event"]["thread_id"], "thread-1");
-        assert_eq!(posted[1]["event"]["last_assistant_message"], "Done");
+        assert_eq!(posted[0]["event"]["type"], "agent-turn-complete");
+        assert_eq!(posted[0]["event"]["thread_id"], "thread-1");
+        assert_eq!(posted[0]["event"]["last_assistant_message"], "Done");
     }
 
     #[tokio::test]
-    async fn test_execute_codex_notify_hook_no_thread_id_skips_synthetic_post() {
+    async fn test_execute_codex_notify_hook_posts_raw_payload_even_without_a_thread_id() {
         use axum::{Router, http::StatusCode, routing::post};
 
         let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::<serde_json::Value>::new()));
@@ -540,7 +494,7 @@ mod tests {
         execute_codex_notify_hook(&cli, Some("sess-1"), raw_payload).await;
 
         let posted = received.lock().unwrap().clone();
-        assert_eq!(posted.len(), 1, "no thread id — only the raw notify post");
+        assert_eq!(posted.len(), 1);
         assert_eq!(posted[0]["event"]["type"], "agent-turn-complete");
     }
 }
