@@ -1574,7 +1574,7 @@ async fn test_handle_active_session_clear_fails() {
         .unwrap();
 
     // Should not panic — logs warning and returns
-    handle_active_session(&store, &session, &test_ready_ctx()).await;
+    handle_active_session(&store, &session, &test_ready_ctx(), HarnessSignals::none()).await;
 }
 
 #[tokio::test]
@@ -1595,7 +1595,42 @@ async fn test_handle_active_session_not_idle() {
     };
 
     // idle_since is None — early return, no store call
-    handle_active_session(&store, &session, &test_ready_ctx()).await;
+    handle_active_session(&store, &session, &test_ready_ctx(), HarnessSignals::none()).await;
+}
+
+#[tokio::test]
+async fn test_handle_active_session_skips_when_lifecycle_owned() {
+    // Regression for the Idle→Active-on-output-change bug: a harness-owned session
+    // (`signals.lifecycle`) must not be flipped back to Active, and its `idle_since`
+    // must not be cleared, just because `handle_active_session` was called — only the
+    // adapter's own hook events may do that once lifecycle is owned.
+    let store = test_store().await;
+
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "lifecycle-owned".into(),
+        workdir: "/tmp/repo".into(),
+        command: "claude -p fix".into(),
+        status: SessionStatus::Idle,
+        backend_session_id: Some("lifecycle-owned".into()),
+        output_snapshot: Some("test output".into()),
+        last_output_at: Some(chrono::Utc::now()),
+        idle_since: Some(chrono::Utc::now()),
+        harness: Some("claude".into()),
+        harness_last_event_at: Some(chrono::Utc::now()),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+
+    handle_active_session(&store, &session, &test_ready_ctx(), HarnessSignals::all()).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Idle);
+    assert!(fetched.idle_since.is_some());
 }
 
 #[tokio::test]
@@ -1627,7 +1662,7 @@ async fn test_handle_active_session_status_update_failure_emits_no_event() {
         .await
         .unwrap();
 
-    handle_active_session(&store, &session, &ctx).await;
+    handle_active_session(&store, &session, &ctx, HarnessSignals::none()).await;
     assert!(matches!(
         rx.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
@@ -2012,6 +2047,67 @@ async fn test_check_session_idle_bypasses_rate_limit_and_error_scraping() {
     assert_eq!(
         fetched.meta_str(pulpo_common::session::meta::ERROR_STATUS),
         None
+    );
+}
+
+#[tokio::test]
+async fn test_check_session_idle_output_change_does_not_revert_owned_idle_status() {
+    // Regression: a hook-driven Idle/needs_input must not be reverted by the very
+    // next watchdog tick just because the TUI repainted (the tmux capture differs
+    // from the stored `output_snapshot`) — only the adapter's own events may move a
+    // harness-owned session's status.
+    let backend = Arc::new(MockBackend::new().with_output("repainted prompt"));
+    let store = test_store().await;
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "harness-idle-repaint".into(),
+        workdir: "/tmp/repo".into(),
+        command: "claude -p fix".into(),
+        status: SessionStatus::Idle,
+        backend_session_id: Some("harness-idle-repaint".into()),
+        output_snapshot: Some("stale prompt".into()),
+        harness: Some("claude".into()),
+        harness_last_event_at: Some(chrono::Utc::now()),
+        idle_since: Some(chrono::Utc::now()),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+    let now = chrono::Utc::now();
+    let timeout = chrono::Duration::seconds(600);
+    let dyn_backend: Arc<dyn Backend> = backend;
+
+    check_session_idle(
+        &dyn_backend,
+        &store,
+        &idle_config,
+        &session,
+        now,
+        timeout,
+        &test_ready_ctx(),
+        &[],
+    )
+    .await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fetched.status,
+        SessionStatus::Idle,
+        "harness-owned Idle session must stay Idle across an output-only change"
+    );
+    assert!(
+        fetched.idle_since.is_some(),
+        "idle_since must not be cleared for a harness-owned session"
     );
 }
 

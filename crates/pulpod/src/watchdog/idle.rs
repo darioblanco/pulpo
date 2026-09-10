@@ -6,7 +6,7 @@ use pulpo_common::session::{InterventionCode, Session, SessionStatus};
 use tracing::{debug, info};
 
 use super::{
-    IdleAction, IdleConfig, ReadyContext, build_session_event, detect_agent_exited,
+    HarnessSignals, IdleAction, IdleConfig, ReadyContext, build_session_event, detect_agent_exited,
     detect_and_store_output_metadata, detect_waiting_for_input, owned_signals, resolve_backend_id,
 };
 use crate::backend::Backend;
@@ -101,7 +101,7 @@ pub(super) async fn check_session_idle(
 
     let output_changed = session.output_snapshot.as_deref() != Some(current_output.as_str());
     if output_changed {
-        handle_active_session(store, session, ready_ctx).await;
+        handle_active_session(store, session, ready_ctx, signals).await;
         return;
     }
 
@@ -207,11 +207,25 @@ pub(super) async fn handle_session_ready(
     }
 }
 
+/// React to fresh output on a session: revert Idle→Active and clear `idle_since`.
+///
+/// `signals.lifecycle` gates this entirely: once a harness adapter owns lifecycle
+/// signals (hook events are flowing), only its own events may decide status — a
+/// mere TUI repaint (the output snapshot changing) must not revert a hook-driven
+/// `Idle`/`needs_input` back to `Active`, since the very next watchdog tick would
+/// otherwise undo a real `NeedsInput`/`TurnFinished` transition just because the
+/// terminal redrew itself. Non-owned sessions (no harness, or its events aren't
+/// flowing yet) keep the original scrollback-driven behavior unchanged.
 pub(super) async fn handle_active_session(
     store: &Store,
     session: &Session,
     ready_ctx: &ReadyContext,
+    signals: HarnessSignals,
 ) {
+    if signals.lifecycle {
+        return;
+    }
+
     if session.status == SessionStatus::Idle {
         info!(
             "Session {} has new output, transitioning back to active",
