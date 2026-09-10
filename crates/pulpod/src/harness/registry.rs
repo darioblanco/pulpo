@@ -66,9 +66,10 @@ impl HarnessRegistry {
     /// Resolve which scrollback-heuristic signals remain safe for the watchdog to
     /// apply to a session, given its own harness id (as stored on the session) and
     /// whether its hook events are actually flowing yet (`harness_last_event_at` is
-    /// set — see `watchdog::harness_owns_state`). Events not yet flowing, or an
-    /// unrecognized/absent harness id, own nothing (every heuristic stays active) —
-    /// the same fallback the pre-adapter watchdog behavior had.
+    /// set — see `watchdog::harness_owns_state`). Events not yet flowing own nothing
+    /// (every heuristic stays active) — the same fallback the pre-adapter watchdog
+    /// behavior had. An unrecognized or absent harness id with events flowing is
+    /// treated as owning everything (the row said events arrived, so trust them).
     ///
     /// An adapter that doesn't actually emit events (`emits_events() == false`, i.e.
     /// `GenericAdapter`) can never own anything either, regardless of what

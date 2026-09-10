@@ -81,7 +81,10 @@ function reportEvent(eventName, payload) {
           child.once("error", resolve);
           // Safety net: never let one slow/stuck child stall the whole chain
           // (and every handler awaiting it) indefinitely.
-          setTimeout(resolve, 2500);
+          // unref: a still-pending timer must never keep the pi process alive after
+          // its own event loop has drained (measured: 2.4 s exit delay otherwise).
+          const timer = setTimeout(resolve, 2500);
+          if (typeof timer.unref === "function") timer.unref();
         } catch {
           /* never let a hook failure affect the agent */
           resolve();

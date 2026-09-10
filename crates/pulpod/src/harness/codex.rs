@@ -315,7 +315,7 @@ fn parse_existing_config(existing: &str) -> toml::Table {
 /// entirely — there's no such thing as "the wrong scope" once `notify`/`hooks` are
 /// inserted as keys of the root `Table` value directly, and inserting under an
 /// existing key name (`notify`) replaces it rather than duplicating it.
-fn build_config_toml(existing: &str, pulpo_bin: &str) -> String {
+fn build_config_toml(existing: &str, pulpo_bin: &str) -> Result<String> {
     let mut table = parse_existing_config(existing);
     table.insert("notify".to_owned(), notify_value(pulpo_bin));
 
@@ -333,7 +333,7 @@ fn build_config_toml(existing: &str, pulpo_bin: &str) -> String {
     }
     table.insert("hooks".to_owned(), TomlValue::Table(hooks_table));
 
-    toml::to_string(&table).unwrap_or_default()
+    Ok(toml::to_string(&table)?)
 }
 
 /// Set `path`'s mode to `0600` regardless of the source file's own mode — `auth.json`
@@ -479,7 +479,7 @@ fn write_config_toml(
         .and_then(|path| std::fs::read_to_string(path).ok())
         .unwrap_or_default();
 
-    let content = build_config_toml(&existing, pulpo_bin);
+    let content = build_config_toml(&existing, pulpo_bin)?;
     let path = codex_home.join("config.toml");
     std::fs::write(&path, content)?;
     Ok(path)
@@ -522,8 +522,12 @@ fn rewrite_spawn(
             session = %ctx.session_name,
             "codex adapter: isolated codex-home already has a session rollout, resuming --last instead of starting a fresh thread"
         );
+        // Same shape as `resume_command`: nest after `exec`, and drop the original
+        // positional prompt so it is not replayed as a new turn on resume.
+        let resume_idx = resume_subcommand_index(&tokens, codex_idx);
+        strip_trailing_positionals(&mut tokens, resume_idx);
         tokens.splice(
-            (codex_idx + 1)..=codex_idx,
+            resume_idx..resume_idx,
             ["resume".to_owned(), "--last".to_owned()],
         );
     }
@@ -1040,6 +1044,61 @@ mod tests {
             ]
         );
         assert!(plan.harness_session_id.is_none());
+    }
+
+    #[test]
+    fn test_prepare_spawn_resume_last_drops_prompt_and_nests_after_exec() {
+        // Same rollout-discovery fallback, but the original command carried a
+        // positional prompt (`codex 'fix the bug'`) or used `codex exec`: the
+        // fallback must not replay the prompt as a fresh turn, and `resume` must
+        // nest after `exec` — the same shape `resume_command` produces.
+        let tmp = tempfile::tempdir().unwrap();
+        let real_home = tempfile::tempdir().unwrap();
+        let _guard = set_test_real_home(real_home.path());
+        let rollout_dir = tmp
+            .path()
+            .join("harness")
+            .join("22222222-2222-2222-2222-222222222222")
+            .join("codex-home")
+            .join("sessions")
+            .join("2026")
+            .join("01")
+            .join("01");
+        std::fs::create_dir_all(&rollout_dir).unwrap();
+        std::fs::write(
+            rollout_dir.join("rollout-2026-01-01T00-00-00-abc.jsonl"),
+            "{}",
+        )
+        .unwrap();
+
+        let plan = CodexAdapter
+            .prepare_spawn(&ctx(tmp.path(), "codex -m gpt-5 'fix the bug'"))
+            .unwrap();
+        assert_eq!(
+            shell_words::split(&plan.command).unwrap(),
+            [
+                "codex",
+                "--dangerously-bypass-hook-trust",
+                "resume",
+                "--last",
+                "-m",
+                "gpt-5",
+            ]
+        );
+
+        let plan = CodexAdapter
+            .prepare_spawn(&ctx(tmp.path(), "codex exec 'fix the bug'"))
+            .unwrap();
+        assert_eq!(
+            shell_words::split(&plan.command).unwrap(),
+            [
+                "codex",
+                "--dangerously-bypass-hook-trust",
+                "exec",
+                "resume",
+                "--last",
+            ]
+        );
     }
 
     #[test]
@@ -1875,7 +1934,7 @@ mod tests {
 
     #[test]
     fn test_build_config_toml_no_existing_config() {
-        let config = build_config_toml("", "/opt/pulpo/pulpo");
+        let config = build_config_toml("", "/opt/pulpo/pulpo").unwrap();
         let parsed: toml::Table = toml::from_str(&config).expect("must parse");
         assert_eq!(parsed["notify"].as_array().unwrap().len(), 3);
         for &(event, _) in HOOK_EVENTS {
@@ -1890,7 +1949,7 @@ mod tests {
         // document, which fails to parse — Codex would refuse to start. A real
         // merge instead ends up with exactly one `notify` key: pulpo's own.
         let existing = "notify = [\"/usr/bin/my-notifier\"]\nmodel = \"gpt-5-codex\"\n";
-        let config = build_config_toml(existing, "/opt/pulpo/pulpo");
+        let config = build_config_toml(existing, "/opt/pulpo/pulpo").unwrap();
 
         // Exactly one `notify =` in the raw text — a duplicate key would make this
         // fail to parse at all.
@@ -1918,7 +1977,7 @@ mod tests {
             "command = \"user-own-stop-hook\"\n",
             "timeout = 3\n",
         );
-        let config = build_config_toml(existing, "/opt/pulpo/pulpo");
+        let config = build_config_toml(existing, "/opt/pulpo/pulpo").unwrap();
         let parsed: toml::Table = toml::from_str(&config).expect("merged config.toml must parse");
 
         let stop_array = parsed["hooks"]["Stop"].as_array().unwrap();
@@ -1957,7 +2016,8 @@ mod tests {
         let config = build_config_toml(
             "model = \"gpt-5-codex\"\n[mcp_servers.demo]\ncommand = \"demo\"\n",
             "/opt/pulpo/pulpo",
-        );
+        )
+        .unwrap();
         let parsed: toml::Value = toml::from_str(&config).unwrap();
         assert_eq!(parsed["model"].as_str(), Some("gpt-5-codex"));
         assert_eq!(
