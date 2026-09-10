@@ -58,6 +58,19 @@ export interface Session {
   updated_at?: string;
 }
 
+/** SSE `session` event payload — see `pulpo_common::event::SessionEvent`. */
+export interface SessionSSEEvent {
+  session_id: string;
+  session_name: string;
+  status: string;
+  output_snippet: string | null;
+  /** The `needs_input` metadata key (e.g. "permission"), when set. Absent — not
+   * just an empty string — when the session has no `needs_input` metadata; the
+   * event is authoritative, so a receiver should always sync (set-or-clear) its
+   * local `metadata.needs_input` from this field rather than only setting it. */
+  needs_input?: string | null;
+}
+
 export interface InterventionEvent {
   id: number;
   session_id: string;
