@@ -80,7 +80,6 @@ It:
 - detects exit markers
 - enforces memory-pressure interventions
 - applies ready TTL cleanup
-- can adopt external tmux sessions
 
 Without the watchdog, Pulpo would be a launcher. With it, Pulpo becomes runtime infrastructure.
 

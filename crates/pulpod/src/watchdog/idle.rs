@@ -73,8 +73,9 @@ pub(super) async fn check_session_idle(
     // The `.code` exit marker (written by `wrap_command` immediately after the
     // wrapped agent command exits) is a deterministic, race-free alternative to the
     // historical text-scrape below. The text scrape stays in place for compatibility
-    // — e.g. adopted external tmux sessions have no `wrap_command` wrapper and thus
-    // no marker, ever, and must keep relying on it (see `watchdog::adopt`).
+    // with any session that predates the marker-file mechanism (PR #94) or otherwise
+    // reaches Ready with no `wrap_command` wrapper of its own, which never gets a
+    // marker and must keep relying on it.
     let marker_exit_code =
         crate::session::utils::read_exit_code_marker(store.data_dir(), &session.id.to_string());
     if marker_exit_code.is_some() || detect_agent_exited(&current_output) {

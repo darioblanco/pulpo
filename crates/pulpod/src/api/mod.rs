@@ -199,7 +199,6 @@ mod tests {
             breach_count: 3,
             idle: crate::watchdog::IdleConfig::default(),
             ready_ttl_secs: 0,
-            adopt_tmux: true,
             extra_waiting_patterns: Vec::new(),
             burn: crate::watchdog::BurnConfig::default(),
         };

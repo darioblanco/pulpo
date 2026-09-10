@@ -14,7 +14,6 @@ Pulpo is an **agent session runtime**. It runs coding agents in tmux sessions or
 - **Session lifecycle** — explicit states (active, idle, ready, killed, lost) with resume semantics
 - **Watchdog supervision** — memory pressure, idle detection, agent exit detection, configurable policies
 - **Command-agnostic** — runs Claude Code, Codex, Gemini CLI, Aider, shell scripts, anything
-- **Adopts existing tmux sessions** — start tmux however you want, pulpo discovers and manages it
 - **Mobile-first web UI** — PWA with push notifications, manage from your phone
 - **4 control surfaces** — CLI, web UI, REST API, SSE
 
@@ -52,7 +51,6 @@ Most scripts use these environment variables:
 | `cli/04-idle-threshold.sh` | Per-session idle control (never idle, custom threshold) |
 | `cli/05-attach-and-input.sh` | Attach to a running session, send input |
 | `cli/06-recovery.sh` | Resume lost/ready sessions after crash or reboot |
-| `cli/07-adopt-tmux.sh` | Let pulpo discover and manage external tmux sessions |
 | `cli/08-multi-node.sh` | Spawn and manage sessions across machines |
 | `cli/09-scheduled-sessions.sh` | Cron-based recurring agent runs |
 | `cli/10-batch-spawn.sh` | Spawn multiple sessions in parallel |

@@ -33,7 +33,6 @@ export function SettingsPage() {
   const [watchdogBreachCount, setWatchdogBreachCount] = useState(3);
   const [watchdogIdleTimeout, setWatchdogIdleTimeout] = useState(300);
   const [watchdogIdleAction, setWatchdogIdleAction] = useState('pause');
-  const [watchdogAdoptTmux, setWatchdogAdoptTmux] = useState(true);
 
   // Notifications
   const [webhooks, setWebhooks] = useState<WebhookFormData[]>([]);
@@ -58,7 +57,6 @@ export function SettingsPage() {
       setWatchdogBreachCount(config.watchdog.breach_count);
       setWatchdogIdleTimeout(config.watchdog.idle_timeout_secs);
       setWatchdogIdleAction(config.watchdog.idle_action);
-      setWatchdogAdoptTmux(config.watchdog.adopt_tmux);
 
       setWebhooks((config.notifications.webhooks ?? []).map((w) => ({ ...w, secret: '' })));
 
@@ -200,8 +198,6 @@ export function SettingsPage() {
                     onIdleTimeoutSecsChange={setWatchdogIdleTimeout}
                     idleAction={watchdogIdleAction}
                     onIdleActionChange={setWatchdogIdleAction}
-                    adoptTmux={watchdogAdoptTmux}
-                    onAdoptTmuxChange={setWatchdogAdoptTmux}
                   />
                 </section>
               </TabsContent>

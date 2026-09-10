@@ -49,9 +49,16 @@ session-runtime section.
 | `ready_ttl_secs` | u64 | `0` | Seconds after Ready before stop (0 = disabled) |
 | `memory_threshold` | u8 | `90` | Memory usage % to trigger intervention |
 | `breach_count` | u32 | `3` | Consecutive breaches before stop |
-| `adopt_tmux` | bool | `true` | Auto-adopt external tmux sessions |
 | `idle_threshold_secs` | u64 | `60` | Seconds of unchanged output before Active→Idle |
 | `waiting_patterns` | string[] | `[]` | Extra patterns for waiting-for-input detection (appended to the built-in patterns) |
+
+`adopt_tmux` (auto-adoption of external tmux sessions into pulpo management) was
+removed — sessions that matter should be started with `pulpo spawn`, which gets harness
+hooks, a preset session id, and real resume; an adopted session got none of that. A
+leftover `watchdog.adopt_tmux` key from a config written before the removal is
+tolerated: it still parses, logs a startup warning, and is dropped the next time the
+config is saved. Same treatment as the retired `[docker]`, `[controller]`, and
+`[inks.*]` sections.
 
 ## `[inks.<name>]` (retired)
 

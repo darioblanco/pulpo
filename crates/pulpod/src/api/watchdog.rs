@@ -17,7 +17,6 @@ pub async fn get_watchdog(
         idle_timeout_secs: config.watchdog.idle_timeout_secs,
         idle_action: config.watchdog.idle_action.clone(),
         ready_ttl_secs: config.watchdog.ready_ttl_secs,
-        adopt_tmux: config.watchdog.adopt_tmux,
         idle_threshold_secs: config.watchdog.idle_threshold_secs,
         extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
     };
@@ -51,9 +50,6 @@ pub async fn update_watchdog(
     }
     if let Some(ttl) = req.ready_ttl_secs {
         config.watchdog.ready_ttl_secs = ttl;
-    }
-    if let Some(adopt) = req.adopt_tmux {
-        config.watchdog.adopt_tmux = adopt;
     }
     if let Some(threshold) = req.idle_threshold_secs {
         config.watchdog.idle_threshold_secs = threshold;
@@ -91,7 +87,6 @@ pub async fn update_watchdog(
                 threshold_secs: config.watchdog.idle_threshold_secs,
             },
             ready_ttl_secs: config.watchdog.ready_ttl_secs,
-            adopt_tmux: config.watchdog.adopt_tmux,
             extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
             burn: crate::watchdog::BurnConfig::from_watchdog_config(&config.watchdog),
         };
@@ -107,7 +102,6 @@ pub async fn update_watchdog(
         idle_timeout_secs: config.watchdog.idle_timeout_secs,
         idle_action: config.watchdog.idle_action.clone(),
         ready_ttl_secs: config.watchdog.ready_ttl_secs,
-        adopt_tmux: config.watchdog.adopt_tmux,
         idle_threshold_secs: config.watchdog.idle_threshold_secs,
         extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
     };
@@ -146,7 +140,6 @@ mod tests {
             idle_timeout_secs: Some(300),
             idle_action: Some("kill".into()),
             ready_ttl_secs: None,
-            adopt_tmux: None,
             idle_threshold_secs: None,
             extra_waiting_patterns: None,
         };
@@ -268,7 +261,6 @@ mod tests {
             breach_count: 3,
             idle: crate::watchdog::IdleConfig::default(),
             ready_ttl_secs: 0,
-            adopt_tmux: true,
             extra_waiting_patterns: Vec::new(),
             burn: crate::watchdog::BurnConfig::default(),
         };
@@ -319,7 +311,6 @@ mod tests {
         let state = test_state().await;
         let req = UpdateWatchdogRequest {
             ready_ttl_secs: Some(600),
-            adopt_tmux: Some(true),
             idle_threshold_secs: Some(120),
             idle_action: Some("alert".into()),
             extra_waiting_patterns: Some(vec!["custom>".into()]),
@@ -327,7 +318,6 @@ mod tests {
         };
         let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.ready_ttl_secs, 600);
-        assert!(resp.adopt_tmux);
         assert_eq!(resp.idle_threshold_secs, 120);
         assert_eq!(resp.idle_action, "alert");
         assert_eq!(resp.extra_waiting_patterns, vec!["custom>"]);

@@ -6,6 +6,7 @@ use base64::Engine;
 use pulpo_common::auth::BindMode;
 use pulpo_common::peer::PeerEntry;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -313,9 +314,14 @@ pub struct WatchdogConfig {
     /// Seconds after Ready before tmux shell is killed (0 = disabled).
     #[serde(default)]
     pub ready_ttl_secs: u64,
-    /// Auto-adopt external tmux sessions into pulpo management.
-    #[serde(default = "default_adopt_tmux")]
-    pub adopt_tmux: bool,
+    /// Retired `watchdog.adopt_tmux` setting.
+    /// Auto-adoption of external tmux sessions into pulpo management was removed —
+    /// a session pulpo didn't spawn never got harness hooks, a preset session id, or
+    /// real resume. This field only exists so configs written before the removal
+    /// still load (`deny_unknown_fields` would otherwise reject them); `load()` logs
+    /// a startup warning when it's present, and it is dropped on the next save.
+    #[serde(default, skip_serializing)]
+    pub adopt_tmux: Option<bool>,
     /// Seconds of unchanged output before Active→Idle transition (default: 60).
     #[serde(default = "default_idle_threshold_secs")]
     pub idle_threshold_secs: u64,
@@ -382,7 +388,7 @@ impl Default for WatchdogConfig {
             idle_timeout_secs: default_idle_timeout_secs(),
             idle_action: default_idle_action(),
             ready_ttl_secs: 0,
-            adopt_tmux: default_adopt_tmux(),
+            adopt_tmux: None,
             idle_threshold_secs: default_idle_threshold_secs(),
             waiting_patterns: Vec::new(),
             burn_ceiling_usd_per_hour: None,
@@ -394,10 +400,6 @@ impl Default for WatchdogConfig {
 
 fn default_burn_action() -> String {
     String::from("alert")
-}
-
-const fn default_adopt_tmux() -> bool {
-    true
 }
 
 const fn default_watchdog_enabled() -> bool {
@@ -562,6 +564,13 @@ pub fn load(path: &str) -> Result<Config> {
             .with_context(|| format!("Failed to read config from {}", path.display()))?;
         let config: Config = toml::from_str(&content).context("Failed to parse config")?;
         config.watchdog.validate()?;
+        if config.watchdog.adopt_tmux.is_some() {
+            warn!(
+                "config: watchdog.adopt_tmux is retired (auto-adoption of external tmux \
+                 sessions was removed) — ignoring it; it will be dropped from the config \
+                 file the next time it is saved"
+            );
+        }
         Ok(config)
     } else {
         // Return defaults if no config file exists
@@ -717,6 +726,61 @@ finished_ttl_secs = 60
         let err = format!("{:#}", load(tmpfile.path().to_str().unwrap()).unwrap_err());
         assert!(err.contains("Failed to parse config"));
         assert!(err.contains("finished_ttl_secs"));
+    }
+
+    #[test]
+    fn test_load_tolerates_legacy_watchdog_adopt_tmux_key() {
+        // Configs written before auto-adoption of external tmux sessions was removed
+        // still load: `watchdog.adopt_tmux` is retired but not rejected.
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "test-node"
+
+[watchdog]
+adopt_tmux = true
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.watchdog.adopt_tmux, Some(true));
+    }
+
+    #[test]
+    fn test_save_drops_legacy_watchdog_adopt_tmux_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[watchdog]
+adopt_tmux = true
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(config.watchdog.adopt_tmux, Some(true));
+        save(&config, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("adopt_tmux"),
+            "retired watchdog.adopt_tmux key is dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.watchdog.adopt_tmux.is_none());
+    }
+
+    #[test]
+    fn test_load_without_watchdog_adopt_tmux_key_defaults_to_none() {
+        let config: Config = toml::from_str("[node]\nname = \"test\"\n").unwrap();
+        assert!(config.watchdog.adopt_tmux.is_none());
     }
 
     #[test]
@@ -1360,7 +1424,7 @@ breach_count = 5
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
                 ready_ttl_secs: 0,
-                adopt_tmux: true,
+                adopt_tmux: None,
                 idle_threshold_secs: 60,
                 waiting_patterns: Vec::new(),
                 burn_ceiling_usd_per_hour: None,

@@ -200,39 +200,6 @@ fn build_resize_command(
 }
 
 #[cfg_attr(coverage, allow(dead_code))]
-fn build_list_sessions_command(tmux: &str, socket: Option<&str>) -> Command {
-    let mut cmd = tmux_command(tmux, socket);
-    cmd.args(["list-sessions", "-F", "#{session_id}\t#{session_name}"]);
-    cmd
-}
-
-#[cfg_attr(coverage, allow(dead_code))]
-fn build_pane_info_command(tmux: &str, socket: Option<&str>, session_name: &str) -> Command {
-    let mut cmd = tmux_command(tmux, socket);
-    cmd.args([
-        "list-panes",
-        "-t",
-        session_name,
-        "-F",
-        "#{pane_current_command}\t#{pane_current_path}",
-    ]);
-    cmd
-}
-
-/// Parse `list-sessions -F '#{session_id}\t#{session_name}'` output into (id, name) pairs.
-pub fn parse_list_sessions(output: &str) -> Vec<(String, String)> {
-    output
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .filter_map(|l| {
-            let (id, name) = l.split_once('\t')?;
-            Some((id.to_owned(), name.to_owned()))
-        })
-        .collect()
-}
-
-#[cfg_attr(coverage, allow(dead_code))]
 fn build_query_session_id_command(tmux: &str, socket: Option<&str>, name: &str) -> Command {
     let mut cmd = tmux_command(tmux, socket);
     cmd.args(["display-message", "-t", name, "-p", "#{session_id}"]);
@@ -247,34 +214,6 @@ pub fn parse_session_id(output: &str) -> Option<String> {
     } else {
         None
     }
-}
-
-#[cfg_attr(coverage, allow(dead_code))]
-fn build_pane_pid_command(tmux: &str, socket: Option<&str>, backend_id: &str) -> Command {
-    let mut cmd = tmux_command(tmux, socket);
-    cmd.args(["list-panes", "-t", backend_id, "-F", "#{pane_pid}"]);
-    cmd
-}
-
-#[cfg_attr(coverage, allow(dead_code))]
-fn build_set_env_command(
-    tmux: &str,
-    socket: Option<&str>,
-    session_name: &str,
-    key: &str,
-    value: &str,
-) -> Command {
-    let mut cmd = tmux_command(tmux, socket);
-    cmd.args(["set-environment", "-t", session_name, key, value]);
-    cmd
-}
-
-/// Parse `list-panes -F '#{pane_current_command}\t#{pane_current_path}'` output.
-/// Returns `(process_name, working_dir)` from the first pane.
-pub fn parse_pane_info(output: &str) -> Option<(String, String)> {
-    let line = output.lines().next()?;
-    let (process, path) = line.split_once('\t')?;
-    Some((process.to_owned(), path.to_owned()))
 }
 
 /// Parse tmux version from `tmux -V` output (e.g., "tmux 3.4" -> `Some((3, 4))`).
@@ -549,62 +488,6 @@ impl Backend for TmuxBackend {
         let stdout = String::from_utf8_lossy(&output.stdout);
         parse_session_id(&stdout).context("Failed to parse tmux session ID")
     }
-
-    fn pane_command_line(&self, backend_id: &str) -> Result<String> {
-        let output = run_tmux(
-            build_pane_pid_command(&self.tmux_path, self.socket_name.as_deref(), backend_id),
-            "get pane PID",
-        )?;
-        let pid = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        if pid.is_empty() {
-            anyhow::bail!("no pane PID for {backend_id}");
-        }
-        let ps_output = std::process::Command::new("ps")
-            .args(["-o", "args=", "-p", &pid])
-            .output()
-            .context("failed to run ps")?;
-        let cmd_line = String::from_utf8_lossy(&ps_output.stdout).trim().to_owned();
-        if cmd_line.is_empty() {
-            anyhow::bail!("no command line for PID {pid}");
-        }
-        Ok(cmd_line)
-    }
-
-    fn list_sessions(&self) -> Result<Vec<(String, String)>> {
-        let output = build_list_sessions_command(&self.tmux_path, self.socket_name.as_deref())
-            .stderr(Stdio::piped())
-            .output()
-            .context("Failed to list tmux sessions")?;
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
-        Ok(parse_list_sessions(&String::from_utf8_lossy(
-            &output.stdout,
-        )))
-    }
-
-    fn pane_info(&self, backend_id: &str) -> Result<(String, String)> {
-        let output = run_tmux(
-            build_pane_info_command(&self.tmux_path, self.socket_name.as_deref(), backend_id),
-            "get pane info",
-        )?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        parse_pane_info(&stdout).context("Failed to parse pane info")
-    }
-
-    fn set_env(&self, backend_id: &str, key: &str, value: &str) -> Result<()> {
-        run_tmux(
-            build_set_env_command(
-                &self.tmux_path,
-                self.socket_name.as_deref(),
-                backend_id,
-                key,
-                value,
-            ),
-            "set tmux environment variable",
-        )?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -798,67 +681,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_list_sessions_command() {
-        let cmd = build_list_sessions_command(T, None);
-        assert_eq!(cmd.get_program(), T);
-        let args: Vec<&OsStr> = cmd.get_args().collect();
-        assert_eq!(
-            args,
-            vec!["list-sessions", "-F", "#{session_id}\t#{session_name}"]
-        );
-    }
-
-    #[test]
-    fn test_build_list_sessions_command_with_socket() {
-        let cmd = build_list_sessions_command(T, Some("pulpo-test-sock"));
-        let args: Vec<&OsStr> = cmd.get_args().collect();
-        assert_eq!(
-            args,
-            vec![
-                "-L",
-                "pulpo-test-sock",
-                "list-sessions",
-                "-F",
-                "#{session_id}\t#{session_name}"
-            ]
-        );
-    }
-
-    #[test]
-    fn test_build_set_env_command() {
-        let cmd = build_set_env_command(T, None, "my-session", "PULPO_SESSION_ID", "abc-123");
-        assert_eq!(cmd.get_program(), T);
-        let args: Vec<&OsStr> = cmd.get_args().collect();
-        assert_eq!(
-            args,
-            vec![
-                "set-environment",
-                "-t",
-                "my-session",
-                "PULPO_SESSION_ID",
-                "abc-123"
-            ]
-        );
-    }
-
-    #[test]
-    fn test_build_pane_info_command() {
-        let cmd = build_pane_info_command(T, None, "my-session");
-        assert_eq!(cmd.get_program(), T);
-        let args: Vec<&OsStr> = cmd.get_args().collect();
-        assert_eq!(
-            args,
-            vec![
-                "list-panes",
-                "-t",
-                "my-session",
-                "-F",
-                "#{pane_current_command}\t#{pane_current_path}"
-            ]
-        );
-    }
-
-    #[test]
     fn test_build_query_session_id_command() {
         let cmd = build_query_session_id_command(T, None, "my-session");
         assert_eq!(cmd.get_program(), T);
@@ -898,14 +720,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_pane_pid_command() {
-        let cmd = build_pane_pid_command(T, None, "$5");
-        assert_eq!(cmd.get_program(), T);
-        let args: Vec<&OsStr> = cmd.get_args().collect();
-        assert_eq!(args, vec!["list-panes", "-t", "$5", "-F", "#{pane_pid}"]);
-    }
-
-    #[test]
     fn test_build_create_command_with_absolute_path() {
         let cmd = build_create_command(
             "/opt/homebrew/bin/tmux",
@@ -916,73 +730,6 @@ mod tests {
             None,
         );
         assert_eq!(cmd.get_program(), "/opt/homebrew/bin/tmux");
-    }
-
-    #[test]
-    fn test_parse_list_sessions() {
-        let output = "$0\tsession-1\n$1\tsession-2\n$5\tmy-work\n";
-        let sessions = parse_list_sessions(output);
-        assert_eq!(
-            sessions,
-            vec![
-                ("$0".into(), "session-1".into()),
-                ("$1".into(), "session-2".into()),
-                ("$5".into(), "my-work".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_parse_list_sessions_empty() {
-        assert!(parse_list_sessions("").is_empty());
-        assert!(parse_list_sessions("\n").is_empty());
-    }
-
-    #[test]
-    fn test_parse_list_sessions_whitespace() {
-        let output = "  $0\tsession-1  \n  $1\tsession-2  \n";
-        let sessions = parse_list_sessions(output);
-        assert_eq!(
-            sessions,
-            vec![
-                ("$0".into(), "session-1".into()),
-                ("$1".into(), "session-2".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_parse_list_sessions_no_tab() {
-        // Lines without tab separator are skipped
-        let output = "no-tab-here\n$0\tvalid-session\n";
-        let sessions = parse_list_sessions(output);
-        assert_eq!(sessions, vec![("$0".into(), "valid-session".into())]);
-    }
-
-    #[test]
-    fn test_parse_pane_info() {
-        let output = "claude\t/home/user/repo\n";
-        let (process, path) = parse_pane_info(output).unwrap();
-        assert_eq!(process, "claude");
-        assert_eq!(path, "/home/user/repo");
-    }
-
-    #[test]
-    fn test_parse_pane_info_bash() {
-        let output = "bash\t/tmp\n";
-        let (process, path) = parse_pane_info(output).unwrap();
-        assert_eq!(process, "bash");
-        assert_eq!(path, "/tmp");
-    }
-
-    #[test]
-    fn test_parse_pane_info_empty() {
-        assert!(parse_pane_info("").is_none());
-    }
-
-    #[test]
-    fn test_parse_pane_info_no_tab() {
-        assert!(parse_pane_info("no-tab-here").is_none());
     }
 
     #[test]

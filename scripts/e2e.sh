@@ -33,10 +33,6 @@ cat >"$CONFIG" <<TOML
 port = $PORT
 data_dir = "$DATA_DIR"
 bind = "local"
-
-# Stay isolated: don't adopt the developer's other tmux sessions into this throwaway daemon.
-[watchdog]
-adopt_tmux = false
 TOML
 
 echo "==> building pulpod + pulpo (debug)"

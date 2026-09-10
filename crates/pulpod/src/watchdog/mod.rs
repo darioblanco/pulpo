@@ -1,4 +1,3 @@
-mod adopt;
 mod budget;
 mod burn;
 mod git;
@@ -12,9 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::harness::{HarnessRegistry, HarnessSignals};
-use adopt::adopt_tmux_sessions;
-#[cfg(test)]
-use adopt::classify_adopted_process;
 use idle::{check_idle_sessions, cleanup_ready_sessions};
 #[cfg(test)]
 use idle::{check_session_idle, handle_active_session, handle_idle_session, handle_session_ready};
@@ -183,8 +179,6 @@ pub struct WatchdogRuntimeConfig {
     pub idle: IdleConfig,
     /// Seconds after Ready before tmux shell is killed (0 = disabled).
     pub ready_ttl_secs: u64,
-    /// Auto-adopt external tmux sessions into pulpo management.
-    pub adopt_tmux: bool,
     /// Extra user-configured patterns for waiting-for-input detection.
     pub extra_waiting_patterns: Vec<String>,
     /// Burn-velocity governor settings (cost/token rate ceilings + action).
@@ -300,10 +294,6 @@ async fn run_watchdog_tick(
 
     if cfg.ready_ttl_secs > 0 {
         cleanup_ready_sessions(backend, store, cfg.ready_ttl_secs).await;
-    }
-
-    if cfg.adopt_tmux {
-        adopt_tmux_sessions(backend, store, ready_ctx).await;
     }
 
     update_git_info(store).await;

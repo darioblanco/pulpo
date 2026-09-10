@@ -60,12 +60,6 @@ impl backend::Backend for CoverageBackend {
     fn setup_logging(&self, _: &str, _: &str) -> anyhow::Result<()> {
         Ok(())
     }
-    fn list_sessions(&self) -> anyhow::Result<Vec<(String, String)>> {
-        Ok(Vec::new())
-    }
-    fn pane_info(&self, _: &str) -> anyhow::Result<(String, String)> {
-        Ok(("bash".into(), "/tmp".into()))
-    }
 }
 
 /// Holds shutdown senders for all background loops.
@@ -332,7 +326,6 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                     threshold_secs: config.watchdog.idle_threshold_secs,
                 },
                 ready_ttl_secs: config.watchdog.ready_ttl_secs,
-                adopt_tmux: config.watchdog.adopt_tmux,
                 extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
                 burn: watchdog::BurnConfig::from_watchdog_config(&config.watchdog),
             };
@@ -705,8 +698,6 @@ data_dir = "{}"
         assert_eq!(b.capture_output("a", 10).unwrap(), "");
         assert!(b.send_input("a", "input").is_ok());
         assert!(b.setup_logging("a", "b").is_ok());
-        assert!(b.list_sessions().unwrap().is_empty());
-        assert_eq!(b.pane_info("a").unwrap(), ("bash".into(), "/tmp".into()));
     }
 
     #[test]

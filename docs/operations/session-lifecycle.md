@@ -54,9 +54,8 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 
 ### Active/Idle → Ready
 - **Trigger**: The wrapper's `{id}.code` exit-marker file appears (written the moment the
-  agent command finishes, containing its exit code), or — fallback for sessions without a
-  wrapper, e.g. adopted external tmux sessions — the `[pulpo] Agent exited` text in
-  captured output.
+  agent command finishes, containing its exit code), or — as a fallback when no marker is
+  available — the `[pulpo] Agent exited` text in captured output.
 - **Detection**: The watchdog checks the marker (deterministic) before any output
   scraping or idle logic. The agent's exit code is persisted to the session. The fallback
   shell keeps the tmux session alive for inspection.
@@ -83,8 +82,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
   gone the markers are consulted; with none present the session is marked Lost. A
   5-second grace period protects freshly spawned sessions from false positives (in
   practice irrelevant for `Ready`, since a session can only reach `Ready` well after
-  its grace window has passed). Adopted external sessions (no wrapper, no markers)
-  always resolve to Lost.
+  its grace window has passed).
 
 ### Ready → Stopped (TTL)
 - **Trigger**: `ready_ttl_secs` expires (if configured > 0).
@@ -179,8 +177,6 @@ cleanup`.
   correctly resolves to `Stopped` (with `exit_code` recorded when available).
 
 - **Long-running session never exits**: Some sessions cycle Active ⇄ Idle indefinitely. They become Ready only when the command exits (the `.code` marker appears, or — for sessions with no wrapper — the `[pulpo] Agent exited` text is detected), or Stopped by user/watchdog/clean shell exit.
-
-- **Adopted external tmux sessions have no exit marker, ever**: Sessions auto-adopted from tmux (`adopt_tmux = true`) were never spawned via the wrapper, so no marker will ever exist for their session id. Their Ready detection relies entirely on the `[pulpo] Agent exited` text scrape, and if their backend disappears they resolve to `Lost` — never `Stopped` — regardless of how they actually ended.
 
 - **Lost on daemon restart**: When the daemon starts, Active/Idle/Ready sessions whose
   tmux sessions are gone are checked against their exit markers just like any other
