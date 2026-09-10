@@ -1972,6 +1972,32 @@ discovery_interval_secs = 60
         assert_eq!(config.node.discovery_interval_secs, 60);
     }
 
+    /// `bind = "container"` (deploying pulpod itself inside Docker/Podman) was
+    /// removed alongside `docker/` — a containerized pulpod can't see the agents'
+    /// own session files that exact usage metering depends on. Loading such a
+    /// config must fail loudly with a pointer to the remaining bind modes,
+    /// rather than silently falling back to a default.
+    #[test]
+    fn test_load_config_rejects_bind_container() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+bind = "container"
+"#,
+        )
+        .unwrap();
+        let err = load(path.to_str().unwrap()).unwrap_err();
+        let message = format!("{err:#}");
+        assert!(message.contains("container"), "message was: {message}");
+        assert!(message.contains("local"), "message was: {message}");
+        assert!(message.contains("tailscale"), "message was: {message}");
+        assert!(message.contains("public"), "message was: {message}");
+    }
+
     #[test]
     fn test_load_config_without_bind_defaults_to_local() {
         let tmpdir = tempfile::tempdir().unwrap();

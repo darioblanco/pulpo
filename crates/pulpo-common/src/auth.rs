@@ -15,8 +15,6 @@ pub enum BindMode {
     /// Bind to `0.0.0.0` — reachable from the network (requires auth token).
     /// Use manual `[peers]` config for multi-node.
     Public,
-    /// Bind to `0.0.0.0` — for container environments (no auth, trusts container network isolation).
-    Container,
 }
 
 impl fmt::Display for BindMode {
@@ -25,7 +23,6 @@ impl fmt::Display for BindMode {
             Self::Local => write!(f, "local"),
             Self::Tailscale => write!(f, "tailscale"),
             Self::Public => write!(f, "public"),
-            Self::Container => write!(f, "container"),
         }
     }
 }
@@ -53,10 +50,6 @@ mod tests {
             serde_json::to_string(&BindMode::Public).unwrap(),
             "\"public\""
         );
-        assert_eq!(
-            serde_json::to_string(&BindMode::Container).unwrap(),
-            "\"container\""
-        );
     }
 
     #[test]
@@ -73,10 +66,6 @@ mod tests {
             serde_json::from_str::<BindMode>("\"public\"").unwrap(),
             BindMode::Public
         );
-        assert_eq!(
-            serde_json::from_str::<BindMode>("\"container\"").unwrap(),
-            BindMode::Container
-        );
     }
 
     #[test]
@@ -84,12 +73,24 @@ mod tests {
         assert!(serde_json::from_str::<BindMode>("\"invalid\"").is_err());
     }
 
+    /// `container` was a real variant (bind pulpod itself inside a Docker/Podman
+    /// container) removed alongside `docker/`. Historical or copy-pasted configs
+    /// using it must fail loudly rather than silently falling back to a default.
+    #[test]
+    fn test_bind_mode_container_rejected_with_helpful_message() {
+        let err = serde_json::from_str::<BindMode>("\"container\"").unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("container"));
+        assert!(message.contains("local"));
+        assert!(message.contains("tailscale"));
+        assert!(message.contains("public"));
+    }
+
     #[test]
     fn test_bind_mode_display() {
         assert_eq!(BindMode::Local.to_string(), "local");
         assert_eq!(BindMode::Tailscale.to_string(), "tailscale");
         assert_eq!(BindMode::Public.to_string(), "public");
-        assert_eq!(BindMode::Container.to_string(), "container");
     }
 
     #[test]
@@ -97,7 +98,6 @@ mod tests {
         assert_eq!(format!("{:?}", BindMode::Local), "Local");
         assert_eq!(format!("{:?}", BindMode::Tailscale), "Tailscale");
         assert_eq!(format!("{:?}", BindMode::Public), "Public");
-        assert_eq!(format!("{:?}", BindMode::Container), "Container");
     }
 
     #[test]
@@ -112,12 +112,7 @@ mod tests {
 
     #[test]
     fn test_bind_mode_roundtrip() {
-        for mode in [
-            BindMode::Local,
-            BindMode::Tailscale,
-            BindMode::Public,
-            BindMode::Container,
-        ] {
+        for mode in [BindMode::Local, BindMode::Tailscale, BindMode::Public] {
             let json = serde_json::to_string(&mode).unwrap();
             let deserialized: BindMode = serde_json::from_str(&json).unwrap();
             assert_eq!(mode, deserialized);
@@ -137,21 +132,6 @@ mod tests {
         assert!(toml_str.contains("public"));
         let parsed: Wrapper = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.bind, BindMode::Public);
-    }
-
-    #[test]
-    fn test_bind_mode_toml_roundtrip_container() {
-        #[derive(Serialize, Deserialize)]
-        struct Wrapper {
-            bind: BindMode,
-        }
-        let w = Wrapper {
-            bind: BindMode::Container,
-        };
-        let toml_str = toml::to_string(&w).unwrap();
-        assert!(toml_str.contains("container"));
-        let parsed: Wrapper = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.bind, BindMode::Container);
     }
 
     #[test]

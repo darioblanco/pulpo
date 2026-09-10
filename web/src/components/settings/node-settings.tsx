@@ -9,14 +9,13 @@ import {
 } from '@/components/ui/select';
 import { FormField } from './form-field';
 
-const bindModes = ['local', 'tailscale', 'public', 'container'] as const;
+const bindModes = ['local', 'tailscale', 'public'] as const;
 
 const bindDescriptions: Record<string, string> = {
   local: 'Binds to 127.0.0.1. Only reachable from this machine. No discovery, no auth.',
   tailscale:
     'Binds locally and serves HTTPS via tailscale serve. Peers discovered via Tailscale API.',
   public: 'Binds to 0.0.0.0. Requires auth token. Use manual [peers] config for multi-node.',
-  container: 'Binds to 0.0.0.0. Trusts container network isolation (no auth).',
 };
 
 interface NodeSettingsProps {

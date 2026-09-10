@@ -40,7 +40,7 @@ export function PeerSettings({ peers, onUpdate, bind }: PeerSettingsProps) {
   }
 
   const description = isLocal
-    ? 'Peer discovery is disabled in local mode. Switch to tailscale, public, or container to connect nodes.'
+    ? 'Peer discovery is disabled in local mode. Switch to tailscale or public to connect nodes.'
     : isTailscale
       ? 'Peers are auto-discovered via the Tailscale API. You can also add manual entries.'
       : 'Manually add peers for multi-node connectivity.';

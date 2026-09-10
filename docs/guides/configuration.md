@@ -23,7 +23,7 @@ name = "mac-mini"
 name = "mac-mini"           # Node name (default: hostname)
 port = 7433                  # HTTP port (default: 7433)
 data_dir = "~/.pulpo"        # Data directory (default: ~/.pulpo)
-bind = "local"               # "local", "public", "tailscale", "container"
+bind = "local"               # "local", "public", "tailscale"
 default_command = "claude"   # Optional fallback when spawn has no command
 ```
 
@@ -31,7 +31,6 @@ Bind modes:
 - `local` (default) — binds to `127.0.0.1`, no auth, no discovery
 - `public` — binds to `0.0.0.0`, requires auth token. Use manual `[peers]` config for multi-node.
 - `tailscale` — binds locally, auto-serves HTTPS via `tailscale serve`, peer discovery via Tailscale API
-- `container` — binds to `0.0.0.0`, no auth (trusts container network isolation)
 
 ## Watchdog
 
@@ -104,7 +103,7 @@ Only used with `bind = "public"`. Auto-generated on first run:
 token = "auto-generated-uuid"
 ```
 
-For `local`, `tailscale`, and `container` modes, auth is skipped.
+For `local` and `tailscale` modes, auth is skipped.
 
 ## Multi-Node
 
