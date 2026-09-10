@@ -2016,6 +2016,63 @@ async fn test_check_session_idle_bypasses_rate_limit_and_error_scraping() {
 }
 
 #[tokio::test]
+async fn test_check_session_idle_codex_harness_keeps_rate_limit_scraping() {
+    // Codex's `owned_signals()` is `lifecycle_only()` (no error/rate-limit hook) —
+    // unlike the all-signals Claude adapter above, a Codex session with
+    // `harness_last_event_at` set must still have `detect_rate_limit` scrape its
+    // output, proving `lifecycle_only()` actually keeps that heuristic running
+    // rather than the bypass silently covering every harness the same way.
+    let backend = Arc::new(MockBackend::new().with_output("Error: rate limit exceeded (429)"));
+    let store = test_store().await;
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "codex-harness-rate-limit".into(),
+        workdir: "/tmp/repo".into(),
+        command: "codex".into(),
+        status: SessionStatus::Active,
+        backend_session_id: Some("codex-harness-rate-limit".into()),
+        harness: Some("codex".into()),
+        harness_last_event_at: Some(chrono::Utc::now()),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+    let now = chrono::Utc::now();
+    let timeout = chrono::Duration::seconds(600);
+    let dyn_backend: Arc<dyn Backend> = backend;
+
+    check_session_idle(
+        &dyn_backend,
+        &store,
+        &idle_config,
+        &session,
+        now,
+        timeout,
+        &test_ready_ctx(),
+        &[],
+    )
+    .await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        fetched
+            .meta_str(pulpo_common::session::meta::RATE_LIMIT)
+            .is_some(),
+        "codex's lifecycle_only() signals must leave rate-limit scraping active"
+    );
+}
+
+#[tokio::test]
 async fn test_check_session_idle_without_harness_events_keeps_scraping() {
     // Regression guard: a session with no `harness_last_event_at` (generic harness,
     // or hooks never fired) must keep today's scrollback heuristics unchanged.
