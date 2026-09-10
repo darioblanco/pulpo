@@ -4,6 +4,7 @@ node_modules
 /web/.svelte-kit
 /web/build
 /web/coverage
+/web/tsconfig.tsbuildinfo
 *.db
 *.db-journal
 .pulpo/config.toml
