@@ -124,10 +124,16 @@ pub fn scan_usage(
 
 /// The per-agent history directories the scan reads (typically `~/.claude`, `~/.codex`,
 /// `~/.pi`). Named fields, because three same-typed paths are too easy to transpose.
+///
+/// `codex` is a *slice* of directories, not one — pulpo-spawned Codex sessions write
+/// their rollouts under isolated `harness/<id>/codex-home/sessions/` directories
+/// (see `harness::codex`'s isolated `CODEX_HOME`), not the user's real `~/.codex`, so
+/// counting only the latter would miss them entirely (see
+/// `super::codex_harness_home_dirs`).
 #[derive(Clone, Copy)]
 pub struct ScanDirs<'a> {
     pub claude: &'a Path,
-    pub codex: &'a Path,
+    pub codex: &'a [&'a Path],
     pub pi: &'a Path,
 }
 
@@ -310,7 +316,7 @@ mod tests {
         let r = scan_usage(
             &ScanDirs {
                 claude: claude.path(),
-                codex: codex.path(),
+                codex: &[codex.path()],
                 pi: pi_dir.path(),
             },
             &RateOverrides::default(),
@@ -352,7 +358,7 @@ mod tests {
         let r = scan_usage(
             &ScanDirs {
                 claude: claude.path(),
-                codex: codex.path(),
+                codex: &[codex.path()],
                 pi: pi_dir.path(),
             },
             &RateOverrides::default(),
@@ -413,7 +419,7 @@ mod tests {
         let r = scan_usage(
             &ScanDirs {
                 claude: claude.path(),
-                codex: codex.path(),
+                codex: &[codex.path()],
                 pi: pi_dir.path(),
             },
             &RateOverrides::default(),
@@ -473,7 +479,7 @@ mod tests {
         let r = scan_usage(
             &ScanDirs {
                 claude: claude.path(),
-                codex: codex.path(),
+                codex: &[codex.path()],
                 pi: pi_dir.path(),
             },
             &RateOverrides::default(),
@@ -489,7 +495,7 @@ mod tests {
         let all = scan_usage(
             &ScanDirs {
                 claude: claude.path(),
-                codex: codex.path(),
+                codex: &[codex.path()],
                 pi: pi_dir.path(),
             },
             &RateOverrides::default(),
@@ -517,7 +523,7 @@ mod tests {
         let r = scan_usage(
             &ScanDirs {
                 claude: claude.path(),
-                codex: codex.path(),
+                codex: &[codex.path()],
                 pi: pi_dir.path(),
             },
             &RateOverrides::default(),
@@ -555,7 +561,7 @@ mod tests {
         let r = scan_usage(
             &ScanDirs {
                 claude: claude.path(),
-                codex: codex.path(),
+                codex: &[codex.path()],
                 pi: pi_dir.path(),
             },
             &RateOverrides::default(),
@@ -583,7 +589,7 @@ mod tests {
         let r = scan_usage(
             &ScanDirs {
                 claude: claude.path(),
-                codex: codex.path(),
+                codex: &[codex.path()],
                 pi: pi_dir.path(),
             },
             &RateOverrides::default(),
@@ -630,7 +636,7 @@ mod tests {
         let r = scan_usage(
             &ScanDirs {
                 claude: claude.path(),
-                codex: codex.path(),
+                codex: &[codex.path()],
                 pi: pi_dir.path(),
             },
             &RateOverrides::default(),

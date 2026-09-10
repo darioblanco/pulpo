@@ -388,8 +388,32 @@ pub fn read_exact_usage_for_session(_session: &Session, _data_dir: &Path) -> Opt
     None
 }
 
-/// Scan all local agent history using the real home-dir paths (`~/.claude`, `~/.codex`,
-/// `~/.pi`).
+/// Every pulpo-spawned Codex session's isolated `CODEX_HOME` under
+/// `<data_dir>/harness/*/codex-home`, so [`scan_local_usage`] counts rollouts
+/// written there too — the user's real `~/.codex` alone would miss every Codex
+/// session pulpo itself spawned, since `harness::codex::CodexAdapter` redirects
+/// `CODEX_HOME` to one of these per session (see `harness/codex.rs`'s module
+/// doc). A missing/unreadable `harness` dir (no pulpo-spawned sessions yet, or a
+/// fresh data dir) yields no extra directories — the scan still covers the real
+/// `~/.codex` alone. These same directories (and the rollouts under them) are
+/// deleted by `pulpo cleanup` along with the rest of a session's harness dir —
+/// see the Codex section of `docs/architecture/harness-adapters.md`.
+pub(crate) fn codex_harness_home_dirs(data_dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(data_dir.join("harness")) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path().join("codex-home"))
+        .filter(|path| path.is_dir())
+        .collect()
+}
+
+/// Scan all local agent history using the real home-dir paths.
+///
+/// Covers `~/.claude`, `~/.codex`, `~/.pi`, plus every pulpo-spawned Codex
+/// session's isolated `codex-home` under `data_dir` (see
+/// [`codex_harness_home_dirs`]).
 ///
 /// `by_worktree` keeps every directory distinct; the default (`false`) collapses git
 /// worktrees and subdirectories onto their origin repo via [`scan::canonical_repo`].
@@ -403,14 +427,19 @@ pub fn scan_local_usage(
     node_name: &str,
     by_worktree: bool,
     since_days: Option<u32>,
+    data_dir: &Path,
 ) -> Option<pulpo_common::api::UsageScanResponse> {
     let home = dirs::home_dir()?;
     let claude_dir = home.join(".claude");
     let codex_dir = home.join(".codex");
     let pi_dir = home.join(".pi");
+    let harness_codex_dirs = codex_harness_home_dirs(data_dir);
+    let codex_dirs: Vec<&Path> = std::iter::once(codex_dir.as_path())
+        .chain(harness_codex_dirs.iter().map(PathBuf::as_path))
+        .collect();
     let dirs = scan::ScanDirs {
         claude: &claude_dir,
-        codex: &codex_dir,
+        codex: &codex_dirs,
         pi: &pi_dir,
     };
     let rates = active_rate_overrides();
@@ -438,6 +467,7 @@ pub fn scan_local_usage(
     _node_name: &str,
     _by_worktree: bool,
     _since_days: Option<u32>,
+    _data_dir: &Path,
 ) -> Option<pulpo_common::api::UsageScanResponse> {
     None
 }
@@ -446,6 +476,30 @@ pub fn scan_local_usage(
 mod tests {
     use super::*;
     use chrono::Datelike;
+
+    // -- codex_harness_home_dirs --
+
+    #[test]
+    fn test_codex_harness_home_dirs_missing_harness_dir_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(codex_harness_home_dirs(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn test_codex_harness_home_dirs_collects_each_session_codex_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let harness_dir = tmp.path().join("harness");
+        let session_a = harness_dir.join("session-a").join("codex-home");
+        let session_b = harness_dir.join("session-b").join("codex-home");
+        std::fs::create_dir_all(&session_a).unwrap();
+        std::fs::create_dir_all(&session_b).unwrap();
+        // A claude-only session (no codex-home) must not be picked up.
+        std::fs::create_dir_all(harness_dir.join("session-c")).unwrap();
+
+        let mut dirs = codex_harness_home_dirs(tmp.path());
+        dirs.sort();
+        assert_eq!(dirs, vec![session_a, session_b]);
+    }
 
     #[test]
     #[allow(clippy::float_cmp)]

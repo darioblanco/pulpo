@@ -74,18 +74,26 @@ pub async fn scan(
     State(state): State<Arc<super::AppState>>,
     Query(params): Query<ScanParams>,
 ) -> Result<Json<UsageScanResponse>, ApiError> {
-    let node_name = state.config.read().await.node.name.clone();
-    let resp = crate::usage::scan_local_usage(&node_name, params.by_worktree, params.since_days)
-        .unwrap_or_else(|| UsageScanResponse {
-            node_name,
-            generated_at: chrono::Utc::now().to_rfc3339(),
-            window_days: params.since_days,
-            total_tokens: 0,
-            total_cost_usd: None,
-            by_agent: Vec::new(),
-            by_model: Vec::new(),
-            by_repo: Vec::new(),
-        });
+    let (node_name, data_dir) = {
+        let config = state.config.read().await;
+        (config.node.name.clone(), config.data_dir())
+    };
+    let resp = crate::usage::scan_local_usage(
+        &node_name,
+        params.by_worktree,
+        params.since_days,
+        std::path::Path::new(&data_dir),
+    )
+    .unwrap_or_else(|| UsageScanResponse {
+        node_name,
+        generated_at: chrono::Utc::now().to_rfc3339(),
+        window_days: params.since_days,
+        total_tokens: 0,
+        total_cost_usd: None,
+        by_agent: Vec::new(),
+        by_model: Vec::new(),
+        by_repo: Vec::new(),
+    });
     Ok(Json(resp))
 }
 

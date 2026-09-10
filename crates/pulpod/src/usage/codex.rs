@@ -167,29 +167,43 @@ fn parse_rollout(path: &Path) -> Option<Rollout> {
     })
 }
 
-/// Per-rollout Codex token totals across *all* rollout files started at or after `since`.
+/// Per-rollout Codex token totals across every rollout file under any of
+/// `codex_dirs`, started at or after `since`. Scans multiple directories — the
+/// user's real `~/.codex` plus, for pulpo-spawned sessions, each isolated
+/// `harness/<id>/codex-home` directory (see `super::codex_harness_home_dirs`) —
+/// deduped by each rollout file's canonicalized path, so a file reachable from
+/// more than one of the given directories is only counted once.
 ///
 /// Token total matches the `ExactUsage` convention: `(input − cached) + output + cached`.
 /// Returns one entry per rollout file (each is one agent process) with no cost — Codex
 /// sessions run on subscription plans with no reliable per-token rate table; the usage
 /// scan groups entries by repo and by model.
-pub(crate) fn scan_rollouts(codex_dir: &Path, since: DateTime<Utc>) -> Vec<ScanEntry> {
-    collect_jsonl_files(codex_dir.join("sessions"), |name| {
-        name.starts_with("rollout-")
-    })
-    .into_iter()
-    .filter_map(|path| parse_rollout(&path))
-    .filter(|r| r.started_at >= since)
-    .map(|r| {
-        let t = r.totals;
-        ScanEntry {
-            cwd: normalize_dir(&r.cwd).to_owned(),
-            model: r.model,
-            tokens: t.input.saturating_sub(t.cached) + t.output + t.cached,
-            cost_usd: None,
+pub(crate) fn scan_rollouts(codex_dirs: &[&Path], since: DateTime<Utc>) -> Vec<ScanEntry> {
+    let mut seen = std::collections::HashSet::new();
+    let mut files = Vec::new();
+    for dir in codex_dirs {
+        for path in collect_jsonl_files(dir.join("sessions"), |name| name.starts_with("rollout-")) {
+            let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            if seen.insert(key) {
+                files.push(path);
+            }
         }
-    })
-    .collect()
+    }
+
+    files
+        .into_iter()
+        .filter_map(|path| parse_rollout(&path))
+        .filter(|r| r.started_at >= since)
+        .map(|r| {
+            let t = r.totals;
+            ScanEntry {
+                cwd: normalize_dir(&r.cwd).to_owned(),
+                model: r.model,
+                tokens: t.input.saturating_sub(t.cached) + t.output + t.cached,
+                cost_usd: None,
+            }
+        })
+        .collect()
 }
 
 /// Read exact usage for a Codex session running in `workdir`, started at `since`.
@@ -550,7 +564,7 @@ mod tests {
         );
         write_rollout(tmp.path(), now, "rollout-2026-06-12-a.jsonl", &content);
 
-        let entries = scan_rollouts(tmp.path(), now - TimeDelta::hours(1));
+        let entries = scan_rollouts(&[tmp.path()], now - TimeDelta::hours(1));
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].cwd, "/repo");
         assert_eq!(entries[0].model.as_deref(), Some("gpt-5.3-codex"));
@@ -585,11 +599,74 @@ mod tests {
         );
 
         // Only the recent rollout survives a 3-day window.
-        let entries = scan_rollouts(tmp.path(), now - TimeDelta::days(3));
+        let entries = scan_rollouts(&[tmp.path()], now - TimeDelta::days(3));
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].tokens, 220);
         // No model recorded → None (still counted).
         assert!(entries[0].model.is_none());
+    }
+
+    #[test]
+    fn test_scan_rollouts_reads_across_multiple_dirs() {
+        // The real `~/.codex` plus a pulpo-spawned session's isolated
+        // `harness/<id>/codex-home` — both must contribute entries.
+        let real_home = tempfile::tempdir().unwrap();
+        let isolated_home = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        write_rollout(
+            real_home.path(),
+            now,
+            "rollout-real.jsonl",
+            &format!(
+                "{}\n{}\n",
+                session_meta_line(&now.to_rfc3339(), "/repo-real"),
+                token_count_line(100, 0, 10)
+            ),
+        );
+        write_rollout(
+            isolated_home.path(),
+            now,
+            "rollout-isolated.jsonl",
+            &format!(
+                "{}\n{}\n",
+                session_meta_line(&now.to_rfc3339(), "/repo-isolated"),
+                token_count_line(200, 0, 20)
+            ),
+        );
+
+        let entries = scan_rollouts(
+            &[real_home.path(), isolated_home.path()],
+            now - TimeDelta::hours(1),
+        );
+        assert_eq!(entries.len(), 2);
+        let cwds: Vec<&str> = entries.iter().map(|e| e.cwd.as_str()).collect();
+        assert!(cwds.contains(&"/repo-real"));
+        assert!(cwds.contains(&"/repo-isolated"));
+    }
+
+    #[test]
+    fn test_scan_rollouts_dedupes_the_same_file_seen_via_two_dirs() {
+        // A rollout file reachable from two of the given directories (e.g. an
+        // isolated codex-home whose `sessions/` happens to be the same on-disk
+        // directory as another one, however unlikely) must only be counted once.
+        let real_home = tempfile::tempdir().unwrap();
+        let now = Utc::now();
+        write_rollout(
+            real_home.path(),
+            now,
+            "rollout-shared.jsonl",
+            &format!(
+                "{}\n{}\n",
+                session_meta_line(&now.to_rfc3339(), "/repo"),
+                token_count_line(100, 0, 10)
+            ),
+        );
+
+        let entries = scan_rollouts(
+            &[real_home.path(), real_home.path()],
+            now - TimeDelta::hours(1),
+        );
+        assert_eq!(entries.len(), 1, "the same file must not be double-counted");
     }
 
     #[test]
