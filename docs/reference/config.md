@@ -15,7 +15,7 @@ delete `~/.pulpo/state.db` and restart.
 | `name` | string | hostname | Node display name |
 | `port` | u16 | `7433` | HTTP listen port |
 | `data_dir` | string | `~/.pulpo` | Data directory for SQLite, logs |
-| `bind` | string | `"local"` | `"local"`, `"public"`, `"tailscale"`, `"container"` |
+| `bind` | string | `"local"` | `"local"`, `"public"`, `"tailscale"` |
 | `tag` | string | — | Tailscale ACL tag for filtering (e.g. `"pulpo"`) |
 | `discovery_interval_secs` | u64 | `30` | How often to run peer discovery |
 | `default_command` | string | — | Default command when spawn has no explicit command |
@@ -28,7 +28,7 @@ delete `~/.pulpo/state.db` and restart.
 |-------|------|---------|-------------|
 | `token` | string | auto-generated | Auth token for `bind = "public"` |
 
-Not needed for `local`, `tailscale`, or `container` modes. Pulpo still auto-generates one on first run so a node can be switched to `public` later without manual bootstrap.
+Not needed for `local` or `tailscale` modes. Pulpo still auto-generates one on first run so a node can be switched to `public` later without manual bootstrap.
 
 ## `[controller]` (retired)
 

@@ -133,7 +133,10 @@ Git hooks live in `.githooks/` and are activated via `git config core.hooksPath 
 > The Docker **session runtime** was removed (`--runtime docker`, `backend/docker.rs`).
 > Historical sessions stored with `runtime = "docker"` remain readable; spawning,
 > resuming, or scheduling with the docker runtime is rejected server-side.
-> Deploying pulpod itself in a container (`bind = "container"`, `docker/`) is unaffected.
+> Deploying `pulpod` itself in a container (`bind = "container"`, `docker/`) was also
+> removed — `pulpod` is installed via Homebrew or systemd on the machines it
+> supervises, and a containerized `pulpod` can't see the agents' own session files
+> that exact usage metering depends on.
 
 ### Writing tests
 

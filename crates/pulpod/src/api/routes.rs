@@ -30,7 +30,7 @@ use super::ws;
 pub fn build(state: Arc<AppState>) -> Router {
     // In Public mode, restrict CORS to same-origin only (the embedded web UI
     // is served from the same origin and doesn't need permissive CORS).
-    // For Local/Tailscale/Container, allow Any for cross-node convenience.
+    // For Local/Tailscale, allow Any for cross-node convenience.
     let bind_mode = state
         .config
         .try_read()

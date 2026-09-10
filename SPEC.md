@@ -71,22 +71,23 @@ exactly what you'd least want flowing through a third-party relay.
      ┌──────────────────┼──────────────────────────┐
      │                  │                           │
   ┌──▼─────────┐  ┌────▼───────┐  ┌────────────────▼──────────────┐
-  │  mac-mini  │  │  macbook   │  │  Docker (container deploy)    │
-  │  pulpod    │  │  pulpod    │  │  ┌───────────┐ ┌───────────┐  │
-  │  ┌──────┐  │  │  ┌──────┐  │  │  │ tailscale │ │  pulpod   │  │
-  │  │ tmux │  │  │  │ tmux │  │  │  │ sidecar   │ │  agents   │  │
-  │  └──────┘  │  │  └──────┘  │  │  │  :443 ────┼─┤  :7433    │  │
-  │  ┌──────┐  │  │  ┌──────┐  │  │  └───────────┘ │  ┌──────┐ │  │
-  │  │SQLite│  │  │  │SQLite│  │  │   shared netns  │  │ tmux │ │  │
-  │  └──────┘  │  │  └──────┘  │  │                 │  └──────┘ │  │
-  └────────────┘  └────────────┘  │                 │  ┌──────┐ │  │
-                                  │                 │  │SQLite│ │  │
-                                  │                 │  └──────┘ │  │
-                                  │                 └───────────┘  │
-                                  └────────────────────────────────┘
-  ◄─── bare-metal (bind=tailscale) ───►  ◄── container (bind=container) ──►
-       runs TS discovery loop                 sidecar handles tailnet
+  │  mac-mini  │  │  macbook   │  │  hetzner (linux server)       │
+  │  pulpod    │  │  pulpod    │  │  pulpod                       │
+  │  ┌──────┐  │  │  ┌──────┐  │  │  ┌──────┐                     │
+  │  │ tmux │  │  │  │ tmux │  │  │  │ tmux │                     │
+  │  └──────┘  │  │  └──────┘  │  │  └──────┘                     │
+  │  ┌──────┐  │  │  ┌──────┐  │  │  ┌──────┐                     │
+  │  │SQLite│  │  │  │SQLite│  │  │  │SQLite│                     │
+  │  └──────┘  │  │  └──────┘  │  │  └──────┘                     │
+  └────────────┘  └────────────┘  └────────────────────────────────┘
+  ◄──────────────── every node bare-metal (bind=tailscale) ──────────────►
+                     each runs its own TS discovery loop
 ```
+
+`pulpod` is installed via Homebrew or systemd on every machine it supervises — there
+is no containerized deployment of `pulpod` itself (removed alongside `docker/`; a
+containerized `pulpod` can't see the agents' own session files that exact usage
+metering depends on).
 
 ### Components
 
@@ -651,7 +652,7 @@ the primary management surface.
 
 **Deliverables:**
 
-- ✅ Token authentication + bind modes (local/public/container)
+- ✅ Token authentication + bind modes (local/public/tailscale)
 - ✅ QR code pairing for mobile clients
 - ✅ Tailscale auto-discovery
 - ✅ PWA install + Web Push notifications
@@ -678,7 +679,7 @@ the primary management surface.
 [node]
 name = "mac-mini"       # Display name (default: hostname)
 port = 7433             # API port (default: 7433)
-bind = "local"          # "local", "tailscale", "public", or "container"
+bind = "local"          # "local", "tailscale", or "public"
 
 [auth]
 # token is auto-generated on first run (only used with bind = "public")
@@ -711,12 +712,10 @@ events = ["active", "ready", "stopped"]   # optional filter; omit for all events
   runs `tailscale serve` to proxy the dashboard over HTTPS on the tailnet — accessible
   at `https://<machine-name>.<tailnet>.ts.net`. Auth is delegated to Tailscale
   (WireGuard). The serve rule is cleaned up on shutdown and stale rules from crashes
-  are cleared on startup. In `container` mode, it binds to `0.0.0.0` but skips auth
-  (trusts container network isolation).
+  are cleared on startup.
 - **Auth**: In `local` and `tailscale` modes, network isolation is the auth layer.
   In `public` mode, a base64url token is auto-generated on first run and required
-  in every request. Retrieve it locally via `GET /api/v1/auth/token`. In `container`
-  mode, auth is disabled — the container runtime provides isolation.
+  in every request. Retrieve it locally via `GET /api/v1/auth/token`.
 - **Agents**: agents run as your user (same as running Claude Code directly).
   The `command` field gives full control over what runs in the session.
 - **No secrets in the API**: the API never exposes API keys. Keys are in the
@@ -742,26 +741,7 @@ and logs the HTTPS URL (e.g., `https://mac-mini.tailnet-name.ts.net`). On shutdo
 previous crash are also cleared on startup.
 
 Use `public` bind mode only when you need direct LAN access without Tailscale
-(e.g., devices not on the tailnet). Use `container` bind mode for Docker/Podman
-deployments where the container runtime provides network isolation.
-
-### Container Deployment with Tailscale Sidecar
-
-For containerized pulpo nodes on the tailnet, use the Tailscale sidecar pattern
-(see `docker/compose/tailscale.yml`). The agents container uses `bind = "container"`
-(binds `0.0.0.0`, no auth) and shares a network namespace with a
-`tailscale/tailscale` sidecar that handles tailnet identity and `tailscale serve`.
-
-**Why not `bind = "tailscale"` in containers?** The `tailscale` bind mode spawns
-`tailscale status --json` for peer discovery and runs `tailscale serve` for HTTPS
-exposure. In the sidecar pattern, the `tailscale` CLI lives in the sidecar container,
-not the agents container. The sidecar handles networking; the agents container trusts
-its network boundary. Bare-metal pulpod nodes running `bind = "tailscale"` discover
-container peers via their own Tailscale discovery loop — the container doesn't need
-to discover anyone.
-
-See `docker/README.md` for full setup instructions, architecture diagram, and
-troubleshooting guide.
+(e.g., devices not on the tailnet).
 
 ---
 

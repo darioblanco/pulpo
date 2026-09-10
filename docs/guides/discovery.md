@@ -50,6 +50,6 @@ token = "secret"
 
 Use this when nodes are not on the same Tailnet, or when you need explicit control over the peer list.
 
-## Local / Container
+## Local
 
-No discovery. `bind = "local"` (default) binds to `127.0.0.1`. `bind = "container"` binds to `0.0.0.0` without auth.
+No discovery. `bind = "local"` (default) binds to `127.0.0.1`.

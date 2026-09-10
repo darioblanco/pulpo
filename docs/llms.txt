@@ -55,7 +55,6 @@ Canonical runtime concepts:
 
 Installation:
 - Homebrew: brew install darioblanco/tap/pulpo
-- Docker: darioblanco/pulpo-base, darioblanco/pulpo-agents
 - Source: make setup && make build && make install
 
 CLI binaries:

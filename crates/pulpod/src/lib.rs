@@ -384,11 +384,9 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
             shutdown_handle.add_sender(ts_shutdown_tx);
             info!("Tailscale discovery enabled");
         }
-        // Public, Local, and Container: no automatic discovery.
+        // Public and Local: no automatic discovery.
         // Use manual [peers] config for multi-node in these modes.
-        pulpo_common::auth::BindMode::Public
-        | pulpo_common::auth::BindMode::Local
-        | pulpo_common::auth::BindMode::Container => {}
+        pulpo_common::auth::BindMode::Public | pulpo_common::auth::BindMode::Local => {}
     }
 
     // Event forwarding: a single dispatcher converts bus events to the canonical
@@ -460,9 +458,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
         pulpo_common::auth::BindMode::Local | pulpo_common::auth::BindMode::Tailscale => {
             "127.0.0.1".into()
         }
-        pulpo_common::auth::BindMode::Public | pulpo_common::auth::BindMode::Container => {
-            "0.0.0.0".into()
-        }
+        pulpo_common::auth::BindMode::Public => "0.0.0.0".into(),
     };
 
     // Set up tailscale serve for HTTPS access over tailnet
@@ -934,8 +930,12 @@ token = "existing-token-value"
         assert_eq!(saved.auth.token, "existing-token-value");
     }
 
+    /// `bind = "container"` was removed alongside `docker/` — pulpod is installed
+    /// via Homebrew/systemd on the machines it supervises, and a containerized
+    /// pulpod can't see the agents' own session files usage metering depends on.
+    /// Loading such a config must fail with a clear pointer to the remaining modes.
     #[tokio::test]
-    async fn test_build_app_bind_container() {
+    async fn test_build_app_rejects_bind_container() {
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
         let data_dir = tmpdir.path().join("data");
@@ -958,8 +958,14 @@ bind = "container"
             config: config_path.to_str().unwrap().into(),
             port: Some(0),
         };
-        let (_app, addr, _handle) = build_app(&cli).await.unwrap();
-        assert_eq!(addr, "0.0.0.0:0");
+        let message = match build_app(&cli).await {
+            Ok(_) => panic!("expected bind = \"container\" to be rejected"),
+            Err(err) => format!("{err:#}"),
+        };
+        assert!(message.contains("container"), "message was: {message}");
+        assert!(message.contains("local"), "message was: {message}");
+        assert!(message.contains("tailscale"), "message was: {message}");
+        assert!(message.contains("public"), "message was: {message}");
     }
 
     #[cfg(coverage)]

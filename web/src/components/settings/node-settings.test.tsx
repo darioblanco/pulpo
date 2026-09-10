@@ -47,11 +47,6 @@ describe('NodeSettings', () => {
     expect(screen.getByLabelText('Discovery interval')).toBeInTheDocument();
   });
 
-  it('shows discovery interval for container mode', () => {
-    render(<NodeSettings {...defaults} bind="container" />);
-    expect(screen.getByLabelText('Discovery interval')).toBeInTheDocument();
-  });
-
   it('calls onNameChange', () => {
     const onNameChange = vi.fn();
     render(<NodeSettings {...defaults} onNameChange={onNameChange} />);

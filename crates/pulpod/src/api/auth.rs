@@ -70,11 +70,8 @@ pub async fn require_auth(
     let expected_token = config.auth.token.clone();
     drop(config);
 
-    // Local/container/tailscale bind → no auth needed (network isolation is the guard)
-    if matches!(
-        bind_mode,
-        BindMode::Local | BindMode::Container | BindMode::Tailscale
-    ) {
+    // Local/tailscale bind → no auth needed (network isolation is the guard)
+    if matches!(bind_mode, BindMode::Local | BindMode::Tailscale) {
         return next.run(req).await;
     }
 
@@ -357,8 +354,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_middleware_container_bind_skips_auth() {
-        let state = make_state(BindMode::Container, "tok").await;
+    async fn test_middleware_tailscale_bind_skips_auth() {
+        let state = make_state(BindMode::Tailscale, "tok").await;
         let req = Request::builder()
             .uri("/api/v1/sessions")
             .body(Body::empty())
