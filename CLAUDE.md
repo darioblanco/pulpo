@@ -294,7 +294,6 @@ pulpo/
 │   │   │   ├── idle.rs           # Idle detection + status transitions
 │   │   │   ├── metadata.rs       # PR/branch/rate-limit/error/usage scraping from output
 │   │   │   ├── output_patterns.rs # Waiting-for-input/rate-limit/error/PR-URL pattern matching
-│   │   │   ├── adopt.rs          # Status resolution for adopted (non-pulpo-spawned) sessions
 │   │   │   ├── git.rs            # Branch/commit detection for sessions
 │   │   │   ├── budget.rs         # Per-session cost budget alerts + auto-stop
 │   │   │   ├── burn.rs           # Burn-rate ceiling governor (cost/token per hour)

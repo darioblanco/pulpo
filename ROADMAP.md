@@ -418,7 +418,7 @@ Core infrastructure:
 - SQLite-backed session persistence with full lifecycle state machine
   (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`; resume from `lost`/`ready`)
 - Watchdog: memory pressure intervention, idle detection, ready TTL cleanup,
-  error/failure detection, tmux auto-adopt
+  error/failure detection
 - Command-agnostic sessions (any CLI tool, any command)
 - Inks: reusable session blueprints (command, description, secrets, runtime defaults) —
   shipped, then removed in July 2026; command/secrets/budget now set directly per
@@ -458,6 +458,16 @@ Revisit only on real demand:
 
 ## Removed
 
+- ~~Watchdog auto-adoption of external tmux sessions (`adopt_tmux`)~~ (2026-09) — the
+  watchdog used to discover tmux sessions pulpo didn't spawn and bring them under
+  management via a scrollback-only classification (`watchdog/adopt.rs`). Since harness
+  adapters (PR #97) a session spawned through `pulpo spawn` gets real hooks, a preset
+  session id, and resume; an adopted session got none of that, and adoption's
+  interaction with the tmux `$N` id space was implicated in the zombie `$4`–`$8`
+  sessions seen after a reboot. Sessions that matter should be started with
+  `pulpo spawn`. A leftover `watchdog.adopt_tmux` key from a config written before the
+  removal is tolerated: it still parses, logs a startup warning, and is dropped the
+  next time the config is saved.
 - ~~Ocean gamification UI~~ (2026-09) — the canvas-based octopus/session visualization
   (`web/src/components/ocean/**`, `web/src/pages/ocean.tsx`) was frozen since 2026-06-12
   and is now extracted to a separate `pulpo-ocean` repo, with its git history intact.

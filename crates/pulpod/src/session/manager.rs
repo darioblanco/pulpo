@@ -1388,10 +1388,6 @@ mod tests {
         fn query_backend_id(&self, name: &str) -> anyhow::Result<String> {
             Ok(format!("${}", name.len()))
         }
-
-        fn list_sessions(&self) -> anyhow::Result<Vec<(String, String)>> {
-            Ok(Vec::new())
-        }
     }
 
     struct FailCapture;
@@ -1802,8 +1798,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_session_ready_with_dead_backend_no_marker_transitions_to_lost() {
         // No wrapper ever ran for this session id (e.g. it reached Ready via the
-        // text-scrape fallback used for adopted external tmux sessions), so no exit
-        // marker exists. A dead backend with no marker resolves to Lost, same as the
+        // text-scrape fallback rather than the `.code` marker), so no exit marker
+        // exists. A dead backend with no marker resolves to Lost, same as the
         // Active/Idle case.
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
         let session = mgr
@@ -4151,21 +4147,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_adopted_style_session_with_no_marker_becomes_lost() {
-        // Regression lock: an "adopted"-style session (a `backend_session_id` present,
-        // but never spawned via `wrap_command`, so no exit marker for its id ever
-        // exists) must still resolve to Lost when its backend dies — this should
-        // already pass given the `has_exit_marker` false branch; it locks in that the
-        // marker-aware classification doesn't change behavior for sessions with no
-        // wrapper (see `watchdog::adopt::classify_adopted_process`).
+    async fn test_session_with_backend_id_but_no_wrapper_and_no_marker_becomes_lost() {
+        // Regression lock: a session with a `backend_session_id` present but never
+        // spawned via `wrap_command` (so no exit marker for its id ever exists) must
+        // still resolve to Lost when its backend dies — this should already pass given
+        // the `has_exit_marker` false branch; it locks in that the marker-aware
+        // classification doesn't change behavior for sessions with no wrapper.
         let (mgr, _, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
         let session = Session {
             id: Uuid::new_v4(),
-            name: "adopted-external".into(),
+            name: "no-wrapper-external".into(),
             workdir: "/tmp".into(),
             command: "claude".into(),
             status: SessionStatus::Active,
-            backend_session_id: Some("adopted-external".into()),
+            backend_session_id: Some("no-wrapper-external".into()),
             created_at: Utc::now() - chrono::Duration::hours(1),
             ..Default::default()
         };

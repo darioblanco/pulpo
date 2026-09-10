@@ -18,8 +18,6 @@ interface WatchdogSettingsProps {
   onIdleTimeoutSecsChange: (val: number) => void;
   idleAction: string;
   onIdleActionChange: (val: string) => void;
-  adoptTmux: boolean;
-  onAdoptTmuxChange: (val: boolean) => void;
 }
 
 const idleActions = ['pause', 'kill'] as const;
@@ -37,8 +35,6 @@ export function WatchdogSettings({
   onIdleTimeoutSecsChange,
   idleAction,
   onIdleActionChange,
-  adoptTmux,
-  onAdoptTmuxChange,
 }: WatchdogSettingsProps) {
   return (
     <Card data-testid="watchdog-settings">
@@ -133,20 +129,6 @@ export function WatchdogSettings({
             ))}
           </div>
         </FormField>
-        <div className="grid gap-2">
-          <div className="flex items-center gap-3">
-            <Switch
-              id="watchdog-adopt-tmux"
-              data-testid="adopt-tmux-toggle"
-              checked={adoptTmux}
-              onCheckedChange={onAdoptTmuxChange}
-            />
-            <Label htmlFor="watchdog-adopt-tmux">Auto-adopt tmux sessions</Label>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Automatically discover and adopt external tmux sessions into pulpo management.
-          </p>
-        </div>
       </CardContent>
     </Card>
   );

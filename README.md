@@ -180,7 +180,7 @@ adds no single point of failure and integrates with your existing observability.
 - **Exact usage metering**: structured readers for Claude Code, Codex & pi (tokens, cost, cache, quota; pi in `--scan` only for now), cross-account / cross-agent rollups, `[rates.<model>]` config, output-scraping fallback for other agents.
 - **Cost control**: per-session / per-schedule budget caps (alert 80%, stop 100%) and a burn-velocity ($/hr) governor — alert-first, opt-in stop.
 - **Monitoring backbone**: signed canonical events to multiple webhooks with a durable outbox + backoff; toggleable Prometheus metrics; SSE stream; web push.
-- **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots; adopts external tmux sessions.
+- **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots.
 - **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error/completion patterns, git telemetry (branch, diff; PR URL detected from output).
 - **Execution isolation**: per-session git worktrees for parallel work on one repo.
 - **Scheduled runs**: cron-based schedules (`pulpo schedule`) with the same budgets and worktree support; `pulpo secret` injects secrets into sessions as env vars.

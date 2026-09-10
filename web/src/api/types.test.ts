@@ -82,7 +82,6 @@ describe('types', () => {
         idle_timeout_secs: 300,
         idle_action: 'pause',
         ready_ttl_secs: 0,
-        adopt_tmux: true,
       },
       notifications: { webhooks: [] },
     };

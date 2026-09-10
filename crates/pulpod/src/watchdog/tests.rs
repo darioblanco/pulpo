@@ -3,7 +3,6 @@ use crate::backend::Backend;
 use crate::store::test_store;
 use anyhow::Result;
 use pulpo_common::session::{Session, SessionStatus};
-use std::collections::HashMap;
 use std::sync::Mutex;
 use tokio::time;
 
@@ -51,9 +50,6 @@ struct MockBackend {
     fail_capture: bool,
     fail_kill: bool,
     fail_create: bool,
-    tmux_sessions: Vec<(String, String)>,
-    pane_infos: HashMap<String, (String, String)>,
-    pane_command_lines: HashMap<String, String>,
 }
 
 impl MockBackend {
@@ -67,9 +63,6 @@ impl MockBackend {
             fail_capture: false,
             fail_kill: false,
             fail_create: false,
-            tmux_sessions: Vec::new(),
-            pane_infos: HashMap::new(),
-            pane_command_lines: HashMap::new(),
         }
     }
 
@@ -133,21 +126,6 @@ impl Backend for MockBackend {
     }
     fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
         Ok(())
-    }
-    fn list_sessions(&self) -> Result<Vec<(String, String)>> {
-        Ok(self.tmux_sessions.clone())
-    }
-    fn pane_info(&self, backend_id: &str) -> Result<(String, String)> {
-        self.pane_infos
-            .get(backend_id)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("no pane info for {backend_id}"))
-    }
-    fn pane_command_line(&self, backend_id: &str) -> Result<String> {
-        self.pane_command_lines
-            .get(backend_id)
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("no command line for {backend_id}"))
     }
 }
 
@@ -218,7 +196,6 @@ fn make_config(
         breach_count,
         idle,
         ready_ttl_secs: 0,
-        adopt_tmux: false,
         extra_waiting_patterns: Vec::new(),
         burn: BurnConfig::default(),
     };
@@ -241,7 +218,6 @@ fn make_config_with_tx(
         breach_count,
         idle,
         ready_ttl_secs: 0,
-        adopt_tmux: false,
         extra_waiting_patterns: Vec::new(),
         burn: BurnConfig::default(),
     };
@@ -2455,7 +2431,6 @@ async fn test_watchdog_live_config_reload_threshold() {
                 ..IdleConfig::default()
             },
             ready_ttl_secs: 0,
-            adopt_tmux: false,
             extra_waiting_patterns: Vec::new(),
             burn: BurnConfig::default(),
         })
@@ -2493,7 +2468,6 @@ async fn test_watchdog_runtime_config_debug() {
         breach_count: 3,
         idle: IdleConfig::default(),
         ready_ttl_secs: 0,
-        adopt_tmux: false,
         extra_waiting_patterns: Vec::new(),
         burn: BurnConfig::default(),
     };
@@ -2515,7 +2489,6 @@ async fn test_watchdog_runtime_config_clone() {
             threshold_secs: 60,
         },
         ready_ttl_secs: 0,
-        adopt_tmux: false,
         extra_waiting_patterns: Vec::new(),
         burn: BurnConfig::default(),
     };
@@ -2858,7 +2831,7 @@ async fn test_ready_transition_via_exit_code_marker_nonzero_persists_value() {
 #[tokio::test]
 async fn test_ready_transition_text_pattern_still_works_without_marker() {
     // Regression lock: the historical text-scrape path must keep working unchanged
-    // for sessions with no exit marker at all (e.g. adopted external tmux sessions).
+    // for sessions with no exit marker at all.
     let backend = Arc::new(MockBackend::new().with_output("work done\n[pulpo] Agent exited\n$ "));
     let store = test_store().await;
     let session = create_running_session(&store, "text-pattern-only").await;
@@ -3217,329 +3190,6 @@ async fn test_cleanup_ready_no_ready_sessions() {
     cleanup_ready_sessions(&dyn_backend, &store, 3600).await;
 
     assert!(backend.kill_calls.lock().unwrap().is_empty());
-}
-
-// --- S5: classify_adopted_process tests ---
-
-#[test]
-fn test_classify_agent_processes() {
-    assert_eq!(classify_adopted_process("claude"), SessionStatus::Active);
-    assert_eq!(classify_adopted_process("codex"), SessionStatus::Active);
-    assert_eq!(classify_adopted_process("gemini"), SessionStatus::Active);
-    assert_eq!(classify_adopted_process("opencode"), SessionStatus::Active);
-}
-
-#[test]
-fn test_classify_agent_case_insensitive() {
-    assert_eq!(classify_adopted_process("Claude"), SessionStatus::Active);
-    assert_eq!(classify_adopted_process("CODEX"), SessionStatus::Active);
-}
-
-#[test]
-fn test_classify_shell_processes() {
-    assert_eq!(classify_adopted_process("bash"), SessionStatus::Ready);
-    assert_eq!(classify_adopted_process("zsh"), SessionStatus::Ready);
-    assert_eq!(classify_adopted_process("sh"), SessionStatus::Ready);
-    assert_eq!(classify_adopted_process("fish"), SessionStatus::Ready);
-    assert_eq!(classify_adopted_process("nu"), SessionStatus::Ready);
-}
-
-#[test]
-fn test_classify_unknown_process() {
-    // Unknown processes are conservatively Active
-    assert_eq!(classify_adopted_process("python"), SessionStatus::Active);
-    assert_eq!(classify_adopted_process("node"), SessionStatus::Active);
-}
-
-// --- S6: adopt_tmux_sessions tests ---
-
-#[tokio::test]
-async fn test_adopt_no_tmux_sessions() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    let ctx = test_ready_ctx();
-
-    let dyn_backend: Arc<dyn Backend> = backend;
-    adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
-
-    let sessions = store.list_sessions().await.unwrap();
-    assert!(sessions.is_empty());
-}
-
-#[tokio::test]
-async fn test_adopt_skips_known_sessions() {
-    let mut backend = MockBackend::new();
-    backend.tmux_sessions = vec![("$0".into(), "existing".into())];
-    backend
-        .pane_infos
-        .insert("existing".into(), ("bash".into(), "/tmp".into()));
-    let backend = Arc::new(backend);
-    let store = test_store().await;
-    // Create a session that has backend_session_id matching a tmux name
-    let _session = create_running_session(&store, "existing").await;
-
-    let ctx = test_ready_ctx();
-    let dyn_backend: Arc<dyn Backend> = backend;
-    adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
-
-    // Only the original session should exist (not adopted again)
-    let sessions = store.list_sessions().await.unwrap();
-    assert_eq!(sessions.len(), 1);
-}
-
-#[tokio::test]
-async fn test_adopt_agent_session_as_active() {
-    let mut backend = MockBackend::new();
-    backend.tmux_sessions = vec![("$0".into(), "my-claude".into())];
-    backend
-        .pane_infos
-        .insert("my-claude".into(), ("claude".into(), "/home/user".into()));
-    let backend = Arc::new(backend);
-    let store = test_store().await;
-
-    let ctx = test_ready_ctx();
-    let dyn_backend: Arc<dyn Backend> = backend;
-    adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
-
-    let sessions = store.list_sessions().await.unwrap();
-    assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].name, "my-claude");
-    assert_eq!(sessions[0].status, SessionStatus::Active);
-    assert_eq!(sessions[0].command, "claude");
-    assert_eq!(sessions[0].workdir, "/home/user");
-    assert_eq!(sessions[0].description, Some("Adopted from tmux".into()));
-    assert_eq!(sessions[0].backend_session_id, Some("$0".into()));
-}
-
-#[tokio::test]
-async fn test_adopt_shell_session_as_ready() {
-    let mut backend = MockBackend::new();
-    backend.tmux_sessions = vec![("$0".into(), "bare-shell".into())];
-    backend
-        .pane_infos
-        .insert("bare-shell".into(), ("bash".into(), "/tmp".into()));
-    let backend = Arc::new(backend);
-    let store = test_store().await;
-
-    let ctx = test_ready_ctx();
-    let dyn_backend: Arc<dyn Backend> = backend;
-    adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
-
-    let sessions = store.list_sessions().await.unwrap();
-    assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].status, SessionStatus::Ready);
-    assert_eq!(sessions[0].command, "bash");
-}
-
-#[tokio::test]
-async fn test_adopt_emits_sse_event() {
-    let mut backend = MockBackend::new();
-    backend.tmux_sessions = vec![("$0".into(), "event-session".into())];
-    backend
-        .pane_infos
-        .insert("event-session".into(), ("codex".into(), "/repo".into()));
-    let backend = Arc::new(backend);
-    let store = test_store().await;
-
-    let (event_tx, mut event_rx) = broadcast::channel::<PulpoEvent>(16);
-    let ctx = ReadyContext {
-        event_tx: Some(event_tx),
-        node_name: "test-node".into(),
-    };
-
-    let dyn_backend: Arc<dyn Backend> = backend;
-    adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
-
-    let event = event_rx.try_recv().unwrap();
-    match event {
-        PulpoEvent::Session(se) => {
-            assert_eq!(se.session_name, "event-session");
-            assert_eq!(se.status, "active");
-            assert!(se.previous_status.is_none());
-            assert_eq!(se.node_name, "test-node");
-        }
-        PulpoEvent::SessionDeleted(_) | PulpoEvent::UsageAlert(_) | PulpoEvent::Intervention(_) => {
-            panic!("expected session event")
-        }
-    }
-}
-
-#[tokio::test]
-async fn test_adopt_skips_pane_info_failure() {
-    let mut backend = MockBackend::new();
-    backend.tmux_sessions = vec![("$0".into(), "no-info".into())];
-    // No pane_info entry → pane_info will return error
-    let backend = Arc::new(backend);
-    let store = test_store().await;
-
-    let ctx = test_ready_ctx();
-    let dyn_backend: Arc<dyn Backend> = backend;
-    adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
-
-    // Should not have adopted (pane_info failed)
-    let sessions = store.list_sessions().await.unwrap();
-    assert!(sessions.is_empty());
-}
-
-#[tokio::test]
-async fn test_adopt_skips_claude_teammate_sessions() {
-    let mut backend = MockBackend::new();
-    // Claude teammate sessions have names like "claude-<hex>" (long names)
-    backend.tmux_sessions = vec![
-        ("$0".into(), "claude-abc123def456".into()),
-        ("$1".into(), "my-session".into()),
-    ];
-    backend
-        .pane_infos
-        .insert("my-session".into(), ("claude".into(), "/repo".into()));
-    // No pane_info for claude-abc123def456 — it should be skipped before pane_info is called
-    let backend = Arc::new(backend);
-    let store = test_store().await;
-
-    let ctx = test_ready_ctx();
-    let dyn_backend: Arc<dyn Backend> = backend;
-    adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
-
-    // Only my-session should be adopted, not the claude teammate session
-    let sessions = store.list_sessions().await.unwrap();
-    assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].name, "my-session");
-}
-
-#[tokio::test]
-async fn test_adopt_allows_short_claude_names() {
-    // Short names like "claude" or "claude-pr" should NOT be skipped
-    let mut backend = MockBackend::new();
-    backend.tmux_sessions = vec![("$0".into(), "claude-pr".into())];
-    backend
-        .pane_infos
-        .insert("claude-pr".into(), ("claude".into(), "/repo".into()));
-    let backend = Arc::new(backend);
-    let store = test_store().await;
-
-    let ctx = test_ready_ctx();
-    let dyn_backend: Arc<dyn Backend> = backend;
-    adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
-
-    let sessions = store.list_sessions().await.unwrap();
-    assert_eq!(sessions.len(), 1);
-    assert_eq!(sessions[0].name, "claude-pr");
-}
-
-#[tokio::test]
-async fn test_adopt_multiple_sessions() {
-    let mut backend = MockBackend::new();
-    backend.tmux_sessions = vec![
-        ("$0".into(), "agent-1".into()),
-        ("$1".into(), "shell-1".into()),
-    ];
-    backend
-        .pane_infos
-        .insert("agent-1".into(), ("claude".into(), "/code".into()));
-    backend
-        .pane_infos
-        .insert("shell-1".into(), ("zsh".into(), "/home".into()));
-    let backend = Arc::new(backend);
-    let store = test_store().await;
-
-    let ctx = test_ready_ctx();
-    let dyn_backend: Arc<dyn Backend> = backend;
-    adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
-
-    let sessions = store.list_sessions().await.unwrap();
-    assert_eq!(sessions.len(), 2);
-}
-
-#[tokio::test]
-async fn test_adopt_skips_by_live_name() {
-    // Ready session with same name should prevent adoption
-    let mut backend = MockBackend::new();
-    backend.tmux_sessions = vec![("$0".into(), "my-session".into())];
-    backend
-        .pane_infos
-        .insert("my-session".into(), ("bash".into(), "/tmp".into()));
-    let backend = Arc::new(backend);
-    let store = test_store().await;
-    // Create a ready session with the same name
-    let mut session = create_running_session(&store, "my-session").await;
-    store
-        .update_session_status(&session.id.to_string(), SessionStatus::Ready)
-        .await
-        .unwrap();
-    session.status = SessionStatus::Ready;
-
-    let ctx = test_ready_ctx();
-    let dyn_backend: Arc<dyn Backend> = backend;
-    adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
-
-    // Should still be just 1 session
-    let sessions = store.list_sessions().await.unwrap();
-    assert_eq!(sessions.len(), 1);
-}
-
-#[tokio::test]
-async fn test_adopt_ghost_fix_stopped_session_does_not_block() {
-    // A stopped session with old backend_session_id should NOT block adoption
-    // of a new tmux session with the same name.
-    let mut backend = MockBackend::new();
-    backend.tmux_sessions = vec![("$5".into(), "reused-name".into())];
-    backend
-        .pane_infos
-        .insert("reused-name".into(), ("claude".into(), "/repo".into()));
-    let backend = Arc::new(backend);
-    let store = test_store().await;
-
-    // Create a stopped session with the same name and old backend_session_id
-    let stopped_session = Session {
-        id: uuid::Uuid::new_v4(),
-        name: "reused-name".into(),
-        workdir: "/old".into(),
-        command: "old-command".into(),
-        status: SessionStatus::Stopped,
-        backend_session_id: Some("reused-name".into()),
-        ..Default::default()
-    };
-    store.insert_session(&stopped_session).await.unwrap();
-
-    let ctx = test_ready_ctx();
-    let dyn_backend: Arc<dyn Backend> = backend;
-    adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
-
-    // Should have 2 sessions: the old stopped one + the newly adopted one
-    let sessions = store.list_sessions().await.unwrap();
-    assert_eq!(sessions.len(), 2);
-    let adopted = sessions.iter().find(|s| s.status == SessionStatus::Active);
-    assert!(adopted.is_some(), "new session should be adopted");
-    let adopted = adopted.unwrap();
-    assert_eq!(adopted.name, "reused-name");
-    assert_eq!(adopted.backend_session_id, Some("$5".into()));
-}
-
-#[tokio::test]
-async fn test_adopt_uses_full_command_line() {
-    // When pane_command_line returns a result, adoption uses it as the command
-    let mut backend = MockBackend::new();
-    backend.tmux_sessions = vec![("$0".into(), "full-cmd".into())];
-    backend
-        .pane_infos
-        .insert("full-cmd".into(), ("claude".into(), "/repo".into()));
-    backend.pane_command_lines.insert(
-        "$0".into(),
-        "claude -p 'review code' --workdir /repo".into(),
-    );
-    let backend = Arc::new(backend);
-    let store = test_store().await;
-
-    let ctx = test_ready_ctx();
-    let dyn_backend: Arc<dyn Backend> = backend;
-    adopt_tmux_sessions(&dyn_backend, &store, &ctx).await;
-
-    let sessions = store.list_sessions().await.unwrap();
-    assert_eq!(sessions.len(), 1);
-    assert_eq!(
-        sessions[0].command,
-        "claude -p 'review code' --workdir /repo"
-    );
 }
 
 // -- detect_and_store_output_metadata tests --

@@ -97,7 +97,6 @@ The watchdog is the supervision loop. It is responsible for:
 - detecting exit markers
 - enforcing ready TTL cleanup
 - recording interventions
-- adopting external tmux sessions when enabled
 
 ## Control Surfaces
 
@@ -219,19 +218,6 @@ Session spawn → resolve_command → build_command → tmux create
   SSE events → web UI / webhooks
 ```
 
-## Runtime Details
-
-### tmux Session Adoption
-
-Pulpo doesn't require you to use `pulpo spawn`. Start tmux however you want — `tmux new-session`, scripts, other tools — and the watchdog discovers and adopts those sessions automatically:
-
-- Classifies adopted sessions into Pulpo lifecycle states
-- Captures the full command line (not just process name) for accurate resume
-- Uses tmux's internal `$N` session IDs, so killing and re-creating sessions with the same name works correctly
-- Tags adopted sessions with `PULPO_SESSION_ID` and `PULPO_SESSION_NAME` env vars
-
-This is enabled by default (`adopt_tmux = true` in watchdog config).
-
 ## Stable vs Experimental
 
 The most stable part of the project is:
@@ -270,7 +256,6 @@ Adding a new backend means implementing ~10 methods (`create_session`, `kill_ses
 - **Infrastructure layer, not agent intelligence** — Pulpo manages execution, not prompting strategy
 - **Command-agnostic** — the same lifecycle applies regardless of command
 - **Explicit failure states** — every session is in a known, auditable state
-- **Adopts existing work** — Pulpo can manage sessions it did not originally spawn
 - **Zero-config local start** — `pulpod` runs out of the box, with optional operational depth
 - **No unsafe code** — `forbid(unsafe_code)` workspace-wide
 

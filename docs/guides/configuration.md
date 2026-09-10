@@ -46,7 +46,6 @@ idle_threshold_secs = 60       # Seconds of unchanged output before Active→Idl
 ready_ttl_secs = 0             # Seconds after Ready before stop (0 = disabled)
 memory_threshold = 90          # Memory % to trigger intervention (default: 90)
 breach_count = 3               # Consecutive breaches before stop (default: 3)
-adopt_tmux = true              # Auto-adopt external tmux sessions
 waiting_patterns = ["custom prompt>"]  # Extra waiting-for-input patterns (default: [])
 ```
 

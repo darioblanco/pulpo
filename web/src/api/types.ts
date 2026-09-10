@@ -102,7 +102,6 @@ export interface WatchdogConfigResponse {
   idle_timeout_secs: number;
   idle_action: string;
   ready_ttl_secs: number;
-  adopt_tmux: boolean;
 }
 
 export interface WebhookEndpointConfigResponse {
