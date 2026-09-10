@@ -83,10 +83,7 @@ describe('AppSidebar', () => {
 describe('AppSidebar active state', () => {
   it('marks Sessions active at the root path', () => {
     renderSidebar('/');
-    expect(screen.getByRole('link', { name: /Sessions/i })).toHaveAttribute(
-      'data-active',
-      'true',
-    );
+    expect(screen.getByRole('link', { name: /Sessions/i })).toHaveAttribute('data-active', 'true');
     expect(screen.getByRole('link', { name: /Usage/i })).toHaveAttribute('data-active', 'false');
     expect(screen.getByRole('link', { name: /Schedules/i })).toHaveAttribute(
       'data-active',
@@ -96,19 +93,13 @@ describe('AppSidebar active state', () => {
 
   it('marks Sessions active on a session detail route', () => {
     renderSidebar('/sessions/abc');
-    expect(screen.getByRole('link', { name: /Sessions/i })).toHaveAttribute(
-      'data-active',
-      'true',
-    );
+    expect(screen.getByRole('link', { name: /Sessions/i })).toHaveAttribute('data-active', 'true');
     expect(screen.getByRole('link', { name: /Usage/i })).toHaveAttribute('data-active', 'false');
   });
 
   it('marks Usage active on the usage route', () => {
     renderSidebar('/usage');
     expect(screen.getByRole('link', { name: /Usage/i })).toHaveAttribute('data-active', 'true');
-    expect(screen.getByRole('link', { name: /Sessions/i })).toHaveAttribute(
-      'data-active',
-      'false',
-    );
+    expect(screen.getByRole('link', { name: /Sessions/i })).toHaveAttribute('data-active', 'false');
   });
 });
