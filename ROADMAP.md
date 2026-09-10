@@ -390,9 +390,10 @@ M1+M2 are the visible "Pulpo watches your spend and catches runaways" story.
 (M3/M4) and Phase D reposition; D's launch moment is after B (now satisfied).
 
 ~~Also still planned: agent completion callbacks (`PULPO_CALLBACK_URL` env var; Claude
-Code hooks can call it)~~ — **superseded by harness adapters** (shipped for Claude Code;
-Codex and pi in progress). Instead of one bare callback URL, a `HarnessAdapter` trait +
-registry rewrites the spawn to wire a harness's own hook system to `pulpo hook
+Code hooks can call it)~~ — **superseded by harness adapters** (shipped for Claude Code
+— hook mechanics verified against v2.1.266 — plus Codex and pi, implemented from their
+docs and unverified in the field). Instead of one bare callback URL, a `HarnessAdapter`
+trait + registry rewrites the spawn to wire a harness's own hook system to `pulpo hook
 <harness>`, normalizes the raw hook payload into lifecycle events
 (`SessionStarted`/`Working`/`TurnFinished`/`NeedsInput`/`Failed`/`SessionEnded`), and
 also captures the harness's own session id so `pulpo resume` continues the actual
@@ -428,7 +429,7 @@ Core infrastructure:
   (see Phase C status above)
 - SSE event stream, webhook notifications, Web Push, PWA
 - Secret store: encrypted-at-rest env vars injected into sessions
-- Per-session idle threshold, configurable waiting patterns (29 built-in)
+- Per-session idle threshold, configurable waiting patterns (extends the built-in set)
 - Scheduling: DB-backed cron schedules (local timezone), CRUD API + CLI, 60s scheduler
 - Observability: PR/branch detection, git branch/commit/diff tracking, rate-limit
   detection, token/cost scraping (superseded by Phase A readers), enriched notifications

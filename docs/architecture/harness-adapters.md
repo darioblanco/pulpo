@@ -64,7 +64,9 @@ resolves a command line via `shell_words::split` + basename of `argv[0]` — han
 `env FOO=bar claude`, absolute paths, etc. `GenericAdapter` always matches last: no
 rewrite, no resume id, no events. Adding Gemini CLI (or any other harness) support
 later means writing one more adapter and registering it — the trait and registry don't
-need to change. Claude Code, Codex, and pi adapters ship today (sections below).
+need to change. Claude Code, Codex, and pi adapters ship today (sections below): shipped
+for Claude Code (hook mechanics verified against v2.1.266), Codex and pi (implemented
+from their docs, unverified in the field).
 
 ## Shipped: the Claude Code adapter
 
@@ -126,10 +128,16 @@ produces `claude --resume <id> <remaining args>`. That command is run through
 > is deprecated and frozen at `0.73.1` — which has **neither** `agent_settled` nor
 > `ui_prompt_start`/`ui_prompt_end` nor `--session-id`, the three primitives this
 > adapter depends on. The active package is `@earendil-works/pi-coding-agent`; this
-> adapter is verified against `0.85.1` only, from static analysis of its shipped
-> `dist/*.d.ts`/`dist/*.js`/`docs/*.md` — **it has not been runtime-tested** against a
-> real `pi` process (no API key was available while building it). Treat it as
-> unverified in the field until someone runs it for real.
+> adapter is verified against `0.85.1`'s shipped `dist/*.d.ts`/`dist/*.js`/`docs/*.md`,
+> plus targeted runtime checks against the real installed `0.85.1` binary (flag-conflict
+> exit codes, subcommand dispatch, and — critically — the `pulpo.ts` extension's own
+> event-ordering fix: loaded and ran under `pi -e <path> -p ... --no-session`, correctly
+> ordering `session_start` before `session_shutdown` even under an artificially slow
+> `session_start` hook that reliably reproduced the opposite, broken order against the
+> pre-fix version of the file). No API key was available, so the full event mapping
+> table (`agent_start`/`agent_settled`/`ui_prompt_start`/`ui_prompt_end` firing from a
+> real model turn) remains **unverified in the field** — only startup/shutdown fired in
+> testing.
 
 Unlike Claude Code, pi has no separate resume flag: `--session-id <id>` is
 **idempotent create-or-open**, scoped to `(cwd, sessionDir)` — it opens the session if
@@ -139,16 +147,31 @@ not. That makes a fresh spawn and a resume the *same command shape*,
 has a session file on disk.
 
 **On spawn** (no existing `--session`/`--continue`/`-c`/`--resume`/`-r`/`--fork`/
-`--no-session` flag): writes `<data_dir>/harness/<session_id>/pulpo.ts`, an extension
-file (loaded via `-e`, a repeatable flag with no conflict against any session flag)
-that wires pi's own event bus to `pulpo hook pi --event <name>` for `session_start`,
+`--no-session` flag, and the token right after `pi` isn't one of its own subcommands —
+see below): writes `<data_dir>/harness/<session_id>/pulpo.ts`, an extension file
+(loaded via `-e`, a repeatable flag with no conflict against any session flag) that
+wires pi's own event bus to `pulpo hook pi --event <name>` for `session_start`,
 `agent_start`, `agent_settled`, `ui_prompt_start`, `ui_prompt_end`, and
 `session_shutdown` (`agent_end` is also hooked, but only to cache the last assistant
 message for `agent_settled` to report — it never posts on its own; see the file's
 comments for why `agent_settled` rather than the more frequent `turn_end`/`agent_end`
 is the "turn finished" signal). Reuses the pulpo session uuid as pi's `--session-id`
 (it already matches pi's id regex) and rewrites the command to
-`pi --session-id <uuid> -e <path> <original args>`.
+`pi --session-id <uuid> -e <path> <original args>`. A `--session-id` with no value at
+all (the last token in the command) mints the pulpo uuid as its value instead of
+leaving it valueless — otherwise the inserted `-e <path>` would become the (invalid)
+session id and pi would reject the command. Flag scanning (both the session-selection
+no-op check and the `--session-id`-presence check) stops at a literal `--` separator,
+since everything after it is a positional argument (e.g. a chat message), never a
+flag.
+
+`prepare_spawn` is also a full no-op when the token immediately after `pi` is one of
+its own subcommands (`install`, `remove`, `uninstall`, `update`, `list`, `config`,
+`auth` — verified via `pi --help`, 0.85.1): each is dispatched by matching `args[0]`
+before pi's normal chat-session parser ever runs, so inserting pulpo's flags right
+after `pi` would push the subcommand word to `args[2]` and silently turn `pi update`
+into a chat session with `"update"` as the prompt instead of actually running the
+update.
 
 If `--session-id` is *already* present in the command (this is exactly what happens
 when `resolve_resume_command` in `session/manager.rs` calls `resume_command` first —
@@ -161,17 +184,23 @@ get re-wired on resume.
 
 **On resume**: strips any existing `--session-id <val>`, then inserts
 `--session-id <id>` right after argv0 — nothing else changes. Returns `None` (falls
-back to the plain original command) if `--session`, `--continue`/`-c`, or
-`--resume`/`-r` is present (pi itself rejects `--session-id` combined with any of
-those, exit 1). That command is run through `prepare_spawn` again, which (per the
-paragraph above) adds `-e <path>` without touching `--session-id`.
+back to the plain original command) if `--session`, `--continue`/`-c`, `--resume`/`-r`,
+or `--fork` is present. The first three are a hard error in pi itself
+(`validateSessionIdFlags`, exit 1) whenever combined with `--session-id`; `--fork` is
+*not* rejected when `--session-id` names a brand-new id (used together to fork *into*
+a chosen id), but resuming means the id, by definition, already has a session on
+disk — and pi's `createSessionManager` exits 1 with `Session already exists with id
+'<id>'` in exactly that case (verified against 0.85.1) — so `resume_command` treats
+`--fork` as a conflict too. That command is run through `prepare_spawn` again, which
+(per the paragraph above) adds `-e <path>` without touching `--session-id`.
 
 **Event mapping**: `session_start` → `SessionStarted` (`resumed` is advisory — pi
 itself can't distinguish "opened an existing session" from "created a fresh one with
 the given id" at `reason: "startup"`; pulpo's call site already knows the real
 answer), `agent_start` → `Working`, `agent_settled` → `TurnFinished` when its `error`
 field is null, else `Failed` (rate-limited on a case-insensitive match for
-`rate.?limit`/`429`/`too many requests` — narrowed from pi's own broader
+`rate.?limit`/`too many requests`/a standalone `429` — not a bare substring, so
+`"request 14290 done"` doesn't false-positive — narrowed from pi's own broader
 retryable-error classifier, which also treats 5xx/timeouts/overloaded as retryable but
 not necessarily rate-limited), `ui_prompt_start` → `NeedsInput` (`kind: "confirm"` →
 Permission, anything else → Question), `ui_prompt_end` → `Working` (clears
@@ -180,6 +209,16 @@ blocking dialog is over" signal), `session_shutdown` → `SessionEnded` only whe
 `reason: "quit"` (a real process exit); every other reason (`reload`/`new`/`resume`/
 `fork`) is in-process session replacement and is `Ok(None)` — a fresh `session_start`
 follows immediately.
+
+**Event ordering**: each `reportEvent` call inside `pulpo.ts` spawns a detached
+`pulpo hook pi` child process, and pi awaits every handler in turn (including
+`session_shutdown` before it exits) — but a plain fire-and-forget spawn per event
+raced independent child processes against each other, so two hook POSTs could reach
+the daemon out of order (reproduced: `session_shutdown` logged before `session_start`
+in some runs). The extension instead threads every `reportEvent` call through one
+`chain` promise and `await`s it before the handler returns, so pi's own sequential
+handler-awaiting forces one event's child process to fully finish (or hit a 2.5s
+safety timeout) before the next event's handler is even invoked.
 
 `matches()` is a plain basename check (`pi`) with no version probing — an installed
 `pi` binary older than whatever version first shipped `agent_settled`/
