@@ -428,8 +428,8 @@ fn create_symlink(source: &Path, dest: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(source, dest)
 }
 
-/// No-op-failing on non-unix targets (the project ships no Windows-native symlink
-/// path today); see [`set_auth_json_permissions`]'s counterpart for the same split.
+/// No-op-failing on non-unix targets (pulpo only ships for macOS and Linux today,
+/// both unix); see [`set_auth_json_permissions`]'s counterpart for the same split.
 #[cfg(not(unix))]
 fn create_symlink(_source: &Path, _dest: &Path) -> std::io::Result<()> {
     Err(std::io::Error::other(

@@ -129,7 +129,7 @@ async fn handle_stream(
         let _ = child.kill().await;
     }
 
-    // Fallback for coverage builds and non-Unix platforms (Windows):
+    // Fallback for coverage builds and non-Unix platforms:
     // echo input back for testing / return unsupported message.
     #[cfg(any(coverage, not(unix)))]
     {

@@ -29,7 +29,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
-#[cfg(all(not(coverage), not(target_os = "windows")))]
+#[cfg(not(coverage))]
 use backend::tmux::TmuxBackend;
 use session::manager::SessionManager;
 
@@ -65,33 +65,6 @@ impl backend::Backend for CoverageBackend {
     }
     fn pane_info(&self, _: &str) -> anyhow::Result<(String, String)> {
         Ok(("bash".into(), "/tmp".into()))
-    }
-}
-
-/// Stub backend for platforms where tmux is not available (Windows).
-/// Sessions cannot be created on these platforms.
-#[cfg(target_os = "windows")]
-struct WindowsStubBackend;
-
-#[cfg(target_os = "windows")]
-impl backend::Backend for WindowsStubBackend {
-    fn create_session(&self, _: &str, _: &str, _: &str) -> anyhow::Result<()> {
-        anyhow::bail!("tmux is not available on Windows — sessions cannot be created here")
-    }
-    fn kill_session(&self, _: &str) -> anyhow::Result<()> {
-        Ok(())
-    }
-    fn is_alive(&self, _: &str) -> anyhow::Result<bool> {
-        Ok(false)
-    }
-    fn capture_output(&self, _: &str, _: usize) -> anyhow::Result<String> {
-        Ok(String::new())
-    }
-    fn send_input(&self, _: &str, _: &str) -> anyhow::Result<()> {
-        Ok(())
-    }
-    fn setup_logging(&self, _: &str, _: &str) -> anyhow::Result<()> {
-        Ok(())
     }
 }
 
@@ -219,7 +192,7 @@ pub fn init_tracing(
 
 /// Upgrade name-based backend session IDs to tmux `$N` IDs for live sessions.
 /// Best-effort: skips sessions whose tmux session is dead or already upgraded.
-#[cfg(all(not(coverage), not(target_os = "windows")))]
+#[cfg(not(coverage))]
 async fn upgrade_backend_ids(manager: &SessionManager, store: &store::Store) {
     let upgrade_backend = manager.backend();
     let Ok(sessions) = store.list_sessions().await else {
@@ -285,17 +258,14 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     // readers price new or repriced models without a code change. No-op under coverage.
     usage::set_rate_overrides(config.rate_overrides());
 
-    #[cfg(all(not(coverage), not(target_os = "windows")))]
+    #[cfg(not(coverage))]
     let backend: Arc<dyn backend::Backend> = Arc::new(TmuxBackend::new());
 
-    #[cfg(all(not(coverage), not(target_os = "windows")))]
+    #[cfg(not(coverage))]
     {
         let version = backend.check_version()?;
         info!("Using {version}");
     }
-
-    #[cfg(all(not(coverage), target_os = "windows"))]
-    let backend: Arc<dyn backend::Backend> = Arc::new(WindowsStubBackend);
 
     #[cfg(coverage)]
     let backend: Arc<dyn backend::Backend> = Arc::new(CoverageBackend);
@@ -319,7 +289,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     }
 
     // Upgrade name-based backend_session_ids to tmux $N IDs (best-effort)
-    #[cfg(all(not(coverage), not(target_os = "windows")))]
+    #[cfg(not(coverage))]
     upgrade_backend_ids(&manager, &store).await;
 
     let peer_registry = peers::PeerRegistry::new(&config.peers);
