@@ -96,6 +96,14 @@ impl HarnessAdapter for ClaudeAdapter {
         let claude_idx = claude_token_index(&tokens)?;
         strip_flag_with_value(&mut tokens, "--session-id");
         strip_flag_with_value(&mut tokens, "--settings");
+        // Also strip any resume/continue flags already on the original command (e.g.
+        // a session spawned with `claude --continue`, or already resumed once with
+        // `--resume <id>`) — otherwise splicing in pulpo's own `--resume
+        // <harness_session_id>` below would produce two conflicting resume/continue
+        // flags on the same invocation, which Claude Code rejects.
+        strip_optional_value_flag(&mut tokens, "--resume");
+        strip_optional_value_flag(&mut tokens, "-r");
+        tokens.retain(|t| t != "--continue" && t != "-c");
         tokens.splice(
             (claude_idx + 1)..=claude_idx,
             ["--resume".to_owned(), harness_session_id.to_owned()],
@@ -148,7 +156,18 @@ impl HarnessAdapter for ClaudeAdapter {
             }
             "SessionEnd" => {
                 let reason = raw.get("reason").and_then(Value::as_str).map(str::to_owned);
-                Some(HarnessEvent::SessionEnded { reason })
+                // `clear` (`/clear`) and `resume` (`/resume`) are in-process session
+                // replacement, not the harness process exiting — verified against the
+                // v2.1.266 binary's reason enum: `clear, resume, logout,
+                // prompt_input_exit, other`. Treating either as `SessionEnded` would
+                // flip a still-running session to `Ready`/`Stopped` out from under
+                // itself; `Ok(None)` leaves state untouched, matching how pi's adapter
+                // treats its own in-process `session_shutdown` reasons.
+                if matches!(reason.as_deref(), Some("clear" | "resume")) {
+                    None
+                } else {
+                    Some(HarnessEvent::SessionEnded { reason })
+                }
             }
             "Notification" => {
                 classify_notification(raw).map(|reason| HarnessEvent::NeedsInput { reason })
@@ -258,6 +277,27 @@ fn strip_flag_with_value(tokens: &mut Vec<String>, flag: &str) {
     }
 }
 
+/// Remove every occurrence of `flag` from `tokens`, along with a following bare value
+/// when one is present — used for flags whose value is optional (Claude's
+/// `-r`/`--resume [sessionId]`), where a value, if given, never itself looks like
+/// another `-`-prefixed flag. Also strips the `flag=value` form.
+fn strip_optional_value_flag(tokens: &mut Vec<String>, flag: &str) {
+    let prefix = format!("{flag}=");
+    let mut i = 0;
+    while i < tokens.len() {
+        if tokens[i] == flag {
+            tokens.remove(i);
+            if i < tokens.len() && !tokens[i].starts_with('-') {
+                tokens.remove(i);
+            }
+        } else if tokens[i].starts_with(&prefix) {
+            tokens.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
 /// The fallible part of [`ClaudeAdapter::prepare_spawn`]: write the settings file and
 /// splice in the new flags. Isolated so the caller can catch any I/O error and fall
 /// back to the unchanged command instead of failing the spawn.
@@ -309,7 +349,11 @@ fn rewrite_spawn(
 /// Build the `--settings` JSON that wires every lifecycle hook of interest to
 /// `<pulpo_bin> hook claude`.
 fn build_settings_json(pulpo_bin: &str) -> String {
-    let command = format!("{pulpo_bin} hook claude");
+    // Claude Code runs a `command`-type hook through a shell, so a pulpo install
+    // path containing a space (or any other shell metacharacter) must be quoted —
+    // otherwise the hook command splits on the space and Claude Code either fails to
+    // find the binary or invokes the wrong thing entirely.
+    let command = format!("{} hook claude", shell_words::quote(pulpo_bin));
     let hook = |matcher: Option<&str>| -> Value {
         let mut entry = serde_json::json!({
             "hooks": [{"type": "command", "command": command, "timeout": 5}],
@@ -580,6 +624,57 @@ mod tests {
     }
 
     #[test]
+    fn test_resume_command_strips_existing_continue_flag() {
+        let cmd = ClaudeAdapter
+            .resume_command("claude --continue", "sid-new")
+            .unwrap();
+        assert_eq!(cmd, "claude --resume sid-new");
+    }
+
+    #[test]
+    fn test_resume_command_strips_existing_short_continue_flag() {
+        let cmd = ClaudeAdapter
+            .resume_command("claude -c", "sid-new")
+            .unwrap();
+        assert_eq!(cmd, "claude --resume sid-new");
+    }
+
+    #[test]
+    fn test_resume_command_strips_existing_resume_flag_and_value() {
+        let cmd = ClaudeAdapter
+            .resume_command("claude --resume X", "sid-new")
+            .unwrap();
+        assert_eq!(cmd, "claude --resume sid-new");
+    }
+
+    #[test]
+    fn test_resume_command_strips_existing_short_resume_flag_and_value() {
+        let cmd = ClaudeAdapter
+            .resume_command("claude -r X", "sid-new")
+            .unwrap();
+        assert_eq!(cmd, "claude --resume sid-new");
+    }
+
+    #[test]
+    fn test_resume_command_strips_existing_resume_equals_form() {
+        let cmd = ClaudeAdapter
+            .resume_command("claude --resume=X -p hi", "sid-new")
+            .unwrap();
+        assert_eq!(cmd, "claude --resume sid-new -p hi");
+    }
+
+    #[test]
+    fn test_resume_command_strips_bare_resume_flag_no_value() {
+        // `--resume` with no value at all (e.g. the user meant to trigger Claude's
+        // interactive picker) followed directly by another flag — only the bare flag
+        // is stripped, the following flag is left alone.
+        let cmd = ClaudeAdapter
+            .resume_command("claude --resume -p hi", "sid-new")
+            .unwrap();
+        assert_eq!(cmd, "claude --resume sid-new -p hi");
+    }
+
+    #[test]
     fn test_resume_command_none_when_not_claude() {
         assert!(ClaudeAdapter.resume_command("bash", "sid-1").is_none());
     }
@@ -744,6 +839,35 @@ mod tests {
             ClaudeAdapter.parse_event(&raw).unwrap().unwrap(),
             HarnessEvent::SessionEnded { reason: None }
         );
+    }
+
+    #[test]
+    fn test_parse_event_session_end_clear_reason_is_none() {
+        // `/clear` ends the conversation in-process but the harness keeps running —
+        // must not be reported as the process exiting.
+        let raw = serde_json::json!({"hook_event_name": "SessionEnd", "reason": "clear"});
+        assert!(ClaudeAdapter.parse_event(&raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_parse_event_session_end_resume_reason_is_none() {
+        // `/resume` likewise replaces the in-process conversation without the harness
+        // process exiting.
+        let raw = serde_json::json!({"hook_event_name": "SessionEnd", "reason": "resume"});
+        assert!(ClaudeAdapter.parse_event(&raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_parse_event_session_end_other_reasons_still_end_session() {
+        for reason in ["logout", "prompt_input_exit", "other"] {
+            let raw = serde_json::json!({"hook_event_name": "SessionEnd", "reason": reason});
+            assert_eq!(
+                ClaudeAdapter.parse_event(&raw).unwrap().unwrap(),
+                HarnessEvent::SessionEnded {
+                    reason: Some(reason.into())
+                }
+            );
+        }
     }
 
     #[test]
@@ -925,6 +1049,19 @@ mod tests {
         assert_eq!(
             json["hooks"]["Notification"][0]["matcher"],
             NOTIFICATION_MATCHER
+        );
+    }
+
+    #[test]
+    fn test_build_settings_json_quotes_pulpo_bin_with_space() {
+        // The hook command is run through a shell — an unquoted path containing a
+        // space would split into two argv elements and Claude Code would fail to
+        // invoke the hook (or invoke the wrong binary).
+        let json_str = build_settings_json("/opt/my pulpo/pulpo");
+        let json: Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(
+            json["hooks"]["Stop"][0]["hooks"][0]["command"],
+            "'/opt/my pulpo/pulpo' hook claude"
         );
     }
 
