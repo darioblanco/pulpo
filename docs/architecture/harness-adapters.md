@@ -205,46 +205,126 @@ prompt pulpo can't answer, and the adapter's spawn rewrite is ineffective.
 
 **On spawn** (no existing `resume` subcommand, `--dangerously-bypass-hook-trust` flag,
 or `CODEX_HOME=` prefix — see below): creates
-`<data_dir>/harness/<session_id>/codex-home/`, copies the real `auth.json` in (from
-`$CODEX_HOME` if pulpod's own process has that env var, else `~/.codex`; skipped
-silently if absent), writes `config.toml` (the user's real one, if any, plus pulpo's
-`notify` line and `[[hooks.<Event>]]` tables for `SessionStart`, `UserPromptSubmit`,
-`Stop`, `SessionEnd`, and `PermissionRequest`), and rewrites the command to
-`codex --dangerously-bypass-hook-trust <original args>` with `CODEX_HOME` set to that
-directory. Unlike Claude, Codex has no flag to preset a session/thread id at launch —
-`harness_session_id` is `None` until a `SessionStart` hook (or the `notify` fallback,
-see below) reports it.
+`<data_dir>/harness/<session_id>/codex-home/` and seeds it with:
+- a copy of the real `auth.json` (from `$CODEX_HOME` if pulpod's own process has that
+  env var, else `~/.codex`; skipped silently if absent), with its mode forced to
+  `0600` regardless of the source file's own mode;
+- symlinks to the user's real `AGENTS.md`, `skills/`, `rules/`, `plugins/`, `prompts/`,
+  `memories/`, cached model list (`models_cache.json`), and `installation_id`, when
+  present — so a pulpo-spawned session still sees the user's own instructions/skills
+  instead of an empty isolated home. Idempotent: an existing symlink (or anything else
+  already at the destination) is left alone, so a resume never fails re-linking these.
+  Deliberately excluded: `sessions/`/`history.jsonl` (each pulpo session gets its own
+  Codex thread history), `log/`, and Codex's sqlite state;
+- `config.toml`, built by parsing the user's real one (if any) into a `toml::Table` and
+  merging pulpo's own `notify` and `[[hooks.<Event>]]` entries into it as structured
+  data — see [Config merge](#codex-config-merge) below — for `SessionStart`,
+  `UserPromptSubmit`, `Stop`, `SessionEnd`, and `PermissionRequest`;
+
+and rewrites the command to `codex --dangerously-bypass-hook-trust <original args>`
+with `CODEX_HOME` set to that directory. Unlike Claude, Codex has no flag to preset a
+session/thread id at launch — `harness_session_id` is `None` until a `SessionStart`
+hook reports it (the rollout-discovery fallback below resumes a lost thread without
+ever learning its id either).
 
 Each hook command is `<pulpo-bin> hook codex --event <Name>` — a deliberate deviation
 from relying on an unconfirmed event-name field in Codex's own hook JSON (unlike
 Claude's `hook_event_name`), reusing the `--event` mechanism `pulpo hook` already
-offers generically.
+offers generically. `<pulpo-bin>` is shell-quoted (`shell_words::quote`) both here and
+in the `notify` line below, since each becomes part of a shell command string Codex
+executes verbatim — an unquoted path containing a space would otherwise be split into
+multiple arguments.
+
+<a id="codex-config-merge"></a>**Config merge, not string concatenation**: the
+adapter parses the user's real `config.toml` (if any) into a `toml::Table` — an
+unparseable file only warns and starts from an empty table — then sets `notify` (any
+pre-existing `notify` is *replaced*, not merged: Codex's config format has only one
+`notify` slot, and a `CODEX_HOME`-wide hook takeover is inherently exclusive with the
+user's own `notify` setup) and *appends* pulpo's own handler to each `hooks.<Event>`
+array, creating it if missing and preserving any hooks the user already configured for
+that event. An earlier version of this adapter built the file by string concatenation
+(the user's real `config.toml` pasted in, then pulpo's `notify`/`hooks` keys appended
+as text) — this broke on any machine whose real `~/.codex/config.toml` already had a
+root `notify` key (a second `notify = [...]` line makes the document invalid TOML,
+and Codex refuses to start) and had a companion table-scoping hazard (a bare key
+appended after one or more `[table]` headers gets silently absorbed into whichever
+table came last, rather than landing at the document root). The structured merge
+avoids both: there's no such thing as "the wrong scope" once `notify`/`hooks` are
+inserted as keys of the root `Table` value directly.
 
 **`notify` and the `codex-notify` CLI variant**: Codex's `notify` config delivers its
 JSON as a trailing argv element, not stdin, so the adapter also wires
 `notify = ["sh", "-c", "'<pulpo-bin>' hook codex-notify \"$0\""]`. See the
-[CLI reference](/reference/cli#hook-internal) for `pulpo hook codex-notify`'s contract —
-it maps `agent-turn-complete` to `TurnFinished` and, when the payload carries a
-session/thread id, also posts a synthetic `SessionStart`-shaped event first so pulpo
-learns the harness session id even if the `SessionStart` hook itself never fired.
+[CLI reference](/reference/cli#hook-internal) for `pulpo hook codex-notify`'s contract
+— it posts the raw notify payload, unmodified, as harness `"codex"`; `parse_event`
+maps its `type` field, `agent-turn-complete`, to a single `TurnFinished` event. An
+earlier version also posted a synthetic `SessionStart`-shaped event first whenever the
+payload carried a thread id, hoping to learn `harness_session_id` even if the real
+`SessionStart` hook never fired — but that fired on *every* `agent-turn-complete`
+notification, not just the first, which flapped the session Active (via the synthetic
+event) then Idle (via the real `TurnFinished` right after it) on every turn, and
+duplicated the `Stop` hook's own `TurnFinished` for the same turn boundary. Removed
+rather than fixed to fire once: `session::manager::apply_harness_event` only stores
+`harness_session_id` from a `SessionStarted`-shaped event
+(`harness::transition_for_event`), and the CLI process is a one-shot per invocation
+with no way to ask the daemon whether it already knows the session's id before
+deciding whether to post one. A lost session whose `SessionStart` hook never fired is
+instead recovered by the rollout-discovery fallback below, on its *next* spawn/resume.
 
-**On resume**: `resume_command` strips any existing `resume <id>`/`--last`, then
-produces `codex resume <id> <remaining args>`. `prepare_spawn` runs again on that
-command and **reuses the same `codex-home` directory** (`create_dir_all` is a no-op
-when it already exists) — Codex's session rollout files live under it, so resuming
-must keep using the same isolated `CODEX_HOME`. The adapter tells its own
-`resume_command` output apart from a user directly resuming a session pulpo has never
-isolated (redirecting `CODEX_HOME` for the latter would break it — the target wouldn't
-exist under a fresh, empty isolated dir) by checking whether this session's
-`codex-home` directory already exists.
+**Rollout-discovery fallback (lost session recovery)**: if a pulpo-spawned session's
+`SessionStart` hook never fires, `harness_session_id` stays unknown and a later resume
+attempt falls back to replaying the session's *original* command (see
+`session::manager::resolve_resume_command`) — with no `resume` token at all, which
+would otherwise start a brand new Codex thread and silently lose the old one.
+`prepare_spawn` guards against this: when the command has no `resume` token but
+`<codex-home>/sessions/` already contains at least one `rollout-*.jsonl` file
+(recursively, since Codex nests them under `sessions/YYYY/MM/DD/`), it rewrites the
+command to `codex --dangerously-bypass-hook-trust resume --last <original args>`
+instead. This is safe specifically *because* `CODEX_HOME` is isolated per pulpo
+session: any rollout under this exact directory can only be that same session's own
+prior thread, so `--last` resumes it correctly without needing to know its id.
 
-**Event mapping**: `SessionStart` → `SessionStarted`, `UserPromptSubmit` → `Working`,
-`Stop` → `TurnFinished`, `SessionEnd` → `SessionEnded`, `PermissionRequest` →
-`NeedsInput{Permission}` (the hook itself never emits `hookSpecificOutput`, so pulpo
-stays observational and the real TUI approval prompt still runs), notify
-`agent-turn-complete` → `TurnFinished`. `PreToolUse`/`PostToolUse`/`PreCompact`/
-`PostCompact`/`SubagentStart`/`SubagentStop`/`Interrupt` exist but map to `Ok(None)` —
-out of scope for pulpo's state machine today.
+**On resume**: `resume_command` strips any existing `resume <id>`/`--last` and any
+trailing positional prompt argument, then produces `codex resume <id> <remaining
+flags>`. Codex replays a positional argument as a brand new turn
+(`codex resume <id> 'fix the bug'` submits "fix the bug" again on top of the resumed
+session) — an earlier version of this adapter kept the original prompt positional,
+which re-submitted it as a duplicate turn on every resume; it's now stripped
+(non-flag tokens that aren't a preceding flag's value, from a fixed list of Codex's
+documented value-taking global flags — `-m/--model`, `-s/--sandbox`,
+`-a/--ask-for-approval`, `-c/--config`, `-C/--cd`, `-p/--profile`). For
+`codex exec ...`, `resume` nests *after* `exec` instead
+(`codex exec resume <id> <flags>`) — **UNVERIFIED**: no confirmed docs/example of this
+exact shape, inferred from [PR #26434](https://github.com/openai/codex/pull/26434)
+("Preserve hook trust bypass in codex exec threads"), which explicitly forwards the
+bypass flag for "fresh thread start/resume/fork" under `codex exec`. `prepare_spawn`
+runs again on the resulting command and **reuses the same `codex-home` directory**
+(`create_dir_all` is a no-op when it already exists) — Codex's session rollout files
+live under it, so resuming must keep using the same isolated `CODEX_HOME`. The adapter
+tells its own `resume_command` output apart from a user directly resuming a session
+pulpo has never isolated (redirecting `CODEX_HOME` for the latter would break it — the
+target wouldn't exist under a fresh, empty isolated dir) by checking whether this
+session's `codex-home` directory already exists.
+
+**Event mapping**: `SessionStart` → `SessionStarted` (accepts `session_id`, as
+documented, or `thread_id`/`thread-id` — the same tolerance the `notify` payload's
+fields get, in case a hook payload ever uses that mechanism's field naming instead),
+`UserPromptSubmit` → `Working`, `Stop` → `TurnFinished`, `SessionEnd` →
+`SessionEnded`, `PermissionRequest` → `NeedsInput{Permission}` (the hook itself never
+emits `hookSpecificOutput`, so pulpo stays observational and the real TUI approval
+prompt still runs), notify `agent-turn-complete` → `TurnFinished`.
+`PreToolUse`/`PostToolUse`/`PreCompact`/`PostCompact`/`SubagentStart`/`SubagentStop`/
+`Interrupt` exist but map to `Ok(None)` — out of scope for pulpo's state machine today.
+`parse_event` routes on `hook_event_name` before falling back to the notify payload's
+`type` field, so a hook event is never misrouted as a notify payload.
+
+**Usage scan**: `usage::scan_local_usage` counts Codex rollouts from the user's real
+`~/.codex` *and* every pulpo-spawned session's isolated
+`<data_dir>/harness/<session_id>/codex-home` (deduped by each rollout file's
+canonicalized path) — the real `~/.codex` alone would miss every Codex session pulpo
+itself spawned, since its rollout files live under the isolated `codex-home` instead.
+`pulpo cleanup` deletes each session's `codex-home` — and the rollouts under it —
+together with the rest of that session's harness dir.
 
 > No Codex hook distinguishes "asked a clarifying question" from "finished the turn"
 > (both are `Stop`), and no hook or notify event carries API-error/429/quota
