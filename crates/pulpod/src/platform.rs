@@ -20,12 +20,7 @@ pub fn os_name() -> &'static str {
     if is_wsl() { "wsl2" } else { "linux" }
 }
 
-#[cfg(target_os = "windows")]
-pub fn os_name() -> &'static str {
-    "windows"
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 pub fn os_name() -> &'static str {
     "unknown"
 }
@@ -38,7 +33,7 @@ mod tests {
     fn test_os_name_is_known() {
         let name = os_name();
         assert!(
-            ["macos", "linux", "wsl2", "windows", "unknown"].contains(&name),
+            ["macos", "linux", "wsl2", "unknown"].contains(&name),
             "Unexpected OS name: {name}"
         );
     }

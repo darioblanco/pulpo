@@ -449,21 +449,9 @@ fn build_open_command(url: &str) -> std::process::Command {
         cmd.arg(url);
         cmd
     }
-    #[cfg(target_os = "linux")]
+    #[cfg(not(target_os = "macos"))]
     {
-        let mut cmd = std::process::Command::new("xdg-open");
-        cmd.arg(url);
-        cmd
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.args(["/C", "start", url]);
-        cmd
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        // Fallback: try xdg-open
+        // Linux and other Unix-likes: try xdg-open
         let mut cmd = std::process::Command::new("xdg-open");
         cmd.arg(url);
         cmd
@@ -507,43 +495,22 @@ fn build_attach_command(backend_session_id: &str) -> std::process::Command {
     // tmux sessions — force a safe TERM value so attach works even when the
     // local terminal uses an exotic terminfo (e.g. xterm-ghostty) that isn't
     // installed on the machine running tmux.
-    #[cfg(not(target_os = "windows"))]
-    {
-        let mut cmd = std::process::Command::new("tmux");
-        cmd.args(["attach-session", "-t", backend_session_id]);
-        let term = std::env::var("TERM").unwrap_or_default();
-        if !is_safe_term(&term) {
-            cmd.env("TERM", "xterm-256color");
-        }
-        cmd
+    let mut cmd = std::process::Command::new("tmux");
+    cmd.args(["attach-session", "-t", backend_session_id]);
+    let term = std::env::var("TERM").unwrap_or_default();
+    if !is_safe_term(&term) {
+        cmd.env("TERM", "xterm-256color");
     }
-    #[cfg(target_os = "windows")]
-    {
-        // tmux attach not available on Windows — inform the user
-        let mut cmd = std::process::Command::new("cmd");
-        cmd.args([
-            "/C",
-            "echo",
-            "Attach not available on Windows. Use the web UI.",
-        ]);
-        cmd
-    }
+    cmd
 }
 
 /// Attach to a session's terminal.
-#[cfg(not(any(test, coverage, target_os = "windows")))]
+#[cfg(not(any(test, coverage)))]
 fn attach_session(backend_session_id: &str) -> Result<()> {
     let status = build_attach_command(backend_session_id).status()?;
     if !status.success() {
         anyhow::bail!("attach failed with {status}");
     }
-    Ok(())
-}
-
-/// Stub for Windows — tmux attach is not available.
-#[cfg(all(target_os = "windows", not(test), not(coverage)))]
-fn attach_session(_backend_session_id: &str) -> Result<()> {
-    eprintln!("tmux attach is not available on Windows. Use the web UI.");
     Ok(())
 }
 

@@ -3,8 +3,11 @@
 Choose the install path based on where you want the runtime to live:
 
 - laptop or always-on Mac/Linux machine: Homebrew or source install
-- Windows: via WSL2
 - server or team-managed box: service install after binary or source setup
+
+Windows is not supported — sessions run in tmux, which native Windows doesn't
+have. Use [WSL2](https://learn.microsoft.com/windows/wsl/install) and follow
+the Linux instructions below inside your distribution.
 
 If you are still deciding whether Pulpo fits your workflow, read
 [Use Cases](/getting-started/use-cases) first.
@@ -20,21 +23,6 @@ This installs:
 - `pulpod` (daemon)
 - `pulpo` (CLI)
 - `tmux` (dependency via formula)
-
-## Windows (via WSL2)
-
-Sessions run on tmux, which is not available on native Windows — `pulpod` running on native Windows cannot create sessions locally (spawning returns an error). Run Pulpo inside [WSL2](https://learn.microsoft.com/windows/wsl/install) instead, where it runs as a normal Linux install.
-
-Inside your WSL2 distribution, follow the Linux instructions above (Homebrew or [From Source](#from-source)) to install `pulpod`, `pulpo`, and `tmux`. Sessions you spawn there run under Linux/tmux.
-
-The native Windows `pulpo.exe` client can still talk to a remote `pulpod` (for example one running in WSL2 or on another machine):
-
-```powershell
-# Point the CLI at a remote daemon and list its sessions
-.\pulpo.exe --node <remote-host>:7433 ls
-```
-
-It cannot host sessions on native Windows — use it only as a client.
 
 ## From Source
 

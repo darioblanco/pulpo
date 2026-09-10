@@ -131,7 +131,7 @@ fn parse_meminfo_field(content: &str, field: &str) -> Result<u64> {
     anyhow::bail!("field not found in /proc/meminfo: {field}")
 }
 
-/// Fallback for Windows and other platforms — report unknown memory.
+/// Fallback for unsupported platforms — report unknown memory.
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn read_system_memory() -> Result<MemorySnapshot> {
     Ok(MemorySnapshot {
@@ -229,7 +229,7 @@ mod tests {
         let result = reader.read_memory();
         // This test runs on the actual system — just verify it returns a sane value
         let snap = result.unwrap();
-        // On macOS/Linux total_mb > 0; on Windows/other platforms the fallback returns 0
+        // On macOS/Linux total_mb > 0; on other platforms the fallback returns 0
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         assert!(snap.total_mb > 0);
         assert!(snap.usage_percent() <= 100);
