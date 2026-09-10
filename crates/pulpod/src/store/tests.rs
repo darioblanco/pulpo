@@ -1305,6 +1305,35 @@ async fn test_touch_harness_last_event_at() {
 }
 
 #[tokio::test]
+async fn test_clear_harness_last_event_at() {
+    let store = test_store().await;
+    let session = make_session("clear-harness-events");
+    store.insert_session(&session).await.unwrap();
+    store
+        .touch_harness_last_event_at(&session.id.to_string())
+        .await
+        .unwrap();
+    let before = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(before.harness_last_event_at.is_some());
+
+    store
+        .clear_harness_last_event_at(&session.id.to_string())
+        .await
+        .unwrap();
+
+    let after = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(after.harness_last_event_at.is_none());
+}
+
+#[tokio::test]
 async fn test_insert_session_with_harness_fields() {
     let store = test_store().await;
     let mut session = make_session("harness-insert");

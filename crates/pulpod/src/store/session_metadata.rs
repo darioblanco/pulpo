@@ -137,6 +137,22 @@ impl Store {
         Ok(())
     }
 
+    /// Clear `harness_last_event_at` — the mirror of [`Self::touch_harness_last_event_at`].
+    /// Called before recreating a resumed session's backend so the watchdog's
+    /// scrollback heuristics apply again until the newly-spawned process's own hooks
+    /// fire (see `harness::owns_state`/`SessionManager::clear_harness_heuristic_state`).
+    pub async fn clear_harness_last_event_at(&self, id: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "UPDATE sessions SET harness_last_event_at = NULL, updated_at = ? WHERE id = ?",
+        )
+        .bind(&now)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn clear_session_idle_since(&self, id: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         sqlx::query("UPDATE sessions SET idle_since = NULL, updated_at = ? WHERE id = ?")

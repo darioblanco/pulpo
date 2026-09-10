@@ -1408,6 +1408,67 @@ async fn test_harness_events_applies_transition() {
 }
 
 #[tokio::test]
+async fn test_harness_events_harness_mismatch_is_bad_request() {
+    let state = test_state().await;
+    let session = create_claude_session(&state, "harness-mismatch").await;
+    let req = HarnessEventRequest {
+        harness: "codex".into(),
+        event: serde_json::json!({"hook_event_name": "UserPromptSubmit"}),
+    };
+    let result = harness_events(
+        State(state.clone()),
+        Path(session.id.to_string()),
+        Json(req),
+    )
+    .await;
+    let (status, Json(body)) = result.unwrap_err();
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body.error.contains("harness mismatch"));
+
+    let Json(fetched) = get(State(state), Path(session.id.to_string()))
+        .await
+        .unwrap();
+    assert_eq!(fetched.harness.as_deref(), Some("claude"));
+}
+
+#[tokio::test]
+async fn test_harness_events_ignored_for_stopped_session() {
+    let state = test_state().await;
+    let session = create_claude_session(&state, "harness-stopped").await;
+    state
+        .session_manager
+        .store()
+        .update_session_status(
+            &session.id.to_string(),
+            pulpo_common::session::SessionStatus::Stopped,
+        )
+        .await
+        .unwrap();
+
+    let req = HarnessEventRequest {
+        harness: "claude".into(),
+        event: serde_json::json!({"hook_event_name": "UserPromptSubmit"}),
+    };
+    let status = harness_events(
+        State(state.clone()),
+        Path(session.id.to_string()),
+        Json(req),
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let Json(fetched) = get(State(state), Path(session.id.to_string()))
+        .await
+        .unwrap();
+    assert_eq!(
+        fetched.status,
+        pulpo_common::session::SessionStatus::Stopped
+    );
+    assert!(fetched.harness_last_event_at.is_none());
+}
+
+#[tokio::test]
 async fn test_harness_events_unrecognized_event_still_touches_last_event_at() {
     let state = test_state().await;
     let session = create_claude_session(&state, "harness-unrecognized").await;

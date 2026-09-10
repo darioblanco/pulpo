@@ -57,6 +57,8 @@ pub(super) fn gone(msg: &str) -> ApiError {
 /// - "docker runtime was removed" → 400
 /// - "worktree no longer exists" (handoff, source worktree missing on disk) → 400
 /// - "unknown harness" (harness-events endpoint, unrecognized `harness` id) → 400
+/// - "harness mismatch" (harness-events endpoint, `harness` doesn't match the
+///   session's own stored harness) → 400
 /// - anything else → 500
 pub(super) fn map_manager_err(e: &anyhow::Error) -> ApiError {
     let msg = e.to_string();
@@ -68,6 +70,7 @@ pub(super) fn map_manager_err(e: &anyhow::Error) -> ApiError {
         || msg.contains("docker runtime was removed")
         || msg.contains("worktree no longer exists")
         || msg.contains("unknown harness")
+        || msg.contains("harness mismatch")
     {
         bad_request(&msg)
     } else {
@@ -162,6 +165,13 @@ mod tests {
     #[test]
     fn test_map_manager_err_unknown_harness() {
         let e = anyhow::anyhow!("unknown harness: codex");
+        let (status, _) = map_manager_err(&e);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_map_manager_err_harness_mismatch() {
+        let e = anyhow::anyhow!("harness mismatch: session abc is harness Some(\"claude\")");
         let (status, _) = map_manager_err(&e);
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }

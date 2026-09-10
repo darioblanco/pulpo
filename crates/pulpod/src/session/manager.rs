@@ -125,6 +125,7 @@ impl SessionManager {
         if let Some(tx) = &self.event_tx {
             let pr_url = session.meta_str(meta::PR_URL).map(str::to_owned);
             let error_status = session.meta_str(meta::ERROR_STATUS).map(str::to_owned);
+            let needs_input = session.meta_str(meta::NEEDS_INPUT).map(str::to_owned);
             let event = SessionEvent {
                 session_id: session.id.to_string(),
                 session_name: session.name.clone(),
@@ -140,6 +141,7 @@ impl SessionManager {
                 git_files_changed: session.git_files_changed,
                 pr_url,
                 error_status,
+                needs_input,
                 total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
                 total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
                 session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
@@ -606,16 +608,45 @@ impl SessionManager {
             .unwrap_or_else(|| session.workdir.clone())
     }
 
-    fn resume_create_id(
-        &self,
-        session: &Session,
-        backend_id: &str,
-        prefer_name_for_tmux: bool,
-    ) -> String {
-        if prefer_name_for_tmux {
-            self.backend.session_id(&session.name)
-        } else {
-            backend_id.to_owned()
+    /// The new tmux session id for a session being resumed (backend already dead) —
+    /// always the deterministic id derived from the session's own name, never the
+    /// stale `$N` `backend_session_id` (which may reference a tmux session that no
+    /// longer exists, e.g. after a daemon restart).
+    fn resume_create_id(&self, session: &Session) -> String {
+        self.backend.session_id(&session.name)
+    }
+
+    /// Clear the harness-heuristic state a previous process run may have left behind,
+    /// before recreating the backend on resume/auto-resume: `harness_last_event_at`
+    /// and the `needs_input`/`last_summary` metadata keys. Without this, a session
+    /// resumed after e.g. `NeedsInput`/`TurnFinished` would keep showing that stale
+    /// state — and the watchdog would keep treating its (dead) hooks as still owning
+    /// its lifecycle signals — until the newly-spawned process's own hooks fire again.
+    /// Best-effort: failures are logged, never propagated (matches the surrounding
+    /// resume path's overall best-effort bookkeeping).
+    async fn clear_harness_heuristic_state(&self, session: &Session) {
+        let session_id = session.id.to_string();
+        if let Err(error) = self.store.clear_harness_last_event_at(&session_id).await {
+            tracing::warn!(
+                session = %session.name,
+                %error,
+                "failed to clear harness_last_event_at on resume"
+            );
+        }
+        if let Err(error) = self
+            .store
+            .batch_update_session_metadata(
+                &session_id,
+                &[],
+                &[meta::NEEDS_INPUT, meta::LAST_SUMMARY],
+            )
+            .await
+        {
+            tracing::warn!(
+                session = %session.name,
+                %error,
+                "failed to clear needs_input/last_summary metadata on resume"
+            );
         }
     }
 
@@ -632,6 +663,7 @@ impl SessionManager {
         // could immediately (and wrongly) treat the freshly-resumed, actively-running
         // session as already finished.
         remove_exit_markers(self.store.data_dir(), &session.id.to_string());
+        self.clear_harness_heuristic_state(session).await;
         let command = self
             .resolve_resume_command(session, effective_workdir)
             .await;
@@ -1016,7 +1048,7 @@ impl SessionManager {
         if !alive {
             // Use session name for the new tmux session, not the stale $N backend ID.
             // The old backend_session_id may point to a dead tmux session that no longer exists.
-            let create_id = self.resume_create_id(&session, &backend_id, true);
+            let create_id = self.resume_create_id(&session);
             self.restore_session_backend(&session, &effective_workdir, &create_id)
                 .await?;
         }
@@ -1086,8 +1118,23 @@ impl SessionManager {
             // the old backend_session_id may point to a dead tmux session that no
             // longer exists, and reusing it verbatim as the new session's *name*
             // produces tmux sessions literally named "$4", "$5", etc. after a reboot).
-            let create_id = self.resume_create_id(&session, &backend_id, true);
             let effective_workdir = Self::effective_resume_workdir(&session);
+            // Same guard `resume_session` applies: a worktree/workdir that vanished
+            // out from under a session (branch deleted, disk wiped, ...) must not be
+            // silently auto-resumed into a broken tmux session on startup — mark it
+            // Lost instead, matching every other auto-resume failure path below.
+            if let Err(error) = validate_workdir(&effective_workdir) {
+                tracing::warn!(
+                    session = %session.name,
+                    %error,
+                    "Cannot auto-resume session: invalid workdir"
+                );
+                self.store
+                    .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+                    .await?;
+                continue;
+            }
+            let create_id = self.resume_create_id(&session);
             if let Err(e) = self
                 .restore_session_backend(&session, &effective_workdir, &create_id)
                 .await
@@ -1118,6 +1165,18 @@ impl SessionManager {
     /// translate the raw payload into a normalized event, apply the state
     /// transition, and emit the existing SSE `session` event. Notifications for
     /// `NeedsInput`/`Failed` reuse that same event — no new channel.
+    ///
+    /// `harness_id` is the request body's own `harness` field — untrusted client
+    /// input, never used to resolve the adapter directly. It must match the
+    /// session's own stored `harness` (set once, at spawn time) or the request is
+    /// rejected: a mismatched/spoofed `harness` would otherwise run the wrong
+    /// adapter's `parse_event` against this session's payload, and `session.harness`
+    /// itself must never be overwritten by what a client claims in the request body.
+    ///
+    /// A session already in a terminal status (`Stopped`/`Lost`) ignores the event
+    /// entirely — touches nothing, returns `Ok(())` — a hook can fire after the
+    /// harness process (and pulpo's own bookkeeping for it) is already done, and
+    /// that's expected/racy, not an error.
     pub async fn apply_harness_event(
         &self,
         session_id: &str,
@@ -1130,10 +1189,21 @@ impl SessionManager {
             .await?
             .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
 
+        if matches!(session.status, SessionStatus::Stopped | SessionStatus::Lost) {
+            return Ok(());
+        }
+
         let adapter = self
             .harness_registry
             .get(harness_id)
             .ok_or_else(|| anyhow!("unknown harness: {harness_id}"))?;
+
+        if session.harness.as_deref() != Some(harness_id) {
+            bail!(
+                "harness mismatch: session {session_id} is harness {:?}, request claims {harness_id:?}",
+                session.harness
+            );
+        }
 
         let session_id_str = session.id.to_string();
         self.store
@@ -2948,6 +3018,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_resume_lost_sessions_marks_lost_on_invalid_workdir() {
+        // Mirrors `test_resume_session_invalid_workdir` for the auto-resume-on-startup
+        // path: a workdir that no longer exists on disk must not be silently
+        // auto-resumed into a broken tmux session — mark it Lost and move on.
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "vanished-workdir".into(),
+            workdir: "/nonexistent/path/that/does/not/exist".into(),
+            command: "echo hello".into(),
+            status: SessionStatus::Active,
+            backend_session_id: Some("vanished-workdir".into()),
+            created_at: Utc::now() - chrono::Duration::hours(1),
+            ..Default::default()
+        };
+        mgr.store().insert_session(&session).await.unwrap();
+
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 0);
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Lost);
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_clears_stale_harness_state() {
+        // Regression: a session resumed after being left with a stale
+        // `harness_last_event_at`/`needs_input`/`last_summary` from its previous
+        // process run must have all three cleared before the backend is recreated —
+        // otherwise heuristics stay bypassed and stale badges linger until the new
+        // process's own hooks fire again.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+        mgr.store()
+            .batch_update_session_metadata(
+                &session.id.to_string(),
+                &[
+                    (meta::NEEDS_INPUT, "permission"),
+                    (meta::LAST_SUMMARY, "old summary"),
+                ],
+                &[],
+            )
+            .await
+            .unwrap();
+        mgr.store()
+            .touch_harness_last_event_at(&session.id.to_string())
+            .await
+            .unwrap();
+
+        *backend.alive.lock().unwrap() = false;
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 1);
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fetched.harness_last_event_at.is_none());
+        assert_eq!(fetched.meta_str(meta::NEEDS_INPUT), None);
+        assert_eq!(fetched.meta_str(meta::LAST_SUMMARY), None);
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_clears_stale_harness_state() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = harness_session(&mgr).await;
+        mgr.store()
+            .update_session_metadata_field(&session.id.to_string(), meta::NEEDS_INPUT, "question")
+            .await
+            .unwrap();
+        mgr.store()
+            .touch_harness_last_event_at(&session.id.to_string())
+            .await
+            .unwrap();
+
+        // get_session marks it Lost since the backend is dead.
+        let _ = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Active);
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fetched.harness_last_event_at.is_none());
+        assert_eq!(fetched.meta_str(meta::NEEDS_INPUT), None);
+    }
+
+    #[tokio::test]
     async fn test_resume_lost_sessions_returns_zero_when_empty() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let resumed = mgr.resume_lost_sessions().await.unwrap();
@@ -4441,6 +4611,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_apply_harness_event_harness_mismatch_is_rejected() {
+        // The session was spawned as "claude" — a request claiming a different
+        // (still-registered) harness id must be rejected rather than trusted, and
+        // must not touch the session at all.
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+        assert_eq!(session.harness.as_deref(), Some("claude"));
+
+        let err = mgr
+            .apply_harness_event(
+                &session.id.to_string(),
+                "codex",
+                &serde_json::json!({"hook_event_name": "UserPromptSubmit"}),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("harness mismatch"), "{err}");
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.harness.as_deref(), Some("claude"));
+        assert!(fetched.harness_last_event_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_ignores_stopped_session() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+        mgr.store()
+            .update_session_status(&session.id.to_string(), SessionStatus::Stopped)
+            .await
+            .unwrap();
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "UserPromptSubmit"}),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert!(
+            fetched.harness_last_event_at.is_none(),
+            "a stale hook on a stopped session must touch nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_ignores_lost_session() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+        mgr.store()
+            .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+            .await
+            .unwrap();
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "Stop"}),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Lost);
+        assert!(fetched.harness_last_event_at.is_none());
+    }
+
+    #[tokio::test]
     async fn test_apply_harness_event_always_touches_last_event_at() {
         let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
         let session = harness_session(&mgr).await;
@@ -4667,6 +4920,45 @@ mod tests {
         let event = unwrap_session_event(rx.recv().await.unwrap());
         assert_eq!(event.session_id, session.id.to_string());
         assert_eq!(event.status, "active");
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_emits_needs_input_on_session_event() {
+        // The live SSE `session` event must carry `needs_input` so the web UI's
+        // badge updates without a follow-up fetch (see `SessionEvent::needs_input`).
+        let (backend, event_tx) = (MockBackend::new(), broadcast::channel(16).0);
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let mgr = SessionManager::new(Arc::new(backend), store, None)
+            .with_no_stale_grace()
+            .with_event_tx(event_tx.clone(), "node-a".into());
+        let mut rx = event_tx.subscribe();
+        let session = harness_session(&mgr).await;
+        let _ = rx.recv().await.unwrap(); // drain the creation event
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "Notification", "matcher": "permission_prompt"}),
+        )
+        .await
+        .unwrap();
+
+        let event = unwrap_session_event(rx.recv().await.unwrap());
+        assert_eq!(event.needs_input.as_deref(), Some("permission"));
+
+        // Working clears it — the follow-up event must carry `needs_input: None` so
+        // the frontend can sync (not just append) the metadata key.
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "UserPromptSubmit"}),
+        )
+        .await
+        .unwrap();
+        let event = unwrap_session_event(rx.recv().await.unwrap());
+        assert_eq!(event.needs_input, None);
     }
 }
 
