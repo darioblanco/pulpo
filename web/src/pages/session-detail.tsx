@@ -15,7 +15,7 @@ import {
   resumeSession,
   downloadSessionOutput,
 } from '@/api/client';
-import { formatRelativeTime, statusColors } from '@/lib/utils';
+import { formatRelativeTime, formatSessionStatus, statusColors } from '@/lib/utils';
 import type { Session, InterventionEvent } from '@/api/types';
 
 export function SessionDetailPage() {
@@ -138,7 +138,7 @@ export function SessionDetailPage() {
                   className={`h-2.5 w-2.5 rounded-full ${statusColors[session.status] ?? 'bg-muted'}`}
                 />
                 <Badge variant="outline" className="uppercase" data-testid="session-status">
-                  {session.status}
+                  {formatSessionStatus(session)}
                 </Badge>
               </div>
               <div className="ml-auto flex flex-wrap gap-2">

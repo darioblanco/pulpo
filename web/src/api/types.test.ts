@@ -29,6 +29,29 @@ describe('types', () => {
     expect(session.description).toBe('Fix the bug');
   });
 
+  it('Session type has optional harness fields', () => {
+    const session: Session = {
+      id: 'sess-1',
+      name: 'test',
+      status: 'idle',
+      command: 'claude -p fix',
+      description: null,
+      workdir: '/repo',
+      metadata: { needs_input: 'permission' },
+      ink: null,
+      intervention_reason: null,
+      intervention_at: null,
+      last_output_at: null,
+      created_at: '2026-01-01T00:00:00Z',
+      harness: 'claude',
+      harness_session_id: 'sid-123',
+      harness_last_event_at: '2026-01-01T00:00:05Z',
+    };
+    expect(session.harness).toBe('claude');
+    expect(session.harness_session_id).toBe('sid-123');
+    expect(session.harness_last_event_at).toBe('2026-01-01T00:00:05Z');
+  });
+
   it('CreateSessionRequest has command and description fields', () => {
     const req: CreateSessionRequest = {
       name: 'my-session',

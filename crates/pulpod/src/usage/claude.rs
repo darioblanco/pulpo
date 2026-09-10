@@ -154,6 +154,45 @@ pub fn read_usage(
     read_usage_dir(&project_dir, since, rates).map(|d| d.usage)
 }
 
+/// Read exact usage from a single known transcript file.
+///
+/// Keyed by the Claude Code session id pulpo assigned via `--session-id` (stored as
+/// the session's `harness_session_id`). Skips the workdir+mtime heuristic in
+/// [`read_usage`] entirely — the caller already knows exactly which file belongs to
+/// this session. Returns `None` when the file doesn't exist or has no matching
+/// records.
+pub fn read_usage_file(
+    claude_dir: &Path,
+    workdir: &str,
+    session_id: &str,
+    since: DateTime<Utc>,
+    rates: &RateOverrides,
+) -> Option<ExactUsage> {
+    let file_path = claude_dir
+        .join("projects")
+        .join(sanitize_workdir(workdir))
+        .join(format!("{session_id}.jsonl"));
+    let content = std::fs::read_to_string(&file_path).ok()?;
+
+    let mut totals = Totals::default();
+    let mut seen = HashSet::new();
+    for line in content.lines() {
+        apply_transcript_line(line, since, &mut seen, &mut totals, rates);
+    }
+    if totals.records == 0 {
+        return None;
+    }
+    Some(ExactUsage {
+        source: SOURCE_CLAUDE,
+        input_tokens: totals.input,
+        output_tokens: totals.output,
+        cache_write_tokens: totals.cache_write,
+        cache_read_tokens: totals.cache_read,
+        cost_usd: (!totals.unknown_model).then_some(totals.cost_usd),
+        quota: None,
+    })
+}
+
 /// Usage for one Claude project directory, plus the agent's recorded `cwd`.
 ///
 /// The `cwd` is read from the transcript (Claude records it per line) so callers like the
@@ -344,6 +383,80 @@ mod tests {
         // Both files counted: 2 × 1000 input, 2 × 500 output.
         assert_eq!(usage.input_tokens, 2000);
         assert_eq!(usage.output_tokens, 1000);
+    }
+
+    #[test]
+    fn test_read_usage_file_reads_only_the_named_session_file() {
+        // Unlike `read_usage`, `read_usage_file` is keyed by session id — it must
+        // ignore a second, unrelated transcript sitting in the same project dir
+        // (the exact over-count `read_usage` documents above).
+        let tmp = tempfile::tempdir().unwrap();
+        let since = Utc::now() - TimeDelta::hours(1);
+        let ts = Utc::now().to_rfc3339();
+        write_project_file(
+            tmp.path(),
+            "/tmp/repo",
+            "11111111-1111-1111-1111-111111111111.jsonl",
+            &transcript_line(&ts, "m1", "r1", "claude-opus-4-8"),
+        );
+        write_project_file(
+            tmp.path(),
+            "/tmp/repo",
+            "22222222-2222-2222-2222-222222222222.jsonl",
+            &transcript_line(&ts, "m2", "r2", "claude-opus-4-8"),
+        );
+
+        let usage = read_usage_file(
+            tmp.path(),
+            "/tmp/repo",
+            "11111111-1111-1111-1111-111111111111",
+            since,
+            &RateOverrides::default(),
+        )
+        .unwrap();
+        // Only the named file's single record — not both.
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 500);
+    }
+
+    #[test]
+    fn test_read_usage_file_missing_file_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(
+            read_usage_file(
+                tmp.path(),
+                "/tmp/repo",
+                "no-such-session",
+                Utc::now() - TimeDelta::hours(1),
+                &RateOverrides::default(),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_read_usage_file_no_matching_records_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let session_id = "33333333-3333-3333-3333-333333333333";
+        // Record predates `since` — file exists but nothing qualifies.
+        let old_ts = (Utc::now() - TimeDelta::hours(2)).to_rfc3339();
+        write_project_file(
+            tmp.path(),
+            "/tmp/repo",
+            &format!("{session_id}.jsonl"),
+            &transcript_line(&old_ts, "m1", "r1", "claude-opus-4-8"),
+        );
+
+        assert!(
+            read_usage_file(
+                tmp.path(),
+                "/tmp/repo",
+                session_id,
+                Utc::now() - TimeDelta::hours(1),
+                &RateOverrides::default(),
+            )
+            .is_none()
+        );
     }
 
     #[test]

@@ -109,11 +109,6 @@ unchanged — see git history of this file for the full sovereignty section.)
 - MCP server — REST is the integration surface
 - Discord bot — archive to its own repo
 
-**Kept despite earlier plans (owner's call, 2026-06-12):**
-
-- Ocean gamification — stays for now, frozen (no new investment). Its canvas code is
-  excluded from web coverage (untestable under jsdom).
-
 ## Plan
 
 ### Track R — Removals (parallel, one PR each, no dependencies)
@@ -394,17 +389,24 @@ M1+M2 are the visible "Pulpo watches your spend and catches runaways" story.
 (cross-node control plane — see Phase C). Remaining live work is single-node optimizers
 (M3/M4) and Phase D reposition; D's launch moment is after B (now satisfied).
 
-Also still planned: **agent completion callbacks** (`PULPO_CALLBACK_URL` env var; Claude
-Code hooks can call it) — replaces the 29 waiting-pattern regexes with a reliable signal
-and powers fast "agent blocked on permission prompt" push alerts. Babysitting wastes
-wall-clock and tokens; this serves the vision and stays.
+~~Also still planned: agent completion callbacks (`PULPO_CALLBACK_URL` env var; Claude
+Code hooks can call it)~~ — **superseded by harness adapters** (shipped for Claude Code
+— hook mechanics verified against v2.1.266 — plus Codex and pi, implemented from their
+docs and unverified in the field). Instead of one bare callback URL, a `HarnessAdapter`
+trait + registry rewrites the spawn to wire a harness's own hook system to `pulpo hook
+<harness>`, normalizes the raw hook payload into lifecycle events
+(`SessionStarted`/`Working`/`TurnFinished`/`NeedsInput`/`Failed`/`SessionEnded`), and
+also captures the harness's own session id so `pulpo resume` continues the actual
+conversation instead of starting a fresh one — the callback idea only replaced the
+waiting-pattern regexes; this replaces those *and* the lost-conversation-on-resume gap.
+See [architecture/harness-adapters](docs/architecture/harness-adapters.md).
 
-**Locked invariant — agent callbacks point at the local node, never a remote one.**
-Hooks and completion callbacks injected into an agent process target the **local
-`pulpod`** that spawned the session — never another machine (there is no controller to
-reach; this held even before its removal). The local daemon owns the session lifecycle and
-forwards events onward from there. Routing agents at a central machine would couple every
-agent process to that machine's address and uptime, add a hop, and break standalone
+**Locked invariant — harness hooks point at the local node, never a remote one.**
+Hooks injected into an agent process target the **local `pulpod`** that spawned the
+session — never another machine (there is no controller to reach; this held even
+before its removal). The local daemon owns the session lifecycle and forwards events
+onward from there. Routing agents at a central machine would couple every agent
+process to that machine's address and uptime, add a hop, and break standalone
 operation. Same principle as event forwarding: **local-first, then aggregate.** See
 [architecture/overview](docs/architecture/overview.md) → "Monitoring & event topology."
 
@@ -427,14 +429,14 @@ Core infrastructure:
   (see Phase C status above)
 - SSE event stream, webhook notifications, Web Push, PWA
 - Secret store: encrypted-at-rest env vars injected into sessions
-- Per-session idle threshold, configurable waiting patterns (29 built-in)
+- Per-session idle threshold, configurable waiting patterns (extends the built-in set)
 - Scheduling: DB-backed cron schedules (local timezone), CRUD API + CLI, 60s scheduler
 - Observability: PR/branch detection, git branch/commit/diff tracking, rate-limit
   detection, token/cost scraping (superseded by Phase A readers), enriched notifications
 - Homebrew tap distribution, CLI auto-start daemon, node name resolution
 
 Shipped but scheduled for removal under Track R: Docker runtime, worktrees web-UI page,
-Tauri mobile builds, MCP server, Discord bot, voice experiments. (Ocean UI stays, frozen.)
+Tauri mobile builds, MCP server, Discord bot, voice experiments.
 
 ## Parked
 
@@ -456,6 +458,10 @@ Revisit only on real demand:
 
 ## Removed
 
+- ~~Ocean gamification UI~~ (2026-09) — the canvas-based octopus/session visualization
+  (`web/src/components/ocean/**`, `web/src/pages/ocean.tsx`) was frozen since 2026-06-12
+  and is now extracted to a separate `pulpo-ocean` repo, with its git history intact.
+  Sessions is the web UI's landing page again.
 - ~~mDNS + seed-based discovery~~ (v0.0.41) — Tailscale + manual peers cover real usage
 - ~~Provider-specific features, guard rails, culture system~~ — agents handle these
 - ~~Per-peer session tabs, fleet click-through, `target_node` on schedules,

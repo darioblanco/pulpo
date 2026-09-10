@@ -154,6 +154,17 @@ describe('SessionDetailPage', () => {
     expect(screen.getByTestId('session-id')).toHaveTextContent('sess-123');
   });
 
+  it('renders needs-input status distinctly from plain idle', async () => {
+    mockGetSession.mockResolvedValue(
+      makeSession({ status: 'idle', metadata: { needs_input: 'question' } }),
+    );
+    renderDetail();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('session-status')).toHaveTextContent('needs input (question)');
+    });
+  });
+
   it('shows worktree branch and path when set', async () => {
     mockGetSession.mockResolvedValue(
       makeSession({

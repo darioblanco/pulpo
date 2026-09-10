@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { stopSession, resumeSession, getInterventionEvents, sendInput } from '@/api/client';
+import { formatSessionStatus } from '@/lib/utils';
 import type { Session, InterventionEvent } from '@/api/types';
 import { OutputView } from '@/components/session/output-view';
 import { TerminalView } from '@/components/session/terminal-view';
@@ -338,7 +339,9 @@ export function SessionCard({
             <span data-testid="session-workdir-short" className="md:hidden">
               {session.workdir.split('/').pop() || session.workdir}
             </span>
-            <span className="text-[#7a9aba]">{session.status}</span>
+            <span data-testid="session-status" className="text-[#7a9aba]">
+              {formatSessionStatus(session)}
+            </span>
           </span>
         </div>
       </div>

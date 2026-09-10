@@ -44,10 +44,31 @@ export interface Session {
   git_ahead?: number | null;
   /** 'docker' only appears on historical sessions — the docker runtime was removed. */
   runtime?: 'tmux' | 'docker';
+  /** Harness adapter id (e.g. "claude"), set at spawn time when the command matched
+   * a known harness. Absent for sessions spawned before harness adapters existed. */
+  harness?: string | null;
+  /** The harness's own session/thread id (e.g. Claude Code's `--session-id`). */
+  harness_session_id?: string | null;
+  /** When the harness last reported a lifecycle event. Presence means hook events
+   * own this session's state (see docs/architecture/harness-adapters.md). */
+  harness_last_event_at?: string | null;
   last_output_at: string | null;
   output_snippet?: string | null;
   created_at: string;
   updated_at?: string;
+}
+
+/** SSE `session` event payload — see `pulpo_common::event::SessionEvent`. */
+export interface SessionSSEEvent {
+  session_id: string;
+  session_name: string;
+  status: string;
+  output_snippet: string | null;
+  /** The `needs_input` metadata key (e.g. "permission"), when set. Absent — not
+   * just an empty string — when the session has no `needs_input` metadata; the
+   * event is authoritative, so a receiver should always sync (set-or-clear) its
+   * local `metadata.needs_input` from this field rather than only setting it. */
+  needs_input?: string | null;
 }
 
 export interface InterventionEvent {

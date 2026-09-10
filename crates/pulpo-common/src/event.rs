@@ -26,6 +26,12 @@ pub struct SessionEvent {
     pub pr_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_status: Option<String>,
+    /// The `needs_input` metadata key (e.g. "permission", "question"), when set —
+    /// mirrors `Session::meta_str(meta::NEEDS_INPUT)` so live SSE consumers (the web
+    /// UI) can render "needs input (<reason>)" without an extra fetch. Absent (not
+    /// just empty) when the session has no `needs_input` metadata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub needs_input: Option<String>,
     /// Token and cost enrichment fields.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_input_tokens: Option<u64>,
@@ -292,6 +298,37 @@ mod tests {
         assert_eq!(deserialized.previous_status, Some("creating".into()));
         assert_eq!(deserialized.node_name, "node-1");
         assert_eq!(deserialized.output_snippet, Some("Hello world".into()));
+    }
+
+    #[test]
+    fn test_session_event_needs_input_roundtrip() {
+        let event = SessionEvent {
+            session_id: "id".into(),
+            session_name: "name".into(),
+            status: "idle".into(),
+            node_name: "n".into(),
+            timestamp: "t".into(),
+            needs_input: Some("permission".into()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("\"needs_input\":\"permission\""));
+        let deserialized: SessionEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.needs_input.as_deref(), Some("permission"));
+    }
+
+    #[test]
+    fn test_session_event_needs_input_omitted_when_none() {
+        let event = SessionEvent {
+            session_id: "id".into(),
+            session_name: "name".into(),
+            status: "active".into(),
+            node_name: "n".into(),
+            timestamp: "t".into(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(!json.contains("needs_input"));
     }
 
     #[test]

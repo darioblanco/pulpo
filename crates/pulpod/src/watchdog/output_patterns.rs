@@ -19,6 +19,8 @@ const WAITING_PATTERNS: &[&str] = &[
     "(n)o",
     "(a)lways",
     "do you want to proceed",
+    "i trust this folder",
+    "enter to confirm",
     // Codex CLI
     "allow command?",
     // Gemini CLI

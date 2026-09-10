@@ -197,12 +197,13 @@ Consequences, by design:
   own aggregator, Grafana/Datadog/a SIEM, or a single designated node). That aggregation
   point is something you own; Pulpo does not run one for you.
 
-**Agent callbacks point at the local node (locked invariant).** When agent-side hooks /
-completion callbacks land (e.g. an injected callback URL), they target the **local
-`pulpod`** that spawned the session — never a remote machine. The local daemon owns the
-session lifecycle and forwards events onward from there. Routing agent processes at a
-central machine would couple every agent to that machine's address and uptime, add a hop,
-and break standalone operation. Same principle as events: **local-first, then aggregate.**
+**Agent callbacks point at the local node (locked invariant).** Harness adapters (see
+[Harness Adapters](/architecture/harness-adapters)) inject hooks into the agent process
+that always target the **local `pulpod`** that spawned the session — never a remote
+machine. The local daemon owns the session lifecycle and forwards events onward from
+there. Routing agent processes at a central machine would couple every agent to that
+machine's address and uptime, add a hop, and break standalone operation. Same principle
+as events: **local-first, then aggregate.**
 
 ## Data Flow
 

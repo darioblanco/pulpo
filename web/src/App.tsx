@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router';
+import { BrowserRouter, Routes, Route } from 'react-router';
 import { Toaster } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ConnectionProvider } from '@/hooks/use-connection';
@@ -6,7 +6,6 @@ import { SSEProvider } from '@/hooks/use-sse';
 import { AppLayout } from '@/components/layout/app-layout';
 import { DashboardPage } from '@/pages/dashboard';
 import { SettingsPage } from '@/pages/settings';
-import { OceanPage } from '@/pages/ocean';
 import { ConnectPage } from '@/pages/connect';
 import { SessionDetailPage } from '@/pages/session-detail';
 import { SchedulesPage } from '@/pages/schedules';
@@ -20,14 +19,14 @@ export function App() {
           <BrowserRouter>
             <Routes>
               <Route element={<AppLayout />}>
-                {/* The meter/breaker product lands on Sessions, not the (frozen) Ocean view. */}
-                <Route index element={<Navigate to="/sessions" replace />} />
+                {/* Sessions is the landing page — rendered directly at "/" (no redirect) so
+                    there is no extra navigation round-trip or flash on load. */}
+                <Route index element={<DashboardPage />} />
                 <Route path="sessions" element={<DashboardPage />} />
                 <Route path="sessions/:id" element={<SessionDetailPage />} />
                 <Route path="schedules" element={<SchedulesPage />} />
                 <Route path="usage" element={<UsagePage />} />
                 <Route path="settings" element={<SettingsPage />} />
-                <Route path="ocean" element={<OceanPage />} />
               </Route>
               <Route path="connect" element={<ConnectPage />} />
             </Routes>

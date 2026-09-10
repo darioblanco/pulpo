@@ -3,6 +3,7 @@ use pulpo_common::session::{Session, SessionStatus, meta};
 use tracing::info;
 
 use super::output_patterns;
+use crate::harness::HarnessSignals;
 use crate::store::Store;
 use crate::usage::ExactUsage;
 
@@ -14,12 +15,23 @@ use crate::usage::ExactUsage;
 /// authoritative: it overwrites token/cost metadata and disables the output scraper
 /// for usage fields. Once a session has ever had an exact source, scraped values are
 /// never written again (mixing the two would corrupt the totals).
+///
+/// `signals` (see `harness::HarnessSignals`, resolved by `watchdog::owned_signals`)
+/// says which of rate-limit and error-status scraping stay skipped: each is skipped
+/// only when the session's own harness adapter says it owns that signal — a
+/// harness's own `StopFailure`-shaped event owns it instead (see `watchdog::idle`
+/// and `harness::transition_for_event`). An adapter with hooks for lifecycle but not
+/// errors/rate-limits (Codex has neither hook) leaves the corresponding heuristic
+/// running even while its other events flow. PR/branch detection and usage tracking
+/// are unaffected; they aren't part of the scrollback-heuristic state machine hooks
+/// replace.
 #[allow(clippy::too_many_lines)]
 pub(super) async fn detect_and_store_output_metadata(
     store: &Store,
     session: &Session,
     output: &str,
     exact_usage: Option<ExactUsage>,
+    signals: HarnessSignals,
 ) {
     let has_pr = session.meta_str(meta::PR_URL).is_some();
     if !has_pr && let Some(pr_url) = output_patterns::extract_pr_url(output) {
@@ -61,7 +73,13 @@ pub(super) async fn detect_and_store_output_metadata(
         }
     }
 
-    if let Some(rate_msg) = output_patterns::detect_rate_limit(output) {
+    // Rate-limit scraping: skipped only once the session's own harness adapter owns
+    // that signal — its own `Failed{rate_limited: true}`-shaped event is
+    // authoritative then, and scrollback heuristics would otherwise fight with it.
+    // An adapter with no rate-limit hook (Codex today) leaves this running.
+    if !signals.rate_limit
+        && let Some(rate_msg) = output_patterns::detect_rate_limit(output)
+    {
         let timestamp = chrono::Utc::now().to_rfc3339();
         #[allow(unused_variables)]
         if let Err(error) = store
@@ -91,49 +109,53 @@ pub(super) async fn detect_and_store_output_metadata(
         }
     }
 
-    let current_error = output_patterns::detect_error(output);
-    let stored_error = session.meta_str(meta::ERROR_STATUS);
-    match (&current_error, stored_error) {
-        (Some(error_status), _) => {
-            let timestamp = chrono::Utc::now().to_rfc3339();
-            #[allow(unused_variables)]
-            if let Err(error) = store
-                .update_session_metadata_field(
-                    &session.id.to_string(),
-                    meta::ERROR_STATUS,
-                    error_status,
-                )
-                .await
-            {
-                coverage_warn!(
-                    session_name = %session.name,
-                    "Failed to store error_status metadata: {error}"
-                );
+    // Error-status scraping: same per-signal gate, independent of rate-limit above —
+    // an adapter could in principle own one signal without the other.
+    if !signals.error {
+        let current_error = output_patterns::detect_error(output);
+        let stored_error = session.meta_str(meta::ERROR_STATUS);
+        match (&current_error, stored_error) {
+            (Some(error_status), _) => {
+                let timestamp = chrono::Utc::now().to_rfc3339();
+                #[allow(unused_variables)]
+                if let Err(error) = store
+                    .update_session_metadata_field(
+                        &session.id.to_string(),
+                        meta::ERROR_STATUS,
+                        error_status,
+                    )
+                    .await
+                {
+                    coverage_warn!(
+                        session_name = %session.name,
+                        "Failed to store error_status metadata: {error}"
+                    );
+                }
+                let _ = store
+                    .update_session_metadata_field(
+                        &session.id.to_string(),
+                        meta::ERROR_STATUS_AT,
+                        &timestamp,
+                    )
+                    .await;
             }
-            let _ = store
-                .update_session_metadata_field(
-                    &session.id.to_string(),
-                    meta::ERROR_STATUS_AT,
-                    &timestamp,
-                )
-                .await;
-        }
-        (None, Some(_)) => {
-            #[allow(unused_variables)]
-            if let Err(error) = store
-                .remove_session_metadata_field(&session.id.to_string(), meta::ERROR_STATUS)
-                .await
-            {
-                coverage_warn!(
-                    session_name = %session.name,
-                    "Failed to clear error_status metadata: {error}"
-                );
+            (None, Some(_)) => {
+                #[allow(unused_variables)]
+                if let Err(error) = store
+                    .remove_session_metadata_field(&session.id.to_string(), meta::ERROR_STATUS)
+                    .await
+                {
+                    coverage_warn!(
+                        session_name = %session.name,
+                        "Failed to clear error_status metadata: {error}"
+                    );
+                }
+                let _ = store
+                    .remove_session_metadata_field(&session.id.to_string(), meta::ERROR_STATUS_AT)
+                    .await;
             }
-            let _ = store
-                .remove_session_metadata_field(&session.id.to_string(), meta::ERROR_STATUS_AT)
-                .await;
+            (None, None) => {}
         }
-        (None, None) => {}
     }
 
     if let Some(exact) = exact_usage {
@@ -533,7 +555,14 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        detect_and_store_output_metadata(&store, &fetched, "all green now", None).await;
+        detect_and_store_output_metadata(
+            &store,
+            &fetched,
+            "all green now",
+            None,
+            HarnessSignals::none(),
+        )
+        .await;
 
         let updated = store
             .get_session(&session.id.to_string())
@@ -561,7 +590,14 @@ mod tests {
         let store = test_store().await;
         let session = insert_session(&store, "exact-write").await;
 
-        detect_and_store_output_metadata(&store, &session, "", Some(exact_usage_fixture())).await;
+        detect_and_store_output_metadata(
+            &store,
+            &session,
+            "",
+            Some(exact_usage_fixture()),
+            HarnessSignals::none(),
+        )
+        .await;
 
         let updated = store
             .get_session(&session.id.to_string())
@@ -597,7 +633,14 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        detect_and_store_output_metadata(&store, &fetched, "", Some(exact_usage_fixture())).await;
+        detect_and_store_output_metadata(
+            &store,
+            &fetched,
+            "",
+            Some(exact_usage_fixture()),
+            HarnessSignals::none(),
+        )
+        .await;
 
         let updated = store
             .get_session(&session.id.to_string())
@@ -630,7 +673,8 @@ mod tests {
             ..exact_usage_fixture()
         };
 
-        detect_and_store_output_metadata(&store, &session, "", Some(exact)).await;
+        detect_and_store_output_metadata(&store, &session, "", Some(exact), HarnessSignals::none())
+            .await;
 
         let updated = store
             .get_session(&session.id.to_string())
@@ -666,7 +710,14 @@ mod tests {
     async fn test_exact_usage_noop_when_values_unchanged() {
         let store = test_store().await;
         let session = insert_session(&store, "exact-noop").await;
-        detect_and_store_output_metadata(&store, &session, "", Some(exact_usage_fixture())).await;
+        detect_and_store_output_metadata(
+            &store,
+            &session,
+            "",
+            Some(exact_usage_fixture()),
+            HarnessSignals::none(),
+        )
+        .await;
         let after_first = store
             .get_session(&session.id.to_string())
             .await
@@ -674,8 +725,14 @@ mod tests {
             .unwrap();
 
         // Same values again — must not error and must leave values identical.
-        detect_and_store_output_metadata(&store, &after_first, "", Some(exact_usage_fixture()))
-            .await;
+        detect_and_store_output_metadata(
+            &store,
+            &after_first,
+            "",
+            Some(exact_usage_fixture()),
+            HarnessSignals::none(),
+        )
+        .await;
 
         let after_second = store
             .get_session(&session.id.to_string())
@@ -689,7 +746,14 @@ mod tests {
     async fn test_scraper_disabled_once_exact_source_recorded() {
         let store = test_store().await;
         let session = insert_session(&store, "scraper-gate").await;
-        detect_and_store_output_metadata(&store, &session, "", Some(exact_usage_fixture())).await;
+        detect_and_store_output_metadata(
+            &store,
+            &session,
+            "",
+            Some(exact_usage_fixture()),
+            HarnessSignals::none(),
+        )
+        .await;
         let fetched = store
             .get_session(&session.id.to_string())
             .await
@@ -698,7 +762,8 @@ mod tests {
 
         // Exact reader unavailable this tick, but scrapeable text is on screen.
         let output = "Tokens: 999,999 sent, 888 received. Cost: $42.00 session.\n";
-        detect_and_store_output_metadata(&store, &fetched, output, None).await;
+        detect_and_store_output_metadata(&store, &fetched, output, None, HarnessSignals::none())
+            .await;
 
         let updated = store
             .get_session(&session.id.to_string())
@@ -715,7 +780,8 @@ mod tests {
         let session = insert_session(&store, "scraper-fallback").await;
 
         let output = "Tokens: 1,234 sent, 567 received. Cost: $0.03 message, $0.06 session.\n";
-        detect_and_store_output_metadata(&store, &session, output, None).await;
+        detect_and_store_output_metadata(&store, &session, output, None, HarnessSignals::none())
+            .await;
 
         let updated = store
             .get_session(&session.id.to_string())

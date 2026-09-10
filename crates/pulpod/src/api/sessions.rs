@@ -7,7 +7,7 @@ use axum::{
 };
 use pulpo_common::api::{
     CleanupResponse, CreateSessionRequest, CreateSessionResponse, HandoffSessionRequest,
-    ListSessionsQuery, OutputQuery, SendInputRequest,
+    HarnessEventRequest, ListSessionsQuery, OutputQuery, SendInputRequest,
 };
 use pulpo_common::session::{Session, SessionStatus};
 use serde::Deserialize;
@@ -210,6 +210,25 @@ pub async fn list_interventions(
         })
         .collect();
     Ok(Json(response))
+}
+
+/// `POST /api/v1/sessions/{id}/harness-events` — ingest a harness lifecycle event.
+///
+/// Posted by `pulpo hook <harness>`. Resolves the session's adapter, applies the
+/// resulting state transition, and emits the existing SSE `session` event (which
+/// already carries notifications through the existing webhook/push paths — no new
+/// channel is added here).
+pub async fn harness_events(
+    State(state): State<Arc<super::AppState>>,
+    Path(id): Path<String>,
+    Json(req): Json<HarnessEventRequest>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .session_manager
+        .apply_harness_event(&id, &req.harness, &req.event)
+        .await
+        .map_err(|e| map_manager_err(&e))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn input(

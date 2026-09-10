@@ -1,4 +1,4 @@
-import { Waves, LayoutList, Settings, Clock, Wallet } from 'lucide-react';
+import { LayoutList, Settings, Clock, Wallet } from 'lucide-react';
 import { Link, useLocation } from 'react-router';
 import {
   Sidebar,
@@ -18,7 +18,6 @@ const navItems = [
   { to: '/usage', icon: Wallet, label: 'Usage' },
   { to: '/schedules', icon: Clock, label: 'Schedules' },
   { to: '/settings', icon: Settings, label: 'Settings' },
-  { to: '/ocean', icon: Waves, label: 'Ocean' },
 ];
 
 export function AppSidebar() {
@@ -42,9 +41,10 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {navItems.map((item) => {
+                // Sessions is also the landing page, rendered at "/" with no redirect.
                 const isActive =
-                  item.to === '/'
-                    ? location.pathname === '/'
+                  item.to === '/sessions'
+                    ? location.pathname === '/' || location.pathname.startsWith(item.to)
                     : location.pathname.startsWith(item.to);
                 return (
                   <SidebarMenuItem key={item.to}>

@@ -92,6 +92,7 @@ hostname = "0.4"
 shellexpand = "3"
 dirs = "6"
 num_cpus = "1"
+shell-words = "1"
 
 # The profile that 'dist' will build with
 [profile.dist]

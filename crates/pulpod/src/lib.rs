@@ -6,6 +6,7 @@ pub mod auth_info;
 pub mod backend;
 pub mod config;
 pub mod discovery;
+pub mod harness;
 
 pub mod notifications;
 pub mod peers;

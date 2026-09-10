@@ -8,6 +8,7 @@ use pulpo_common::api::{
 use pulpo_common::session::{Session, SessionStatus};
 
 mod format;
+mod hook;
 mod http;
 
 #[cfg_attr(coverage, allow(unused_imports))]
@@ -240,6 +241,33 @@ pub enum Commands {
     Worktree {
         #[command(subcommand)]
         action: WorktreeAction,
+    },
+
+    /// Report a harness lifecycle event to the daemon (invoked by a harness's own
+    /// hook config, e.g. Claude Code's `--settings`-injected hooks — not meant to be
+    /// run by hand). Reads the event JSON from stdin, resolves the session from
+    /// `PULPO_SESSION_ID`, and always exits 0 without printing anything: a hook must
+    /// never block or break the agent it's wired into.
+    ///
+    /// `harness` "codex-notify" is a special case: Codex's `notify` mechanism
+    /// delivers its JSON as a trailing argv element rather than stdin (see
+    /// `harness::codex`), so that payload is read from `payload` instead.
+    #[command(hide = true)]
+    Hook {
+        /// Harness id (e.g. "claude", "codex", or "codex-notify" for Codex's
+        /// notify mechanism)
+        harness: String,
+
+        /// Event name to use when the stdin payload doesn't already carry one
+        /// (most harness hook configs, including pulpo's own, don't need this —
+        /// the payload's own `hook_event_name` field already says which event fired)
+        #[arg(long = "event")]
+        event: Option<String>,
+
+        /// The event JSON, passed as an argument instead of stdin — only used for
+        /// harness "codex-notify" (Codex's `notify` config delivers its payload as
+        /// the final argv element, not stdin)
+        payload: Option<String>,
     },
 }
 
@@ -1036,6 +1064,29 @@ async fn ensure_daemon_running(_client: &reqwest::Client, _url: &str, _node: &st
 /// Execute the given CLI command against the specified node.
 #[allow(clippy::too_many_lines)]
 pub async fn execute(cli: &Cli) -> Result<String> {
+    // `hook` is handled entirely separately from every other command, before the
+    // normal node-resolution/auto-start preamble below: a hook must never try to
+    // start the daemon (if `PULPO_SESSION_ID` is set, pulpod is already running —
+    // it's what spawned this session), never block, and never fail the process it's
+    // wired into. See `hook::execute_hook` for the full contract.
+    if let Some(Commands::Hook {
+        harness,
+        event,
+        payload,
+    }) = &cli.command
+    {
+        let session_id = std::env::var(hook::SESSION_ID_ENV)
+            .ok()
+            .filter(|value| !value.is_empty());
+        if harness == "codex-notify" {
+            let raw_payload = payload.clone().unwrap_or_default();
+            return Ok(
+                hook::execute_codex_notify_hook(cli, session_id.as_deref(), &raw_payload).await,
+            );
+        }
+        return Ok(hook::execute_hook(cli, session_id.as_deref(), harness, event.as_deref()).await);
+    }
+
     let client = reqwest::Client::new();
     let (resolved_node, peer_token) = resolve_node(&client, &cli.node).await;
     let url = base_url(&resolved_node);
@@ -1452,12 +1503,39 @@ pub async fn execute(cli: &Cli) -> Result<String> {
         Commands::Worktree { action } => {
             execute_worktree(&client, action, &url, token.as_deref(), node).await
         }
+        // Always intercepted by the early return at the top of `execute()`, before
+        // the node-resolution preamble above ever runs — kept only so this match
+        // stays exhaustive.
+        Commands::Hook { .. } => Ok(String::new()),
     }
+}
+
+/// Whether `main` should print `execute`'s output.
+///
+/// Empty output — every `pulpo hook ...` invocation returns one, see
+/// [`hook::execute_hook`] — must never be printed, not even as a bare newline:
+/// `println!("")` still emits one, and for a `SessionStart`/`UserPromptSubmit` hook,
+/// Claude Code feeds a command hook's stdout straight back into its own context, so a
+/// stray blank line would leak into the conversation.
+#[must_use]
+pub const fn should_print_output(output: &str) -> bool {
+    !output.is_empty()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_should_print_output_true_for_nonempty() {
+        assert!(should_print_output("Detached from session \"x\"."));
+    }
+
+    #[test]
+    fn test_should_print_output_false_for_empty() {
+        // The `hook` subcommand's output — must never reach a bare `println!("")`.
+        assert!(!should_print_output(""));
+    }
 
     #[test]
     fn test_cli_parse_list() {
@@ -2765,6 +2843,49 @@ mod tests {
         let result = execute(&cli).await.unwrap();
         assert!(result.contains("Opening"));
         assert!(result.contains("http://localhost:7433"));
+    }
+
+    #[tokio::test]
+    async fn test_execute_hook_is_intercepted_before_node_preamble() {
+        // Point at an unreachable address — if this fell through to the normal
+        // preamble (resolve_node/ensure_daemon_running) instead of being intercepted
+        // up front, it could hang or error; the hook path must always resolve
+        // cleanly (whatever PULPO_SESSION_ID happens to be in this environment,
+        // `execute` never propagates an error for the hook subcommand). This test
+        // cannot hang on a real stdin read either way — `hook::read_hook_stdin` is
+        // stubbed to the empty-string "stdin-injecting" variant under `cfg(test)`
+        // regardless of `PULPO_SESSION_ID`, the same as `execute_hook_with_stdin`'s
+        // callers get explicitly.
+        let cli = Cli {
+            node: "127.0.0.1:1".into(),
+            token: None,
+            command: Some(Commands::Hook {
+                harness: "claude".into(),
+                event: None,
+                payload: None,
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_execute_codex_notify_hook_is_intercepted_before_node_preamble() {
+        // Same guarantee as the "claude" hook path above, for the "codex-notify"
+        // dispatch branch specifically.
+        let cli = Cli {
+            node: "127.0.0.1:1".into(),
+            token: None,
+            command: Some(Commands::Hook {
+                harness: "codex-notify".into(),
+                event: None,
+                payload: Some(r#"{"type":"agent-turn-complete"}"#.into()),
+            }),
+            path: None,
+        };
+        let result = execute(&cli).await;
+        assert!(result.is_ok());
     }
 
     #[tokio::test]

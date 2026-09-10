@@ -51,7 +51,7 @@ async fn test_migrate_uses_sqlx_migrations_table() {
             .fetch_all(store.pool())
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
 
     let has_sandbox: i32 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'sandbox'",
@@ -1212,6 +1212,142 @@ async fn test_clear_session_idle_since() {
         .unwrap()
         .unwrap();
     assert!(fetched.idle_since.is_none());
+}
+
+#[tokio::test]
+async fn test_update_session_harness_sets_both_fields() {
+    let store = test_store().await;
+    let session = make_session("harness-test");
+    store.insert_session(&session).await.unwrap();
+
+    store
+        .update_session_harness(&session.id.to_string(), "claude", Some("sid-1"))
+        .await
+        .unwrap();
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.harness.as_deref(), Some("claude"));
+    assert_eq!(fetched.harness_session_id.as_deref(), Some("sid-1"));
+}
+
+#[tokio::test]
+async fn test_update_session_harness_with_no_id_keeps_existing_id() {
+    let store = test_store().await;
+    let session = make_session("harness-keep-id");
+    store.insert_session(&session).await.unwrap();
+    store
+        .update_session_harness(&session.id.to_string(), "claude", Some("sid-1"))
+        .await
+        .unwrap();
+
+    // A later call with no id (e.g. re-resolving the adapter on resume) must not
+    // clobber the previously known harness_session_id.
+    store
+        .update_session_harness(&session.id.to_string(), "claude", None)
+        .await
+        .unwrap();
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.harness_session_id.as_deref(), Some("sid-1"));
+}
+
+#[tokio::test]
+async fn test_update_session_harness_session_id() {
+    let store = test_store().await;
+    let session = make_session("harness-session-id");
+    store.insert_session(&session).await.unwrap();
+
+    store
+        .update_session_harness_session_id(&session.id.to_string(), "sid-from-hook")
+        .await
+        .unwrap();
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.harness_session_id.as_deref(), Some("sid-from-hook"));
+}
+
+#[tokio::test]
+async fn test_touch_harness_last_event_at() {
+    let store = test_store().await;
+    let session = make_session("harness-events");
+    store.insert_session(&session).await.unwrap();
+
+    let before = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(before.harness_last_event_at.is_none());
+
+    store
+        .touch_harness_last_event_at(&session.id.to_string())
+        .await
+        .unwrap();
+
+    let after = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(after.harness_last_event_at.is_some());
+}
+
+#[tokio::test]
+async fn test_clear_harness_last_event_at() {
+    let store = test_store().await;
+    let session = make_session("clear-harness-events");
+    store.insert_session(&session).await.unwrap();
+    store
+        .touch_harness_last_event_at(&session.id.to_string())
+        .await
+        .unwrap();
+    let before = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(before.harness_last_event_at.is_some());
+
+    store
+        .clear_harness_last_event_at(&session.id.to_string())
+        .await
+        .unwrap();
+
+    let after = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(after.harness_last_event_at.is_none());
+}
+
+#[tokio::test]
+async fn test_insert_session_with_harness_fields() {
+    let store = test_store().await;
+    let mut session = make_session("harness-insert");
+    session.harness = Some("claude".into());
+    session.harness_session_id = Some("sid-preset".into());
+    store.insert_session(&session).await.unwrap();
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.harness.as_deref(), Some("claude"));
+    assert_eq!(fetched.harness_session_id.as_deref(), Some("sid-preset"));
 }
 
 #[tokio::test]

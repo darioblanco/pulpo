@@ -20,6 +20,7 @@ pub mod pool;
 pub mod projection;
 pub mod scan;
 
+use std::path::{Path, PathBuf};
 #[cfg(not(coverage))]
 use std::sync::OnceLock;
 
@@ -275,6 +276,49 @@ pub fn read_exact_usage(
     }
 }
 
+/// Like [`read_exact_usage`], but prefers a Claude Code session's exact transcript
+/// file when known.
+///
+/// When the session's `harness_session_id` (the `--session-id` pulpo assigned at
+/// spawn) is known, prefers the exact transcript file the harness adapter's session
+/// id names — `<claude_dir>/projects/<sanitized workdir>/<harness_session_id>.jsonl`
+/// — over the workdir+mtime heuristic. This avoids the documented over-count where a
+/// second agent run in the same workdir gets summed in too. Falls back to
+/// [`read_exact_usage`] whenever that exact file doesn't exist (non-Claude harness,
+/// no id yet, or a pre-harness-adapter session).
+#[allow(clippy::too_many_arguments)]
+pub fn read_exact_usage_with_harness(
+    command: &str,
+    workdir: &str,
+    since: DateTime<Utc>,
+    now: DateTime<Utc>,
+    claude_dir: &std::path::Path,
+    codex_dir: &std::path::Path,
+    rates: &RateOverrides,
+    harness: Option<&str>,
+    harness_session_id: Option<&str>,
+) -> Option<ExactUsage> {
+    if harness == Some("claude")
+        && let Some(session_id) = harness_session_id
+    {
+        let exact_path = claude_dir
+            .join("projects")
+            .join(claude::sanitize_workdir(workdir))
+            .join(format!("{session_id}.jsonl"));
+        if exact_path.is_file() {
+            let since_with_grace = since - TimeDelta::seconds(SINCE_GRACE_SECS);
+            return claude::read_usage_file(
+                claude_dir,
+                workdir,
+                session_id,
+                since_with_grace,
+                rates,
+            );
+        }
+    }
+    read_exact_usage(command, workdir, since, now, claude_dir, codex_dir, rates)
+}
+
 /// The directory an agent actually ran in, used to locate its session files.
 ///
 /// Worktree sessions run inside the worktree, so prefer `worktree_path` when set;
@@ -284,32 +328,92 @@ pub fn effective_usage_dir(session: &Session) -> &str {
     session.worktree_path.as_deref().unwrap_or(&session.workdir)
 }
 
+/// Codex home directories to check for a session's exact usage, in priority order.
+///
+/// A pulpo-spawned Codex session (`session.harness == "codex"`) has its `CODEX_HOME`
+/// redirected per session by `harness::codex::CodexAdapter` (see that module) —
+/// `config.toml`, `auth.json`, *and the `sessions/` rollout files* all move together
+/// under `<data_dir>/harness/<session_id>/codex-home/`. Without checking that
+/// directory first, exact usage metering silently reads zero for every
+/// pulpo-spawned Codex session (`~/.codex/sessions` never gets Codex's rollout files
+/// at all in that case). The real `~/.codex` is still checked after: the adapter
+/// declines to redirect `CODEX_HOME` for some commands (e.g. one that already
+/// resumes a session pulpo doesn't manage — see `CodexAdapter::prepare_spawn`), in
+/// which case the session's rollout files land in the real location instead.
+fn codex_dir_candidates(session: &Session, home: &Path, data_dir: &Path) -> Vec<PathBuf> {
+    let default_dir = home.join(".codex");
+    if session.harness.as_deref() == Some("codex") {
+        let per_session = data_dir
+            .join("harness")
+            .join(session.id.to_string())
+            .join("codex-home");
+        vec![per_session, default_dir]
+    } else {
+        vec![default_dir]
+    }
+}
+
 /// Read exact usage for a session using the real home-directory agent paths.
 ///
+/// `data_dir` is pulpo's own data directory (`Store::data_dir`) — needed to locate a
+/// Codex session's per-session `CODEX_HOME` (see [`codex_dir_candidates`]).
+///
 /// Gated with `cfg(not(coverage))` because it reads the developer's real `~/.claude`
-/// and `~/.codex` directories; the inner readers and [`effective_usage_dir`] are covered.
+/// and `~/.codex` directories; the inner readers, [`effective_usage_dir`], and
+/// [`codex_dir_candidates`] are covered directly.
 #[cfg(not(coverage))]
-pub fn read_exact_usage_for_session(session: &Session) -> Option<ExactUsage> {
+pub fn read_exact_usage_for_session(session: &Session, data_dir: &Path) -> Option<ExactUsage> {
     let home = dirs::home_dir()?;
-    read_exact_usage(
-        &session.command,
-        effective_usage_dir(session),
-        session.created_at,
-        Utc::now(),
-        &home.join(".claude"),
-        &home.join(".codex"),
-        active_rate_overrides(),
-    )
+    for codex_dir in codex_dir_candidates(session, &home, data_dir) {
+        if let Some(usage) = read_exact_usage_with_harness(
+            &session.command,
+            effective_usage_dir(session),
+            session.created_at,
+            Utc::now(),
+            &home.join(".claude"),
+            &codex_dir,
+            active_rate_overrides(),
+            session.harness.as_deref(),
+            session.harness_session_id.as_deref(),
+        ) {
+            return Some(usage);
+        }
+    }
+    None
 }
 
 /// No-op stub under coverage builds (no real filesystem access).
 #[cfg(coverage)]
-pub fn read_exact_usage_for_session(_session: &Session) -> Option<ExactUsage> {
+pub fn read_exact_usage_for_session(_session: &Session, _data_dir: &Path) -> Option<ExactUsage> {
     None
 }
 
-/// Scan all local agent history using the real home-dir paths (`~/.claude`, `~/.codex`,
-/// `~/.pi`).
+/// Every pulpo-spawned Codex session's isolated `CODEX_HOME` under
+/// `<data_dir>/harness/*/codex-home`, so [`scan_local_usage`] counts rollouts
+/// written there too — the user's real `~/.codex` alone would miss every Codex
+/// session pulpo itself spawned, since `harness::codex::CodexAdapter` redirects
+/// `CODEX_HOME` to one of these per session (see `harness/codex.rs`'s module
+/// doc). A missing/unreadable `harness` dir (no pulpo-spawned sessions yet, or a
+/// fresh data dir) yields no extra directories — the scan still covers the real
+/// `~/.codex` alone. These same directories (and the rollouts under them) are
+/// deleted by `pulpo cleanup` along with the rest of a session's harness dir —
+/// see the Codex section of `docs/architecture/harness-adapters.md`.
+pub(crate) fn codex_harness_home_dirs(data_dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(data_dir.join("harness")) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path().join("codex-home"))
+        .filter(|path| path.is_dir())
+        .collect()
+}
+
+/// Scan all local agent history using the real home-dir paths.
+///
+/// Covers `~/.claude`, `~/.codex`, `~/.pi`, plus every pulpo-spawned Codex
+/// session's isolated `codex-home` under `data_dir` (see
+/// [`codex_harness_home_dirs`]).
 ///
 /// `by_worktree` keeps every directory distinct; the default (`false`) collapses git
 /// worktrees and subdirectories onto their origin repo via [`scan::canonical_repo`].
@@ -323,14 +427,19 @@ pub fn scan_local_usage(
     node_name: &str,
     by_worktree: bool,
     since_days: Option<u32>,
+    data_dir: &Path,
 ) -> Option<pulpo_common::api::UsageScanResponse> {
     let home = dirs::home_dir()?;
     let claude_dir = home.join(".claude");
     let codex_dir = home.join(".codex");
     let pi_dir = home.join(".pi");
+    let harness_codex_dirs = codex_harness_home_dirs(data_dir);
+    let codex_dirs: Vec<&Path> = std::iter::once(codex_dir.as_path())
+        .chain(harness_codex_dirs.iter().map(PathBuf::as_path))
+        .collect();
     let dirs = scan::ScanDirs {
         claude: &claude_dir,
-        codex: &codex_dir,
+        codex: &codex_dirs,
         pi: &pi_dir,
     };
     let rates = active_rate_overrides();
@@ -358,6 +467,7 @@ pub fn scan_local_usage(
     _node_name: &str,
     _by_worktree: bool,
     _since_days: Option<u32>,
+    _data_dir: &Path,
 ) -> Option<pulpo_common::api::UsageScanResponse> {
     None
 }
@@ -365,6 +475,31 @@ pub fn scan_local_usage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
+
+    // -- codex_harness_home_dirs --
+
+    #[test]
+    fn test_codex_harness_home_dirs_missing_harness_dir_is_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(codex_harness_home_dirs(tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn test_codex_harness_home_dirs_collects_each_session_codex_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let harness_dir = tmp.path().join("harness");
+        let session_a = harness_dir.join("session-a").join("codex-home");
+        let session_b = harness_dir.join("session-b").join("codex-home");
+        std::fs::create_dir_all(&session_a).unwrap();
+        std::fs::create_dir_all(&session_b).unwrap();
+        // A claude-only session (no codex-home) must not be picked up.
+        std::fs::create_dir_all(harness_dir.join("session-c")).unwrap();
+
+        let mut dirs = codex_harness_home_dirs(tmp.path());
+        dirs.sort();
+        assert_eq!(dirs, vec![session_a, session_b]);
+    }
 
     #[test]
     #[allow(clippy::float_cmp)]
@@ -520,11 +655,222 @@ mod tests {
     }
 
     #[test]
+    fn test_read_exact_usage_with_harness_prefers_exact_file() {
+        // Two transcripts land in the same project dir (e.g. two claude runs in the
+        // same workdir); the heuristic in `read_exact_usage` would sum both. When the
+        // harness session id is known, only the named file counts.
+        let tmp = tempfile::tempdir().unwrap();
+        let workdir = "/tmp/repo";
+        let session_id = "44444444-4444-4444-4444-444444444444";
+        let since = Utc::now() - TimeDelta::hours(1);
+        let ts = Utc::now().to_rfc3339();
+
+        let project_dir = tmp
+            .path()
+            .join("projects")
+            .join(claude::sanitize_workdir(workdir));
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join(format!("{session_id}.jsonl")),
+            format!(
+                r#"{{"timestamp":"{ts}","requestId":"r1","type":"assistant","message":{{"id":"m1","model":"claude-opus-4-8","usage":{{"input_tokens":1000,"output_tokens":500}}}}}}"#
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            project_dir.join("other-session.jsonl"),
+            format!(
+                r#"{{"timestamp":"{ts}","requestId":"r2","type":"assistant","message":{{"id":"m2","model":"claude-opus-4-8","usage":{{"input_tokens":9000,"output_tokens":9000}}}}}}"#
+            ),
+        )
+        .unwrap();
+
+        let usage = read_exact_usage_with_harness(
+            "claude -p 'fix'",
+            workdir,
+            since,
+            Utc::now(),
+            tmp.path(),
+            tmp.path(),
+            &RateOverrides::default(),
+            Some("claude"),
+            Some(session_id),
+        )
+        .unwrap();
+
+        // Only the exact file's record counted — not the decoy's 9000/9000.
+        assert_eq!(usage.input_tokens, 1000);
+        assert_eq!(usage.output_tokens, 500);
+    }
+
+    #[test]
+    fn test_read_exact_usage_with_harness_falls_back_when_file_missing() {
+        // No exact file exists for this harness_session_id (e.g. the SessionStart hook
+        // never fired) — falls back to the workdir+mtime heuristic, which still finds
+        // the transcript that's actually on disk.
+        let tmp = tempfile::tempdir().unwrap();
+        let workdir = "/tmp/repo";
+        let since = Utc::now() - TimeDelta::hours(1);
+        let ts = Utc::now().to_rfc3339();
+        let project_dir = tmp
+            .path()
+            .join("projects")
+            .join(claude::sanitize_workdir(workdir));
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(
+            project_dir.join("some-other-name.jsonl"),
+            format!(
+                r#"{{"timestamp":"{ts}","requestId":"r1","type":"assistant","message":{{"id":"m1","model":"claude-opus-4-8","usage":{{"input_tokens":42,"output_tokens":7}}}}}}"#
+            ),
+        )
+        .unwrap();
+
+        let usage = read_exact_usage_with_harness(
+            "claude -p 'fix'",
+            workdir,
+            since,
+            Utc::now(),
+            tmp.path(),
+            tmp.path(),
+            &RateOverrides::default(),
+            Some("claude"),
+            Some("55555555-5555-5555-5555-555555555555"),
+        )
+        .unwrap();
+
+        assert_eq!(usage.input_tokens, 42);
+        assert_eq!(usage.output_tokens, 7);
+    }
+
+    #[test]
+    fn test_read_exact_usage_with_harness_no_harness_id_uses_heuristic() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No harness/harness_session_id at all (generic or pre-harness-adapter session).
+        let result = read_exact_usage_with_harness(
+            "claude -p 'fix'",
+            "/tmp/repo",
+            Utc::now(),
+            Utc::now(),
+            tmp.path(),
+            tmp.path(),
+            &RateOverrides::default(),
+            None,
+            None,
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
     fn test_read_exact_usage_for_session_no_agent_command() {
         let session = Session {
             command: "cargo build".into(),
             ..Default::default()
         };
-        assert!(read_exact_usage_for_session(&session).is_none());
+        assert!(
+            read_exact_usage_for_session(&session, Path::new("/nonexistent-data-dir")).is_none()
+        );
+    }
+
+    // -- codex_dir_candidates --
+
+    #[test]
+    fn test_codex_dir_candidates_prefers_per_session_codex_home_for_codex_harness() {
+        let session = Session {
+            id: "33333333-3333-3333-3333-333333333333".parse().unwrap(),
+            harness: Some("codex".into()),
+            ..Default::default()
+        };
+        let home = Path::new("/home/user");
+        let data_dir = Path::new("/data");
+        let candidates = codex_dir_candidates(&session, home, data_dir);
+        assert_eq!(
+            candidates,
+            vec![
+                PathBuf::from("/data/harness/33333333-3333-3333-3333-333333333333/codex-home"),
+                PathBuf::from("/home/user/.codex"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_codex_dir_candidates_non_codex_harness_only_default() {
+        let session = Session {
+            harness: Some("claude".into()),
+            ..Default::default()
+        };
+        let home = Path::new("/home/user");
+        let data_dir = Path::new("/data");
+        assert_eq!(
+            codex_dir_candidates(&session, home, data_dir),
+            vec![PathBuf::from("/home/user/.codex")]
+        );
+    }
+
+    #[test]
+    fn test_codex_dir_candidates_no_harness_only_default() {
+        let session = Session::default();
+        let home = Path::new("/home/user");
+        let data_dir = Path::new("/data");
+        assert_eq!(
+            codex_dir_candidates(&session, home, data_dir),
+            vec![PathBuf::from("/home/user/.codex")]
+        );
+    }
+
+    #[test]
+    fn test_read_exact_usage_with_harness_finds_rollout_under_per_session_codex_home() {
+        // A pulpo-spawned Codex session's rollout file lives only under its isolated
+        // per-session CODEX_HOME, never under a real `~/.codex` (see
+        // `harness::codex::CodexAdapter`) — this proves the reader finds it there
+        // when handed the directory `codex_dir_candidates` computes for it.
+        // `read_exact_usage_for_session` itself (the thin wrapper that resolves the
+        // real home dir and loops over candidates) is `cfg(not(coverage))`-excluded,
+        // like every other real-home-dir-touching function in this module; its
+        // candidate *selection* logic is covered directly by the
+        // `codex_dir_candidates` tests above.
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path();
+        let session_id = "44444444-4444-4444-4444-444444444444";
+        let workdir = "/tmp/codex-usage-repo";
+        let session = Session {
+            id: session_id.parse().unwrap(),
+            harness: Some("codex".into()),
+            ..Default::default()
+        };
+        let codex_home = codex_dir_candidates(&session, Path::new("/home/user"), data_dir)
+            .into_iter()
+            .next()
+            .unwrap();
+
+        let now = Utc::now();
+        let day_dir = codex_home
+            .join("sessions")
+            .join(format!("{:04}", now.year()))
+            .join(format!("{:02}", now.month()))
+            .join(format!("{:02}", now.day()));
+        std::fs::create_dir_all(&day_dir).unwrap();
+        let rollout = format!(
+            r#"{{"timestamp":"{ts}","type":"session_meta","payload":{{"id":"abc","timestamp":"{ts}","cwd":"{workdir}","originator":"codex_cli_rs"}}}}
+{{"timestamp":"{ts}","type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"input_tokens":100,"cached_input_tokens":0,"output_tokens":10,"total_tokens":110}}}}}}}}
+"#,
+            ts = now.to_rfc3339()
+        );
+        std::fs::write(day_dir.join("rollout-a.jsonl"), rollout).unwrap();
+
+        let usage = read_exact_usage_with_harness(
+            "codex -p hi",
+            workdir,
+            now - TimeDelta::hours(1),
+            now,
+            Path::new("/nonexistent-claude-dir"),
+            &codex_home,
+            &RateOverrides::default(),
+            Some("codex"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(usage.source, SOURCE_CODEX);
+        assert_eq!(usage.input_tokens, 100);
+        assert_eq!(usage.output_tokens, 10);
     }
 }

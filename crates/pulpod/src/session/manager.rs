@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
@@ -10,13 +11,14 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::backend::Backend;
+use crate::harness::{self, HarnessRegistry};
 #[cfg(not(coverage))]
 use crate::session::utils::create_worktree;
 use crate::session::utils::{
-    DOCKER_RUNTIME_REMOVED, exit_dir, find_orphan_exit_markers, find_orphan_session_logs,
-    find_orphan_worktree_dirs, has_exit_marker, read_exit_code_marker, remove_exit_markers,
-    remove_session_log, session_log_path, validate_runtime, validate_session_name,
-    validate_workdir, worktrees_dir, wrap_command, write_secrets_file,
+    DOCKER_RUNTIME_REMOVED, cleanup_harness_dir, exit_dir, find_orphan_exit_markers,
+    find_orphan_session_logs, find_orphan_worktree_dirs, has_exit_marker, read_exit_code_marker,
+    remove_exit_markers, remove_session_log, session_log_path, validate_runtime,
+    validate_session_name, validate_workdir, worktrees_dir, wrap_command, write_secrets_file,
 };
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -42,6 +44,9 @@ pub struct SessionManager {
     /// file via `tmux pipe-pane`. Off by default — the capture is unbounded and
     /// fills the disk; enable only for debugging.
     capture_session_output: bool,
+    /// Resolves a session's command line (or explicit harness id) to a
+    /// [`crate::harness::HarnessAdapter`]. See `spawn`/resume integration below.
+    harness_registry: Arc<HarnessRegistry>,
 }
 
 /// Result of resolving the command and description to launch a session with.
@@ -58,6 +63,23 @@ struct SessionCreatePlan {
     secrets_file: Option<String>,
 }
 
+/// Prepend `export KEY='value'; ` for each of a [`harness::SpawnPlan`]'s extra env
+/// vars to `command`. A no-op when `env` is empty (true for every adapter shipped so
+/// far — the field exists for adapters that need to pass something through the
+/// environment instead of rewriting flags).
+fn apply_extra_env(command: &str, env: &[(String, String)]) -> String {
+    use std::fmt::Write;
+
+    if env.is_empty() {
+        return command.to_owned();
+    }
+    let mut exports = String::new();
+    for (key, value) in env {
+        let _ = write!(exports, "export {key}='{}'; ", value.replace('\'', "'\\''"));
+    }
+    format!("{exports}{command}")
+}
+
 impl SessionManager {
     pub fn new(backend: Arc<dyn Backend>, store: Store, default_command: Option<String>) -> Self {
         Self {
@@ -68,6 +90,7 @@ impl SessionManager {
             node_name: String::new(),
             stale_grace_secs: 5,
             capture_session_output: false,
+            harness_registry: Arc::new(HarnessRegistry::default()),
         }
     }
 
@@ -102,6 +125,7 @@ impl SessionManager {
         if let Some(tx) = &self.event_tx {
             let pr_url = session.meta_str(meta::PR_URL).map(str::to_owned);
             let error_status = session.meta_str(meta::ERROR_STATUS).map(str::to_owned);
+            let needs_input = session.meta_str(meta::NEEDS_INPUT).map(str::to_owned);
             let event = SessionEvent {
                 session_id: session.id.to_string(),
                 session_name: session.name.clone(),
@@ -117,6 +141,7 @@ impl SessionManager {
                 git_files_changed: session.git_files_changed,
                 pr_url,
                 error_status,
+                needs_input,
                 total_input_tokens: session.meta_parsed(meta::TOTAL_INPUT_TOKENS),
                 total_output_tokens: session.meta_parsed(meta::TOTAL_OUTPUT_TOKENS),
                 session_cost_usd: session.meta_parsed(meta::SESSION_COST_USD),
@@ -316,6 +341,31 @@ impl SessionManager {
         let name = req.name.clone();
         let backend_id = self.backend.session_id(&name);
 
+        // Harness adapter: resolve, then rewrite the spawn so the harness reports
+        // lifecycle events back to pulpo (a no-op for commands no adapter claims —
+        // see `harness::GenericAdapter`). Must run before `wrap_command` wraps the
+        // command for the backend.
+        let id_str = id.to_string();
+        let adapter = self.harness_registry.resolve(&command);
+        let harness_ctx = harness::SpawnContext {
+            session_id: &id_str,
+            session_name: &name,
+            workdir: &effective_workdir,
+            command: &command,
+            data_dir: Path::new(self.store.data_dir()),
+        };
+        let spawn_plan = adapter.prepare_spawn(&harness_ctx).unwrap_or_else(|error| {
+            tracing::warn!(
+                session = %name,
+                harness = adapter.id(),
+                %error,
+                "harness adapter failed to prepare spawn; spawning unchanged"
+            );
+            harness::SpawnPlan::unchanged(&command)
+        });
+        let harness_id = adapter.id().to_owned();
+        let harness_session_id = spawn_plan.harness_session_id.clone();
+
         // Write secrets to a temp file. The file is sourced and immediately deleted
         // by the session shell, so secrets never appear in the command string visible
         // in `ps` or `capture-pane`.
@@ -326,7 +376,7 @@ impl SessionManager {
         };
 
         let final_command = wrap_command(
-            &command,
+            &apply_extra_env(&spawn_plan.command, &spawn_plan.env),
             &id,
             &name,
             secrets_file.as_deref(),
@@ -354,6 +404,8 @@ impl SessionManager {
             worktree_path,
             worktree_branch,
             runtime,
+            harness: Some(harness_id),
+            harness_session_id,
             created_at: now,
             updated_at: now,
             ..Default::default()
@@ -450,9 +502,10 @@ impl SessionManager {
         session: &Session,
         effective_workdir: &str,
         create_id: &str,
+        command: &str,
     ) -> Result<()> {
         let final_command = wrap_command(
-            &session.command,
+            command,
             &session.id,
             &session.name,
             None,
@@ -461,6 +514,59 @@ impl SessionManager {
         );
         self.backend
             .create_session(create_id, effective_workdir, &final_command)
+    }
+
+    /// Resolve the command to relaunch a session with on resume.
+    ///
+    /// If the session has a `harness_session_id` and its adapter knows how to resume
+    /// (`resume_command`), use that instead of the original command — then run it
+    /// through `prepare_spawn` again so hooks are re-injected (a fresh `--settings`
+    /// file; `ClaudeAdapter` never re-adds `--session-id` once `--resume` is present).
+    /// Falls back to the plain original command when the adapter has no resume
+    /// support, or the session predates harness adapters.
+    async fn resolve_resume_command(&self, session: &Session, effective_workdir: &str) -> String {
+        let adapter = session
+            .harness
+            .as_deref()
+            .and_then(|id| self.harness_registry.get(id))
+            .unwrap_or_else(|| self.harness_registry.resolve(&session.command));
+
+        let base_command = session
+            .harness_session_id
+            .as_deref()
+            .and_then(|harness_session_id| {
+                adapter.resume_command(&session.command, harness_session_id)
+            })
+            .unwrap_or_else(|| session.command.clone());
+
+        let session_id = session.id.to_string();
+        let harness_ctx = harness::SpawnContext {
+            session_id: &session_id,
+            session_name: &session.name,
+            workdir: effective_workdir,
+            command: &base_command,
+            data_dir: Path::new(self.store.data_dir()),
+        };
+        let spawn_plan = adapter.prepare_spawn(&harness_ctx).unwrap_or_else(|error| {
+            tracing::warn!(
+                session = %session.name,
+                harness = adapter.id(),
+                %error,
+                "harness adapter failed to prepare resume spawn; using unchanged command"
+            );
+            harness::SpawnPlan::unchanged(&base_command)
+        });
+
+        let _ = self
+            .store
+            .update_session_harness(
+                &session_id,
+                adapter.id(),
+                spawn_plan.harness_session_id.as_deref(),
+            )
+            .await;
+
+        apply_extra_env(&spawn_plan.command, &spawn_plan.env)
     }
 
     async fn refresh_backend_session_id(&self, session: &Session) {
@@ -502,16 +608,45 @@ impl SessionManager {
             .unwrap_or_else(|| session.workdir.clone())
     }
 
-    fn resume_create_id(
-        &self,
-        session: &Session,
-        backend_id: &str,
-        prefer_name_for_tmux: bool,
-    ) -> String {
-        if prefer_name_for_tmux {
-            self.backend.session_id(&session.name)
-        } else {
-            backend_id.to_owned()
+    /// The new tmux session id for a session being resumed (backend already dead) —
+    /// always the deterministic id derived from the session's own name, never the
+    /// stale `$N` `backend_session_id` (which may reference a tmux session that no
+    /// longer exists, e.g. after a daemon restart).
+    fn resume_create_id(&self, session: &Session) -> String {
+        self.backend.session_id(&session.name)
+    }
+
+    /// Clear the harness-heuristic state a previous process run may have left behind,
+    /// before recreating the backend on resume/auto-resume: `harness_last_event_at`
+    /// and the `needs_input`/`last_summary` metadata keys. Without this, a session
+    /// resumed after e.g. `NeedsInput`/`TurnFinished` would keep showing that stale
+    /// state — and the watchdog would keep treating its (dead) hooks as still owning
+    /// its lifecycle signals — until the newly-spawned process's own hooks fire again.
+    /// Best-effort: failures are logged, never propagated (matches the surrounding
+    /// resume path's overall best-effort bookkeeping).
+    async fn clear_harness_heuristic_state(&self, session: &Session) {
+        let session_id = session.id.to_string();
+        if let Err(error) = self.store.clear_harness_last_event_at(&session_id).await {
+            tracing::warn!(
+                session = %session.name,
+                %error,
+                "failed to clear harness_last_event_at on resume"
+            );
+        }
+        if let Err(error) = self
+            .store
+            .batch_update_session_metadata(
+                &session_id,
+                &[],
+                &[meta::NEEDS_INPUT, meta::LAST_SUMMARY],
+            )
+            .await
+        {
+            tracing::warn!(
+                session = %session.name,
+                %error,
+                "failed to clear needs_input/last_summary metadata on resume"
+            );
         }
     }
 
@@ -528,7 +663,11 @@ impl SessionManager {
         // could immediately (and wrongly) treat the freshly-resumed, actively-running
         // session as already finished.
         remove_exit_markers(self.store.data_dir(), &session.id.to_string());
-        self.recreate_backend_session(session, effective_workdir, create_id)?;
+        self.clear_harness_heuristic_state(session).await;
+        let command = self
+            .resolve_resume_command(session, effective_workdir)
+            .await;
+        self.recreate_backend_session(session, effective_workdir, create_id, &command)?;
         self.refresh_backend_session_id(session).await;
         Ok(())
     }
@@ -593,6 +732,7 @@ impl SessionManager {
         }
         remove_session_log(self.store.data_dir(), &session_id);
         remove_exit_markers(self.store.data_dir(), &session_id);
+        cleanup_harness_dir(self.store.data_dir(), &session_id);
         self.store.delete_session(&session_id).await?;
         self.emit_session_deleted(session);
         Ok(())
@@ -795,6 +935,7 @@ impl SessionManager {
             if remove_exit_markers(&data_dir, &session.id.to_string()) {
                 logs_cleaned += 1;
             }
+            cleanup_harness_dir(&data_dir, &session.id.to_string());
         }
         let ids: Vec<String> = dead_sessions.iter().map(|s| s.id.to_string()).collect();
         if !ids.is_empty() {
@@ -907,7 +1048,7 @@ impl SessionManager {
         if !alive {
             // Use session name for the new tmux session, not the stale $N backend ID.
             // The old backend_session_id may point to a dead tmux session that no longer exists.
-            let create_id = self.resume_create_id(&session, &backend_id, true);
+            let create_id = self.resume_create_id(&session);
             self.restore_session_backend(&session, &effective_workdir, &create_id)
                 .await?;
         }
@@ -972,10 +1113,30 @@ impl SessionManager {
                 self.resolve_dead_backend_session(&mut session).await?;
                 continue;
             }
-            // Backend is dead — resume the session
-            let create_id = self.resume_create_id(&session, &backend_id, false);
+            // Backend is dead — resume the session. Use the session name for the new
+            // tmux session, not the stale $N backend ID (see resume_session above —
+            // the old backend_session_id may point to a dead tmux session that no
+            // longer exists, and reusing it verbatim as the new session's *name*
+            // produces tmux sessions literally named "$4", "$5", etc. after a reboot).
+            let effective_workdir = Self::effective_resume_workdir(&session);
+            // Same guard `resume_session` applies: a worktree/workdir that vanished
+            // out from under a session (branch deleted, disk wiped, ...) must not be
+            // silently auto-resumed into a broken tmux session on startup — mark it
+            // Lost instead, matching every other auto-resume failure path below.
+            if let Err(error) = validate_workdir(&effective_workdir) {
+                tracing::warn!(
+                    session = %session.name,
+                    %error,
+                    "Cannot auto-resume session: invalid workdir"
+                );
+                self.store
+                    .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+                    .await?;
+                continue;
+            }
+            let create_id = self.resume_create_id(&session);
             if let Err(e) = self
-                .restore_session_backend(&session, &session.workdir, &create_id)
+                .restore_session_backend(&session, &effective_workdir, &create_id)
                 .await
             {
                 tracing::warn!(
@@ -997,6 +1158,127 @@ impl SessionManager {
             resumed += 1;
         }
         Ok(resumed)
+    }
+
+    /// Ingest a harness lifecycle event (posted by `pulpo hook <harness>` via
+    /// `POST /api/v1/sessions/{id}/harness-events`): resolve the session's adapter,
+    /// translate the raw payload into a normalized event, apply the state
+    /// transition, and emit the existing SSE `session` event. Notifications for
+    /// `NeedsInput`/`Failed` reuse that same event — no new channel.
+    ///
+    /// `harness_id` is the request body's own `harness` field — untrusted client
+    /// input, never used to resolve the adapter directly. It must match the
+    /// session's own stored `harness` (set once, at spawn time) or the request is
+    /// rejected: a mismatched/spoofed `harness` would otherwise run the wrong
+    /// adapter's `parse_event` against this session's payload, and `session.harness`
+    /// itself must never be overwritten by what a client claims in the request body.
+    ///
+    /// A session already in a terminal status (`Stopped`/`Lost`) ignores the event
+    /// entirely — touches nothing, returns `Ok(())` — a hook can fire after the
+    /// harness process (and pulpo's own bookkeeping for it) is already done, and
+    /// that's expected/racy, not an error.
+    pub async fn apply_harness_event(
+        &self,
+        session_id: &str,
+        harness_id: &str,
+        raw_event: &serde_json::Value,
+    ) -> Result<()> {
+        let mut session = self
+            .store
+            .get_session(session_id)
+            .await?
+            .ok_or_else(|| anyhow!("session not found: {session_id}"))?;
+
+        if matches!(session.status, SessionStatus::Stopped | SessionStatus::Lost) {
+            return Ok(());
+        }
+
+        let adapter = self
+            .harness_registry
+            .get(harness_id)
+            .ok_or_else(|| anyhow!("unknown harness: {harness_id}"))?;
+
+        if session.harness.as_deref() != Some(harness_id) {
+            bail!(
+                "harness mismatch: session {session_id} is harness {:?}, request claims {harness_id:?}",
+                session.harness
+            );
+        }
+
+        let session_id_str = session.id.to_string();
+        self.store
+            .touch_harness_last_event_at(&session_id_str)
+            .await?;
+        session.harness_last_event_at = Some(Utc::now());
+
+        let Some(event) = adapter.parse_event(raw_event)? else {
+            return Ok(());
+        };
+
+        let backend_alive = if matches!(event, harness::HarnessEvent::SessionEnded { .. }) {
+            let backend_id = self.resolve_backend_id(&session);
+            self.backend.is_alive(&backend_id).unwrap_or(false)
+        } else {
+            false
+        };
+
+        let update = harness::transition_for_event(&event, backend_alive);
+        let previous_status = session.status;
+
+        if update.harness_session_id.is_some() {
+            self.store
+                .update_session_harness(
+                    &session_id_str,
+                    adapter.id(),
+                    update.harness_session_id.as_deref(),
+                )
+                .await?;
+            session
+                .harness_session_id
+                .clone_from(&update.harness_session_id);
+        }
+
+        if !update.metadata_set.is_empty() || !update.metadata_clear.is_empty() {
+            let sets: Vec<(&str, &str)> = update
+                .metadata_set
+                .iter()
+                .map(|(key, value)| (*key, value.as_str()))
+                .collect();
+            self.store
+                .batch_update_session_metadata(&session_id_str, &sets, &update.metadata_clear)
+                .await?;
+            if let Ok(Some(refreshed)) = self.store.get_session(&session_id_str).await {
+                session.metadata = refreshed.metadata;
+            }
+        }
+
+        if update.set_idle_since {
+            self.store
+                .update_session_idle_since(&session_id_str)
+                .await?;
+            session.idle_since = Some(Utc::now());
+        }
+
+        if let Some(status) = update.status {
+            self.store
+                .update_session_status(&session_id_str, status)
+                .await?;
+            session.status = status;
+        }
+
+        if update.notify {
+            tracing::info!(
+                session = %session.name,
+                harness = adapter.id(),
+                status = %session.status,
+                "harness event needs attention"
+            );
+        }
+
+        session.updated_at = Utc::now();
+        self.emit_event(&session, Some(previous_status));
+
+        Ok(())
     }
 
     pub const fn store(&self) -> &Store {
@@ -2736,10 +3018,192 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_resume_lost_sessions_marks_lost_on_invalid_workdir() {
+        // Mirrors `test_resume_session_invalid_workdir` for the auto-resume-on-startup
+        // path: a workdir that no longer exists on disk must not be silently
+        // auto-resumed into a broken tmux session — mark it Lost and move on.
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "vanished-workdir".into(),
+            workdir: "/nonexistent/path/that/does/not/exist".into(),
+            command: "echo hello".into(),
+            status: SessionStatus::Active,
+            backend_session_id: Some("vanished-workdir".into()),
+            created_at: Utc::now() - chrono::Duration::hours(1),
+            ..Default::default()
+        };
+        mgr.store().insert_session(&session).await.unwrap();
+
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 0);
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Lost);
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_clears_stale_harness_state() {
+        // Regression: a session resumed after being left with a stale
+        // `harness_last_event_at`/`needs_input`/`last_summary` from its previous
+        // process run must have all three cleared before the backend is recreated —
+        // otherwise heuristics stay bypassed and stale badges linger until the new
+        // process's own hooks fire again.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+        mgr.store()
+            .batch_update_session_metadata(
+                &session.id.to_string(),
+                &[
+                    (meta::NEEDS_INPUT, "permission"),
+                    (meta::LAST_SUMMARY, "old summary"),
+                ],
+                &[],
+            )
+            .await
+            .unwrap();
+        mgr.store()
+            .touch_harness_last_event_at(&session.id.to_string())
+            .await
+            .unwrap();
+
+        *backend.alive.lock().unwrap() = false;
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 1);
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fetched.harness_last_event_at.is_none());
+        assert_eq!(fetched.meta_str(meta::NEEDS_INPUT), None);
+        assert_eq!(fetched.meta_str(meta::LAST_SUMMARY), None);
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_clears_stale_harness_state() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = harness_session(&mgr).await;
+        mgr.store()
+            .update_session_metadata_field(&session.id.to_string(), meta::NEEDS_INPUT, "question")
+            .await
+            .unwrap();
+        mgr.store()
+            .touch_harness_last_event_at(&session.id.to_string())
+            .await
+            .unwrap();
+
+        // get_session marks it Lost since the backend is dead.
+        let _ = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Active);
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fetched.harness_last_event_at.is_none());
+        assert_eq!(fetched.meta_str(meta::NEEDS_INPUT), None);
+    }
+
+    #[tokio::test]
     async fn test_resume_lost_sessions_returns_zero_when_empty() {
         let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
         let resumed = mgr.resume_lost_sessions().await.unwrap();
         assert_eq!(resumed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_uses_name_derived_id_not_stale_backend_id() {
+        // Regression test: after a reboot, `backend_session_id` may point at a
+        // tmux $N id from a session that no longer exists. Auto-resume must create
+        // the new tmux session named after the pulpo session (via
+        // `backend.session_id(&session.name)`), not by reusing that stale $N value
+        // as the new session's name — otherwise recreated sessions end up literally
+        // named "$4", "$5", etc.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "reboot-sess".into(),
+            workdir: "/tmp".into(),
+            command: "echo hello".into(),
+            status: SessionStatus::Active,
+            backend_session_id: Some("$4".into()),
+            created_at: Utc::now() - chrono::Duration::hours(1),
+            ..Default::default()
+        };
+        mgr.store().insert_session(&session).await.unwrap();
+
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 1);
+
+        let calls: Vec<String> = backend.calls.lock().unwrap().clone();
+        assert!(
+            calls.iter().any(|c| c.starts_with("create:reboot-sess:")),
+            "expected create call keyed by session name, not stale backend id; calls: {calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|c| c.starts_with("create:$4:")),
+            "must not reuse the stale backend id as the new tmux session name; calls: {calls:?}"
+        );
+
+        // The stale $N id must not linger in the DB either — refresh_backend_session_id
+        // (called by restore_session_backend for both resume paths) re-queries the
+        // backend by name and persists the fresh id.
+        let fetched = mgr
+            .store()
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        // MockBackend.query_backend_id() returns $N where N is the name length —
+        // "reboot-sess" is 11 characters.
+        assert_eq!(fetched.backend_session_id, Some("$11".into()));
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_sessions_uses_worktree_path_when_it_exists() {
+        // Regression test: resume_lost_sessions must resume into the worktree
+        // (when it still exists on disk), the same as the manual resume_session
+        // path — not blindly into the original session.workdir.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let worktree_dir = tempfile::tempdir().unwrap();
+        let worktree_path = worktree_dir.path().to_str().unwrap().to_owned();
+
+        let session = Session {
+            id: Uuid::new_v4(),
+            name: "worktree-sess".into(),
+            workdir: "/nonexistent/original/workdir".into(),
+            worktree_path: Some(worktree_path.clone()),
+            command: "echo hello".into(),
+            status: SessionStatus::Active,
+            backend_session_id: Some("worktree-sess".into()),
+            created_at: Utc::now() - chrono::Duration::hours(1),
+            ..Default::default()
+        };
+        mgr.store().insert_session(&session).await.unwrap();
+
+        let resumed = mgr.resume_lost_sessions().await.unwrap();
+        assert_eq!(resumed, 1);
+
+        let calls: Vec<String> = backend.calls.lock().unwrap().clone();
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.starts_with(&format!("create:worktree-sess:{worktree_path}:"))),
+            "expected the still-existing worktree path to be used as the resumed session's workdir; calls: {calls:?}"
+        );
     }
 
     #[tokio::test]
@@ -3958,6 +4422,543 @@ mod tests {
         let resp = mgr.cleanup_dead_sessions().await.unwrap();
         assert_eq!(resp.logs_cleaned, 1);
         assert!(!orphan_code.exists());
+    }
+
+    // -- Harness adapter integration --------------------------------------------
+
+    fn harness_req(name: &str, command: &str) -> CreateSessionRequest {
+        CreateSessionRequest {
+            command: Some(command.into()),
+            ..make_req(name)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_session_claude_command_sets_harness_and_rewrites_spawn() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = mgr
+            .create_session(harness_req("claude-sess", "claude -p 'fix'"))
+            .await
+            .unwrap();
+
+        // The session row keeps the ORIGINAL command (resume needs it verbatim).
+        assert_eq!(session.command, "claude -p 'fix'");
+        assert_eq!(session.harness.as_deref(), Some("claude"));
+        assert!(session.harness_session_id.is_some());
+
+        // The backend actually received the rewritten command.
+        let calls = backend.calls.lock().unwrap();
+        let sid = session.harness_session_id.clone().unwrap();
+        assert!(calls[0].contains(&format!("--session-id {sid}")));
+        assert!(calls[0].contains("--settings"));
+        drop(calls);
+
+        // The settings file was actually written under the harness dir.
+        let harness_dir =
+            crate::session::utils::harness_dir(mgr.store().data_dir(), &session.id.to_string());
+        assert!(harness_dir.join("claude-settings.json").exists());
+    }
+
+    #[tokio::test]
+    async fn test_create_session_non_harness_command_sets_generic() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = mgr
+            .create_session(harness_req("generic-sess", "bash -lc 'echo hi'"))
+            .await
+            .unwrap();
+
+        assert_eq!(session.harness.as_deref(), Some("generic"));
+        assert!(session.harness_session_id.is_none());
+        let calls = backend.calls.lock().unwrap();
+        // Unchanged — no --session-id/--settings injected for a non-adapter command.
+        assert!(!calls[0].contains("--session-id"));
+        drop(calls);
+    }
+
+    #[tokio::test]
+    async fn test_create_session_claude_with_resume_flag_skips_session_id() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = mgr
+            .create_session(harness_req("claude-resume", "claude --resume abc-123"))
+            .await
+            .unwrap();
+
+        assert_eq!(session.harness.as_deref(), Some("claude"));
+        // The user already pinned the resume target — no NEW id minted at spawn time.
+        assert!(session.harness_session_id.is_none());
+        let calls = backend.calls.lock().unwrap();
+        assert!(calls[0].contains("--resume abc-123"));
+        assert!(calls[0].contains("--settings"));
+        assert!(!calls[0].contains("--session-id"));
+        drop(calls);
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_uses_adapter_resume_command() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr
+            .create_session(harness_req("claude-to-resume", "claude -p 'fix'"))
+            .await
+            .unwrap();
+        let harness_session_id = session.harness_session_id.clone().unwrap();
+        mgr.store()
+            .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+            .await
+            .unwrap();
+        backend.calls.lock().unwrap().clear();
+
+        let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Active);
+
+        let calls = backend.calls.lock().unwrap();
+        let create_call = calls
+            .iter()
+            .find(|c| c.starts_with("create:"))
+            .expect("expected a create call on resume");
+        assert!(create_call.contains(&format!("--resume {harness_session_id}")));
+        assert!(create_call.contains("--settings"));
+        assert!(!create_call.contains("--session-id"));
+        drop(calls);
+    }
+
+    #[tokio::test]
+    async fn test_resume_session_without_harness_session_id_falls_back_to_original() {
+        // Pre-harness-adapter session: no harness fields set at all.
+        let (mgr, backend, pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr.create_session(make_req("legacy-sess")).await.unwrap();
+        sqlx::query("UPDATE sessions SET harness = NULL, harness_session_id = NULL, status = 'lost' WHERE id = ?")
+            .bind(session.id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        backend.calls.lock().unwrap().clear();
+
+        let resumed = mgr.resume_session(&session.id.to_string()).await.unwrap();
+        assert_eq!(resumed.status, SessionStatus::Active);
+        let calls = backend.calls.lock().unwrap();
+        let create_call = calls.iter().find(|c| c.starts_with("create:")).unwrap();
+        assert!(create_call.contains("echo hello"));
+        assert!(!create_call.contains("--resume"));
+        drop(calls);
+    }
+
+    #[tokio::test]
+    async fn test_purge_session_removes_harness_dir() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = mgr
+            .create_session(harness_req("purge-harness", "claude -p 'fix'"))
+            .await
+            .unwrap();
+        let harness_dir =
+            crate::session::utils::harness_dir(mgr.store().data_dir(), &session.id.to_string());
+        assert!(harness_dir.exists());
+
+        mgr.stop_session(&session.id.to_string(), true)
+            .await
+            .unwrap();
+
+        assert!(!harness_dir.exists());
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_dead_sessions_removes_harness_dir() {
+        let (mgr, _backend, pool) = test_manager(MockBackend::new()).await;
+        let session = mgr
+            .create_session(harness_req("cleanup-harness", "claude -p 'fix'"))
+            .await
+            .unwrap();
+        let harness_dir =
+            crate::session::utils::harness_dir(mgr.store().data_dir(), &session.id.to_string());
+        assert!(harness_dir.exists());
+        sqlx::query("UPDATE sessions SET status = 'stopped' WHERE id = ?")
+            .bind(session.id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        mgr.cleanup_dead_sessions().await.unwrap();
+
+        assert!(!harness_dir.exists());
+    }
+
+    // -- apply_harness_event ------------------------------------------------------
+
+    async fn harness_session(mgr: &SessionManager) -> Session {
+        mgr.create_session(harness_req("hook-sess", "claude -p 'fix'"))
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_session_not_found() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let err = mgr
+            .apply_harness_event("nonexistent", "claude", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_unknown_harness() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+        let err = mgr
+            .apply_harness_event(&session.id.to_string(), "gemini", &serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("unknown harness"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_harness_mismatch_is_rejected() {
+        // The session was spawned as "claude" — a request claiming a different
+        // (still-registered) harness id must be rejected rather than trusted, and
+        // must not touch the session at all.
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+        assert_eq!(session.harness.as_deref(), Some("claude"));
+
+        let err = mgr
+            .apply_harness_event(
+                &session.id.to_string(),
+                "codex",
+                &serde_json::json!({"hook_event_name": "UserPromptSubmit"}),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("harness mismatch"), "{err}");
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.harness.as_deref(), Some("claude"));
+        assert!(fetched.harness_last_event_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_ignores_stopped_session() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+        mgr.store()
+            .update_session_status(&session.id.to_string(), SessionStatus::Stopped)
+            .await
+            .unwrap();
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "UserPromptSubmit"}),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Stopped);
+        assert!(
+            fetched.harness_last_event_at.is_none(),
+            "a stale hook on a stopped session must touch nothing"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_ignores_lost_session() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+        mgr.store()
+            .update_session_status(&session.id.to_string(), SessionStatus::Lost)
+            .await
+            .unwrap();
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "Stop"}),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Lost);
+        assert!(fetched.harness_last_event_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_always_touches_last_event_at() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+        assert!(session.harness_last_event_at.is_none());
+
+        // An event the adapter doesn't recognize still marks events as flowing.
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "PreToolUse"}),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(fetched.harness_last_event_at.is_some());
+        assert_eq!(fetched.status, SessionStatus::Active);
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_session_started_sets_id_and_active() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({
+                "hook_event_name": "SessionStart",
+                "session_id": "sid-from-hook",
+                "source": "startup",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Active);
+        assert_eq!(fetched.harness_session_id.as_deref(), Some("sid-from-hook"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_turn_finished_sets_idle_and_summary() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({
+                "hook_event_name": "Stop",
+                "last_assistant_message": "Fixed it",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Idle);
+        assert!(fetched.idle_since.is_some());
+        assert_eq!(fetched.meta_str(meta::LAST_SUMMARY), Some("Fixed it"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_needs_input_sets_metadata() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({
+                "hook_event_name": "Notification",
+                "matcher": "permission_prompt",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Idle);
+        assert_eq!(fetched.meta_str(meta::NEEDS_INPUT), Some("permission"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_working_clears_needs_input() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "Notification", "matcher": "permission_prompt"}),
+        )
+        .await
+        .unwrap();
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "UserPromptSubmit"}),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Active);
+        assert_eq!(fetched.meta_str(meta::NEEDS_INPUT), None);
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_failed_sets_error_and_rate_limit() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({
+                "hook_event_name": "StopFailure",
+                "error_type": "rate_limit_error",
+            }),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Idle);
+        assert_eq!(
+            fetched.meta_str(meta::ERROR_STATUS),
+            Some("rate_limit_error")
+        );
+        assert_eq!(fetched.meta_str(meta::RATE_LIMIT), Some("rate_limit_error"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_session_ended_ready_when_backend_alive() {
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new().with_alive(true)).await;
+        let session = harness_session(&mgr).await;
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "SessionEnd"}),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Ready);
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_session_ended_stopped_when_backend_dead() {
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let session = harness_session(&mgr).await;
+        *backend.alive.lock().unwrap() = false;
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "SessionEnd"}),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_emits_session_event() {
+        let (backend, event_tx) = (MockBackend::new(), broadcast::channel(16).0);
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let mgr = SessionManager::new(Arc::new(backend), store, None)
+            .with_no_stale_grace()
+            .with_event_tx(event_tx.clone(), "node-a".into());
+        let mut rx = event_tx.subscribe();
+        let session = harness_session(&mgr).await;
+        // Drain the creation event.
+        let _ = rx.recv().await.unwrap();
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "UserPromptSubmit"}),
+        )
+        .await
+        .unwrap();
+
+        let event = unwrap_session_event(rx.recv().await.unwrap());
+        assert_eq!(event.session_id, session.id.to_string());
+        assert_eq!(event.status, "active");
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_emits_needs_input_on_session_event() {
+        // The live SSE `session` event must carry `needs_input` so the web UI's
+        // badge updates without a follow-up fetch (see `SessionEvent::needs_input`).
+        let (backend, event_tx) = (MockBackend::new(), broadcast::channel(16).0);
+        let tmpdir = tempfile::tempdir().unwrap();
+        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+        store.migrate().await.unwrap();
+        let mgr = SessionManager::new(Arc::new(backend), store, None)
+            .with_no_stale_grace()
+            .with_event_tx(event_tx.clone(), "node-a".into());
+        let mut rx = event_tx.subscribe();
+        let session = harness_session(&mgr).await;
+        let _ = rx.recv().await.unwrap(); // drain the creation event
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "Notification", "matcher": "permission_prompt"}),
+        )
+        .await
+        .unwrap();
+
+        let event = unwrap_session_event(rx.recv().await.unwrap());
+        assert_eq!(event.needs_input.as_deref(), Some("permission"));
+
+        // Working clears it — the follow-up event must carry `needs_input: None` so
+        // the frontend can sync (not just append) the metadata key.
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "UserPromptSubmit"}),
+        )
+        .await
+        .unwrap();
+        let event = unwrap_session_event(rx.recv().await.unwrap());
+        assert_eq!(event.needs_input, None);
     }
 }
 

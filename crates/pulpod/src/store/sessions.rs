@@ -19,6 +19,7 @@ impl Store {
         let intervention_at_str = session.intervention_at.map(|dt| dt.to_rfc3339());
         let last_output_at_str = session.last_output_at.map(|dt| dt.to_rfc3339());
         let idle_since_str = session.idle_since.map(|dt| dt.to_rfc3339());
+        let harness_last_event_at_str = session.harness_last_event_at.map(|dt| dt.to_rfc3339());
         sqlx::query(
             "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
                 exit_code, backend_session_id, output_snapshot,
@@ -26,8 +27,8 @@ impl Store {
                 intervention_code, intervention_reason, intervention_at,
                 last_output_at, idle_since, idle_threshold_secs, worktree_path, worktree_branch,
                 git_branch, git_commit, git_files_changed, git_insertions, git_deletions, git_ahead,
-                runtime, created_at, updated_at)
-             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                runtime, harness, harness_session_id, harness_last_event_at, created_at, updated_at)
+             VALUES (?, ?, ?, '', '', ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(session.id.to_string())
         .bind(&session.name)
@@ -59,6 +60,9 @@ impl Store {
         .bind(session.git_deletions.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
         .bind(session.git_ahead.map(|v| i32::try_from(v).unwrap_or(i32::MAX)))
         .bind(session.runtime.to_string())
+        .bind(&session.harness)
+        .bind(&session.harness_session_id)
+        .bind(&harness_last_event_at_str)
         .bind(session.created_at.to_rfc3339())
         .bind(session.updated_at.to_rfc3339())
         .execute(&self.pool)

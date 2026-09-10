@@ -173,6 +173,21 @@ pub struct Session {
     /// docker only appears on historical rows (the docker runtime was removed).
     #[serde(default)]
     pub runtime: Runtime,
+    /// Harness adapter id (e.g. "claude"), set at spawn time when the launched
+    /// command matched a known harness. `None` for sessions spawned before harness
+    /// adapters existed, or whose command matched no adapter (generic).
+    #[serde(default)]
+    pub harness: Option<String>,
+    /// The harness's own session/thread id (e.g. Claude Code's `--session-id`),
+    /// used to resume the same conversation instead of starting a fresh one.
+    #[serde(default)]
+    pub harness_session_id: Option<String>,
+    /// When the harness last reported a lifecycle event via `pulpo hook`. Presence
+    /// tells the watchdog that event-driven state transitions own this session, so
+    /// the scrollback heuristics (waiting-for-input, rate-limit, error detection,
+    /// time-based Active→Idle) are skipped.
+    #[serde(default)]
+    pub harness_last_event_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -207,6 +222,9 @@ impl Default for Session {
             git_deletions: None,
             git_ahead: None,
             runtime: Runtime::default(),
+            harness: None,
+            harness_session_id: None,
+            harness_last_event_at: None,
             created_at: now,
             updated_at: now,
         }
@@ -251,6 +269,13 @@ pub mod meta {
     // Burn-velocity governor: one-shot timestamp recorded when the lifetime-average spend
     // rate first crosses the configured ceiling, so the alert fires only once per session.
     pub const BURN_ALERTED_AT: &str = "burn_alerted_at";
+    // Harness adapter events (see `pulpod::harness`).
+    // Set on a `NeedsInput` event; distinguishes "blocked on me" from plain idle.
+    // Cleared on `SessionStarted`/`Working`.
+    pub const NEEDS_INPUT: &str = "needs_input";
+    // Set on `TurnFinished`, truncated to 200 chars — a short summary of what the
+    // agent just did, for display alongside the idle status.
+    pub const LAST_SUMMARY: &str = "last_summary";
 }
 
 impl Session {
@@ -708,6 +733,34 @@ mod tests {
         assert!(json.contains("\"worktree_branch\":\"fix-auth\""));
         let deserialized: Session = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.worktree_branch, Some("fix-auth".into()));
+    }
+
+    #[test]
+    fn test_session_harness_fields_roundtrip() {
+        let mut session = make_session();
+        session.harness = Some("claude".into());
+        session.harness_session_id = Some("sid-123".into());
+        session.harness_last_event_at = Some(Utc::now());
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(json.contains("\"harness\":\"claude\""));
+        assert!(json.contains("\"harness_session_id\":\"sid-123\""));
+        let deserialized: Session = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.harness, session.harness);
+        assert_eq!(deserialized.harness_session_id, session.harness_session_id);
+        assert_eq!(
+            deserialized.harness_last_event_at,
+            session.harness_last_event_at
+        );
+    }
+
+    #[test]
+    fn test_session_harness_fields_default_on_deserialize_when_missing() {
+        // Older wire payloads (pre-harness-adapters) omit these fields entirely.
+        let json = r#"{"id":"00000000-0000-0000-0000-000000000000","name":"test","workdir":"/tmp","command":"echo","status":"active","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let session: Session = serde_json::from_str(json).unwrap();
+        assert_eq!(session.harness, None);
+        assert_eq!(session.harness_session_id, None);
+        assert_eq!(session.harness_last_event_at, None);
     }
 
     #[test]

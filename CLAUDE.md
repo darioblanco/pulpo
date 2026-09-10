@@ -191,9 +191,10 @@ describe('api', () => {
 - **Async**: All I/O is async via `tokio`. Backend trait methods are sync (tmux commands are fast) but called from async context via `tokio::task::spawn_blocking` when needed.
 - **Naming**: Session names are kebab-case, **validated server-side** by `validate_session_name()` in `session/manager.rs` (`[a-z0-9-]`, max 128 chars). This is security-critical — session names are interpolated into shell commands in `wrap_command`. Schedule names follow the same rules. Any new code path that accepts session/schedule names MUST validate them.
 - **Exit markers**: `wrap_command` writes `{data_dir}/exit/{id}.code` (agent exit code) and `{id}.clean` (shell ended normally). A dead tmux session WITH a marker resolves to `Stopped` (clean end); without → `Lost` (crash). Markers are purged with the session and swept by `pulpo cleanup`.
+- **Harness adapters**: `session/manager.rs` resolves a `HarnessAdapter` (`harness/`) at spawn/resume time to rewrite the command so the harness (Claude Code, Codex, pi) reports lifecycle events to `pulpo hook <harness>` → `POST /api/v1/sessions/{id}/harness-events`. Shipped for Claude Code (hook mechanics verified against v2.1.266), Codex and pi (implemented from their docs, unverified in the field). Once a session's `harness_last_event_at` is set, the watchdog stops applying scrollback heuristics to it (see `watchdog::harness_owns_state`) — hook events own its state instead. See `docs/architecture/harness-adapters.md`.
 - **Session IDs**: `backend_session_id` stores the tmux `$N` session ID (monotonically increasing, never reused while tmux server runs). At startup, name-based IDs are upgraded to `$N` IDs.
 - **Database**: SQLite via `sqlx`. Versioned schema migrations live in `crates/pulpod/migrations/`; `store/mod.rs` contains the runtime store API only. Use `sqlx::query!` macro for compile-time checked queries when possible.
-- **Config**: TOML config at `~/.pulpo/config.toml`. All fields have sensible defaults — pulpod runs with zero config. Key watchdog config fields: `idle_threshold_secs` (seconds of unchanged output before Active→Idle, default 60), `waiting_patterns` (extra user-defined patterns appended to the 29 built-in waiting-for-input patterns).
+- **Config**: TOML config at `~/.pulpo/config.toml`. All fields have sensible defaults — pulpod runs with zero config. Key watchdog config fields: `idle_threshold_secs` (seconds of unchanged output before Active→Idle, default 60), `waiting_patterns` (extra user-defined patterns appended to the built-in waiting-for-input patterns).
 - **Per-session idle**: Sessions accept `idle_threshold_secs: Option<u32>` — `None` = use global, `Some(0)` = never idle, `Some(N)` = N seconds. CLI: `pulpo spawn <name> --idle-threshold <secs>`.
 - **Logging**: Use `tracing` macros (`info!`, `warn!`, `error!`, `debug!`). Set level via `RUST_LOG` env var.
 - **No `unsafe` code** — `forbid(unsafe_code)` is set workspace-wide.
@@ -277,20 +278,42 @@ pulpo/
 │   │   ├── store/                # Persistence
 │   │   │   └── mod.rs            # SQLite store API
 │   │   ├── notifications/        # Push notifications
-│   │   │   ├── mod.rs            # Module declaration
-│   │   │   └── discord.rs        # Discord webhook notifier + loop
+│   │   │   ├── mod.rs            # Module declaration + dispatcher
+│   │   │   ├── webhook.rs        # Signed webhook delivery (lifecycle/intervention/usage_alert/fleet)
+│   │   │   ├── web_push.rs       # Web Push notifications (VAPID)
+│   │   │   ├── outbox.rs         # Retry/backoff queue for webhook delivery
+│   │   │   └── action_token.rs   # Signed action tokens (push "Stop" action)
 │   │   ├── peers/                # Peer discovery
 │   │   │   ├── mod.rs            # PeerRegistry
 │   │   │   └── health.rs         # Peer health probing (cached on-demand)
 │   │   ├── watchdog/             # Resource monitoring
 │   │   │   ├── mod.rs            # Watchdog loop (memory + idle detection)
+│   │   │   ├── idle.rs           # Idle detection + status transitions
+│   │   │   ├── metadata.rs       # PR/branch/rate-limit/error/usage scraping from output
+│   │   │   ├── output_patterns.rs # Waiting-for-input/rate-limit/error/PR-URL pattern matching
+│   │   │   ├── adopt.rs          # Status resolution for adopted (non-pulpo-spawned) sessions
+│   │   │   ├── git.rs            # Branch/commit detection for sessions
+│   │   │   ├── budget.rs         # Per-session cost budget alerts + auto-stop
+│   │   │   ├── burn.rs           # Burn-rate ceiling governor (cost/token per hour)
+│   │   │   ├── intervention.rs   # Shared stop-and-record path for forced session stops
 │   │   │   └── memory.rs         # System memory probing
+│   │   ├── harness/               # Harness adapters (agent lifecycle events)
+│   │   │   ├── mod.rs            # HarnessAdapter trait, HarnessEvent, state transitions
+│   │   │   ├── registry.rs       # HarnessRegistry: resolve a command line to an adapter
+│   │   │   ├── generic.rs        # Fallback adapter: no rewrite, no events
+│   │   │   ├── claude.rs         # Claude Code adapter (hooks, --session-id/--resume)
+│   │   │   ├── codex.rs          # Codex adapter (isolated CODEX_HOME + hooks/notify)
+│   │   │   ├── pi.rs             # pi adapter (pulpo.ts extension, --session-id)
+│   │   │   └── pulpo.ts.tmpl     # pi extension file template (embedded via include_str!)
 │   │   └── discovery/            # Peer discovery (Tailscale)
 │   │       ├── mod.rs            # Discovery types + constants
 │   │       └── tailscale.rs      # Tailscale API peer discovery
 │   ├── pulpo-cli/src/
 │   │   ├── main.rs               # Thin entry point (cfg(coverage) excluded)
-│   │   └── lib.rs                # CLI logic: Cli, Commands, execute
+│   │   ├── lib.rs                # CLI logic: Cli, Commands, execute
+│   │   ├── hook.rs               # `pulpo hook <harness>` internal subcommand (lifecycle events → daemon)
+│   │   ├── format.rs             # Terminal output rendering (tables/reports)
+│   │   └── http.rs               # HTTP client helpers (auth, node/token resolution)
 │   └── pulpo-common/src/
 │       ├── lib.rs
 │       ├── session.rs            # Session, SessionStatus types

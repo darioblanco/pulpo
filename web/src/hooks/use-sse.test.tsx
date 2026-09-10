@@ -305,6 +305,94 @@ describe('useSSE', () => {
     expect(result.current.sessions[0].output_snippet).toBe('Existing snippet');
   });
 
+  it('sets metadata.needs_input from session events', async () => {
+    const sessions = [
+      {
+        id: 'sess-1',
+        name: 'my-api',
+        status: 'active',
+        command: 'Fix',
+        description: null,
+        workdir: '/repo',
+        metadata: null,
+        ink: null,
+        intervention_reason: null,
+        intervention_at: null,
+        last_output_at: null,
+
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ];
+    mockFetch.mockResolvedValue({ json: () => Promise.resolve(sessions) });
+    const { result } = renderHook(() => useSSE(), { wrapper });
+
+    act(() => lastES().onopen?.());
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    const es = lastES();
+    act(() => {
+      es._fireEvent(
+        'session',
+        JSON.stringify({
+          session_id: 'sess-1',
+          session_name: 'my-api',
+          status: 'idle',
+          output_snippet: null,
+          needs_input: 'permission',
+        }),
+      );
+    });
+
+    expect(result.current.sessions[0].metadata?.needs_input).toBe('permission');
+  });
+
+  it('clears metadata.needs_input when the event carries none', async () => {
+    const sessions = [
+      {
+        id: 'sess-1',
+        name: 'my-api',
+        status: 'idle',
+        command: 'Fix',
+        description: null,
+        workdir: '/repo',
+        metadata: { needs_input: 'permission' },
+        ink: null,
+        intervention_reason: null,
+        intervention_at: null,
+        last_output_at: null,
+
+        created_at: '2025-01-01T00:00:00Z',
+      },
+    ];
+    mockFetch.mockResolvedValue({ json: () => Promise.resolve(sessions) });
+    const { result } = renderHook(() => useSSE(), { wrapper });
+
+    act(() => lastES().onopen?.());
+
+    await waitFor(() => {
+      expect(result.current.sessions).toHaveLength(1);
+    });
+    expect(result.current.sessions[0].metadata?.needs_input).toBe('permission');
+
+    const es = lastES();
+    act(() => {
+      es._fireEvent(
+        'session',
+        JSON.stringify({
+          session_id: 'sess-1',
+          session_name: 'my-api',
+          status: 'active',
+          output_snippet: null,
+        }),
+      );
+    });
+
+    expect(result.current.sessions[0].metadata?.needs_input).toBeUndefined();
+  });
+
   it('ignores malformed session events', async () => {
     const sessions = [
       {

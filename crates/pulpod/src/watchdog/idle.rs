@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use pulpo_common::event::PulpoEvent;
@@ -5,8 +6,8 @@ use pulpo_common::session::{InterventionCode, Session, SessionStatus};
 use tracing::{debug, info};
 
 use super::{
-    IdleAction, IdleConfig, ReadyContext, build_session_event, detect_agent_exited,
-    detect_and_store_output_metadata, detect_waiting_for_input, resolve_backend_id,
+    HarnessSignals, IdleAction, IdleConfig, ReadyContext, build_session_event, detect_agent_exited,
+    detect_and_store_output_metadata, detect_waiting_for_input, owned_signals, resolve_backend_id,
 };
 use crate::backend::Backend;
 use crate::store::Store;
@@ -93,16 +94,18 @@ pub(super) async fn check_session_idle(
         return;
     }
 
-    let exact_usage = crate::usage::read_exact_usage_for_session(session);
-    detect_and_store_output_metadata(store, session, &current_output, exact_usage).await;
+    let signals = owned_signals(session);
+    let exact_usage =
+        crate::usage::read_exact_usage_for_session(session, Path::new(store.data_dir()));
+    detect_and_store_output_metadata(store, session, &current_output, exact_usage, signals).await;
 
     let output_changed = session.output_snapshot.as_deref() != Some(current_output.as_str());
     if output_changed {
-        handle_active_session(store, session, ready_ctx).await;
+        handle_active_session(store, session, ready_ctx, signals).await;
         return;
     }
 
-    if session.status == SessionStatus::Active {
+    if !signals.lifecycle && session.status == SessionStatus::Active {
         let immediate = detect_waiting_for_input(&current_output, extra_waiting_patterns);
         let last_change = session.last_output_at.unwrap_or(session.created_at);
         let sustained = (now - last_change).num_seconds()
@@ -204,11 +207,25 @@ pub(super) async fn handle_session_ready(
     }
 }
 
+/// React to fresh output on a session: revert Idle→Active and clear `idle_since`.
+///
+/// `signals.lifecycle` gates this entirely: once a harness adapter owns lifecycle
+/// signals (hook events are flowing), only its own events may decide status — a
+/// mere TUI repaint (the output snapshot changing) must not revert a hook-driven
+/// `Idle`/`needs_input` back to `Active`, since the very next watchdog tick would
+/// otherwise undo a real `NeedsInput`/`TurnFinished` transition just because the
+/// terminal redrew itself. Non-owned sessions (no harness, or its events aren't
+/// flowing yet) keep the original scrollback-driven behavior unchanged.
 pub(super) async fn handle_active_session(
     store: &Store,
     session: &Session,
     ready_ctx: &ReadyContext,
+    signals: HarnessSignals,
 ) {
+    if signals.lifecycle {
+        return;
+    }
+
     if session.status == SessionStatus::Idle {
         info!(
             "Session {} has new output, transitioning back to active",

@@ -10,7 +10,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { getSessions, resolveBaseUrl, authHeaders } from '@/api/client';
-import type { Session } from '@/api/types';
+import type { Session, SessionSSEEvent } from '@/api/types';
 import { useConnection } from './use-connection';
 import { toast } from 'sonner';
 
@@ -56,31 +56,34 @@ export function SSEProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const mergeSessionEvent = useCallback(
-    (event: {
-      session_id: string;
-      session_name: string;
-      status: string;
-      output_snippet: string | null;
-    }): boolean => {
-      const current = sessionsRef.current;
-      const idx = current.findIndex((s) => s.id === event.session_id);
-      if (idx === -1) return false;
+  const mergeSessionEvent = useCallback((event: SessionSSEEvent): boolean => {
+    const current = sessionsRef.current;
+    const idx = current.findIndex((s) => s.id === event.session_id);
+    if (idx === -1) return false;
 
-      setSessions(
-        current.map((s, i) => {
-          if (i !== idx) return s;
-          return {
-            ...s,
-            status: event.status,
-            output_snippet: event.output_snippet ?? s.output_snippet,
-          };
-        }),
-      );
-      return true;
-    },
-    [],
-  );
+    setSessions(
+      current.map((s, i) => {
+        if (i !== idx) return s;
+        // The event is authoritative for `needs_input` — always sync (set or
+        // clear) the metadata key from it rather than only ever setting it,
+        // otherwise a stale badge would survive a `Working`/`TurnFinished`
+        // transition that cleared it server-side.
+        const metadata = { ...(s.metadata ?? {}) };
+        if (event.needs_input) {
+          metadata.needs_input = event.needs_input;
+        } else {
+          delete metadata.needs_input;
+        }
+        return {
+          ...s,
+          status: event.status,
+          output_snippet: event.output_snippet ?? s.output_snippet,
+          metadata,
+        };
+      }),
+    );
+    return true;
+  }, []);
 
   const disconnect = useCallback(() => {
     if (reconnectTimerRef.current) {

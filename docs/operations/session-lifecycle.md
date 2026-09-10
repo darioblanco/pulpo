@@ -104,10 +104,10 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 
 ## Waiting Patterns (Idle Detection)
 
-The watchdog inspects the last 5 lines of terminal output for these patterns (case-insensitive). 29 built-in patterns cover major coding agents and common CLI prompts:
+The watchdog inspects the last 5 lines of terminal output for these patterns (case-insensitive). The built-in patterns cover major coding agents and common CLI prompts:
 
 - **Generic**: `(y/n)`, `[Y/n]`, `[yes/no]`, `(yes/no)`, `Yes / No`, `Do you trust`, `Press Enter`, `approve this`, `Are you sure`, `Continue?`, `Confirm?`, `Proceed?`
-- **Claude Code**: `(Y)es`, `(N)o`, `(A)lways`, `Do you want to proceed`
+- **Claude Code**: `(Y)es`, `(N)o`, `(A)lways`, `Do you want to proceed`, `I trust this folder`, `Enter to confirm`
 - **Codex CLI**: `Allow command?`
 - **Gemini CLI**: `Allow?`, `Approve?`
 - **Aider**: `to the chat?`, `Apply edit?`, `shell command?`, `Create new file`
@@ -115,16 +115,6 @@ The watchdog inspects the last 5 lines of terminal output for these patterns (ca
 - **SSH/sudo**: `continue connecting (yes/no)`, `'s password:`, `[sudo] password`
 
 Add custom patterns via `waiting_patterns` in `[watchdog]` config — they are appended to the built-in list.
-
-## Ocean Visual Mapping
-
-| State | Color | Sprite | Behavior |
-|-------|-------|--------|----------|
-| Active | Lavender | active-swim | Full swimming animation |
-| Idle | Amber/Gold | idle-idle | Minimal movement, small radius |
-| Ready | Emerald | ready-idle | Stationary |
-| Stopped | Red | stopped-idle | Stationary (same sprite as Lost, recolored) |
-| Lost | Red | lost-idle | Stationary (same sprite as Stopped, recolored) |
 
 ## Configuration
 

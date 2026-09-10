@@ -51,7 +51,7 @@ session-runtime section.
 | `breach_count` | u32 | `3` | Consecutive breaches before stop |
 | `adopt_tmux` | bool | `true` | Auto-adopt external tmux sessions |
 | `idle_threshold_secs` | u64 | `60` | Seconds of unchanged output before Active→Idle |
-| `waiting_patterns` | string[] | `[]` | Extra patterns for waiting-for-input detection (appended to 29 built-in patterns) |
+| `waiting_patterns` | string[] | `[]` | Extra patterns for waiting-for-input detection (appended to the built-in patterns) |
 
 ## `[inks.<name>]` (retired)
 
