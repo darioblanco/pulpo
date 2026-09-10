@@ -905,7 +905,6 @@ mod tests {
             "echo WRAPPED_OK",
             &id,
             "integ-wrapped",
-            None,
             data_dir.path().to_str().unwrap(),
         );
         // wrap_command runs a fallback shell (not exec'd) so the session stays alive
@@ -928,7 +927,6 @@ mod tests {
             "echo 'QUOTED_OK'",
             &id,
             "integ-quotes",
-            None,
             data_dir.path().to_str().unwrap(),
         );
         let output = tmux_run_and_capture("pulpo-integ-quotes", &wrapped, None);
@@ -970,7 +968,6 @@ mod tests {
             "true",
             &id,
             "integ-marker",
-            None,
             data_dir_str,
         );
 

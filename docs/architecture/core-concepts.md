@@ -102,7 +102,6 @@ Some features are important but still secondary to the core model:
 - multi-node fleet discovery
 - worktrees
 - schedules
-- secrets
 - notifications
 
 They matter operationally, but they are easier to reason about once session/runtime/lifecycle concepts are already clear.

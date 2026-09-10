@@ -44,9 +44,12 @@ Canonical runtime concepts:
 - There is no controller/node control plane (removed July 2026) — every pulpod is standalone.
   The supported multi-machine path is direct access to each node (`pulpo --node <name>`, saved
   web UI connections, SSH/tmux) plus the event-forwarding backbone for aggregated visibility.
-- There is no ink preset registry (removed July 2026) — command and secrets are set directly
-  per session/schedule (`--secret`), and cost budgets are set with `--budget-cost` on both
-  `pulpo spawn` and `pulpo schedule add`.
+- There is no ink preset registry (removed July 2026) — command is set directly per
+  session/schedule, and cost budgets are set with `--budget-cost` on both `pulpo spawn` and
+  `pulpo schedule add`.
+- There is no secrets store — every supported agent reads its own credentials from its own
+  config; a session-scoped env var is set by prefixing the command (`-- env KEY=value ...`),
+  and a machine-wide one by exporting it in the environment `pulpod` runs under.
 - Web Push follows the standard Web Push protocol (VAPID + ECE) directly from `pulpod` to the
   browser, no relay — any spec-compliant client can subscribe. Budget/burn `usage_alert`
   pushes carry a short-lived, HMAC-signed "Stop session" action token; tapping it POSTs to the

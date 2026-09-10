@@ -22,9 +22,6 @@ pub struct CreateSessionRequest {
     /// Runtime environment. Defaults to tmux. Kept for wire compatibility —
     /// "docker" still deserializes but is rejected server-side (runtime removed).
     pub runtime: Option<crate::session::Runtime>,
-    /// Secret names to inject as environment variables.
-    #[serde(default)]
-    pub secrets: Option<Vec<String>>,
     /// Terminal program identifier (e.g. "ghostty", "iTerm.app") from the CLI's environment.
     /// Forwarded into the session shell environment as `TERM_PROGRAM` so agents can detect
     /// the outer terminal's capabilities (image paste, color support, etc.).
@@ -52,8 +49,6 @@ pub struct HandoffSessionRequest {
     pub name: Option<String>,
     pub command: Option<String>,
     pub description: Option<String>,
-    #[serde(default)]
-    pub secrets: Option<Vec<String>>,
     #[serde(default)]
     pub budget_cost_usd: Option<f64>,
     pub idle_threshold_secs: Option<u32>,
@@ -321,9 +316,6 @@ pub struct Schedule {
     /// Runtime environment (historical; "docker" is rejected on create/update).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime: Option<String>,
-    /// Secret names to inject as environment variables.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub secrets: Vec<String>,
     /// Create in an isolated git worktree.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<bool>,
@@ -354,9 +346,6 @@ pub struct CreateScheduleRequest {
     pub description: Option<String>,
     /// Runtime environment (historical; "docker" is rejected — runtime removed).
     pub runtime: Option<String>,
-    /// Secret names to inject as environment variables.
-    #[serde(default)]
-    pub secrets: Option<Vec<String>>,
     /// Create in an isolated git worktree.
     pub worktree: Option<bool>,
     /// Base branch to fork the worktree from.
@@ -377,42 +366,12 @@ pub struct UpdateScheduleRequest {
     /// Runtime environment. Use `Some(None)` to clear.
     /// "docker" is rejected — the docker session runtime was removed.
     pub runtime: Option<Option<String>>,
-    /// Secret names. Use `Some(vec![])` to clear.
-    pub secrets: Option<Vec<String>>,
     /// Create in an isolated git worktree. Use `Some(None)` to clear.
     pub worktree: Option<Option<bool>>,
     /// Base branch to fork the worktree from. Use `Some(None)` to clear.
     pub worktree_base: Option<Option<String>>,
     /// Cost budget in USD. Use `Some(None)` to clear.
     pub budget_cost_usd: Option<Option<f64>>,
-}
-
-// -- Secret types --
-
-/// Request body for PUT /api/v1/secrets/{name}
-#[derive(Debug, Deserialize)]
-pub struct SetSecretRequest {
-    pub value: String,
-    /// Optional env var name override. If set, the secret is exported as this
-    /// environment variable instead of using the secret name.
-    pub env: Option<String>,
-}
-
-/// Response for GET /api/v1/secrets
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SecretListResponse {
-    pub secrets: Vec<SecretEntry>,
-}
-
-/// A single secret entry (name + `created_at`, never includes the value).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SecretEntry {
-    pub name: String,
-    /// The env var name this secret maps to. `None` means the secret name is
-    /// used directly as the env var.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub env: Option<String>,
-    pub created_at: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -736,12 +695,11 @@ mod tests {
 
     #[test]
     fn test_handoff_session_request_deserialize_full() {
-        let json = r#"{"name":"implement-auth","command":"codex 'implement'","description":"Implement the plan","secrets":["GH_WORK"],"budget_cost_usd":2.5,"idle_threshold_secs":30,"term_program":"ghostty"}"#;
+        let json = r#"{"name":"implement-auth","command":"codex 'implement'","description":"Implement the plan","budget_cost_usd":2.5,"idle_threshold_secs":30,"term_program":"ghostty"}"#;
         let req: HandoffSessionRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.name.as_deref(), Some("implement-auth"));
         assert_eq!(req.command.as_deref(), Some("codex 'implement'"));
         assert_eq!(req.description.as_deref(), Some("Implement the plan"));
-        assert_eq!(req.secrets, Some(vec!["GH_WORK".to_owned()]));
         assert_eq!(req.budget_cost_usd, Some(2.5));
         assert_eq!(req.idle_threshold_secs, Some(30));
         assert_eq!(req.term_program.as_deref(), Some("ghostty"));
@@ -754,7 +712,6 @@ mod tests {
         assert!(req.name.is_none());
         assert!(req.command.is_none());
         assert!(req.description.is_none());
-        assert!(req.secrets.is_none());
         assert!(req.budget_cost_usd.is_none());
         assert!(req.idle_threshold_secs.is_none());
         assert!(req.term_program.is_none());
@@ -766,7 +723,6 @@ mod tests {
             name: Some("test".into()),
             command: None,
             description: None,
-            secrets: None,
             budget_cost_usd: None,
             idle_threshold_secs: None,
             term_program: None,
@@ -781,7 +737,6 @@ mod tests {
             name: Some("test".into()),
             command: Some("echo hi".into()),
             description: None,
-            secrets: None,
             budget_cost_usd: None,
             idle_threshold_secs: None,
             term_program: None,
@@ -798,7 +753,6 @@ mod tests {
             name: Some("implement-auth".into()),
             command: None,
             description: None,
-            secrets: None,
             budget_cost_usd: Some(1.0),
             idle_threshold_secs: None,
             term_program: None,
@@ -908,13 +862,6 @@ mod tests {
         let json = r#"{"name":"test"}"#;
         let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
         assert!(req.worktree_base.is_none());
-    }
-
-    #[test]
-    fn test_create_session_request_without_secrets() {
-        let json = r#"{"name":"test"}"#;
-        let req: CreateSessionRequest = serde_json::from_str(json).unwrap();
-        assert!(req.secrets.is_none());
     }
 
     #[test]
@@ -1534,7 +1481,6 @@ mod tests {
             ink: None,
             description: Some("Nightly review".into()),
             runtime: None,
-            secrets: vec![],
             worktree: None,
             worktree_base: None,
             budget_cost_usd: None,
@@ -1702,152 +1648,6 @@ mod tests {
         let json = "{}";
         let req: UpdateScheduleRequest = serde_json::from_str(json).unwrap();
         assert!(req.budget_cost_usd.is_none());
-    }
-
-    // -- Secret type tests --
-
-    #[test]
-    fn test_set_secret_request_deserialize() {
-        let json = r#"{"value":"super-secret"}"#;
-        let req: SetSecretRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.value, "super-secret");
-        assert!(req.env.is_none());
-    }
-
-    #[test]
-    fn test_set_secret_request_with_env() {
-        let json = r#"{"value":"super-secret","env":"CUSTOM_VAR"}"#;
-        let req: SetSecretRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.value, "super-secret");
-        assert_eq!(req.env.as_deref(), Some("CUSTOM_VAR"));
-    }
-
-    #[test]
-    fn test_set_secret_request_missing_value() {
-        let json = r"{}";
-        let result = serde_json::from_str::<SetSecretRequest>(json);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_set_secret_request_debug() {
-        let req = SetSecretRequest {
-            value: "secret".into(),
-            env: None,
-        };
-        let debug = format!("{req:?}");
-        assert!(debug.contains("SetSecretRequest"));
-    }
-
-    #[test]
-    fn test_secret_list_response_serialize() {
-        let resp = SecretListResponse {
-            secrets: vec![SecretEntry {
-                name: "MY_TOKEN".into(),
-                env: None,
-                created_at: "2026-01-01T00:00:00Z".into(),
-            }],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("MY_TOKEN"));
-        assert!(json.contains("2026-01-01"));
-        // env is None, so it should be skipped
-        assert!(!json.contains("\"env\""));
-    }
-
-    #[test]
-    fn test_secret_list_response_serialize_with_env() {
-        let resp = SecretListResponse {
-            secrets: vec![SecretEntry {
-                name: "GH_WORK".into(),
-                env: Some("GITHUB_TOKEN".into()),
-                created_at: "2026-01-01T00:00:00Z".into(),
-            }],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("GH_WORK"));
-        assert!(json.contains("GITHUB_TOKEN"));
-    }
-
-    #[test]
-    fn test_secret_list_response_deserialize() {
-        let json = r#"{"secrets":[{"name":"KEY","created_at":"2026-01-01T00:00:00Z"}]}"#;
-        let resp: SecretListResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.secrets.len(), 1);
-        assert_eq!(resp.secrets[0].name, "KEY");
-        assert!(resp.secrets[0].env.is_none());
-    }
-
-    #[test]
-    fn test_secret_list_response_deserialize_with_env() {
-        let json = r#"{"secrets":[{"name":"KEY","env":"CUSTOM_ENV","created_at":"2026-01-01T00:00:00Z"}]}"#;
-        let resp: SecretListResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.secrets[0].env.as_deref(), Some("CUSTOM_ENV"));
-    }
-
-    #[test]
-    fn test_secret_list_response_empty() {
-        let resp = SecretListResponse { secrets: vec![] };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert_eq!(json, r#"{"secrets":[]}"#);
-    }
-
-    #[test]
-    fn test_secret_list_response_debug() {
-        let resp = SecretListResponse { secrets: vec![] };
-        let debug = format!("{resp:?}");
-        assert!(debug.contains("SecretListResponse"));
-    }
-
-    #[test]
-    fn test_secret_entry_clone() {
-        let entry = SecretEntry {
-            name: "KEY".into(),
-            env: Some("CUSTOM".into()),
-            created_at: "now".into(),
-        };
-        #[allow(clippy::redundant_clone)]
-        let cloned = entry.clone();
-        assert_eq!(cloned.name, "KEY");
-        assert_eq!(cloned.env.as_deref(), Some("CUSTOM"));
-    }
-
-    #[test]
-    fn test_secret_entry_debug() {
-        let entry = SecretEntry {
-            name: "KEY".into(),
-            env: None,
-            created_at: "now".into(),
-        };
-        let debug = format!("{entry:?}");
-        assert!(debug.contains("SecretEntry"));
-    }
-
-    #[test]
-    fn test_secret_entry_roundtrip() {
-        let entry = SecretEntry {
-            name: "MY_VAR".into(),
-            env: None,
-            created_at: "2026-03-21T00:00:00Z".into(),
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        let deserialized: SecretEntry = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.name, "MY_VAR");
-        assert!(deserialized.env.is_none());
-        assert_eq!(deserialized.created_at, "2026-03-21T00:00:00Z");
-    }
-
-    #[test]
-    fn test_secret_entry_roundtrip_with_env() {
-        let entry = SecretEntry {
-            name: "GH_WORK".into(),
-            env: Some("GITHUB_TOKEN".into()),
-            created_at: "2026-03-21T00:00:00Z".into(),
-        };
-        let json = serde_json::to_string(&entry).unwrap();
-        let deserialized: SecretEntry = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.name, "GH_WORK");
-        assert_eq!(deserialized.env.as_deref(), Some("GITHUB_TOKEN"));
     }
 
     #[test]

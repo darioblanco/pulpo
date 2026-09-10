@@ -86,7 +86,6 @@ pub async fn create(
         ink: None,
         description: req.description,
         runtime: req.runtime,
-        secrets: req.secrets.unwrap_or_default(),
         worktree: req.worktree,
         worktree_base: req.worktree_base,
         budget_cost_usd: req.budget_cost_usd,
@@ -138,9 +137,6 @@ pub async fn update(
     }
     if let Some(runtime) = &req.runtime {
         schedule.runtime.clone_from(runtime);
-    }
-    if let Some(secrets) = req.secrets {
-        schedule.secrets = secrets;
     }
     if let Some(worktree) = &req.worktree {
         schedule.worktree = *worktree;
@@ -585,7 +581,6 @@ mod tests {
                 "command": "claude -p 'review'",
                 "workdir": "/tmp",
                 "runtime": "tmux",
-                "secrets": ["GH_TOKEN", "NPM_TOKEN"],
                 "worktree": true,
                 "worktree_base": "main"
             }))
@@ -593,10 +588,6 @@ mod tests {
         resp.assert_status(StatusCode::CREATED);
         let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
         assert_eq!(body["runtime"], "tmux");
-        assert_eq!(
-            body["secrets"],
-            serde_json::json!(["GH_TOKEN", "NPM_TOKEN"])
-        );
         assert_eq!(body["worktree"], true);
         assert_eq!(body["worktree_base"], "main");
     }
@@ -702,7 +693,6 @@ mod tests {
             .put(&format!("/api/v1/schedules/{id}"))
             .json(&serde_json::json!({
                 "runtime": "tmux",
-                "secrets": ["SECRET_A"],
                 "worktree": true,
                 "worktree_base": "develop"
             }))
@@ -710,7 +700,6 @@ mod tests {
         resp.assert_status_ok();
         let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
         assert_eq!(body["runtime"], "tmux");
-        assert_eq!(body["secrets"], serde_json::json!(["SECRET_A"]));
         assert_eq!(body["worktree"], true);
         assert_eq!(body["worktree_base"], "develop");
     }
@@ -753,7 +742,5 @@ mod tests {
         resp.assert_status(StatusCode::CREATED);
         let body: serde_json::Value = serde_json::from_str(&resp.text()).unwrap();
         assert!(body.get("runtime").is_none() || body["runtime"].is_null());
-        // secrets should not appear (empty vec with skip_serializing_if)
-        assert!(body.get("secrets").is_none() || body["secrets"].as_array().unwrap().is_empty());
     }
 }

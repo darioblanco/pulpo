@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -18,7 +18,7 @@ use crate::session::utils::{
     DOCKER_RUNTIME_REMOVED, cleanup_harness_dir, exit_dir, find_orphan_exit_markers,
     find_orphan_session_logs, find_orphan_worktree_dirs, has_exit_marker, read_exit_code_marker,
     remove_exit_markers, remove_session_log, session_log_path, validate_runtime,
-    validate_session_name, validate_workdir, worktrees_dir, wrap_command, write_secrets_file,
+    validate_session_name, validate_workdir, worktrees_dir, wrap_command,
 };
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -60,7 +60,6 @@ struct SessionCreatePlan {
     backend_id: String,
     effective_workdir: String,
     final_command: String,
-    secrets_file: Option<String>,
 }
 
 /// Prepend `export KEY='value'; ` for each of a [`harness::SpawnPlan`]'s extra env
@@ -171,9 +170,9 @@ impl SessionManager {
     /// or interprets any artifacts the source session left behind (e.g. a PLAN.md) —
     /// it only guarantees the next command starts in the same place.
     ///
-    /// Reuses [`Self::build_create_plan`] (and therefore `wrap_command`, the secrets
-    /// file, budget metadata, and idle threshold plumbing) with an adopted worktree
-    /// instead of creating a new one, so this is not a parallel code path to `spawn`.
+    /// Reuses [`Self::build_create_plan`] (and therefore `wrap_command`, budget
+    /// metadata, and idle threshold plumbing) with an adopted worktree instead of
+    /// creating a new one, so this is not a parallel code path to `spawn`.
     pub async fn handoff_session(
         &self,
         source_id: &str,
@@ -216,7 +215,6 @@ impl SessionManager {
             worktree: None,
             worktree_base: None,
             runtime: None,
-            secrets: req.secrets,
             term_program: req.term_program,
             budget_cost_usd: req.budget_cost_usd,
         };
@@ -259,8 +257,7 @@ impl SessionManager {
             &plan.effective_workdir,
             &plan.final_command,
         ) {
-            self.cleanup_failed_create(&plan.session.id, plan.secrets_file.as_deref())
-                .await?;
+            self.cleanup_failed_create(&plan.session.id).await?;
             return Err(error);
         }
 
@@ -328,15 +325,6 @@ impl SessionManager {
             );
         }
 
-        // Resolve secrets for injection.
-        let secrets_env = if let Some(ref secret_names) = req.secrets
-            && !secret_names.is_empty()
-        {
-            self.store.get_secrets_for_injection(secret_names).await?
-        } else {
-            HashMap::new()
-        };
-
         let id = Uuid::new_v4();
         let name = req.name.clone();
         let backend_id = self.backend.session_id(&name);
@@ -366,20 +354,10 @@ impl SessionManager {
         let harness_id = adapter.id().to_owned();
         let harness_session_id = spawn_plan.harness_session_id.clone();
 
-        // Write secrets to a temp file. The file is sourced and immediately deleted
-        // by the session shell, so secrets never appear in the command string visible
-        // in `ps` or `capture-pane`.
-        let secrets_file = if secrets_env.is_empty() {
-            None
-        } else {
-            write_secrets_file(&id, &secrets_env, self.store.data_dir())?
-        };
-
         let final_command = wrap_command(
             &apply_extra_env(&spawn_plan.command, &spawn_plan.env),
             &id,
             &name,
-            secrets_file.as_deref(),
             req.term_program.as_deref(),
             self.store.data_dir(),
         );
@@ -416,18 +394,10 @@ impl SessionManager {
             backend_id,
             effective_workdir,
             final_command,
-            secrets_file,
         })
     }
 
-    async fn cleanup_failed_create(
-        &self,
-        session_id: &Uuid,
-        secrets_file: Option<&str>,
-    ) -> Result<()> {
-        if let Some(secrets_file) = secrets_file {
-            let _ = std::fs::remove_file(secrets_file);
-        }
+    async fn cleanup_failed_create(&self, session_id: &Uuid) -> Result<()> {
         self.store
             .update_session_status(&session_id.to_string(), SessionStatus::Stopped)
             .await?;
@@ -508,7 +478,6 @@ impl SessionManager {
             command,
             &session.id,
             &session.name,
-            None,
             None,
             self.store.data_dir(),
         );
@@ -1436,7 +1405,6 @@ mod tests {
             worktree: None,
             worktree_base: None,
             runtime: None,
-            secrets: None,
             term_program: None,
             budget_cost_usd: None,
         }
@@ -1477,7 +1445,6 @@ mod tests {
             worktree: None,
             worktree_base: None,
             runtime: None,
-            secrets: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1527,10 +1494,10 @@ mod tests {
     fn test_wrap_command_escapes_session_name() {
         // Even if validation is bypassed, wrap_command should escape the name
         let id = uuid::Uuid::new_v4();
-        let wrapped = wrap_command("echo test", &id, "safe-name", None, None, "/tmp");
+        let wrapped = wrap_command("echo test", &id, "safe-name", None, "/tmp");
         assert!(wrapped.contains("PULPO_SESSION_NAME=safe-name"));
         // Verify single quotes in name would be escaped (defense-in-depth)
-        let wrapped = wrap_command("echo test", &id, "name'inject", None, None, "/tmp");
+        let wrapped = wrap_command("echo test", &id, "name'inject", None, "/tmp");
         assert!(!wrapped.contains("name'inject"));
         assert!(wrapped.contains("name'\\''inject"));
     }
@@ -1548,7 +1515,6 @@ mod tests {
             worktree: None,
             worktree_base: None,
             runtime: None,
-            secrets: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1569,7 +1535,6 @@ mod tests {
             worktree: None,
             worktree_base: None,
             runtime: None,
-            secrets: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -1638,49 +1603,6 @@ mod tests {
         let sessions = mgr.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].status, SessionStatus::Stopped);
-    }
-
-    #[tokio::test]
-    async fn test_create_session_backend_failure_cleans_up_secrets_file() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new().with_create_error()).await;
-        // Pre-populate a secret
-        mgr.store()
-            .set_secret("CLEANUP_TOKEN", "val123")
-            .await
-            .unwrap();
-        let mut req = make_req("cleanup-test");
-        req.secrets = Some(vec!["CLEANUP_TOKEN".into()]);
-        let result = mgr.create_session(req).await;
-        assert!(result.is_err());
-
-        // The secrets file should have been cleaned up
-        let data_dir = mgr.store().data_dir();
-        let secrets_dir = format!("{data_dir}/secrets");
-        if std::fs::exists(&secrets_dir).unwrap_or(false) {
-            let entries: Vec<_> = std::fs::read_dir(&secrets_dir)
-                .unwrap()
-                .filter_map(std::result::Result::ok)
-                .collect();
-            assert!(
-                entries.is_empty(),
-                "secrets file should have been cleaned up, found: {entries:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_write_secrets_file_creates_secrets_subdirectory() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let data_dir = tmpdir.path().to_str().unwrap();
-        let id = uuid::Uuid::new_v4();
-        let mut secrets = HashMap::new();
-        secrets.insert("KEY".to_owned(), "val".to_owned());
-        let path = write_secrets_file(&id, &secrets, data_dir)
-            .unwrap()
-            .unwrap();
-        // File should be under data_dir/secrets/
-        assert!(path.starts_with(&format!("{data_dir}/secrets/")));
-        assert!(std::path::Path::new(&path).exists());
     }
 
     #[tokio::test]
@@ -2292,7 +2214,7 @@ mod tests {
     #[test]
     fn test_wrap_command_basic() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo hello", &id, "test-session", None, None, "/tmp");
+        let cmd = wrap_command("echo hello", &id, "test-session", None, "/tmp");
         assert!(cmd.contains("-l -c"));
         assert!(cmd.contains("echo hello"));
         assert!(cmd.contains("[pulpo] Agent exited (session: test-session)"));
@@ -2312,14 +2234,7 @@ mod tests {
     #[test]
     fn test_wrap_command_single_quotes() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command(
-            "claude -p 'Fix the bug'",
-            &id,
-            "my-task",
-            None,
-            None,
-            "/tmp",
-        );
+        let cmd = wrap_command("claude -p 'Fix the bug'", &id, "my-task", None, "/tmp");
         assert!(cmd.contains("-l -c"));
         // Single quotes should be properly escaped
         assert!(cmd.contains("claude -p"));
@@ -2335,7 +2250,7 @@ mod tests {
         // Verify the wrapped command has balanced single quotes so it doesn't
         // cause "unmatched '" errors when tmux passes it to the shell.
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude", &id, "test-session", None, None, "/tmp");
+        let cmd = wrap_command("claude", &id, "test-session", None, "/tmp");
 
         // Count single quotes outside of escaped sequences (\')
         // The '\'' pattern (end-quote, escaped-quote, start-quote) is valid.
@@ -2355,7 +2270,7 @@ mod tests {
         // quoting bugs. The wrapped command is a complete shell invocation like
         // `/bin/zsh -l -c '...'`, so we parse it as a whole.
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("true", &id, "test-session", None, None, "/tmp");
+        let cmd = wrap_command("true", &id, "test-session", None, "/tmp");
 
         let output = std::process::Command::new("sh")
             .args(["-n", "-c", &cmd])
@@ -2373,14 +2288,7 @@ mod tests {
     fn test_wrap_command_with_quotes_executes_without_parse_error() {
         // Same test but with a command containing single quotes (common with claude -p).
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command(
-            "echo 'hello world'",
-            &id,
-            "quoted-session",
-            None,
-            None,
-            "/tmp",
-        );
+        let cmd = wrap_command("echo 'hello world'", &id, "quoted-session", None, "/tmp");
 
         let output = std::process::Command::new("sh")
             .args(["-n", "-c", &cmd])
@@ -2412,7 +2320,7 @@ mod tests {
     #[test]
     fn test_wrap_command_shell_no_exit_marker() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("bash", &id, "my-shell", None, None, "/tmp");
+        let cmd = wrap_command("bash", &id, "my-shell", None, "/tmp");
         // Bare-shell spawns are NOT exec'd — the wrapper must regain control to
         // write the `.clean` marker after the interactive shell exits.
         assert!(cmd.contains("bash;"));
@@ -2430,42 +2338,10 @@ mod tests {
     #[test]
     fn test_wrap_command_shell_with_path() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("/usr/bin/zsh", &id, "zsh-session", None, None, "/tmp");
+        let cmd = wrap_command("/usr/bin/zsh", &id, "zsh-session", None, "/tmp");
         assert!(cmd.contains("/usr/bin/zsh;"));
         assert!(!cmd.contains("exec /usr/bin/zsh"));
         assert!(!cmd.contains("[pulpo] Agent exited"));
-    }
-
-    #[test]
-    fn test_wrap_command_with_secrets_file() {
-        let id = uuid::Uuid::new_v4();
-        let secrets_path = "/tmp/pulpo-secrets-test.sh";
-        let cmd = wrap_command("echo hello", &id, "test", Some(secrets_path), None, "/tmp");
-        // Command should source the secrets file and delete it — NOT contain secret values
-        assert!(cmd.contains(". /tmp/pulpo-secrets-test.sh && rm -f /tmp/pulpo-secrets-test.sh"));
-        assert!(cmd.contains("echo hello"));
-        // Secret values should NOT appear in the command string
-        assert!(!cmd.contains("export GITHUB_TOKEN"));
-    }
-
-    #[test]
-    fn test_wrap_command_shell_with_secrets_file() {
-        let id = uuid::Uuid::new_v4();
-        let secrets_path = "/tmp/pulpo-secrets-shell.sh";
-        let cmd = wrap_command("bash", &id, "my-shell", Some(secrets_path), None, "/tmp");
-        assert!(cmd.contains(". /tmp/pulpo-secrets-shell.sh && rm -f /tmp/pulpo-secrets-shell.sh"));
-        assert!(cmd.contains("bash;"));
-        assert!(!cmd.contains("exec bash"));
-    }
-
-    #[test]
-    fn test_wrap_command_no_secrets_file() {
-        let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo hello", &id, "test", None, None, "/tmp");
-        // Without secrets, no source/rm prefix should appear
-        assert!(!cmd.contains(". /tmp/pulpo-secrets"));
-        assert!(!cmd.contains("rm -f"));
-        assert!(cmd.contains("echo hello"));
     }
 
     #[test]
@@ -2474,7 +2350,7 @@ mod tests {
         // exit-marker directory must be quoted defensively, just like session names.
         let id = uuid::Uuid::new_v4();
         let data_dir = "/tmp/pulpo test dir";
-        let cmd = wrap_command("echo hi", &id, "test", None, None, data_dir);
+        let cmd = wrap_command("echo hi", &id, "test", None, data_dir);
         assert!(cmd.contains(&format!("{id}.code")));
         assert!(cmd.contains(&format!("{id}.clean")));
         assert!(cmd.contains("pulpo test dir"));
@@ -2494,124 +2370,15 @@ mod tests {
     #[test]
     fn test_wrap_command_term_program() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude", &id, "test-session", None, Some("ghostty"), "/tmp");
+        let cmd = wrap_command("claude", &id, "test-session", Some("ghostty"), "/tmp");
         assert!(cmd.contains("export TERM_PROGRAM='ghostty'"));
     }
 
     #[test]
     fn test_wrap_command_no_term_program() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude", &id, "test-session", None, None, "/tmp");
+        let cmd = wrap_command("claude", &id, "test-session", None, "/tmp");
         assert!(!cmd.contains("TERM_PROGRAM"));
-    }
-
-    #[test]
-    fn test_write_secrets_file_empty() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let id = uuid::Uuid::new_v4();
-        let result =
-            write_secrets_file(&id, &HashMap::new(), tmpdir.path().to_str().unwrap()).unwrap();
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_write_secrets_file_creates_file() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let data_dir = tmpdir.path().to_str().unwrap();
-        let id = uuid::Uuid::new_v4();
-        let mut secrets = HashMap::new();
-        secrets.insert("GITHUB_TOKEN".to_owned(), "ghp_abc123".to_owned());
-        secrets.insert("NPM_TOKEN".to_owned(), "npm_xyz".to_owned());
-
-        let path = write_secrets_file(&id, &secrets, data_dir)
-            .unwrap()
-            .unwrap();
-        assert_eq!(path, format!("{data_dir}/secrets/secrets-{id}.sh"));
-
-        // File should exist and contain export statements
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("export GITHUB_TOKEN='ghp_abc123'"));
-        assert!(content.contains("export NPM_TOKEN='npm_xyz'"));
-
-        // File should have restrictive permissions (0600) set atomically
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let metadata = std::fs::metadata(&path).unwrap();
-            assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
-        }
-    }
-
-    #[test]
-    fn test_write_secrets_file_escapes_single_quotes() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let data_dir = tmpdir.path().to_str().unwrap();
-        let id = uuid::Uuid::new_v4();
-        let mut secrets = HashMap::new();
-        secrets.insert("MY_KEY".to_owned(), "value'with'quotes".to_owned());
-
-        let path = write_secrets_file(&id, &secrets, data_dir)
-            .unwrap()
-            .unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("export MY_KEY='value'\\''with'\\''quotes'"));
-    }
-
-    #[tokio::test]
-    async fn test_create_session_with_secrets() {
-        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
-        // Pre-populate secrets
-        mgr.store()
-            .set_secret("MY_TOKEN", "secret123")
-            .await
-            .unwrap();
-        mgr.store()
-            .set_secret_with_env("GH_WORK", "ghp_abc", Some("GITHUB_TOKEN"))
-            .await
-            .unwrap();
-
-        let mut req = make_req("secret-test");
-        req.secrets = Some(vec!["MY_TOKEN".into(), "GH_WORK".into()]);
-        let session = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.status, SessionStatus::Active);
-
-        let calls = backend.calls.lock().unwrap();
-        let create_call = &calls[0];
-        // Secrets should NOT appear in the command string (security fix)
-        assert!(
-            !create_call.contains("secret123"),
-            "secret value leaked into command: {create_call}"
-        );
-        assert!(
-            !create_call.contains("ghp_abc"),
-            "secret value leaked into command: {create_call}"
-        );
-        // Instead, the command should source a secrets file from data_dir
-        assert!(
-            create_call.contains("/secrets/secrets-"),
-            "command should source secrets file: {create_call}"
-        );
-        assert!(
-            create_call.contains("&& rm -f"),
-            "command should delete secrets file: {create_call}"
-        );
-        drop(calls);
-
-        // Verify the secrets file was created with correct content in data_dir
-        let data_dir = mgr.store().data_dir();
-        let secrets_path = format!("{data_dir}/secrets/secrets-{}.sh", session.id);
-        let content = std::fs::read_to_string(&secrets_path).unwrap();
-        assert!(content.contains("export MY_TOKEN='secret123'"));
-        assert!(content.contains("export GITHUB_TOKEN='ghp_abc'"));
-    }
-
-    #[tokio::test]
-    async fn test_create_session_with_empty_secrets() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let mut req = make_req("empty-secrets");
-        req.secrets = Some(vec![]);
-        let session = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.status, SessionStatus::Active);
     }
 
     #[tokio::test]
@@ -2716,7 +2483,6 @@ mod tests {
             worktree: None,
             worktree_base: None,
             runtime: None,
-            secrets: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -2745,7 +2511,6 @@ mod tests {
             worktree: None,
             worktree_base: None,
             runtime: None,
-            secrets: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -2772,118 +2537,11 @@ mod tests {
             worktree: None,
             worktree_base: None,
             runtime: None,
-            secrets: None,
             term_program: None,
             budget_cost_usd: None,
         };
         let session = mgr.create_session(req).await.unwrap();
         assert_eq!(session.command, "custom-agent");
-    }
-
-    #[test]
-    fn test_write_secrets_file_path_includes_session_id() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let data_dir = tmpdir.path().to_str().unwrap();
-        let id = uuid::Uuid::new_v4();
-        let mut secrets = HashMap::new();
-        secrets.insert("KEY".to_owned(), "val".to_owned());
-        let path = write_secrets_file(&id, &secrets, data_dir)
-            .unwrap()
-            .unwrap();
-        assert!(
-            path.contains(&id.to_string()),
-            "path should contain session ID: {path}"
-        );
-        assert_eq!(path, format!("{data_dir}/secrets/secrets-{id}.sh"));
-    }
-
-    #[test]
-    fn test_write_secrets_file_content_format() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let data_dir = tmpdir.path().to_str().unwrap();
-        let id = uuid::Uuid::new_v4();
-        let mut secrets = HashMap::new();
-        secrets.insert("MY_VAR".to_owned(), "hello world".to_owned());
-        let path = write_secrets_file(&id, &secrets, data_dir)
-            .unwrap()
-            .unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        // Each line should be: export KEY='VALUE'
-        assert!(content.contains("export MY_VAR='hello world'\n"));
-    }
-
-    #[test]
-    fn test_write_secrets_file_escapes_multiple_single_quotes() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let data_dir = tmpdir.path().to_str().unwrap();
-        let id = uuid::Uuid::new_v4();
-        let mut secrets = HashMap::new();
-        secrets.insert("K".to_owned(), "a'b'c".to_owned());
-        let path = write_secrets_file(&id, &secrets, data_dir)
-            .unwrap()
-            .unwrap();
-        let content = std::fs::read_to_string(&path).unwrap();
-        // Each ' becomes '\'' in shell single-quote escaping
-        assert!(content.contains("export K='a'\\''b'\\''c'"));
-    }
-
-    #[test]
-    fn test_wrap_command_secrets_source_before_env_vars() {
-        let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command(
-            "echo test",
-            &id,
-            "sess",
-            Some("/tmp/secrets.sh"),
-            None,
-            "/tmp",
-        );
-        // The source-and-delete must come BEFORE the env var exports
-        let source_pos = cmd.find(". /tmp/secrets.sh").unwrap();
-        let env_pos = cmd.find("PULPO_SESSION_ID").unwrap();
-        assert!(
-            source_pos < env_pos,
-            "secrets should be sourced before env vars: {cmd}"
-        );
-    }
-
-    #[test]
-    fn test_wrap_command_secrets_source_and_delete_pattern() {
-        let id = uuid::Uuid::new_v4();
-        let path = "/tmp/pulpo-secrets-test.sh";
-        let cmd = wrap_command("my-agent", &id, "sess", Some(path), None, "/tmp");
-        // Pattern: `. <file> && rm -f <file>; `
-        assert!(cmd.contains(&format!(". {path} && rm -f {path}; ")));
-    }
-
-    #[tokio::test]
-    async fn test_create_session_with_missing_secret_names() {
-        // Requesting secrets that don't exist in store — should silently skip them
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        let mut req = make_req("missing-secrets");
-        req.secrets = Some(vec!["NONEXISTENT_SECRET".into()]);
-        let session = mgr.create_session(req).await.unwrap();
-        assert_eq!(session.status, SessionStatus::Active);
-    }
-
-    #[tokio::test]
-    async fn test_create_session_secret_env_collision() {
-        let (mgr, _, _pool) = test_manager(MockBackend::new()).await;
-        // Set up two secrets that both map to GITHUB_TOKEN
-        mgr.store()
-            .set_secret("GITHUB_TOKEN", "val1")
-            .await
-            .unwrap();
-        mgr.store()
-            .set_secret_with_env("GH_WORK", "val2", Some("GITHUB_TOKEN"))
-            .await
-            .unwrap();
-
-        let mut req = make_req("collision-test");
-        req.secrets = Some(vec!["GITHUB_TOKEN".into(), "GH_WORK".into()]);
-        let result = mgr.create_session(req).await;
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("both map to env var"), "got: {err}");
     }
 
     #[tokio::test]
@@ -2899,7 +2557,6 @@ mod tests {
             worktree: None,
             worktree_base: None,
             runtime: None,
-            secrets: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -3215,7 +2872,6 @@ mod tests {
             worktree: None,
             worktree_base: None,
             runtime: None,
-            secrets: None,
             term_program: None,
             budget_cost_usd: None,
         };
@@ -3417,7 +3073,6 @@ mod tests {
             name: None,
             command: None,
             description: None,
-            secrets: None,
             budget_cost_usd: None,
             idle_threshold_secs: None,
             term_program: None,
@@ -3767,7 +3422,7 @@ mod tests {
     #[test]
     fn test_wrap_command_double_quotes() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo \"hello world\"", &id, "test", None, None, "/tmp");
+        let cmd = wrap_command("echo \"hello world\"", &id, "test", None, "/tmp");
         assert!(cmd.contains("echo \"hello world\""));
         assert!(cmd.contains("-l -c"));
     }
@@ -3775,21 +3430,21 @@ mod tests {
     #[test]
     fn test_wrap_command_backticks() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo `date`", &id, "test", None, None, "/tmp");
+        let cmd = wrap_command("echo `date`", &id, "test", None, "/tmp");
         assert!(cmd.contains("echo `date`"));
     }
 
     #[test]
     fn test_wrap_command_dollar_variables() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo $HOME $USER", &id, "test", None, None, "/tmp");
+        let cmd = wrap_command("echo $HOME $USER", &id, "test", None, "/tmp");
         assert!(cmd.contains("echo $HOME $USER"));
     }
 
     #[test]
     fn test_wrap_command_empty_string() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("", &id, "test", None, None, "/tmp");
+        let cmd = wrap_command("", &id, "test", None, "/tmp");
         // Empty command is not a shell command, so gets agent wrapper
         assert!(cmd.contains("-l -c"));
         assert!(cmd.contains("[pulpo] Agent exited"));
@@ -3799,7 +3454,7 @@ mod tests {
     fn test_wrap_command_very_long() {
         let id = uuid::Uuid::new_v4();
         let long_cmd = "echo ".to_owned() + &"a".repeat(10_000);
-        let cmd = wrap_command(&long_cmd, &id, "test", None, None, "/tmp");
+        let cmd = wrap_command(&long_cmd, &id, "test", None, "/tmp");
         assert!(cmd.contains(&"a".repeat(10_000)));
         assert!(cmd.contains("-l -c"));
     }
@@ -5028,7 +4683,6 @@ mod real_tmux_tests {
             worktree: worktree.then_some(true),
             worktree_base: None,
             runtime: None,
-            secrets: None,
             term_program: None,
             budget_cost_usd: None,
         }

@@ -35,7 +35,6 @@ async fn test_list_returns_local_session_without_filters() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -61,7 +60,6 @@ async fn test_list_with_status_filter() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -105,7 +103,6 @@ async fn test_get_returns_local_session() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -131,7 +128,6 @@ async fn test_create_returns_created() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -155,7 +151,6 @@ async fn test_create_docker_runtime_rejected_with_bad_request() {
         worktree: None,
         worktree_base: None,
         runtime: Some(pulpo_common::session::Runtime::Docker),
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -183,7 +178,6 @@ async fn test_create_duplicate_name_returns_conflict() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -218,7 +212,6 @@ async fn test_cleanup_removes_stopped_sessions() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -269,7 +262,6 @@ async fn test_stop_returns_no_content() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -294,7 +286,6 @@ async fn test_stop_with_purge() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -330,7 +321,6 @@ async fn test_output_for_session() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -367,7 +357,6 @@ async fn test_input_for_session() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -484,7 +473,6 @@ async fn test_get_internal_error() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -511,7 +499,6 @@ async fn test_stop_internal_error() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -541,7 +528,6 @@ async fn test_create_internal_error() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -564,7 +550,6 @@ async fn test_output_internal_error() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -592,7 +577,6 @@ async fn test_input_internal_error() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -626,7 +610,6 @@ async fn test_output_capture_fallback_to_log() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -654,7 +637,6 @@ async fn test_input_send_error() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -746,7 +728,6 @@ async fn test_download_output_running_session() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -805,7 +786,6 @@ async fn test_download_output_dead_session_no_snapshot() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -849,7 +829,6 @@ async fn test_download_output_internal_error() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -876,7 +855,6 @@ async fn test_list_interventions_empty() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -901,7 +879,6 @@ async fn test_list_interventions_with_events() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -970,7 +947,6 @@ async fn test_resume_not_stale() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1034,7 +1010,6 @@ async fn test_resume_stale_session() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1067,7 +1042,6 @@ async fn test_resume_name_collision_returns_conflict() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1090,7 +1064,6 @@ async fn test_resume_name_collision_returns_conflict() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1169,7 +1142,6 @@ async fn test_resume_internal_error() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1203,7 +1175,6 @@ fn empty_handoff_req() -> HandoffSessionRequest {
         name: None,
         command: None,
         description: None,
-        secrets: None,
         budget_cost_usd: None,
         idle_threshold_secs: None,
         term_program: None,
@@ -1237,7 +1208,6 @@ async fn test_handoff_auto_name_by_id() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1270,7 +1240,6 @@ async fn test_handoff_resolves_source_by_name() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1301,7 +1270,6 @@ async fn test_handoff_explicit_name_and_command() {
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };
@@ -1342,7 +1310,6 @@ async fn create_claude_session(
         worktree: None,
         worktree_base: None,
         runtime: None,
-        secrets: None,
         term_program: None,
         budget_cost_usd: None,
     };

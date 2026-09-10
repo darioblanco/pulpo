@@ -99,8 +99,6 @@ pub(super) fn row_to_session(row: &SqliteRow) -> Result<Session> {
 
 #[allow(clippy::unnecessary_wraps)]
 pub(super) fn row_to_schedule(row: &SqliteRow) -> Result<pulpo_common::api::Schedule> {
-    let secrets_json: String = row.try_get("secrets").unwrap_or_else(|_| "[]".to_owned());
-    let secrets: Vec<String> = serde_json::from_str(&secrets_json).unwrap_or_default();
     Ok(pulpo_common::api::Schedule {
         id: row.try_get("id").unwrap_or_default(),
         name: row.try_get("name").unwrap_or_default(),
@@ -110,7 +108,6 @@ pub(super) fn row_to_schedule(row: &SqliteRow) -> Result<pulpo_common::api::Sche
         ink: row.try_get("ink").unwrap_or(None),
         description: row.try_get("description").unwrap_or(None),
         runtime: row.try_get("runtime").unwrap_or(None),
-        secrets,
         worktree: row.try_get("worktree").unwrap_or(None),
         worktree_base: row.try_get("worktree_base").unwrap_or(None),
         budget_cost_usd: row.try_get("budget_cost_usd").unwrap_or(None),
@@ -405,7 +402,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_row_to_schedule_invalid_secrets_defaults_empty() {
+    async fn test_row_to_schedule_reads_fields() {
         let pool = memory_pool().await;
         let row = sqlx::query(
             r"
@@ -418,7 +415,6 @@ mod tests {
                 NULL AS ink,
                 NULL AS description,
                 NULL AS runtime,
-                'not-json' AS secrets,
                 1 AS worktree,
                 'main' AS worktree_base,
                 1 AS enabled,
@@ -432,7 +428,7 @@ mod tests {
         .unwrap();
 
         let schedule = row_to_schedule(&row).unwrap();
-        assert!(schedule.secrets.is_empty());
+        assert_eq!(schedule.id, "sched-1");
         assert_eq!(schedule.worktree, Some(true));
     }
 }

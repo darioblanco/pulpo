@@ -25,7 +25,6 @@ pulpo usage [--scan] --json               Output raw JSON instead of the formatt
 pulpo nodes                               List known nodes/peers
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
 pulpo worktree list                       List worktree sessions (alias: wt ls)
-pulpo secret <SUBCOMMAND>                 Manage secrets (env vars for sessions)
 pulpo ui                                  Open web UI in browser
 ```
 
@@ -47,7 +46,6 @@ By default, `spawn` auto-attaches to the session. Use `--detach` / `-d` to skip 
 | `--idle-threshold <SECS>` | Per-session idle threshold (`0` = never idle) |
 | `--worktree` / `-w` | Create an isolated git worktree for the session |
 | `--worktree-base <BRANCH>` | Fork worktree from a specific branch (implies `--worktree`) |
-| `--secret <NAME>` | Inject a stored secret as an environment variable |
 | `--budget-cost <USD>` | Cost budget; watchdog alerts at 80% and stops the session at 100% |
 
 If no name is provided, Pulpo derives one from the workdir/path context. If no command is provided, Pulpo falls back to `node.default_command`, or finally `$SHELL`.
@@ -74,7 +72,6 @@ the next command starts in the same directory (and worktree, if any).
 |------|-------------|
 | `NAME` | New session name (auto-generated as `<source>-2`, `-3`, ... if omitted) |
 | `--description <TEXT>` | Human-readable description for the new session |
-| `--secret <NAME>` | Inject a stored secret as an environment variable (repeatable) |
 | `--budget-cost <USD>` | Cost budget for the new session |
 | `--idle-threshold <SECS>` | Per-session idle threshold (`0` = never idle) |
 | `--detach` / `-d` | Don't attach to the new session after handoff |
@@ -103,7 +100,6 @@ pulpo schedule remove <ID>                                      Remove a job
 |------|-------------|
 | `--workdir <PATH>` | Working directory (default: current) |
 | `--description <TEXT>` | Human-readable description |
-| `--secret <NAME>` | Inject a stored secret (repeatable) |
 | `--worktree` | Create an isolated git worktree for each run |
 | `--worktree-base <BRANCH>` | Fork worktree from a specific branch (implies `--worktree`) |
 | `--budget-cost <USD>` | Cost budget applied to every session this schedule fires (watchdog alerts at 80%, stops at 100%) |
@@ -115,16 +111,6 @@ create it on another machine, use the global `--node` flag before the subcommand
 **Scheduler behavior:** Schedules run in the daemon's machine timezone. The scheduler loop ticks every 60 seconds, so cron expressions more granular than 1 minute won't fire more often. Each schedule fire creates a fresh session with a timestamped name (`<schedule>-YYYYMMDD-HHMM`).
 
 **Worktree schedules:** When `--worktree` is set, each scheduled run creates a fresh git worktree, giving the agent an isolated copy of the repository. The worktree is cleaned up when the session is stopped.
-
-## Secret Subcommands
-
-```text
-pulpo secret set <NAME> <VALUE>           Set a secret (env var)
-pulpo secret list                         List secret names (alias: ls)
-pulpo secret delete <NAME>                Delete a secret (alias: rm)
-```
-
-Secrets are environment variables injected into sessions. Names must be uppercase alphanumeric with underscores (e.g., `GITHUB_TOKEN`). Values are never returned by the API.
 
 ## Hook (internal)
 
@@ -226,16 +212,15 @@ pulpo schedule add nightly-review "0 3 * * *" \
 
 See [Nightly Code Review](/guides/nightly-code-review) for the complete recipe.
 
-### Remote private-infra run with secrets
+### Remote private-infra run with a credential
 
 ```bash
 pulpo --node mac-mini spawn review-backend \
   --workdir ~/repos/backend \
-  --secret GH_WORK \
-  -- claude -p "Review this service for correctness, security issues, and missing tests."
+  -- env GITHUB_TOKEN=ghp_work_xxxxxxxxxxxx claude -p "Review this service for correctness, security issues, and missing tests."
 ```
 
-See [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale) for the complete recipe.
+See [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale) for the complete recipe.
 
 ### Worktree-isolated risky task
 

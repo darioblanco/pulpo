@@ -183,7 +183,7 @@ adds no single point of failure and integrates with your existing observability.
 - **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots.
 - **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error/completion patterns, git telemetry (branch, diff; PR URL detected from output).
 - **Execution isolation**: per-session git worktrees for parallel work on one repo.
-- **Scheduled runs**: cron-based schedules (`pulpo schedule`) with the same budgets and worktree support; `pulpo secret` injects secrets into sessions as env vars.
+- **Scheduled runs**: cron-based schedules (`pulpo schedule`) with the same budgets and worktree support.
 - **Sovereign access**: single binary with embedded web UI/PWA, CLI, REST API; Tailscale transport for private remote access.
 - **Command-agnostic**: any terminal agent or command.
 

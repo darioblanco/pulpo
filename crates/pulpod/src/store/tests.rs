@@ -51,7 +51,7 @@ async fn test_migrate_uses_sqlx_migrations_table() {
             .fetch_all(store.pool())
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 
     let has_sandbox: i32 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'sandbox'",
@@ -60,6 +60,24 @@ async fn test_migrate_uses_sqlx_migrations_table() {
     .await
     .unwrap();
     assert_eq!(has_sandbox, 0);
+
+    // The secrets store was removed: the `secrets` table and the
+    // `schedules.secrets` column must both be gone after migrating.
+    let has_secrets_table: i32 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='secrets'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(has_secrets_table, 0);
+
+    let has_secrets_column: i32 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('schedules') WHERE name = 'secrets'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(has_secrets_column, 0);
 }
 
 #[tokio::test]

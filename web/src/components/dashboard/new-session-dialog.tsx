@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,11 +10,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { Plus, GitBranch, X } from 'lucide-react';
+import { Plus, GitBranch } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
-import { Badge } from '@/components/ui/badge';
-import { createSession, getSecrets } from '@/api/client';
-import type { SecretEntry, Session } from '@/api/types';
+import { createSession } from '@/api/client';
+import type { Session } from '@/api/types';
 
 interface NewSessionDialogProps {
   onCreated: (session: Session) => void;
@@ -31,24 +30,6 @@ export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
   const [idleThreshold, setIdleThreshold] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [availableSecrets, setAvailableSecrets] = useState<SecretEntry[]>([]);
-  const [selectedSecrets, setSelectedSecrets] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (open) {
-      getSecrets()
-        .then((entries) => setAvailableSecrets(entries))
-        .catch(() => {
-          /* secrets are optional */
-        });
-    }
-  }, [open]);
-
-  function toggleSecret(secretName: string) {
-    setSelectedSecrets((prev) =>
-      prev.includes(secretName) ? prev.filter((s) => s !== secretName) : [...prev, secretName],
-    );
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -64,7 +45,6 @@ export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
         ...(worktree ? { worktree: true } : {}),
         ...(worktree && worktreeBase ? { worktree_base: worktreeBase } : {}),
         ...(idleThreshold ? { idle_threshold_secs: Number(idleThreshold) } : {}),
-        ...(selectedSecrets.length > 0 ? { secrets: selectedSecrets } : {}),
       };
 
       const resp = await createSession(data);
@@ -76,7 +56,6 @@ export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
       setWorktree(false);
       setWorktreeBase('');
       setIdleThreshold('');
-      setSelectedSecrets([]);
       setOpen(false);
       onCreated(resp.session);
     } catch (e) {
@@ -174,34 +153,6 @@ export function NewSessionDialog({ onCreated }: NewSessionDialogProps) {
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
-
-          {availableSecrets.length > 0 && (
-            <div className="space-y-1.5" data-testid="secrets-picker">
-              <Label>Secrets</Label>
-              <div className="flex flex-wrap gap-1.5">
-                {availableSecrets.map((s) => {
-                  const isSelected = selectedSecrets.includes(s.name);
-                  return (
-                    <Badge
-                      key={s.name}
-                      variant={isSelected ? 'default' : 'outline'}
-                      className="cursor-pointer"
-                      data-testid={`secret-badge-${s.name}`}
-                      onClick={() => toggleSecret(s.name)}
-                    >
-                      {s.name}
-                      {isSelected && <X className="ml-1 h-3 w-3" />}
-                    </Badge>
-                  );
-                })}
-              </div>
-              {selectedSecrets.length > 0 && (
-                <p className="text-xs text-muted-foreground" data-testid="secrets-selected-count">
-                  {selectedSecrets.length} secret{selectedSecrets.length > 1 ? 's' : ''} selected
-                </p>
-              )}
-            </div>
-          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="idle-threshold">Idle Threshold (seconds)</Label>

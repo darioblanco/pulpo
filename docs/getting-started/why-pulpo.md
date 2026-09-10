@@ -75,8 +75,8 @@ Pulpo gives you:
 
 - self-hosted execution on infrastructure you control, reachable over your own tailnet
 - command-agnostic support across agent vendors
-- secrets and cost data that never leave your machines
-- policy depth through watchdogs, secrets, worktrees, and budgets
+- credentials and cost data that never leave your machines
+- policy depth through watchdogs, worktrees, and budgets
 
 ### 3. The Operator Running Repeated Agent Work
 

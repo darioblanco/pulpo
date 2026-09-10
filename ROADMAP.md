@@ -92,9 +92,10 @@ unchanged — see git history of this file for the full sovereignty section.)
 | Event-forwarding backbone (`[[webhooks]]` + `/metrics`) | **The cross-node story**: forward signed events to your own collector; aggregate in Grafana/Datadog/SIEM. Replaces the removed bespoke controller for fleet visibility |
 | Tailscale transport (`bind = "tailscale"`) | Secure zero-setup remote access to a node's UI/API over the tailnet; standalone, no fleet required |
 | Controller / cross-node control plane | **REMOVED (July 2026)** — was frozen (2026-06-14), then deleted; not kept as dormant code (see Phase C) |
-| Inks (`[inks.<name>]` preset registry) | **REMOVED (July 2026)** — command/secrets set directly per session/schedule; budget moved onto schedules (`--budget-cost`); a shared blueprint added indirection without a corresponding need |
+| Inks (`[inks.<name>]` preset registry) | **REMOVED (July 2026)** — command set directly per session/schedule; budget moved onto schedules (`--budget-cost`); a shared blueprint added indirection without a corresponding need |
+| Secrets store | **REMOVED (2026-09)** — every supported agent reads its own credentials from its own config; an env var a session needs is exported in the shell or wrapped into the command |
 | PWA web UI | The gauge; mobile-first; single-node-first with an optional event-fed fleet pane |
-| CLI, secret store, webhook/web-push notifications | Supporting surface |
+| CLI, webhook/web-push notifications | Supporting surface |
 
 **Cut — orchestration we're losing at, plus dead weight (Track R):**
 
@@ -414,21 +415,22 @@ operation. Same principle as event forwarding: **local-first, then aggregate.** 
 
 Core infrastructure:
 - `pulpod` daemon + REST API + embedded web UI (single binary)
-- `pulpo` CLI with attach, spawn, resume, stop, logs, schedule, secret
+- `pulpo` CLI with attach, spawn, resume, stop, logs, schedule
 - SQLite-backed session persistence with full lifecycle state machine
   (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`; resume from `lost`/`ready`)
 - Watchdog: memory pressure intervention, idle detection, ready TTL cleanup,
   error/failure detection
 - Command-agnostic sessions (any CLI tool, any command)
 - Inks: reusable session blueprints (command, description, secrets, runtime defaults) —
-  shipped, then removed in July 2026; command/secrets/budget now set directly per
-  session/schedule (see Roadmap "Removed")
+  shipped, then removed in July 2026; command/budget now set directly per session/schedule
+  (see Roadmap "Removed")
 - Multi-node: Tailscale peer discovery, manual peers (`pulpo nodes`); a controller/node
   control plane (fleet dashboard, cross-node create/stop/resume, scheduled dispatch)
   shipped, then was removed in July 2026 — every `pulpod` is standalone, reached directly
   (see Phase C status above)
 - SSE event stream, webhook notifications, Web Push, PWA
-- Secret store: encrypted-at-rest env vars injected into sessions
+- Secret store: plaintext-in-SQLite env vars injected into sessions — shipped, then removed
+  in 2026-09 (see Roadmap "Removed")
 - Per-session idle threshold, configurable waiting patterns (extends the built-in set)
 - Scheduling: DB-backed cron schedules (local timezone), CRUD API + CLI, 60s scheduler
 - Observability: PR/branch detection, git branch/commit/diff tracking, rate-limit
@@ -486,9 +488,16 @@ Revisit only on real demand:
   DELETE /api/v1/inks`, `InkConfig`, `resolve_ink`, per-ink usage rollups. The community
   standardized agent-side config (AGENTS.md, skills) and shell-side presets (aliases,
   scripts); a pulpo-proprietary preset registry was config overhead nobody wrote. Command
-  and secrets are set directly per session/schedule; the recurring cost budget moved onto
-  the schedule itself (`pulpo schedule add --budget-cost <USD>`). `Session.ink` and
-  `Schedule.ink` remain on the wire for historical rows; never set for new ones.
+  is set directly per session/schedule; the recurring cost budget moved onto the schedule
+  itself (`pulpo schedule add --budget-cost <USD>`). `Session.ink` and `Schedule.ink`
+  remain on the wire for historical rows; never set for new ones.
+- ~~Secrets store~~ (2026-09) — `pulpo secret` CLI, `GET/PUT/DELETE /api/v1/secrets`, the
+  `secrets` SQLite table, `--secret` on `pulpo spawn`/`pulpo handoff`/`pulpo schedule add`,
+  the web settings secrets tab, and the temp-file injection on every session spawn. Every
+  supported agent (Claude Code, Codex, pi, Gemini) reads its own credentials from its own
+  config, and the owner's database had zero secrets stored after five months in
+  production. An env var a session needs is exported in the shell `pulpod` runs under, or
+  prefixed onto the spawned command (`-- env KEY=value ...`).
 
 ## Success Criteria
 

@@ -51,8 +51,8 @@ exactly what you'd least want flowing through a third-party relay.
 - Agent-to-agent communication; custom model hosting/serving
 - Multi-user / team features (single-user, your tailnet)
 - Defining the "best" preset catalog or prompting methodology — a preset registry
-  (`inks`) existed and was removed (July 2026; see Roadmap "Removed"); command/secrets
-  live directly on sessions and schedules
+  (`inks`) existed and was removed (July 2026; see Roadmap "Removed"); command lives
+  directly on sessions and schedules
 - Replacing specialized local agent UX tools, or becoming an all-in-one platform
 
 ---
@@ -664,10 +664,13 @@ the primary management surface.
 - ✅ Flexible session model (command, description, metadata)
 - ✅ SSE event stream (`GET /api/v1/events`, broadcast channel, SessionEvent)
 - ✅ Generic webhook notifications (`[[notifications.webhooks]]` config) + Web Push
-- ~~Ink config (`[inks.name]` preset registry, `GET/POST/PUT/DELETE /api/v1/inks`)~~ — removed July 2026: command/secrets set directly per session/schedule; budget moved onto schedules (`--budget-cost`)
+- ~~Ink config (`[inks.name]` preset registry, `GET/POST/PUT/DELETE /api/v1/inks`)~~ — removed July 2026: command set directly per session/schedule; budget moved onto schedules (`--budget-cost`)
 - ~~Discord webhook notifier (`[notifications.discord]` config)~~ — removed June 2026: use `[[notifications.webhooks]]`
 - ~~Discord bot (`contrib/discord-bot/`)~~ — removed June 2026
 - ~~MCP server (session management as MCP tools)~~ — removed June 2026: REST API is the primary integration surface
+- ~~Secrets store (`secrets` table, `GET/PUT/DELETE /api/v1/secrets`, `pulpo secret` CLI)~~
+  — removed 2026-09: every supported agent reads its own credentials from its own config;
+  an env var a session needs is exported in the shell or wrapped into the command
 
 ---
 

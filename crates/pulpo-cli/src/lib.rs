@@ -13,8 +13,8 @@ mod http;
 
 #[cfg_attr(coverage, allow(unused_imports))]
 use format::{
-    format_cleanup_message, format_interventions, format_nodes, format_schedules, format_secrets,
-    format_sessions, format_usage_projection, format_usage_scan, format_worktree_sessions,
+    format_cleanup_message, format_interventions, format_nodes, format_schedules, format_sessions,
+    format_usage_projection, format_usage_scan, format_worktree_sessions,
 };
 #[cfg_attr(coverage, allow(unused_imports))]
 use http::{
@@ -98,10 +98,6 @@ pub enum Commands {
         #[arg(long = "worktree-base")]
         worktree_base: Option<String>,
 
-        /// Secrets to inject as environment variables (by name)
-        #[arg(long)]
-        secret: Vec<String>,
-
         /// Cost budget in USD (watchdog alerts at 80%, stops at 100%)
         #[arg(long = "budget-cost")]
         budget_cost: Option<f64>,
@@ -123,10 +119,6 @@ pub enum Commands {
         /// Human-readable description of the task
         #[arg(long)]
         description: Option<String>,
-
-        /// Secrets to inject as environment variables (by name)
-        #[arg(long)]
-        secret: Vec<String>,
 
         /// Cost budget in USD (watchdog alerts at 80%, stops at 100%)
         #[arg(long = "budget-cost")]
@@ -229,13 +221,6 @@ pub enum Commands {
         action: ScheduleAction,
     },
 
-    /// Manage secrets (environment variables injected into sessions)
-    #[command(visible_alias = "sec")]
-    Secret {
-        #[command(subcommand)]
-        action: SecretAction,
-    },
-
     /// Manage git worktrees for sessions
     #[command(visible_alias = "wt")]
     Worktree {
@@ -272,29 +257,6 @@ pub enum Commands {
 }
 
 #[derive(Subcommand, Debug)]
-pub enum SecretAction {
-    /// Set a secret
-    Set {
-        /// Secret name (will be the env var name, uppercase + underscores)
-        name: String,
-        /// Secret value
-        value: String,
-        /// Environment variable name (defaults to secret name)
-        #[arg(long)]
-        env: Option<String>,
-    },
-    /// List secret names
-    #[command(visible_alias = "ls")]
-    List,
-    /// Delete a secret
-    #[command(visible_alias = "rm")]
-    Delete {
-        /// Secret name
-        name: String,
-    },
-}
-
-#[derive(Subcommand, Debug)]
 pub enum WorktreeAction {
     /// List sessions that use git worktrees
     #[command(visible_alias = "ls")]
@@ -317,9 +279,6 @@ pub enum ScheduleAction {
         /// Description
         #[arg(long)]
         description: Option<String>,
-        /// Secrets to inject as environment variables (by name, repeatable)
-        #[arg(long)]
-        secret: Vec<String>,
         /// Create an isolated git worktree for each run
         #[arg(long)]
         worktree: bool,
@@ -744,7 +703,6 @@ async fn execute_schedule(
             cron,
             workdir,
             description,
-            secret,
             worktree,
             worktree_base,
             budget_cost,
@@ -770,9 +728,6 @@ async fn execute_schedule(
             }
             if let Some(d) = description {
                 body["description"] = serde_json::json!(d);
-            }
-            if !secret.is_empty() {
-                body["secrets"] = serde_json::json!(secret);
             }
             if use_worktree {
                 body["worktree"] = serde_json::json!(true);
@@ -846,68 +801,6 @@ async fn execute_schedule(
 async fn execute_schedule(
     _client: &reqwest::Client,
     _action: &ScheduleAction,
-    _base: &str,
-    _token: Option<&str>,
-    _node: &str,
-) -> Result<String> {
-    Ok(String::new())
-}
-
-// --- Secret API ---
-
-/// Execute a secret subcommand via the secrets API.
-#[cfg(not(coverage))]
-async fn execute_secret(
-    client: &reqwest::Client,
-    action: &SecretAction,
-    base: &str,
-    token: Option<&str>,
-    node: &str,
-) -> Result<String> {
-    match action {
-        SecretAction::Set { name, value, env } => {
-            let mut body = serde_json::json!({ "value": value });
-            if let Some(e) = env {
-                body["env"] = serde_json::json!(e);
-            }
-            request_text(
-                client,
-                reqwest::Method::PUT,
-                format!("{base}/api/v1/secrets/{name}"),
-                token,
-                node,
-                Some(&body),
-            )
-            .await?;
-            Ok(format!("Secret \"{name}\" set."))
-        }
-        SecretAction::List => {
-            let parsed: serde_json::Value =
-                get_json(client, format!("{base}/api/v1/secrets"), token, node).await?;
-            let secrets = parsed["secrets"].as_array().map_or(&[][..], Vec::as_slice);
-            Ok(format_secrets(secrets))
-        }
-        SecretAction::Delete { name } => {
-            request_text(
-                client,
-                reqwest::Method::DELETE,
-                format!("{base}/api/v1/secrets/{name}"),
-                token,
-                node,
-                None,
-            )
-            .await?;
-            Ok(format!("Secret \"{name}\" deleted."))
-        }
-    }
-}
-
-/// Coverage stub for secret execution.
-#[cfg(coverage)]
-#[allow(clippy::unnecessary_wraps)]
-async fn execute_secret(
-    _client: &reqwest::Client,
-    _action: &SecretAction,
     _base: &str,
     _token: Option<&str>,
     _node: &str,
@@ -1179,7 +1072,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             idle_threshold,
             worktree,
             worktree_base,
-            secret,
             budget_cost,
             command,
         } => {
@@ -1230,9 +1122,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                     );
                 }
             }
-            if !secret.is_empty() {
-                body["secrets"] = serde_json::json!(secret);
-            }
             if let Ok(tp) = std::env::var("TERM_PROGRAM") {
                 body["term_program"] = serde_json::json!(tp);
             }
@@ -1260,7 +1149,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             source,
             name,
             description,
-            secret,
             budget_cost,
             idle_threshold,
             detach,
@@ -1280,9 +1168,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             }
             if let Some(d) = description {
                 body["description"] = serde_json::json!(d);
-            }
-            if !secret.is_empty() {
-                body["secrets"] = serde_json::json!(secret);
             }
             if let Some(b) = budget_cost {
                 body["budget_cost_usd"] = serde_json::json!(b);
@@ -1463,9 +1348,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
         }
         Commands::Schedule { action } => {
             execute_schedule(&client, action, &url, token.as_deref(), node).await
-        }
-        Commands::Secret { action } => {
-            execute_secret(&client, action, &url, token.as_deref(), node).await
         }
         Commands::Worktree { action } => {
             execute_worktree(&client, action, &url, token.as_deref(), node).await
@@ -1651,59 +1533,10 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_spawn_secrets() {
-        let cli = Cli::try_parse_from([
-            "pulpo",
-            "spawn",
-            "my-task",
-            "--secret",
-            "GITHUB_TOKEN",
-            "--secret",
-            "NPM_TOKEN",
-        ])
-        .unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Spawn { secret, .. }) if secret == &["GITHUB_TOKEN", "NPM_TOKEN"]
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_spawn_no_secrets() {
-        let cli = Cli::try_parse_from(["pulpo", "spawn", "my-task"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Spawn { secret, .. }) if secret.is_empty()
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_secret_set_with_env() {
-        let cli = Cli::try_parse_from([
-            "pulpo",
-            "secret",
-            "set",
-            "GH_WORK",
-            "token123",
-            "--env",
-            "GITHUB_TOKEN",
-        ])
-        .unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Secret { action: SecretAction::Set { name, value, env } })
-                if name == "GH_WORK" && value == "token123" && env.as_deref() == Some("GITHUB_TOKEN")
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_secret_set_without_env() {
-        let cli = Cli::try_parse_from(["pulpo", "secret", "set", "MY_KEY", "val"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Secret { action: SecretAction::Set { name, value, env } })
-                if name == "MY_KEY" && value == "val" && env.is_none()
-        ));
+    fn test_cli_parse_spawn_unknown_secret_flag_rejected() {
+        // The secrets store was removed — `--secret` is no longer a recognized flag.
+        let result = Cli::try_parse_from(["pulpo", "spawn", "my-task", "--secret", "TOKEN"]);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -1837,8 +1670,6 @@ mod tests {
             "implement-auth",
             "--description",
             "Implement the plan",
-            "--secret",
-            "GH_WORK",
             "--budget-cost",
             "2.5",
             "--idle-threshold",
@@ -1852,7 +1683,6 @@ mod tests {
                 source,
                 name,
                 description,
-                secret,
                 budget_cost,
                 idle_threshold,
                 detach,
@@ -1861,7 +1691,6 @@ mod tests {
                 if source == "plan-auth"
                     && name.as_deref() == Some("implement-auth")
                     && description.as_deref() == Some("Implement the plan")
-                    && secret == &["GH_WORK"]
                     && *budget_cost == Some(2.5)
                     && *idle_threshold == Some(30)
                     && *detach
@@ -2151,7 +1980,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                secret: vec![],
                 budget_cost: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
@@ -2177,7 +2005,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                secret: vec![],
                 budget_cost: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
@@ -2202,7 +2029,6 @@ mod tests {
 
                 worktree: true,
                 worktree_base: None,
-                secret: vec![],
                 budget_cost: None,
                 command: vec!["claude".into()],
             }),
@@ -2227,7 +2053,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                secret: vec![],
                 budget_cost: None,
                 command: vec!["echo".into(), "hello".into()],
             }),
@@ -2252,7 +2077,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                secret: vec![],
                 budget_cost: None,
                 command: vec![],
             }),
@@ -2277,7 +2101,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                secret: vec![],
                 budget_cost: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
@@ -2302,7 +2125,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                secret: vec![],
                 budget_cost: None,
                 command: vec!["claude".into(), "-p".into(), "Fix bug".into()],
             }),
@@ -2323,7 +2145,6 @@ mod tests {
                 source: "plan-auth".into(),
                 name: None,
                 description: None,
-                secret: vec![],
                 budget_cost: None,
                 idle_threshold: None,
                 detach: true,
@@ -2345,7 +2166,6 @@ mod tests {
                 source: "plan-auth".into(),
                 name: Some("implement-auth".into()),
                 description: Some("Implement the plan".into()),
-                secret: vec!["GH_WORK".into()],
                 budget_cost: Some(2.5),
                 idle_threshold: Some(30),
                 detach: true,
@@ -2367,7 +2187,6 @@ mod tests {
                 source: "plan-auth".into(),
                 name: None,
                 description: None,
-                secret: vec![],
                 budget_cost: None,
                 idle_threshold: None,
                 detach: false,
@@ -2388,7 +2207,6 @@ mod tests {
                 source: "plan-auth".into(),
                 name: None,
                 description: None,
-                secret: vec![],
                 budget_cost: None,
                 idle_threshold: None,
                 detach: true,
@@ -2426,7 +2244,6 @@ mod tests {
                 source: "plan-auth".into(),
                 name: None,
                 description: None,
-                secret: vec![],
                 budget_cost: None,
                 idle_threshold: None,
                 detach: true,
@@ -2505,7 +2322,7 @@ mod tests {
         assert!(err.contains("localhost:1"));
     }
 
-    /// Regression: `pulpo schedule list` (and the other schedule/secret/worktree
+    /// Regression: `pulpo schedule list` (and the other schedule/worktree
     /// subcommands) used bare `.send().await?` without `friendly_error`, so a
     /// stopped daemon printed a raw reqwest error. Routing them through the
     /// shared request helpers fixed that. Gated `not(coverage)` because the
@@ -2665,7 +2482,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                secret: vec![],
                 budget_cost: None,
                 command: vec!["test".into()],
             }),
@@ -2896,7 +2712,6 @@ mod tests {
 
                 worktree: false,
                 worktree_base: None,
-                secret: vec![],
                 budget_cost: None,
                 command: vec!["test".into()],
             }),
@@ -4019,71 +3834,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // -- Secret CLI parse tests --
-
-    #[test]
-    fn test_cli_parse_secret_set() {
-        let cli = Cli::try_parse_from(["pulpo", "secret", "set", "MY_TOKEN", "abc123"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Secret { action: SecretAction::Set { name, value, env } })
-                if name == "MY_TOKEN" && value == "abc123" && env.is_none()
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_secret_list() {
-        let cli = Cli::try_parse_from(["pulpo", "secret", "list"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Secret {
-                action: SecretAction::List
-            })
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_secret_list_alias() {
-        let cli = Cli::try_parse_from(["pulpo", "secret", "ls"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Secret {
-                action: SecretAction::List
-            })
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_secret_delete() {
-        let cli = Cli::try_parse_from(["pulpo", "secret", "delete", "MY_TOKEN"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Secret { action: SecretAction::Delete { name } })
-                if name == "MY_TOKEN"
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_secret_delete_alias() {
-        let cli = Cli::try_parse_from(["pulpo", "secret", "rm", "MY_TOKEN"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Secret { action: SecretAction::Delete { name } })
-                if name == "MY_TOKEN"
-        ));
-    }
-
-    #[test]
-    fn test_cli_parse_secret_alias() {
-        let cli = Cli::try_parse_from(["pulpo", "sec", "list"]).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Some(Commands::Secret {
-                action: SecretAction::List
-            })
-        ));
-    }
-
     // -- Schedule CLI new flags tests --
 
     #[test]
@@ -4094,8 +3844,6 @@ mod tests {
             "add",
             "nightly",
             "0 3 * * *",
-            "--secret",
-            "GH_TOKEN",
             "--worktree",
             "--worktree-base",
             "main",
@@ -4104,9 +3852,8 @@ mod tests {
         assert!(matches!(
             &cli.command,
             Some(Commands::Schedule {
-                action: ScheduleAction::Add { name, secret, worktree, worktree_base, .. }
+                action: ScheduleAction::Add { name, worktree, worktree_base, .. }
             }) if name == "nightly"
-                && secret == &["GH_TOKEN"]
                 && *worktree
                 && worktree_base.as_deref() == Some("main")
         ));

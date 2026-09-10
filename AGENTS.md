@@ -35,7 +35,6 @@ These are mandatory for all code changes:
 
 - **Session names are validated** via `validate_session_name()` in `session/manager.rs` — kebab-case only (`[a-z0-9-]`). Any new code path that creates sessions MUST go through this validation. Session names are interpolated into shell commands; invalid names enable shell injection.
 - **Schedule names** are validated with the same rules in `api/schedules.rs`.
-- **Secrets temp files** are written to `~/.pulpo/data/secrets/` with atomic `0o600` permissions (Unix). Never write secrets to `/tmp`.
 - **Auth tokens** are compared using constant-time comparison (`constant_time_eq` in `auth.rs`). Do not use `==` for token comparison.
 - **ConnectInfo** absence is treated as remote (fail-closed). Do not change this to fail-open.
 - **CORS** is restricted in Public bind mode. Do not set `allow_origin(Any)` for Public mode.
