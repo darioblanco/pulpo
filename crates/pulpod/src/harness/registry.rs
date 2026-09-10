@@ -69,6 +69,14 @@ impl HarnessRegistry {
     /// set — see `watchdog::harness_owns_state`). Events not yet flowing, or an
     /// unrecognized/absent harness id, own nothing (every heuristic stays active) —
     /// the same fallback the pre-adapter watchdog behavior had.
+    ///
+    /// An adapter that doesn't actually emit events (`emits_events() == false`, i.e.
+    /// `GenericAdapter`) can never own anything either, regardless of what
+    /// `owned_signals()` would otherwise report (its trait default is "all") —
+    /// `harness_last_event_at` can end up set for such a session anyway (e.g. a
+    /// stray/malformed `harness-events` POST naming a non-emitting harness id), and
+    /// that must never be read as "this session's heuristics are covered," since
+    /// nothing is really wired up to cover them.
     #[must_use]
     pub fn owned_signals_for(
         &self,
@@ -80,7 +88,13 @@ impl HarnessRegistry {
         }
         harness_id
             .and_then(|id| self.get(id))
-            .map_or(HarnessSignals::all(), |adapter| adapter.owned_signals())
+            .map_or(HarnessSignals::all(), |adapter| {
+                if adapter.emits_events() {
+                    adapter.owned_signals()
+                } else {
+                    HarnessSignals::none()
+                }
+            })
     }
 }
 
@@ -278,6 +292,21 @@ mod tests {
         assert_eq!(
             registry.owned_signals_for(None, true),
             HarnessSignals::all()
+        );
+    }
+
+    #[test]
+    fn test_owned_signals_for_generic_events_flowing_is_none() {
+        // GenericAdapter never emits real events (`emits_events() == false`), but
+        // `harness_last_event_at` can still get touched (e.g. a stray/malformed
+        // `harness-events` POST naming "generic") — a non-emitting adapter must never
+        // be treated as owning any watchdog heuristic just because the trait default
+        // for `owned_signals()` happens to be "all". See
+        // `harness::generic::tests::test_generic_does_not_emit_events`.
+        let registry = HarnessRegistry::default();
+        assert_eq!(
+            registry.owned_signals_for(Some("generic"), true),
+            HarnessSignals::none()
         );
     }
 }

@@ -264,6 +264,14 @@ pub struct StateUpdate {
     pub notify: bool,
 }
 
+/// Truncate `s` to at most `max_chars` `char`s (never splits a multi-byte codepoint).
+/// Used to cap harness-supplied free text (a `Failed.error` message, or a
+/// harness-specific `NeedsInputReason::Other` label) before it's stored as session
+/// metadata — an unbounded harness payload must never bloat the sessions table.
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    s.chars().take(max_chars).collect()
+}
+
 /// Map a normalized [`HarnessEvent`] to the session/metadata changes it implies.
 ///
 /// `backend_alive` decides the `SessionEnded` branch (Ready if the backend — e.g. the
@@ -289,19 +297,24 @@ pub fn transition_for_event(event: &HarnessEvent, backend_alive: bool) -> StateU
         HarnessEvent::TurnFinished { summary } => {
             let metadata_set = summary
                 .as_ref()
-                .map(|s| (meta::LAST_SUMMARY, s.chars().take(200).collect()))
+                .map(|s| (meta::LAST_SUMMARY, truncate_chars(s, 200)))
                 .into_iter()
                 .collect();
             StateUpdate {
                 status: Some(SessionStatus::Idle),
                 metadata_set,
+                // A turn finishing (e.g. `Stop` after the user approved a permission
+                // prompt in the terminal, with no hook in between) always clears a
+                // stale `needs_input` — otherwise `pulpo ls`/the web UI keep showing
+                // "needs input (permission)" on a session that's simply done.
+                metadata_clear: vec![meta::NEEDS_INPUT],
                 set_idle_since: true,
                 ..Default::default()
             }
         }
         HarnessEvent::NeedsInput { reason } => StateUpdate {
             status: Some(SessionStatus::Idle),
-            metadata_set: vec![(meta::NEEDS_INPUT, reason.to_string())],
+            metadata_set: vec![(meta::NEEDS_INPUT, truncate_chars(&reason.to_string(), 500))],
             notify: true,
             ..Default::default()
         },
@@ -310,17 +323,21 @@ pub fn transition_for_event(event: &HarnessEvent, backend_alive: bool) -> StateU
             rate_limited,
         } => {
             let now = chrono::Utc::now().to_rfc3339();
+            let error = truncate_chars(error, 500);
             let mut metadata_set = vec![
                 (meta::ERROR_STATUS, error.clone()),
                 (meta::ERROR_STATUS_AT, now.clone()),
             ];
             if *rate_limited {
-                metadata_set.push((meta::RATE_LIMIT, error.clone()));
+                metadata_set.push((meta::RATE_LIMIT, error));
                 metadata_set.push((meta::RATE_LIMIT_AT, now));
             }
             StateUpdate {
                 status: Some(SessionStatus::Idle),
                 metadata_set,
+                // A failed turn also clears any stale `needs_input` — the harness
+                // moved past whatever it was blocked on (or crashed out of it).
+                metadata_clear: vec![meta::NEEDS_INPUT],
                 notify: true,
                 ..Default::default()
             }
@@ -478,6 +495,16 @@ mod tests {
     }
 
     #[test]
+    fn test_transition_turn_finished_clears_needs_input() {
+        // Scenario: permission_prompt sets needs_input, the user approves in the
+        // terminal (no hook fires for the approval itself), the turn then finishes
+        // via `Stop` with no further hook to clear it — the stale "needs input
+        // (permission)" badge must not survive a completed turn.
+        let update = transition_for_event(&HarnessEvent::TurnFinished { summary: None }, true);
+        assert_eq!(update.metadata_clear, vec![meta::NEEDS_INPUT]);
+    }
+
+    #[test]
     fn test_transition_needs_input_sets_idle_and_reason_and_notifies() {
         let update = transition_for_event(
             &HarnessEvent::NeedsInput {
@@ -538,6 +565,47 @@ mod tests {
                 .iter()
                 .any(|(k, _)| *k == meta::RATE_LIMIT_AT)
         );
+    }
+
+    #[test]
+    fn test_transition_failed_clears_needs_input() {
+        let update = transition_for_event(
+            &HarnessEvent::Failed {
+                error: "API error".into(),
+                rate_limited: false,
+            },
+            true,
+        );
+        assert_eq!(update.metadata_clear, vec![meta::NEEDS_INPUT]);
+    }
+
+    #[test]
+    fn test_transition_failed_truncates_error_to_500_chars() {
+        let long = "x".repeat(2000);
+        let update = transition_for_event(
+            &HarnessEvent::Failed {
+                error: long,
+                rate_limited: true,
+            },
+            true,
+        );
+        for (key, value) in &update.metadata_set {
+            if *key == meta::ERROR_STATUS || *key == meta::RATE_LIMIT {
+                assert_eq!(value.chars().count(), 500, "key {key} not truncated");
+            }
+        }
+    }
+
+    #[test]
+    fn test_transition_needs_input_truncates_other_reason_to_500_chars() {
+        let long = "y".repeat(2000);
+        let update = transition_for_event(
+            &HarnessEvent::NeedsInput {
+                reason: NeedsInputReason::Other(long),
+            },
+            true,
+        );
+        assert_eq!(update.metadata_set[0].1.chars().count(), 500);
     }
 
     #[test]
