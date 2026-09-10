@@ -214,7 +214,6 @@ mod tests {
             worktree: None,
             worktree_base: None,
             runtime: None,
-            secrets: None,
             term_program: None,
             budget_cost_usd: None,
         };

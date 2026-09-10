@@ -63,12 +63,11 @@ config is saved. Same treatment as the retired `[docker]`, `[controller]`, and
 ## `[inks.<name>]` (retired)
 
 Inks — a named-preset registry (command, description, secrets, runtime, budget) — were
-removed. Command and secrets are set directly per session/schedule (`pulpo spawn --secret`,
-`pulpo schedule add --secret`), and the recurring cost budget moved onto the schedule itself
-(`pulpo schedule add --budget-cost <USD>`). A leftover `[inks.*]` section from a config
-written before the removal is tolerated: it still parses, is ignored, and is dropped the
-next time the config is saved. Same treatment as the retired `[docker]` and `[controller]`
-sections.
+removed. Command is set directly per session/schedule, and the recurring cost budget moved
+onto the schedule itself (`pulpo schedule add --budget-cost <USD>`). A leftover `[inks.*]`
+section from a config written before the removal is tolerated: it still parses, is ignored,
+and is dropped the next time the config is saved. Same treatment as the retired `[docker]`
+and `[controller]` sections.
 
 ## `[plans.<name>]`
 

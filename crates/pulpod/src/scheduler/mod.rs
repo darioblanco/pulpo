@@ -132,12 +132,6 @@ async fn fire_due_schedules(
             })
         });
 
-        let secrets = if schedule.secrets.is_empty() {
-            None
-        } else {
-            Some(schedule.secrets.clone())
-        };
-
         let req = CreateSessionRequest {
             name: session_name,
             workdir: Some(schedule.workdir.clone()),
@@ -152,7 +146,6 @@ async fn fire_due_schedules(
             worktree: schedule.worktree,
             worktree_base: schedule.worktree_base.clone(),
             runtime,
-            secrets,
             term_program: None,
             budget_cost_usd: schedule.budget_cost_usd,
         };
@@ -242,7 +235,6 @@ mod tests {
             ink: None,
             description: None,
             runtime: None,
-            secrets: vec![],
             worktree: None,
             worktree_base: None,
             budget_cost_usd: None,
@@ -269,7 +261,6 @@ mod tests {
             ink: None,
             description: None,
             runtime: None,
-            secrets: vec![],
             worktree: None,
             worktree_base: None,
             budget_cost_usd: None,
@@ -370,7 +361,6 @@ mod tests {
             ink: None,
             description: None,
             runtime: None,
-            secrets: vec![],
             worktree: None,
             worktree_base: None,
             budget_cost_usd: None,
@@ -402,7 +392,6 @@ mod tests {
             ink: None,
             description: None,
             runtime: None,
-            secrets: vec![],
             worktree: None,
             worktree_base: None,
             budget_cost_usd: None,
@@ -428,7 +417,6 @@ mod tests {
             ink: None,
             description: None,
             runtime: None,
-            secrets: vec![],
             worktree: None,
             worktree_base: None,
             budget_cost_usd: None,

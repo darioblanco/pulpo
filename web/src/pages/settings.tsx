@@ -4,7 +4,6 @@ import { NodeSettings } from '@/components/settings/node-settings';
 import { WatchdogSettings } from '@/components/settings/watchdog-settings';
 import { NotificationsSettings } from '@/components/settings/notifications-settings';
 import { PeerSettings } from '@/components/settings/peer-settings';
-import { SecretSettings } from '@/components/settings/secret-settings';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -153,9 +152,6 @@ export function SettingsPage() {
                 <TabsTrigger value="watchdog" data-testid="settings-tab-watchdog">
                   Watchdog
                 </TabsTrigger>
-                <TabsTrigger value="secrets" data-testid="settings-tab-secrets">
-                  Secrets
-                </TabsTrigger>
                 <TabsTrigger value="notifications" data-testid="settings-tab-notifications">
                   Notifications
                 </TabsTrigger>
@@ -200,10 +196,6 @@ export function SettingsPage() {
                     onIdleActionChange={setWatchdogIdleAction}
                   />
                 </section>
-              </TabsContent>
-
-              <TabsContent value="secrets">
-                <SecretSettings />
               </TabsContent>
 
               <TabsContent value="notifications">

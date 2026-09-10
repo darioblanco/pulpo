@@ -1,5 +1,5 @@
 //! Terminal output rendering for the `pulpo` CLI: table and report
-//! formatting for sessions, nodes, usage, schedules, and secrets.
+//! formatting for sessions, nodes, usage, and schedules.
 //!
 //! Pure move from `lib.rs` — no logic changes.
 
@@ -331,26 +331,6 @@ pub fn format_usage_scan(r: &UsageScanResponse) -> String {
     append_scan_rollups(&mut lines, "By agent:", &r.by_agent, 24);
     append_scan_rollups(&mut lines, "By model:", &r.by_model, 24);
     append_scan_rollups(&mut lines, "By repo:", &r.by_repo, 40);
-    lines.join("\n")
-}
-
-/// Format secret entries as a table.
-#[cfg_attr(coverage, allow(dead_code))]
-pub fn format_secrets(secrets: &[serde_json::Value]) -> String {
-    if secrets.is_empty() {
-        return "No secrets configured.".into();
-    }
-    let mut lines = vec![format!("{:<24} {:<24} {}", "NAME", "ENV", "CREATED")];
-    for s in secrets {
-        let name = s["name"].as_str().unwrap_or("?");
-        let env_display = s["env"]
-            .as_str()
-            .map_or_else(|| name.to_owned(), String::from);
-        let created = s["created_at"]
-            .as_str()
-            .map_or("-", |t| if t.len() >= 16 { &t[..16] } else { t });
-        lines.push(format!("{name:<24} {env_display:<24} {created}"));
-    }
     lines.join("\n")
 }
 
@@ -1122,45 +1102,6 @@ mod tests {
     #[test]
     fn test_format_schedules_empty() {
         assert_eq!(format_schedules(&[]), "No schedules.");
-    }
-
-    #[test]
-    fn test_format_secrets_empty() {
-        let secrets: Vec<serde_json::Value> = vec![];
-        assert_eq!(format_secrets(&secrets), "No secrets configured.");
-    }
-
-    #[test]
-    fn test_format_secrets_with_entries() {
-        let secrets = vec![
-            serde_json::json!({"name": "GITHUB_TOKEN", "created_at": "2026-03-21T12:00:00Z"}),
-            serde_json::json!({"name": "NPM_TOKEN", "created_at": "2026-03-20T10:30:00Z"}),
-        ];
-        let output = format_secrets(&secrets);
-        assert!(output.contains("GITHUB_TOKEN"));
-        assert!(output.contains("NPM_TOKEN"));
-        assert!(output.contains("NAME"));
-        assert!(output.contains("ENV"));
-        assert!(output.contains("CREATED"));
-    }
-
-    #[test]
-    fn test_format_secrets_with_env() {
-        let secrets = vec![
-            serde_json::json!({"name": "GH_WORK", "env": "GITHUB_TOKEN", "created_at": "2026-03-21T12:00:00Z"}),
-            serde_json::json!({"name": "NPM_TOKEN", "created_at": "2026-03-20T10:30:00Z"}),
-        ];
-        let output = format_secrets(&secrets);
-        assert!(output.contains("GH_WORK"));
-        assert!(output.contains("GITHUB_TOKEN"));
-        assert!(output.contains("NPM_TOKEN"));
-    }
-
-    #[test]
-    fn test_format_secrets_short_timestamp() {
-        let secrets = vec![serde_json::json!({"name": "KEY", "created_at": "now"})];
-        let output = format_secrets(&secrets);
-        assert!(output.contains("now"));
     }
 
     #[test]

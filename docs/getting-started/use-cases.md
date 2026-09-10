@@ -131,13 +131,12 @@ bind = "tailscale"
 
 Pulpo runs as a single binary on a box you own, reachable only over your tailnet. Usage and cost
 data are read from local files and never leave that machine unless you point `[[webhooks]]`
-somewhere yourself. Secrets are stored per-node, injected into the session's own process
-environment, and never returned by the API.
+somewhere yourself. Credentials a session needs are set directly in its process environment
+on that machine — Pulpo never stores them.
 
 Best docs to read next:
 
-- [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale)
-- [Secrets](/guides/secrets)
+- [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale)
 - [Discovery Guide](/guides/discovery)
 
 ## Quick Decision Table
@@ -149,5 +148,5 @@ Best docs to read next:
 | Multiple agents on one repo without collisions | [Parallel Agents On One Repo](/guides/parallel-agents-one-repo) |
 | A recurring job that can't overspend | [Nightly Code Review](/guides/nightly-code-review) |
 | Alerts before a runaway session gets expensive | [Configuration Guide](/guides/configuration) |
-| Agents near private repos or internal APIs | [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale) |
+| Agents near private repos or internal APIs | [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale) |
 | An objective comparison with alternatives | [Alternatives And Comparisons](/getting-started/alternatives) |

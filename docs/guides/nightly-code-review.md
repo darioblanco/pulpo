@@ -40,15 +40,14 @@ ICP described in [Use Cases](/getting-started/use-cases).
 ```bash
 pulpo schedule add nightly-review "0 3 * * *" \
   --workdir ~/repos/my-api \
-  --secret GH_WORK --secret ANTHROPIC_KEY \
-  -- claude -p "Review this repository for bugs, regressions, risky changes, and missing tests. Summarize findings clearly."
+  -- env GH_WORK=ghp_xxx ANTHROPIC_API_KEY=sk-ant-xxx claude -p "Review this repository for bugs, regressions, risky changes, and missing tests. Summarize findings clearly."
 ```
 
 What this does:
 
 1. Adds a schedule named `nightly-review`
 2. Runs every day at `03:00` in the daemon's machine timezone
-3. Starts a fresh Pulpo session in `~/repos/my-api`, with the given secrets injected
+3. Starts a fresh Pulpo session in `~/repos/my-api`, with the given credentials set for that command
 4. Uses your review prompt as the session command
 
 Each schedule fire creates a fresh timestamped session such as:
@@ -120,7 +119,7 @@ Make sure the workdir path exists on `mac-mini`, not just on the machine you're 
 
 This recipe gets stronger when combined with:
 
-- [Secrets](/guides/secrets) for API keys and repo credentials
+- [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale) for API keys and repo credentials
 - [Discovery Guide](/guides/discovery) if you run more than one machine
 - notifications so you know when the overnight run is `ready`, `stopped`, or `lost`
 

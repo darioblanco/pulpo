@@ -6,14 +6,12 @@ import * as api from '@/api/client';
 
 vi.mock('@/api/client', () => ({
   createSession: vi.fn(),
-  getSecrets: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
 }));
 
 const mockCreateSession = vi.mocked(api.createSession);
-const mockGetSecrets = vi.mocked(api.getSecrets);
 
 const defaultSession = {
   id: '1',
@@ -33,8 +31,6 @@ const defaultSession = {
 
 beforeEach(() => {
   mockCreateSession.mockReset();
-  mockGetSecrets.mockReset();
-  mockGetSecrets.mockResolvedValue([]);
 });
 
 async function openDialog() {
@@ -195,106 +191,6 @@ describe('NewSessionDialog', () => {
     });
   });
 
-  it('shows secrets picker when secrets are available', async () => {
-    mockGetSecrets.mockResolvedValue([
-      { name: 'GITHUB_TOKEN', created_at: '2026-01-01T00:00:00Z' },
-      { name: 'NPM_TOKEN', created_at: '2026-01-02T00:00:00Z' },
-    ]);
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    await openDialog();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('secrets-picker')).toBeInTheDocument();
-      expect(screen.getByTestId('secret-badge-GITHUB_TOKEN')).toBeInTheDocument();
-      expect(screen.getByTestId('secret-badge-NPM_TOKEN')).toBeInTheDocument();
-    });
-  });
-
-  it('does not show secrets picker when no secrets available', async () => {
-    mockGetSecrets.mockResolvedValue([]);
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    await openDialog();
-
-    await waitFor(() => {
-      expect(mockGetSecrets).toHaveBeenCalled();
-    });
-    expect(screen.queryByTestId('secrets-picker')).not.toBeInTheDocument();
-  });
-
-  it('sends selected secrets on submit', async () => {
-    mockGetSecrets.mockResolvedValue([
-      { name: 'GITHUB_TOKEN', created_at: '2026-01-01T00:00:00Z' },
-      { name: 'NPM_TOKEN', created_at: '2026-01-02T00:00:00Z' },
-    ]);
-    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    const user = await openDialog();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('secret-badge-GITHUB_TOKEN')).toBeInTheDocument();
-    });
-
-    // Select GITHUB_TOKEN
-    await user.click(screen.getByTestId('secret-badge-GITHUB_TOKEN'));
-
-    await user.type(screen.getByLabelText('Name'), 'sec-test');
-    await user.type(screen.getByLabelText('Working directory'), '/repo');
-
-    const form = screen.getByLabelText('Working directory').closest('form')!;
-    fireEvent.submit(form);
-
-    await waitFor(() => {
-      expect(mockCreateSession).toHaveBeenCalledWith(
-        expect.objectContaining({
-          name: 'sec-test',
-          workdir: '/repo',
-          secrets: ['GITHUB_TOKEN'],
-        }),
-      );
-    });
-  });
-
-  it('shows selected count when secrets are chosen', async () => {
-    mockGetSecrets.mockResolvedValue([
-      { name: 'KEY_A', created_at: '2026-01-01T00:00:00Z' },
-      { name: 'KEY_B', created_at: '2026-01-02T00:00:00Z' },
-    ]);
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    const user = await openDialog();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('secret-badge-KEY_A')).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByTestId('secret-badge-KEY_A'));
-    await user.click(screen.getByTestId('secret-badge-KEY_B'));
-
-    await waitFor(() => {
-      expect(screen.getByTestId('secrets-selected-count')).toHaveTextContent('2 secrets selected');
-    });
-  });
-
-  it('deselects a secret by clicking it again', async () => {
-    mockGetSecrets.mockResolvedValue([{ name: 'KEY_A', created_at: '2026-01-01T00:00:00Z' }]);
-    mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    const user = await openDialog();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('secret-badge-KEY_A')).toBeInTheDocument();
-    });
-
-    // Select
-    await user.click(screen.getByTestId('secret-badge-KEY_A'));
-    await waitFor(() => {
-      expect(screen.getByTestId('secrets-selected-count')).toHaveTextContent('1 secret selected');
-    });
-
-    // Deselect
-    await user.click(screen.getByTestId('secret-badge-KEY_A'));
-    expect(screen.queryByTestId('secrets-selected-count')).not.toBeInTheDocument();
-  });
-
   it('sends description when provided', async () => {
     mockCreateSession.mockResolvedValue({ session: { ...defaultSession } });
     render(<NewSessionDialog onCreated={vi.fn()} />);
@@ -441,15 +337,5 @@ describe('NewSessionDialog', () => {
       const call = mockCreateSession.mock.calls[0][0];
       expect(call).not.toHaveProperty('idle_threshold_secs');
     });
-  });
-
-  it('handles getSecrets failure gracefully', async () => {
-    mockGetSecrets.mockRejectedValue(new Error('Network error'));
-    render(<NewSessionDialog onCreated={vi.fn()} />);
-    await openDialog();
-
-    // Dialog should still work without secrets picker
-    expect(screen.getByText('Create New Session')).toBeInTheDocument();
-    expect(screen.queryByTestId('secrets-picker')).not.toBeInTheDocument();
   });
 });

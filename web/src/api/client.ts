@@ -16,8 +16,6 @@ import type {
   PushSubscriptionRequest,
   ScheduleInfo,
   CreateScheduleRequest,
-  SecretEntry,
-  SecretListResponse,
 } from './types';
 
 let getBaseUrl: () => string = () => '';
@@ -290,30 +288,4 @@ export async function deleteSchedule(id: string): Promise<void> {
     method: 'DELETE',
   });
   if (!res.ok) throw await apiError(res, 'Failed to delete schedule');
-}
-
-// -- Secrets API --
-
-export async function getSecrets(): Promise<SecretEntry[]> {
-  const res = await authFetch(`${resolveBaseUrl()}/secrets`);
-  const data: SecretListResponse = await res.json();
-  return data.secrets;
-}
-
-export async function setSecret(name: string, value: string, env?: string): Promise<void> {
-  const body: Record<string, string> = { value };
-  if (env) body.env = env;
-  const res = await authFetch(`${resolveBaseUrl()}/secrets/${encodeURIComponent(name)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw await apiError(res, 'Failed to set secret');
-}
-
-export async function deleteSecret(name: string): Promise<void> {
-  const res = await authFetch(`${resolveBaseUrl()}/secrets/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-  });
-  if (!res.ok) throw await apiError(res, 'Failed to delete secret');
 }

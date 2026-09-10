@@ -8,7 +8,8 @@ check on it, or take over, from anywhere on your tailnet.
 This guide is the daily-driver loop: run one always-on daemon, spawn, detach, and reattach
 later from a different machine. It stays on a single node — see
 [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale) if you also
-need secrets management, or the [Discovery Guide](/guides/discovery) if you outgrow one box.
+need to reach private repos or internal APIs, or the [Discovery Guide](/guides/discovery) if
+you outgrow one box.
 
 ## 1. Run `pulpod` On One Always-On Machine
 
@@ -123,5 +124,5 @@ hand at all. See [Session Lifecycle](/operations/session-lifecycle) and
 - [Session Lifecycle](/operations/session-lifecycle) — exact state transitions
 - [Recovery](/guides/recovery) — resume semantics after crashes and reboots
 - [Discovery Guide](/guides/discovery) — Tailscale bind mode and peer discovery details
-- [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale) — adding
-  secrets, and what changes if you ever need more than one machine
+- [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale) — reaching
+  private repos and internal APIs, and what changes if you ever need more than one machine

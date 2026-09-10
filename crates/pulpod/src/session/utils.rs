@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Result, bail};
 
 /// Validate that a session name is safe for shell interpolation and tmux usage.
 /// Allows lowercase alphanumeric characters and hyphens (kebab-case).
@@ -329,71 +329,15 @@ pub fn find_orphan_exit_markers(exit_dir: &Path, known_ids: &HashSet<String>) ->
     orphans
 }
 
-/// Write secrets to a sourced-and-deleted file under the pulpo data dir.
-pub fn write_secrets_file(
-    session_id: &uuid::Uuid,
-    secrets: &HashMap<String, String>,
-    data_dir: &str,
-) -> Result<Option<String>> {
-    use std::fmt::Write;
-    use std::io::Write as IoWrite;
-
-    if secrets.is_empty() {
-        return Ok(None);
-    }
-
-    let mut content = String::new();
-    for (key, value) in secrets {
-        let escaped_value = value.replace('\'', "'\\''");
-        let _ = writeln!(content, "export {key}='{escaped_value}'");
-    }
-
-    let secrets_dir = format!("{data_dir}/secrets");
-    std::fs::create_dir_all(&secrets_dir)
-        .map_err(|e| anyhow!("failed to create secrets directory {secrets_dir}: {e}"))?;
-
-    let path = format!("{secrets_dir}/secrets-{session_id}.sh");
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|e| anyhow!("failed to create secrets file {path}: {e}"))?;
-        file.write_all(content.as_bytes())
-            .map_err(|e| anyhow!("failed to write secrets file {path}: {e}"))?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        std::fs::write(&path, &content)
-            .map_err(|e| anyhow!("failed to write secrets file {path}: {e}"))?;
-    }
-
-    Ok(Some(path))
-}
-
 #[cfg(test)]
 #[allow(dead_code)]
 pub fn wrap_command_for_test(
     command: &str,
     session_id: &uuid::Uuid,
     session_name: &str,
-    secrets_file: Option<&str>,
     data_dir: &str,
 ) -> String {
-    wrap_command(
-        command,
-        session_id,
-        session_name,
-        secrets_file,
-        None,
-        data_dir,
-    )
+    wrap_command(command, session_id, session_name, None, data_dir)
 }
 
 /// Wrap a command with env vars, exit markers, and (for agent commands) a fallback shell.
@@ -417,13 +361,10 @@ pub fn wrap_command(
     command: &str,
     session_id: &uuid::Uuid,
     session_name: &str,
-    secrets_file: Option<&str>,
     term_program: Option<&str>,
     data_dir: &str,
 ) -> String {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_owned());
-    let secrets_source =
-        secrets_file.map_or_else(String::new, |path| format!(". {path} && rm -f {path}; "));
     let safe_name = session_name.replace('\'', "'\\''");
     let term_program_export = term_program.map_or_else(String::new, |tp| {
         let safe_tp = tp.replace('\'', "'\\''");
@@ -438,7 +379,7 @@ pub fn wrap_command(
     let clean_path = format!("{safe_exit_dir}/{session_id}.clean");
 
     let env = format!(
-        "mkdir -p '\\''{safe_exit_dir}'\\''; {secrets_source}export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={safe_name}; {term_program_export}export BROWSER=true; \
+        "mkdir -p '\\''{safe_exit_dir}'\\''; export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={safe_name}; {term_program_export}export BROWSER=true; \
          open() {{ case \"$1\" in http://*|https://*) return 0;; *) command open \"$@\";; esac; }}; "
     );
 

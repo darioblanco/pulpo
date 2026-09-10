@@ -62,7 +62,6 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
   "worktree": true,
   "worktree_base": "main",
   "runtime": "tmux",
-  "secrets": ["GITHUB_TOKEN"],
   "budget_cost_usd": 5.0
 }
 ```
@@ -109,14 +108,6 @@ This endpoint isn't meant to be called directly — it's what `pulpo hook <harne
 
 Like sessions, schedules accept a `budget_cost_usd` field — applied to every session the
 schedule fires (watchdog alerts at 80%, stops at 100%).
-
-## Secrets
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/secrets` | List secret names |
-| PUT | `/api/v1/secrets/:name` | Set a secret |
-| DELETE | `/api/v1/secrets/:name` | Delete a secret |
 
 ## Push Notifications
 

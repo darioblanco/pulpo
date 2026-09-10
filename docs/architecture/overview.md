@@ -166,8 +166,8 @@ Every `pulpod` is standalone. Multi-machine operation is direct, not brokered:
   [Discovery Guide](/guides/discovery).
 - **Direct access** is how you reach another node: `pulpo --node <name|host:port>` from the
   CLI (resolves through the local peer registry), a saved connection in the web UI, or plain
-  SSH + `pulpo attach`. Sessions, schedules, and secrets are local to the node that runs them
-  — nothing is proxied through a third machine.
+  SSH + `pulpo attach`. Sessions and schedules are local to the node that runs them — nothing
+  is proxied through a third machine.
 - **Aggregated visibility**, when you want one view across machines, comes from the
   event-forwarding backbone: every node forwards signed events to your own collector via
   `[[webhooks]]` and exposes `/metrics` + `/usage`, so you aggregate in Grafana/Datadog/a SIEM
@@ -233,7 +233,7 @@ Useful but more secondary:
 - peer discovery
 - schedules
 - worktrees
-- secrets and notifications
+- notifications
 
 Experimental or convenience-oriented:
 

@@ -166,7 +166,6 @@ export interface CreateSessionRequest {
   worktree?: boolean;
   worktree_base?: string;
   idle_threshold_secs?: number;
-  secrets?: string[];
   target_node?: string;
 }
 
@@ -208,16 +207,6 @@ export interface ScheduleInfo {
   last_attempted_at: string | null;
   last_error: string | null;
   created_at: string;
-}
-
-export interface SecretEntry {
-  name: string;
-  env?: string | null;
-  created_at: string;
-}
-
-export interface SecretListResponse {
-  secrets: SecretEntry[];
 }
 
 export interface CreateScheduleRequest {

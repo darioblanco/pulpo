@@ -44,7 +44,7 @@ pub struct Config {
     #[serde(default, skip_serializing)]
     pub controller: Option<toml::Value>,
     /// Retired `[inks.<name>]` preset registry configuration.
-    /// Inks were removed — command/secrets/runtime live directly on sessions and
+    /// Inks were removed — command/runtime live directly on sessions and
     /// schedules, and budgets moved onto schedules. This field only exists so
     /// configs written before the removal still load (`deny_unknown_fields`
     /// would otherwise reject them). It is ignored and dropped on save.

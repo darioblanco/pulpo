@@ -7,14 +7,13 @@ use crate::store::rows::{row_to_schedule, row_to_session};
 
 impl Store {
     pub async fn insert_schedule(&self, schedule: &pulpo_common::api::Schedule) -> Result<()> {
-        let secrets_json = serde_json::to_string(&schedule.secrets)?;
         sqlx::query(
             "INSERT INTO schedules (
                 id, name, cron, command, workdir, ink, description,
-                runtime, secrets, worktree, worktree_base, budget_cost_usd, enabled,
+                runtime, worktree, worktree_base, budget_cost_usd, enabled,
                 last_run_at, last_session_id, last_attempted_at, last_error, created_at
              )
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&schedule.id)
         .bind(&schedule.name)
@@ -24,7 +23,6 @@ impl Store {
         .bind(&schedule.ink)
         .bind(&schedule.description)
         .bind(&schedule.runtime)
-        .bind(&secrets_json)
         .bind(schedule.worktree)
         .bind(&schedule.worktree_base)
         .bind(schedule.budget_cost_usd)

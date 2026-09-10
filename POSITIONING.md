@@ -159,7 +159,7 @@ Top-level docs should:
 - state the primary user and problem early
 - describe tmux and Docker as execution backends, not the headline
 - emphasize remote supervision, durability, and multi-machine operation
-- treat worktrees, scheduling, secrets, and notifications as operational depth
+- treat worktrees, scheduling, and notifications as operational depth
 
 ## Roadmap Implications
 

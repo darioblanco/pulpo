@@ -16,7 +16,7 @@ Each example is intentionally simple.
 You can combine the same agent command with Pulpo features such as:
 
 - `--worktree` for isolated git branches
-- `--secret` for credentials
+- `env VAR=value` prefixed onto the command for one-off credentials
 - `pulpo schedule add ...` for recurring runs
 
 The command is the agent. Pulpo is the runtime and control plane around it.

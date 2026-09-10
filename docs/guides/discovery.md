@@ -20,8 +20,8 @@ others — there is deliberately no control plane. Every `pulpod` is standalone:
 
 > **Note:** Distributed discovery methods (mDNS, seed-based gossip) were removed to simplify the codebase. They may return in a future version. Use Tailscale discovery or manual `[peers]` config instead.
 
-For a full example that combines discovery with remote execution and secrets,
-see [Private Infrastructure With Tailscale And Secrets](/guides/private-infra-with-tailscale).
+For a full example that combines discovery with remote execution against private
+infrastructure, see [Private Infrastructure With Tailscale](/guides/private-infra-with-tailscale).
 
 ## Tailscale (recommended)
 

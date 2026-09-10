@@ -13,9 +13,6 @@ vi.mock('@/api/client', () => ({
   getPeers: vi.fn(),
   addPeer: vi.fn(),
   removePeer: vi.fn(),
-  getSecrets: vi.fn().mockResolvedValue([]),
-  setSecret: vi.fn(),
-  deleteSecret: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
@@ -121,7 +118,6 @@ describe('SettingsPage', () => {
       expect(screen.getByTestId('settings-tabs')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-node')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-watchdog')).toBeInTheDocument();
-      expect(screen.getByTestId('settings-tab-secrets')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-notifications')).toBeInTheDocument();
       expect(screen.getByTestId('settings-tab-peers')).toBeInTheDocument();
     });
@@ -142,11 +138,6 @@ describe('SettingsPage', () => {
     clickTab('settings-tab-watchdog');
     await waitFor(() => {
       expect(screen.getByTestId('watchdog-settings')).toBeInTheDocument();
-    });
-
-    clickTab('settings-tab-secrets');
-    await waitFor(() => {
-      expect(screen.getByTestId('secret-settings')).toBeInTheDocument();
     });
 
     clickTab('settings-tab-notifications');
