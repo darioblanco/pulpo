@@ -1032,11 +1032,24 @@ impl SessionManager {
         let effective_workdir = Self::effective_resume_workdir(&session);
         validate_workdir(&effective_workdir)?;
 
-        // If the backend session is still alive, just re-mark it as running.
-        // Only recreate the session if the backend process is gone.
+        // If the backend session is still alive, just re-mark it as running — unless
+        // the agent already exited into the wrapper's fallback shell (an exit marker
+        // is present, see `wrap_command`/CLAUDE.md's exit-marker rules). In that case
+        // the shell is alive but there's no live agent to just "un-pause": treat it
+        // the same as a dead backend — kill the leftover shell and recreate the
+        // backend with the resume command (`restore_session_backend` purges the
+        // stale markers itself, and the harness resume path re-launches the agent).
+        // Without this, marking the session Active while the marker still exists
+        // gets flipped straight back to `Ready` by the very next watchdog idle-check
+        // tick (`watchdog::idle::check_session_idle`'s own marker check).
         let backend_id = self.resolve_backend_id(&session);
         let alive = self.backend.is_alive(&backend_id)?;
-        if !alive {
+        let agent_already_exited =
+            alive && has_exit_marker(self.store.data_dir(), &session.id.to_string());
+        if !alive || agent_already_exited {
+            if agent_already_exited {
+                self.stop_session_backend(&session, &backend_id)?;
+            }
             // Use session name for the new tmux session, not the stale $N backend ID.
             // The old backend_session_id may point to a dead tmux session that no longer exists.
             let create_id = self.resume_create_id(&session);
@@ -4137,6 +4150,87 @@ mod tests {
             !has_exit_marker(&data_dir, &id),
             "stale exit markers must be purged before the backend is recreated on resume"
         );
+    }
+
+    #[tokio::test]
+    async fn test_resume_ready_session_alive_with_exit_marker_recreates_backend() {
+        // A Ready session's fallback shell can still be alive in tmux even though
+        // the agent process itself already exited (see `wrap_command`/CLAUDE.md's
+        // exit-marker rules) — resuming it must not just flip status back to
+        // Active, which would leave the marker in place and get the session
+        // bounced straight back to Ready by the very next watchdog idle-check tick.
+        // It must kill the leftover shell and recreate the backend through the
+        // resume path so the harness actually relaunches the agent.
+        let (mgr, backend, pool) = test_manager(MockBackend::new()).await; // alive by default
+        let session = mgr
+            .create_session(make_req("ready-alive-marker"))
+            .await
+            .unwrap();
+        let id = session.id.to_string();
+        let data_dir = mgr.store().data_dir().to_owned();
+
+        let code_path = exit_code_marker_path(&data_dir, &id);
+        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+        std::fs::write(&code_path, "0").unwrap();
+
+        sqlx::query("UPDATE sessions SET status = 'ready' WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(has_exit_marker(&data_dir, &id));
+
+        backend.calls.lock().unwrap().clear();
+        let resumed = mgr.resume_session(&id).await.unwrap();
+
+        assert_eq!(resumed.status, SessionStatus::Active);
+        let calls: Vec<_> = backend.calls.lock().unwrap().clone();
+        assert!(
+            calls.iter().any(|c| c.starts_with("kill:")),
+            "leftover alive shell should be killed before recreating; calls: {calls:?}"
+        );
+        assert!(
+            calls.iter().any(|c| c.starts_with("create:")),
+            "backend should be recreated via the resume path; calls: {calls:?}"
+        );
+        assert!(
+            !has_exit_marker(&data_dir, &id),
+            "exit markers must be cleared once the backend is recreated"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resume_lost_session_dead_backend_with_marker_unchanged_behavior() {
+        // Lost+dead is unaffected by the new alive+marker check: a dead backend
+        // always recreates regardless of the exit marker, exactly as before.
+        let (mgr, backend, pool) = test_manager(MockBackend::new().with_alive(false)).await;
+        let session = mgr
+            .create_session(make_req("lost-dead-marker"))
+            .await
+            .unwrap();
+        let id = session.id.to_string();
+        let data_dir = mgr.store().data_dir().to_owned();
+
+        let code_path = exit_code_marker_path(&data_dir, &id);
+        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+        std::fs::write(&code_path, "0").unwrap();
+
+        sqlx::query("UPDATE sessions SET status = 'lost' WHERE id = ?")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        backend.calls.lock().unwrap().clear();
+        let resumed = mgr.resume_session(&id).await.unwrap();
+
+        assert_eq!(resumed.status, SessionStatus::Active);
+        let calls: Vec<_> = backend.calls.lock().unwrap().clone();
+        assert!(
+            calls.iter().any(|c| c.starts_with("create:")),
+            "dead backend should always be recreated regardless of exit marker; calls: {calls:?}"
+        );
+        assert!(!has_exit_marker(&data_dir, &id));
     }
 
     #[tokio::test]
