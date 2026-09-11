@@ -25,7 +25,6 @@ On `mac-mini`:
 [node]
 name = "mac-mini"
 bind = "tailscale"
-tag = "pulpo"
 ```
 
 Start (or restart) `pulpod`. `bind = "tailscale"` binds locally and serves HTTPS over the

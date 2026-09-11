@@ -65,7 +65,7 @@ The most important meanings:
 - `idle`: the session appears to be waiting for input or has gone quiet long enough to be treated as waiting
 - `ready`: the command exited and the session is resumable
 - `lost`: the backend disappeared unexpectedly
-- `stopped`: the session was terminated and is not resumable
+- `stopped`: the session was terminated (or exited cleanly) and is still resumable
 
 See [Session Lifecycle](/operations/session-lifecycle) for exact transition rules.
 
@@ -80,6 +80,12 @@ It:
 - detects exit markers
 - enforces memory-pressure interventions
 - applies ready TTL cleanup
+
+For harnesses with their own lifecycle hooks (Claude Code, Codex, pi), a **harness
+adapter** reports real events — turn finished, blocked on a permission prompt, session
+ended — instead of the watchdog guessing from scrollback text. A session blocked this
+way shows as `idle` with a `needs input (<reason>)` label, distinct from a plain idle
+prompt. See [Harness Adapters](/architecture/harness-adapters).
 
 Without the watchdog, Pulpo would be a launcher. With it, Pulpo becomes runtime infrastructure.
 
@@ -111,3 +117,4 @@ They matter operationally, but they are easier to reason about once session/runt
 1. [Architecture Overview](/architecture/overview)
 2. [Quickstart](/getting-started/quickstart)
 3. [Session Lifecycle](/operations/session-lifecycle)
+4. [Harness Adapters](/architecture/harness-adapters)

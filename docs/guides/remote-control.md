@@ -92,7 +92,7 @@ The statuses that matter day to day:
 - `idle` — the agent is waiting on you, or has gone quiet past the idle threshold
 - `ready` — the command exited; the session is done but still resumable
 - `lost` — the daemon's machine rebooted or tmux disappeared; resumable
-- `stopped` — terminated on purpose; not resumable
+- `stopped` — terminated on purpose, or exited cleanly; resumable
 
 ## Sessions Survive Disconnects And Reboots
 
@@ -110,8 +110,9 @@ pulpo resume fix
 ```
 
 `pulpo resume` re-creates the `tmux` session, re-runs the command, and auto-attaches. It
-works on `lost` sessions (the backend disappeared) and `ready` sessions (the agent already
-finished, but you want the shell back). `pulpod` also auto-resumes sessions that were
+works on `lost` sessions (the backend disappeared), `ready` sessions (the agent already
+finished, but you want the shell back), and `stopped` sessions (terminated on purpose or
+exited cleanly). `pulpod` also auto-resumes sessions that were
 `active` when it shut down, the next time it starts — you often won't need to run `resume` by
 hand at all. See [Session Lifecycle](/operations/session-lifecycle) and
 [Recovery](/guides/recovery) for the exact state machine and detection rules.

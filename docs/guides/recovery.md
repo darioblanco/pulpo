@@ -12,7 +12,7 @@ Recovery is part of Pulpo's core runtime contract. If you want to understand wha
 | **Active** | Agent is working — terminal output is changing | No |
 | **Idle** | Agent needs attention — waiting for input or at its prompt | No |
 | **Ready** | Agent process exited — task is done | Yes (resumable) |
-| **Stopped** | Session was terminated by user, watchdog, or TTL cleanup | Yes (not resumable) |
+| **Stopped** | Session was terminated by user, watchdog, or TTL cleanup | Yes (resumable) |
 | **Lost** | tmux process disappeared unexpectedly (crash, reboot) | Yes (resumable) |
 
 ## Common Recovery Path
@@ -26,9 +26,12 @@ pulpo resume my-api
 
 `resume` auto-attaches to the tmux session after restarting the agent. Detach with `Ctrl-b d`.
 
-It works for **lost** (tmux gone after crash/reboot) and **ready** (agent exited normally) sessions. The session command is re-executed in a new tmux session.
+It works for **lost** (tmux gone after crash/reboot), **ready** (agent exited normally),
+and **stopped** (terminated by user, watchdog, or TTL cleanup) sessions. The session
+command is re-executed in a new tmux session.
 
-**Stopped** sessions cannot be resumed — start a new session with `pulpo spawn`.
+A session still **active**, **idle**, or **creating** cannot be resumed — it's still
+running. Start a fresh session with `pulpo spawn` instead.
 
 ## Recovery After Daemon Restart
 
@@ -49,4 +52,9 @@ pulpo interventions <name>
 Common intervention reasons:
 - `memory_pressure` — system memory exceeded the configured threshold
 - `idle_timeout` — session was idle longer than allowed (when `idle_action = "kill"`)
-- `ready_ttl` — ready session exceeded its TTL grace period
+- `user_stop` — the session was stopped via `pulpo stop` (or the API)
+- `budget_exceeded` — the session's `--budget-cost` cap was reached
+- `burn_rate` — the burn-velocity governor's ceiling was crossed with `burn_action = "stop"`
+
+`ready_ttl_secs` cleanup is a separate, unrecorded path: it stops the tmux shell of a
+long-idle `Ready` session directly and does not appear in `pulpo interventions`.

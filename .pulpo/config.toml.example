@@ -6,6 +6,6 @@
 name = "local-dev"
 # data_dir is set relative to the repo so dev data stays local
 data_dir = ".pulpo/data"
-
-[auth]
-bind = "localhost"
+# "local" (default) binds to 127.0.0.1 with no auth; see docs/reference/config.md
+# for "tailscale" and "public".
+bind = "local"

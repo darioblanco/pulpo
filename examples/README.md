@@ -4,19 +4,26 @@ Runnable examples for common Pulpo workflows.
 
 ## What is Pulpo?
 
-Pulpo is an **agent session runtime**. It runs coding agents in tmux sessions or Docker containers, with lifecycle management, crash recovery, and watchdog supervision — designed for coding agents but flexible enough for any terminal work.
+Pulpo is the **self-hosted meter and breaker box for coding agents**. It runs your agent
+sessions as durable background workers in tmux, on machines you own — with exact usage
+metering (tokens/cost read from the agent's own session files), budget enforcement, and
+monitoring that forwards to your own observability stack.
 
-**The problem**: You have a machine (Mac Mini, Linux server, cloud VM), optionally reachable over Tailscale. You want to spawn agents, check on them from your phone, and not lose work when the machine reboots. Today that means SSH → tmux attach → navigate windows — too many layers, no visibility, no recovery.
+**The problem**: a few coding agents running in parallel can burn a weekly subscription
+allowance in an afternoon, and no vendor `/usage` page aggregates spend across your
+accounts or machines. Pulpo fills that gap — see [Why Pulpo](https://pulpo.darioblanco.com/getting-started/why-pulpo)
+for the full case, and [Alternatives And Comparisons](https://pulpo.darioblanco.com/getting-started/alternatives)
+for how it compares to cost readers (ccusage), native multi-agent UX tools (Conductor,
+Claude Code Remote Control), and hosted agent clouds.
 
 **What makes Pulpo unique**:
 
-- **Session lifecycle** — explicit states (active, idle, ready, killed, lost) with resume semantics
-- **Watchdog supervision** — memory pressure, idle detection, agent exit detection, configurable policies
+- **Exact usage metering** — structured readers for Claude Code, Codex, and pi; cross-account/cross-agent rollups; `[rates.<model>]` for new or repriced models
+- **Cost control** — per-session/schedule budget caps (alert 80%, stop 100%) plus a burn-velocity governor
+- **Hook-driven supervision** — Claude Code, Codex, and pi report real lifecycle events (`needs input (<reason>)`, real resume) instead of scrollback guessing; any other command falls back to watchdog heuristics (idle, memory, error, completion)
+- **Monitoring backbone** — signed events to any number of webhooks (durable outbox, HMAC) plus an opt-in Prometheus `/metrics` endpoint
 - **Command-agnostic** — runs Claude Code, Codex, Gemini CLI, Aider, shell scripts, anything
-- **Mobile-first web UI** — PWA with push notifications, manage from your phone
-- **4 control surfaces** — CLI, web UI, REST API, SSE
-
-No other tool combines tmux orchestration with agent-aware lifecycle management. Tools like tmuxinator manage layouts, overmind runs Procfiles, cmux wraps Claude — Pulpo is the infrastructure layer that makes any terminal session durable, observable, and manageable.
+- **4 control surfaces** — CLI, web UI (PWA with push notifications), REST API, SSE
 
 ## Layout
 
@@ -36,8 +43,8 @@ bash examples/cli/01-basic-spawn.sh
 
 Most scripts use these environment variables:
 
-- `PULPOD_URL` (default: `http://localhost:7433`)
-- `PULPOD_TOKEN` (optional for `local` bind mode, required for `public` bind mode)
+- `URL` / `PULPOD_URL` (default: `localhost:7433` / `http://localhost:7433`)
+- `PULPOD_TOKEN` (optional for `local`/`tailscale` bind mode, required for `public`)
 
 ## Example Index
 
@@ -49,10 +56,9 @@ Most scripts use these environment variables:
 | `cli/02-spawn-and-detach.sh` | Spawn without attaching (for scripts/CI) |
 | `cli/04-idle-threshold.sh` | Per-session idle control (never idle, custom threshold) |
 | `cli/05-attach-and-input.sh` | Attach to a running session, send input |
-| `cli/06-recovery.sh` | Resume lost/ready sessions after crash or reboot |
+| `cli/06-recovery.sh` | Resume lost/ready/stopped sessions after crash, reboot, or stop |
 | `cli/09-scheduled-sessions.sh` | Cron-based recurring agent runs |
 | `cli/10-batch-spawn.sh` | Spawn multiple sessions in parallel |
-| `cli/11-docker-runtime.sh` | Run agents in isolated Docker containers |
 
 ### API Examples
 
@@ -68,4 +74,8 @@ Most scripts use these environment variables:
 |---------|-------------|
 | `config/minimal.toml` | Zero-config local setup |
 | `config/watchdog.toml` | Watchdog tuning (idle, memory, patterns) |
-| `config/docker.toml` | Docker runtime for isolated agent execution |
+| `config/public-with-auth.toml` | Expose pulpod on the network with a bearer token |
+
+For more workflows (worktrees, handoff, private-infra credentials, webhooks), see the
+[docs site](https://pulpo.darioblanco.com) and
+[Examples in the docs](https://pulpo.darioblanco.com/getting-started/quickstart).

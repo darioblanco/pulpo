@@ -175,7 +175,7 @@ pub enum Commands {
     /// Remove all stopped and lost sessions
     Cleanup,
 
-    /// Resume a lost session
+    /// Resume a lost, ready, or stopped session
     #[command(visible_alias = "r")]
     Resume {
         /// Session name or ID

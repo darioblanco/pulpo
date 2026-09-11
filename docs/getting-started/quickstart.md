@@ -64,7 +64,7 @@ The important statuses to know early are:
 - `idle`: the command is waiting for input or has gone quiet
 - `ready`: the command finished, but the session is still resumable
 - `lost`: the backend disappeared and the session may need resume
-- `stopped`: the session was terminated and is not resumable
+- `stopped`: the session was terminated (or exited cleanly) — still resumable
 
 ## 5. Detach And Reattach From Anywhere
 
@@ -88,7 +88,8 @@ pulpo list
 pulpo resume my-api
 ```
 
-`ready` sessions are also resumable. `stopped` sessions are not.
+`ready` and `stopped` sessions are also resumable — only a session still `active`,
+`idle`, or `creating` cannot be (it's still running).
 
 ## 7. Parallel Agents With Worktrees
 

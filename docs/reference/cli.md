@@ -6,14 +6,14 @@
 pulpo spawn [NAME] [OPTIONS] [-- <COMMAND...>]  Spawn a new session (auto-attaches)
 pulpo handoff <SOURCE> [NAME] [OPTIONS] [-- <COMMAND...>]  Hand off a finished
                                           session's context to a new session (alias: h)
-pulpo list                                List sessions (alias: ls)
-pulpo logs <NAME> [--follow]              Show session output
-pulpo attach <NAME>                       Attach to a session terminal
-pulpo input <NAME> [TEXT]                 Send text input to a session
-pulpo stop <NAME>                         Stop a running session
+pulpo list [--all]                        List sessions, live only by default (alias: ls; -a/--all includes stopped/lost)
+pulpo logs <NAME> [--lines N] [--follow]  Show session output (alias: l; default 100 lines; -f to tail)
+pulpo attach <NAME>                       Attach to a session terminal (alias: a)
+pulpo input <NAME> [TEXT]                 Send text input to a session (alias: i, send)
+pulpo stop <NAME>... [--purge]            Stop one or more sessions (alias: k, kill; -p/--purge also removes from history)
 pulpo cleanup                             Remove all stopped and lost sessions
-pulpo resume <NAME>                       Resume a lost, ready, or stopped session (auto-attaches)
-pulpo interventions <NAME>                Show watchdog interventions
+pulpo resume <NAME>                       Resume a lost, ready, or stopped session (alias: r; auto-attaches)
+pulpo interventions <NAME>                Show watchdog interventions (alias: iv)
 pulpo usage                               Show token/cost burn rate, time-to-cap, and quota
 pulpo usage --scan                        Scan ALL local agent history (Claude + Codex + pi):
                                           total spend by agent, model, and repo, no daemon-managed
@@ -25,6 +25,8 @@ pulpo usage [--scan] --json               Output raw JSON instead of the formatt
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
 pulpo worktree list                       List worktree sessions (alias: wt ls)
 pulpo ui                                  Open web UI in browser
+pulpo <PATH>                              Quick spawn: spawns a session in that directory
+                                          (name auto-generated from the directory basename)
 ```
 
 ## Spawn Options
@@ -143,10 +145,13 @@ trailing argv element rather than stdin, so `harness "codex-notify"` is a specia
 the payload is read from the `<payload>` argument instead. The Codex adapter wires
 `notify = ["sh", "-c", "'<pulpo-bin>' hook codex-notify \"$0\""]` in its isolated
 `config.toml`, which turns Codex's appended JSON into `$0` and, in turn, this command's
-argument. It posts the raw payload to the daemon as harness `"codex"` (mapped to
-`TurnFinished` on `agent-turn-complete`) and, when the payload carries a session/thread
-id, first posts a synthetic `SessionStart`-shaped event so pulpo learns the harness
-session id even if the `SessionStart` hook itself never fired. Same
+argument. It posts the raw payload, unmodified, to the daemon as harness `"codex"`
+(mapped to a single `TurnFinished` event on `agent-turn-complete`) — never a synthetic
+`SessionStart` alongside it (an earlier version tried that to learn the harness session id
+even when the real `SessionStart` hook never fired, but it flapped the session
+Active→Idle on every turn and was removed; a lost session whose `SessionStart` hook never
+fired is instead recovered by Codex's rollout-discovery fallback on its next spawn/resume
+— see [Harness Adapters](/architecture/harness-adapters#shipped-the-codex-adapter)). Same
 always-exit-0/2s-timeout/silent contract as the general form.
 
 ## Global Options

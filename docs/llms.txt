@@ -19,6 +19,7 @@ Primary docs:
 - /docs/guides/configuration.md
 - /docs/guides/recovery.md
 - /docs/guides/plan-then-build.md
+- /docs/architecture/harness-adapters.md
 - /docs/reference/cli.md
 - /docs/reference/config.md
 - /docs/reference/api.md
@@ -29,8 +30,15 @@ Primary docs:
 
 Canonical runtime concepts:
 - Session states: creating, active, idle, ready, stopped, lost.
-- Resume applies to lost and ready sessions. Stopped sessions cannot be resumed.
+- Resume applies to lost, ready, AND stopped sessions (recreates the backend, re-executes
+  the command). Only active/idle/creating sessions cannot be resumed (still running).
 - Sessions run arbitrary shell commands — no built-in provider abstraction.
+- Harness adapters (Claude Code, Codex, pi) wire each harness's own lifecycle hooks to
+  `pulpo hook <harness>` so status comes from the harness, not scrollback text; resume
+  replays the harness's own resume command instead of the bare original one. A session
+  blocked on the harness shows `idle` with a `needs input (<reason>)` label. Any other
+  command keeps the scrollback-heuristic watchdog. See
+  /docs/architecture/harness-adapters.md.
 - pulpod exposes REST and SSE on port 7433 by default.
 - Config path defaults to ~/.pulpo/config.toml.
 - `pulpo usage --scan` reads Claude Code, Codex, and pi session files directly from disk —

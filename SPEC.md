@@ -2,7 +2,7 @@
 
 > _Eight arms, one brain — see and control what every agent costs, on infrastructure you own._
 >
-> Last verified against code: 2026-06-14
+> Last verified against code: 2026-09-11
 
 Pulpo is a lightweight daemon that runs coding-agent sessions as durable background
 workers, **measures exactly what each one costs** (across agents, accounts, and
@@ -130,7 +130,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 - **Session detail**: live terminal output, input field, metadata (incl. per-session cost/tokens)
 - **Usage**: cost/burn gauge — account cards + per-session table (the meter)
 - **Schedules**: cron schedule management
-- **Settings**: node config, watchdog, notifications, secrets
+- **Settings**: node config, watchdog, notifications
 
 ---
 
@@ -225,7 +225,7 @@ The session itself also stores the most recent intervention in `intervention_rea
 **What triggers an intervention:**
 
 - **Memory pressure** — the watchdog checks system memory usage every `check_interval_secs`. If usage exceeds `memory_threshold` for `breach_count` consecutive checks, the highest-memory session is stopped.
-- **Idle timeout** — if a session produces no output for `idle_timeout_secs`, the watchdog acts based on `idle_action`: `"alert"` logs a warning, `"stop"` terminates the session.
+- **Idle timeout** — if a session produces no output for `idle_timeout_secs`, the watchdog acts based on `idle_action`: `"alert"` logs a warning, `"kill"` terminates the session.
 
 **How to inspect interventions:**
 
@@ -270,7 +270,7 @@ Watchdog detects issue → stops session → records intervention → session is
 | `check_interval_secs` | `10`      | How often to check (seconds)                    |
 | `breach_count`        | `3`       | Consecutive breaches before acting              |
 | `idle_timeout_secs`   | `600`     | Seconds of no output before idle action         |
-| `idle_action`         | `"alert"` | `"alert"` (log warning) or `"stop"` (terminate) |
+| `idle_action`         | `"alert"` | `"alert"` (log warning) or `"kill"` (terminate) |
 
 ### Troubleshooting
 
@@ -298,6 +298,39 @@ pulpod
 - Output streaming: `tmux pipe-pane` to a log file + periodic `capture-pane`
 - Input: `tmux send-keys -t <session-name> "text" Enter`
 - Attach (web): WebSocket ↔ PTY bridge that connects to the tmux session
+
+---
+
+## Harness Adapters
+
+The tmux backend above is command-agnostic, but three harnesses expose structured
+lifecycle signals of their own — hooks, a `--session-id`/resume flag — instead of just
+terminal text. A **harness adapter** (`crates/pulpod/src/harness/`) rewrites the spawn
+command to wire those signals to `pulpo hook <harness>` →
+`POST /api/v1/sessions/{id}/harness-events`, and translates them into a normalized
+`HarnessEvent` (`SessionStarted`, `Working`, `TurnFinished`, `NeedsInput`, `Failed`,
+`SessionEnded`) that drives the same `Active`/`Idle`/`Ready`/`Stopped` states directly.
+
+Shipped adapters: **Claude Code** (hook mechanics verified against v2.1.266), **Codex**
+and **pi** (implemented from their docs, unverified in the field). A command with no
+matching adapter (`GenericAdapter`) behaves exactly as before — no rewrite, no events,
+scrollback heuristics only.
+
+Two additive effects once a session's events start flowing:
+
+1. **`needs input (<reason>)`** — a `NeedsInput` event sets `Idle` plus a `needs_input`
+   metadata reason (`permission`, `question`, `idle`, ...), distinguishing "blocked on
+   me" from a plain idle prompt. `SessionStatus` itself is unchanged.
+2. **Real resume** — `pulpo resume` replays the harness's own resume command
+   (`claude --resume <id>`, `codex resume <id>`, pi's idempotent `--session-id <id>`)
+   instead of re-running the bare original command, so the conversation continues
+   instead of restarting.
+
+The watchdog stops applying scrollback heuristics **only for the signals that harness's
+events cover** (`HarnessAdapter::owned_signals()`) — e.g. Codex has no error/rate-limit
+hook, so those two keep running from scrollback even once its lifecycle events flow.
+Full event mapping, per-harness spawn/resume rewrites, and the watchdog-bypass mechanism:
+[docs/architecture/harness-adapters.md](docs/architecture/harness-adapters.md).
 
 ---
 
@@ -413,13 +446,31 @@ GET    /events                SSE event stream
 | `GET`    | `/sessions/:id/output`          | Get recent output              |
 | `GET`    | `/sessions/:id/output/download` | Download full output           |
 | `GET`    | `/sessions/:id/interventions`   | List intervention events       |
+| `POST`   | `/sessions/:id/harness-events`  | Ingest a harness lifecycle event (posted by `pulpo hook <harness>`) |
+| `POST`   | `/sessions/:id/handoff`         | Spawn a new session inheriting this one's workdir/worktree |
+| `POST`   | `/sessions/cleanup`             | Remove all stopped and lost sessions |
 | `WS`     | `/sessions/:id/stream`          | Stream terminal output         |
 | `GET`    | `/node`                         | Node info                      |
 | `GET`    | `/config`                       | Get daemon config              |
 | `PUT`    | `/config`                       | Update daemon config           |
+| `GET`/`PUT` | `/watchdog`                  | Get/update watchdog config     |
+| `GET`/`PUT` | `/notifications`             | Get/update notification config |
+| `GET`    | `/metrics`                      | Prometheus metrics (opt-in, `[metrics] enabled = true`) |
+| `GET`    | `/usage/projection`             | Live burn-rate/time-to-cap projection |
+| `GET`    | `/usage/scan`                   | Scan all local agent history (Claude + Codex + pi) |
+| `GET`/`POST` | `/schedules`                 | List/create cron schedules     |
+| `GET`/`PUT`/`DELETE` | `/schedules/:id`        | Get/update/delete a schedule   |
+| `GET`    | `/schedules/:id/runs`           | Schedule run history           |
+| `GET`    | `/push/vapid-key`               | Get the public VAPID key       |
+| `POST`   | `/push/subscribe`               | Register a Web Push subscription |
+| `POST`   | `/push/unsubscribe`             | Remove a Web Push subscription |
+| `POST`   | `/push/action`                  | Act on a push action token (e.g. "Stop session"); unauthenticated |
 | `GET`    | `/auth/token`                   | Get auth token (local only)    |
 | `GET`    | `/auth/pairing-url`             | Get QR pairing URL (local)     |
 | `GET`    | `/events`                       | SSE event stream               |
+
+Full request/response shapes, the harness-events payload, and the push action-token
+contract: [API Reference](docs/reference/api.md), [Push Notifications](docs/reference/push.md).
 
 ---
 
@@ -597,7 +648,7 @@ Ship the smallest useful thing first.
 **Deliverables:**
 
 - ✅ Config API (`GET/PUT /api/v1/config`) with hot-reload and restart detection
-- ✅ Settings view with tabbar navigation (Node, Watchdog, Secrets, Notifications)
+- ✅ Settings view with tabbar navigation (Node, Watchdog, Notifications)
 - ✅ Session list filtering (`status`, `search`, `sort`, `order` query params)
 - ✅ Session output download endpoint (`GET /api/v1/sessions/{id}/output/download`)
 - ✅ Session history view with search/filter bar
@@ -662,13 +713,22 @@ memory_threshold = 90
 check_interval_secs = 10
 breach_count = 3
 idle_timeout_secs = 600
-idle_action = "alert"       # "alert" or "stop"
+idle_action = "alert"       # "alert" or "kill"
 
-[[notifications.webhooks]]
+[[webhooks]]
 name = "primary"
 url = "https://example.com/hooks/pulpo"
-events = ["active", "ready", "stopped"]   # optional filter; omit for all events
+events = ["lifecycle.*", "usage_alert.*", "intervention.*"]  # "<type>.<subtype>" globs; omit for all events
 ```
+
+Every field is optional with a sensible default — `pulpod` runs with zero config. This is
+a minimal illustration, not the full field list: `[rates.<model>]` (per-model cost
+overrides), `[plans.<name>]` (quota estimates for Claude's "% of weekly cap"), `[metrics]`
+(the opt-in Prometheus endpoint), and the complete `[node]`/`[watchdog]`/`[auth]` field
+sets are in [Config Reference](docs/reference/config.md). Config keys retired by earlier
+removals (`[docker]`, `[controller]`, `[inks]`, `[peers]`, `watchdog.adopt_tmux`,
+`node.discovery_interval_secs`) still parse from an old config file (ignored, dropped on
+next save) — see that same reference's "Retired keys" section.
 
 ---
 

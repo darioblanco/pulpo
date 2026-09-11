@@ -135,7 +135,12 @@ Web Push (no relay), with a **Stop session** button right on the lock-screen not
 **Run — durable and unattended.** Each agent runs in a `tmux` session with explicit lifecycle
 states that survive reboots (drop into the live terminal anytime with `pulpo attach`), a
 watchdog for idle / memory / error / completion detection, and per-session git worktrees so
-parallel agents on one repo never collide.
+parallel agents on one repo never collide. For Claude Code, Codex, and pi — harnesses with
+their own lifecycle hooks — Pulpo wires those hooks at spawn time so status comes from the
+harness itself: a real `needs input (<reason>)` label instead of a scrollback guess, and
+`pulpo resume` replays the harness's own conversation (`claude --resume`, `codex resume`,
+pi's `--session-id`) rather than starting fresh — surviving a reboot with context intact.
+Any other command falls back to the same scrollback-pattern watchdog Pulpo always had.
 
 That model works for Claude Code, Codex, Gemini CLI, Aider, shell scripts, and any other
 terminal command — Pulpo is not tied to one vendor or one model.
@@ -182,6 +187,7 @@ adds no single point of failure and integrates with your existing observability.
 - **Monitoring backbone**: signed canonical events to multiple webhooks with a durable outbox + backoff; toggleable Prometheus metrics; SSE stream; web push.
 - **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots.
 - **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error/completion patterns, git telemetry (branch, diff; PR URL detected from output).
+- **Harness adapters**: hook-driven lifecycle for Claude Code, Codex, and pi — a `needs input (<reason>)` status label and real resume of the harness's own conversation, once events are flowing; scrollback heuristics remain the fallback for every other command.
 - **Execution isolation**: per-session git worktrees for parallel work on one repo.
 - **Scheduled runs**: cron-based schedules (`pulpo schedule`) with the same budgets and worktree support.
 - **Sovereign access**: single binary with embedded web UI/PWA, CLI, REST API; Tailscale transport for private remote access.
