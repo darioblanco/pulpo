@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { testConnection, discoverPeers } from './connection';
+import { testConnection } from './connection';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -44,41 +44,6 @@ describe('testConnection', () => {
 
     expect(mockFetch).toHaveBeenCalledWith('http://mac-mini:7433/api/v1/node', {
       headers: { Authorization: 'Bearer my-token' },
-    });
-  });
-});
-
-describe('discoverPeers', () => {
-  it('returns peers array on success', async () => {
-    const peers = [{ name: 'win-pc', address: 'win-pc:7433', status: 'online' }];
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ local: {}, peers }),
-    });
-
-    const result = await discoverPeers('http://mac-mini:7433');
-
-    expect(mockFetch).toHaveBeenCalledWith('http://mac-mini:7433/api/v1/peers', { headers: {} });
-    expect(result).toEqual(peers);
-  });
-
-  it('throws on failure', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: false });
-
-    await expect(discoverPeers('http://bad:7433')).rejects.toThrow('Failed to discover peers');
-  });
-
-  it('sends auth header when token is provided', async () => {
-    const peers = [{ name: 'win-pc', address: 'win-pc:7433', status: 'online' }];
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ local: {}, peers }),
-    });
-
-    await discoverPeers('http://mac-mini:7433', 'peer-token');
-
-    expect(mockFetch).toHaveBeenCalledWith('http://mac-mini:7433/api/v1/peers', {
-      headers: { Authorization: 'Bearer peer-token' },
     });
   });
 });

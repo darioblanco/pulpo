@@ -10,7 +10,7 @@
 use std::time::Duration;
 
 use crate::Cli;
-use crate::http::{authed_post, base_url, resolve_node, resolve_token};
+use crate::http::{authed_post, base_url, resolve_address, resolve_token};
 
 /// Environment variable the command wrapper (`session/manager.rs::wrap_command`)
 /// exports into every pulpo session — how a hook finds out which session it's
@@ -137,11 +137,9 @@ pub async fn execute_hook_with_stdin(
     };
 
     let client = reqwest::Client::new();
-    let (resolved_node, peer_token) = resolve_node(&client, &cli.node).await;
+    let resolved_node = resolve_address(&cli.url);
     let base = base_url(&resolved_node);
-    let token = resolve_token(&client, &base, &resolved_node, cli.token.as_deref())
-        .await
-        .or(peer_token);
+    let token = resolve_token(&client, &base, &resolved_node, cli.token.as_deref()).await;
 
     post_hook_event(
         &client,
@@ -198,11 +196,9 @@ pub async fn execute_codex_notify_hook(
     };
 
     let client = reqwest::Client::new();
-    let (resolved_node, peer_token) = resolve_node(&client, &cli.node).await;
+    let resolved_node = resolve_address(&cli.url);
     let base = base_url(&resolved_node);
-    let token = resolve_token(&client, &base, &resolved_node, cli.token.as_deref())
-        .await
-        .or(peer_token);
+    let token = resolve_token(&client, &base, &resolved_node, cli.token.as_deref()).await;
 
     post_hook_event(
         &client,
@@ -223,9 +219,9 @@ mod tests {
     use super::*;
     use crate::Commands;
 
-    fn test_cli(node: String) -> Cli {
+    fn test_cli(url: String) -> Cli {
         Cli {
-            node,
+            url,
             token: None,
             command: Some(Commands::Hook {
                 harness: "claude".into(),

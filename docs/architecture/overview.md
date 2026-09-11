@@ -52,7 +52,7 @@ It is the layer that turns agent commands into durable infrastructure objects.
 
 - **`pulpod`** — the daemon. Owns session state, backends, watchdog, API, and persistence.
 - **`pulpo`** — the CLI. A thin client over the daemon API.
-- **`pulpo-common`** — shared types for sessions, nodes, peers, and API payloads.
+- **`pulpo-common`** — shared types for sessions, nodes, and API payloads.
 - **`web/`** — the embedded web UI. Useful, but conceptually a client of the daemon, not the core runtime itself.
 
 ## The Core Contract
@@ -141,33 +141,33 @@ Each session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the 
 
 Cron-based schedules run inside `pulpod` (no crontab manipulation) and always fire on the
 node that holds them. To schedule on another box, point the CLI at it with the global
-`--node` connection flag — the schedule is created directly on that node's `pulpod`:
+`--url` connection flag — the schedule is created directly on that node's `pulpod`:
 
 ```bash
-pulpo --node gpu-box schedule add nightly "0 3 * * *" -- claude -p "review"
+pulpo --url gpu-box schedule add nightly "0 3 * * *" -- claude -p "review"
 ```
 
 Schedules are visible in the web UI dashboard at `/schedules`.
 
-### Multi-Node Architecture
+### Multi-Machine Access
 
 > **Status (July 2026): there is no control plane.** A controller/node relay mode existed
 > and was frozen (2026-06-14), then removed entirely (2026-07). Cross-node orchestration —
 > remote spawn, a canonical fleet session index, controller-proxied commands — was a dead
 > product lane: first parties (Claude Code Remote Control, Codex's desktop command center)
 > already won that race. See the [Roadmap](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md)
-> "Phase C" for the history.
+> "Phase C" for the history. The peer registry and Tailscale peer discovery layered on top
+> of that were removed later for the same reason: a read-only list of other nodes' sessions
+> with no way to act on them wasn't worth the config surface and health-probing machinery.
 
 Every `pulpod` is standalone. Multi-machine operation is direct, not brokered:
 
-- **Discovery** tells nodes about each other — **Tailscale** (peers discovered via the local
-  Tailscale API, HTTPS served via `tailscale serve`) or **manual** `[peers]` entries — but a
-  discovered peer is just a name-to-address mapping, not a subordinate. See the
-  [Discovery Guide](/guides/discovery).
-- **Direct access** is how you reach another node: `pulpo --node <name|host:port>` from the
-  CLI (resolves through the local peer registry), a saved connection in the web UI, or plain
-  SSH + `pulpo attach`. Sessions and schedules are local to the node that runs them — nothing
-  is proxied through a third machine.
+- **`bind = "tailscale"`** binds locally and serves HTTPS over the tailnet via
+  `tailscale serve` — no port-forwarding, no public IP, Tailscale's own ACLs are the
+  reachability boundary. This is transport only; it does not enumerate other nodes.
+- **Direct access** is how you reach another node: `pulpo --url <host:port>` from the CLI, a
+  saved connection in the web UI, or plain SSH + `pulpo attach`. Sessions and schedules are
+  local to the node that runs them — nothing is proxied through a third machine.
 - **Aggregated visibility**, when you want one view across machines, comes from the
   event-forwarding backbone: every node forwards signed events to your own collector via
   `[[webhooks]]` and exposes `/metrics` + `/usage`, so you aggregate in Grafana/Datadog/a SIEM
@@ -177,7 +177,7 @@ Important limits:
 
 - there is no fleet-wide session index; each node's SQLite store is authoritative only for
   its own sessions
-- the web UI shows the local node only — no fleet tabs or cross-node table
+- the web UI shows the local node only — no cross-node table
 - distributed terminal attach is intentionally out of scope; remote detail remains HTTP/log-oriented
 - schedules always fire on the node that holds them; there is no remote schedule dispatch
 
@@ -230,7 +230,7 @@ The most stable part of the project is:
 
 Useful but more secondary:
 
-- peer discovery
+- Tailscale bind (remote transport)
 - schedules
 - worktrees
 - notifications

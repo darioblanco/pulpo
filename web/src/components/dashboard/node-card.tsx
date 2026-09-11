@@ -1,43 +1,37 @@
 import { Badge } from '@/components/ui/badge';
 import type { NodeInfo, Session } from '@/api/types';
 import { SessionCard } from './session-card';
-import { formatMemory, statusDotColors } from '@/lib/utils';
+import { formatMemory } from '@/lib/utils';
 
 interface NodeCardProps {
   name: string;
   nodeInfo: NodeInfo | null;
-  status: 'online' | 'offline' | 'unknown';
   sessions: Session[];
-  isLocal?: boolean;
-  address?: string;
   onRefresh: () => void;
   selectionMode?: boolean;
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
 }
 
+/** The local node's session list — pulpo is single-node-first, so this always
+ * renders the machine `pulpod` is running on. */
 export function NodeCard({
   name,
   nodeInfo,
-  status,
   sessions,
-  isLocal = false,
-  address,
   onRefresh,
   selectionMode,
   selectedIds,
   onToggleSelect,
 }: NodeCardProps) {
   return (
-    <div data-testid="node-card" className={status !== 'online' ? 'opacity-50' : ''}>
+    <div data-testid="node-card">
       <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${statusDotColors[status]}`} />
+        <span className="h-2 w-2 shrink-0 rounded-full bg-status-ready" />
         <span className="font-medium">{name}</span>
-        {isLocal && (
-          <Badge variant="outline" className="text-[0.625rem] uppercase text-primary">
-            local
-          </Badge>
-        )}
+        <Badge variant="outline" className="text-[0.625rem] uppercase text-primary">
+          local
+        </Badge>
       </div>
 
       {nodeInfo && (
@@ -52,33 +46,26 @@ export function NodeCard({
           <span>{nodeInfo.cpus} CPU</span>
           <span>{formatMemory(nodeInfo.memory_mb)}</span>
           {nodeInfo.gpu && <span>{nodeInfo.gpu}</span>}
-          {address && <span>{address}</span>}
         </div>
       )}
 
-      {status === 'online' ? (
-        sessions.length === 0 ? (
-          <p className="py-4 text-center text-sm text-muted-foreground">
-            No active sessions on this node.
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
-            {sessions.map((session) => (
-              <SessionCard
-                key={session.id}
-                session={session}
-                onRefresh={onRefresh}
-                selectionMode={selectionMode}
-                selected={selectedIds?.has(session.id)}
-                onToggleSelect={onToggleSelect}
-              />
-            ))}
-          </div>
-        )
-      ) : (
-        <p className="py-4 text-center text-sm italic text-muted-foreground">
-          Node is {status} — cannot fetch sessions.
+      {sessions.length === 0 ? (
+        <p className="py-4 text-center text-sm text-muted-foreground">
+          No active sessions on this node.
         </p>
+      ) : (
+        <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
+          {sessions.map((session) => (
+            <SessionCard
+              key={session.id}
+              session={session}
+              onRefresh={onRefresh}
+              selectionMode={selectionMode}
+              selected={selectedIds?.has(session.id)}
+              onToggleSelect={onToggleSelect}
+            />
+          ))}
+        </div>
       )}
     </div>
   );

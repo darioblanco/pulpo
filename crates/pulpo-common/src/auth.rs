@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BindMode {
-    /// Bind to `127.0.0.1` — only reachable from the local machine. No discovery, no auth.
+    /// Bind to `127.0.0.1` — only reachable from the local machine. No auth.
     #[default]
     Local,
-    /// Bind to the Tailscale interface IP — reachable only over tailnet.
-    /// Discovery via Tailscale API. No auth token (Tailscale handles authentication).
+    /// Bind to `127.0.0.1` and expose the dashboard over the tailnet via
+    /// `tailscale serve` (HTTPS, tailnet identity). No auth token (Tailscale
+    /// handles authentication).
     Tailscale,
     /// Bind to `0.0.0.0` — reachable from the network (requires auth token).
-    /// Use manual `[peers]` config for multi-node.
     Public,
 }
 

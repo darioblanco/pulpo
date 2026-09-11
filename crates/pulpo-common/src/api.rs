@@ -3,8 +3,6 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::BindMode;
-use crate::node::NodeInfo;
-use crate::peer::{PeerEntry, PeerInfo};
 use crate::session::Session;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,12 +91,6 @@ pub struct ErrorResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct PeersResponse {
-    pub local: NodeInfo,
-    pub peers: Vec<PeerInfo>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
@@ -116,7 +108,6 @@ pub enum WsControl {
 pub struct ConfigResponse {
     pub node: NodeConfigResponse,
     pub auth: AuthConfigResponse,
-    pub peers: HashMap<String, PeerEntry>,
     pub watchdog: WatchdogConfigResponse,
     pub notifications: NotificationsConfigResponse,
 }
@@ -142,7 +133,6 @@ pub struct NodeConfigResponse {
     pub data_dir: String,
     pub bind: BindMode,
     pub tag: Option<String>,
-    pub discovery_interval_secs: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -198,7 +188,6 @@ pub struct UpdateConfigRequest {
     pub data_dir: Option<String>,
     pub bind: Option<BindMode>,
     pub tag: Option<String>,
-    pub discovery_interval_secs: Option<u64>,
     // Watchdog
     pub watchdog_enabled: Option<bool>,
     pub watchdog_memory_threshold: Option<u8>,
@@ -208,8 +197,6 @@ pub struct UpdateConfigRequest {
     pub watchdog_idle_action: Option<String>,
     // Notifications — Generic webhooks (full replace when provided)
     pub webhooks: Option<Vec<WebhookEndpointUpdateRequest>>,
-    // Peers
-    pub peers: Option<HashMap<String, PeerEntry>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -236,12 +223,6 @@ pub struct UpdateWatchdogRequest {
 #[derive(Debug, Default, Deserialize)]
 pub struct UpdateNotificationsRequest {
     pub webhooks: Option<Vec<WebhookEndpointUpdateRequest>>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct AddPeerRequest {
-    pub name: String,
-    pub address: String,
 }
 
 // -- Web Push types --
@@ -507,10 +488,8 @@ mod tests {
                 data_dir: "/tmp".into(),
                 bind: BindMode::Local,
                 tag: None,
-                discovery_interval_secs: 30,
             },
             auth: AuthConfigResponse {},
-            peers: HashMap::new(),
             watchdog: WatchdogConfigResponse {
                 enabled: true,
                 memory_threshold: 90,
@@ -536,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null,"discovery_interval_secs":30},"auth":{},"peers":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"webhooks":[]}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null},"auth":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"webhooks":[]}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
@@ -560,7 +539,6 @@ mod tests {
             data_dir: "/tmp".into(),
             bind: BindMode::Local,
             tag: None,
-            discovery_interval_secs: 30,
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("test"));
@@ -574,7 +552,6 @@ mod tests {
         assert_eq!(req.port, Some(9999));
         assert!(req.data_dir.is_none());
         assert!(req.bind.is_none());
-        assert!(req.peers.is_none());
     }
 
     #[test]
@@ -616,24 +593,13 @@ mod tests {
     }
 
     #[test]
-    fn test_config_response_with_peers() {
-        let mut peers: HashMap<String, PeerEntry> = HashMap::new();
-        peers.insert("remote".into(), PeerEntry::Simple("10.0.0.1:7433".into()));
-        let mut resp = test_config_response();
-        resp.peers = peers;
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("remote"));
-    }
-
-    #[test]
     fn test_update_config_request_with_all_fields() {
-        let json = r#"{"node_name":"new","port":9999,"data_dir":"/d","bind":"public","peers":{"remote":"10.0.0.1:7433"}}"#;
+        let json = r#"{"node_name":"new","port":9999,"data_dir":"/d","bind":"public"}"#;
         let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.node_name, Some("new".into()));
         assert_eq!(req.port, Some(9999));
         assert_eq!(req.data_dir, Some("/d".into()));
         assert_eq!(req.bind, Some(BindMode::Public));
-        assert!(req.peers.is_some());
     }
 
     #[test]
@@ -950,134 +916,6 @@ mod tests {
     }
 
     #[test]
-    fn test_peers_response_serialize() {
-        use crate::node::NodeInfo;
-        use crate::peer::{PeerInfo, PeerSource, PeerStatus};
-
-        let resp = PeersResponse {
-            local: NodeInfo {
-                name: "local".into(),
-                hostname: "host".into(),
-                os: "macos".into(),
-                arch: "aarch64".into(),
-                cpus: 8,
-                memory_mb: 16384,
-                gpu: None,
-            },
-            peers: vec![PeerInfo {
-                name: "remote".into(),
-                address: "10.0.0.2:7433".into(),
-                status: PeerStatus::Online,
-                node_info: None,
-                session_count: Some(2),
-                source: PeerSource::Configured,
-            }],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"local\""));
-        assert!(json.contains("\"peers\""));
-        assert!(json.contains("\"remote\""));
-    }
-
-    #[test]
-    fn test_peers_response_deserialize() {
-        let json = r#"{"local":{"name":"n","hostname":"h","os":"linux","arch":"x86_64","cpus":4,"memory_mb":8192,"gpu":null},"peers":[]}"#;
-        let resp: PeersResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.local.name, "n");
-        assert!(resp.peers.is_empty());
-    }
-
-    #[test]
-    fn test_peers_response_roundtrip() {
-        use crate::node::NodeInfo;
-
-        let resp = PeersResponse {
-            local: NodeInfo {
-                name: "roundtrip".into(),
-                hostname: "h".into(),
-                os: "macos".into(),
-                arch: "arm64".into(),
-                cpus: 10,
-                memory_mb: 32768,
-                gpu: Some("M4".into()),
-            },
-            peers: vec![],
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let deserialized: PeersResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.local.name, "roundtrip");
-        assert!(deserialized.peers.is_empty());
-    }
-
-    #[test]
-    fn test_peers_response_debug() {
-        use crate::node::NodeInfo;
-
-        let resp = PeersResponse {
-            local: NodeInfo {
-                name: "debug".into(),
-                hostname: "h".into(),
-                os: "macos".into(),
-                arch: "arm64".into(),
-                cpus: 1,
-                memory_mb: 0,
-                gpu: None,
-            },
-            peers: vec![],
-        };
-        let debug = format!("{resp:?}");
-        assert!(debug.contains("debug"));
-    }
-
-    #[test]
-    fn test_add_peer_request_deserialize() {
-        let json = r#"{"name":"remote","address":"10.0.0.1:7433"}"#;
-        let req: AddPeerRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.name, "remote");
-        assert_eq!(req.address, "10.0.0.1:7433");
-    }
-
-    #[test]
-    fn test_add_peer_request_debug() {
-        let req = AddPeerRequest {
-            name: "test".into(),
-            address: "host:7433".into(),
-        };
-        let debug = format!("{req:?}");
-        assert!(debug.contains("test"));
-    }
-
-    #[test]
-    fn test_add_peer_request_serialize() {
-        let req = AddPeerRequest {
-            name: "node".into(),
-            address: "10.0.0.1:7433".into(),
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("\"name\":\"node\""));
-        assert!(json.contains("\"address\":\"10.0.0.1:7433\""));
-    }
-
-    #[test]
-    fn test_add_peer_request_roundtrip() {
-        let req = AddPeerRequest {
-            name: "roundtrip".into(),
-            address: "h:1".into(),
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        let parsed: AddPeerRequest = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.name, "roundtrip");
-        assert_eq!(parsed.address, "h:1");
-    }
-
-    #[test]
-    fn test_add_peer_request_missing_fields() {
-        let json = r#"{"name":"only-name"}"#;
-        let result = serde_json::from_str::<AddPeerRequest>(json);
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn test_intervention_event_response_serde() {
         let event = InterventionEventResponse {
             id: 1,
@@ -1340,7 +1178,6 @@ mod tests {
             data_dir: "/tmp".into(),
             bind: BindMode::Tailscale,
             tag: None,
-            discovery_interval_secs: 30,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"bind\":\"tailscale\""));

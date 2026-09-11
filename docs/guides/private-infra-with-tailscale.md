@@ -96,8 +96,7 @@ See [Worktrees](/guides/worktrees) for the full isolation model.
 
 ## Operational Notes
 
-- Tailscale is the recommended `bind` mode for reaching a node outside your LAN; use manual
-  `[peers]` entries instead if a machine isn't on your tailnet.
+- Tailscale is the recommended `bind` mode for reaching a node outside your LAN.
 - Set credentials on the node that will actually execute the work, not on whichever machine
   you happen to be typing from.
 - `--workdir` (and any credential-backed path) must exist on the node that runs the session,
@@ -106,7 +105,6 @@ See [Worktrees](/guides/worktrees) for the full isolation model.
 ## Related Docs
 
 - [Control Your Agents From Anywhere](/guides/remote-control)
-- [Discovery Guide](/guides/discovery)
 - [Worktrees](/guides/worktrees)
 - [Use Cases](/getting-started/use-cases)
 
@@ -117,9 +115,8 @@ plane joining them — cross-node orchestration is a dead product lane (see
 [ROADMAP.md](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md) "Phase C"). Instead:
 
 - Run a `pulpod` per box, each on your tailnet (`bind = "tailscale"`).
-- Reach each one directly: `pulpo --node <name>` from any machine on the tailnet (resolves
-  via the peer registry — see [Discovery Guide](/guides/discovery)), a saved connection in
-  the web UI, or plain SSH + `pulpo attach`.
+- Reach each one directly: `pulpo --url <host:port>` from any machine on the tailnet, a saved
+  connection in the web UI, or plain SSH + `pulpo attach`.
 - Aggregate visibility across machines by pointing every node's `[[webhooks]]` at the same
   collector — see the "Monitoring & event topology" section of the
   [Architecture Overview](/architecture/overview).

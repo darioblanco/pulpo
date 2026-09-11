@@ -8,20 +8,6 @@ export interface NodeInfo {
   gpu: string | null;
 }
 
-export interface PeerInfo {
-  name: string;
-  address: string;
-  status: 'online' | 'offline' | 'unknown';
-  node_info: NodeInfo | null;
-  session_count: number | null;
-  source?: 'configured' | 'discovered';
-}
-
-export interface PeersResponse {
-  local: NodeInfo;
-  peers: PeerInfo[];
-}
-
 export interface Session {
   id: string;
   name: string;
@@ -91,7 +77,6 @@ export interface NodeConfigResponse {
   data_dir: string;
   bind: string;
   tag: string | null;
-  discovery_interval_secs: number;
 }
 
 export interface WatchdogConfigResponse {
@@ -122,11 +107,8 @@ export interface NotificationsConfigResponse {
   webhooks: WebhookEndpointConfigResponse[];
 }
 
-export type PeerEntry = string | { address: string; token?: string };
-
 export interface ConfigResponse {
   node: NodeConfigResponse;
-  peers: Record<string, PeerEntry>;
   watchdog: WatchdogConfigResponse;
   notifications: NotificationsConfigResponse;
 }
@@ -137,7 +119,6 @@ export interface UpdateConfigRequest {
   data_dir?: string;
   bind?: string;
   tag?: string;
-  discovery_interval_secs?: number;
   watchdog_enabled?: boolean;
   watchdog_memory_threshold?: number;
   watchdog_check_interval_secs?: number;
@@ -145,7 +126,6 @@ export interface UpdateConfigRequest {
   watchdog_idle_timeout_secs?: number;
   watchdog_idle_action?: string;
   webhooks?: WebhookEndpointUpdateRequest[];
-  peers?: Record<string, PeerEntry>;
 }
 
 export interface UpdateConfigResponse {

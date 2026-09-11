@@ -13,8 +13,6 @@ const defaults = {
   onBindChange: vi.fn(),
   tag: '',
   onTagChange: vi.fn(),
-  discoveryInterval: 60,
-  onDiscoveryIntervalChange: vi.fn(),
 };
 
 describe('NodeSettings', () => {
@@ -30,21 +28,6 @@ describe('NodeSettings', () => {
   it('renders bind mode select', () => {
     render(<NodeSettings {...defaults} />);
     expect(screen.getByTestId('bind-mode-trigger')).toBeInTheDocument();
-  });
-
-  it('hides networking fields in local mode', () => {
-    render(<NodeSettings {...defaults} bind="local" />);
-    expect(screen.queryByLabelText('Discovery interval')).not.toBeInTheDocument();
-  });
-
-  it('shows discovery interval for tailscale mode', () => {
-    render(<NodeSettings {...defaults} bind="tailscale" />);
-    expect(screen.getByLabelText('Discovery interval')).toBeInTheDocument();
-  });
-
-  it('shows discovery interval for public mode', () => {
-    render(<NodeSettings {...defaults} bind="public" />);
-    expect(screen.getByLabelText('Discovery interval')).toBeInTheDocument();
   });
 
   it('calls onNameChange', () => {
@@ -80,36 +63,6 @@ describe('NodeSettings', () => {
     render(<NodeSettings {...defaults} onTagChange={onTagChange} />);
     fireEvent.change(screen.getByLabelText('Tag'), { target: { value: 'gpu' } });
     expect(onTagChange).toHaveBeenCalledWith('gpu');
-  });
-
-  it('calls onDiscoveryIntervalChange', () => {
-    const onDiscoveryIntervalChange = vi.fn();
-    render(
-      <NodeSettings
-        {...defaults}
-        bind="public"
-        onDiscoveryIntervalChange={onDiscoveryIntervalChange}
-      />,
-    );
-    fireEvent.change(screen.getByLabelText('Discovery interval'), {
-      target: { value: '120' },
-    });
-    expect(onDiscoveryIntervalChange).toHaveBeenCalledWith(120);
-  });
-
-  it('calls onDiscoveryIntervalChange with 0 for invalid input', () => {
-    const onDiscoveryIntervalChange = vi.fn();
-    render(
-      <NodeSettings
-        {...defaults}
-        bind="public"
-        onDiscoveryIntervalChange={onDiscoveryIntervalChange}
-      />,
-    );
-    fireEvent.change(screen.getByLabelText('Discovery interval'), {
-      target: { value: '' },
-    });
-    expect(onDiscoveryIntervalChange).toHaveBeenCalledWith(0);
   });
 
   it('shows bind mode description', () => {

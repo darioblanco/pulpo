@@ -17,10 +17,8 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
             data_dir: config.node.data_dir.clone(),
             bind: config.node.bind,
             tag: config.node.tag.clone(),
-            discovery_interval_secs: config.node.discovery_interval_secs,
         },
         auth: AuthConfigResponse {},
-        peers: config.peers.clone(),
         watchdog: WatchdogConfigResponse {
             enabled: config.watchdog.enabled,
             memory_threshold: config.watchdog.memory_threshold,
@@ -82,9 +80,6 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
     if let Some(tag) = req.tag {
         config.node.tag = if tag.is_empty() { None } else { Some(tag) };
     }
-    if let Some(interval) = req.discovery_interval_secs {
-        config.node.discovery_interval_secs = interval;
-    }
 
     // Watchdog
     if let Some(enabled) = req.watchdog_enabled {
@@ -125,12 +120,7 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
         config.notifications.webhooks.clear();
     }
 
-    // Peers
-    if let Some(peers) = req.peers {
-        config.peers = peers;
-    }
-
-    // Restart required for port, bind, or tag changes (affects network/discovery loops)
+    // Restart required for port, bind, or tag changes (affects network setup, e.g. tailscale serve)
     config.node.port != original_port
         || config.node.bind != original_bind
         || config.node.tag != original_tag
@@ -162,15 +152,12 @@ mod tests {
     use super::*;
     use crate::api::AppState;
     use crate::backend::StubBackend;
-    use std::collections::HashMap;
 
     use crate::config::{Config, NodeConfig};
-    use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
     use axum::extract::State;
     use axum::http::StatusCode;
-    use pulpo_common::peer::PeerEntry;
 
     async fn test_state() -> Arc<AppState> {
         let tmpdir = tempfile::tempdir().unwrap();
@@ -179,7 +166,6 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
         AppState::new(
             Config {
                 node: NodeConfig {
@@ -191,7 +177,6 @@ mod tests {
                 ..Default::default()
             },
             manager,
-            peer_registry,
             store,
         )
     }
@@ -203,7 +188,6 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
         let config_path = tmpdir.path().join("config.toml");
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         AppState::with_event_tx(
@@ -218,7 +202,6 @@ mod tests {
             },
             config_path,
             manager,
-            peer_registry,
             event_tx,
             store,
         )
@@ -230,7 +213,6 @@ mod tests {
         let Json(resp) = get_config(State(state)).await.unwrap();
         assert_eq!(resp.node.name, "test-node");
         assert_eq!(resp.node.port, 7433);
-        assert!(resp.peers.is_empty());
     }
 
     #[tokio::test]
@@ -281,23 +263,6 @@ mod tests {
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert!(!resp.restart_required);
-    }
-
-    #[tokio::test]
-    async fn test_update_config_peers() {
-        let state = test_state().await;
-        let mut peers = HashMap::new();
-        peers.insert("remote".into(), PeerEntry::Simple("10.0.0.1:7433".into()));
-        let req = UpdateConfigRequest {
-            peers: Some(peers),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.peers.len(), 1);
-        assert_eq!(
-            resp.config.peers["remote"],
-            PeerEntry::Simple("10.0.0.1:7433".into())
-        );
     }
 
     #[tokio::test]
@@ -479,18 +444,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_config_discovery_interval() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            discovery_interval_secs: Some(120),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.node.discovery_interval_secs, 120);
-        assert!(!resp.restart_required);
-    }
-
-    #[tokio::test]
     async fn test_update_config_watchdog() {
         let state = test_state().await;
         let req = UpdateConfigRequest {
@@ -520,7 +473,6 @@ mod tests {
                 port: 7433,
                 data_dir: "/tmp".into(),
                 tag: Some("gpu".into()),
-                discovery_interval_secs: 120,
                 ..NodeConfig::default()
             },
             watchdog: crate::config::WatchdogConfig {
@@ -553,7 +505,6 @@ mod tests {
         let resp = config_to_response(&config);
         // Node fields
         assert_eq!(resp.node.tag, Some("gpu".into()));
-        assert_eq!(resp.node.discovery_interval_secs, 120);
         // Watchdog
         assert!(resp.watchdog.enabled);
         assert_eq!(resp.watchdog.memory_threshold, 85);
@@ -713,7 +664,6 @@ mod tests {
         store.migrate().await.unwrap();
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
 
         // Use /dev/null/impossible as config path (can't create dirs under /dev/null)
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
@@ -729,7 +679,6 @@ mod tests {
             },
             std::path::PathBuf::from("/dev/null/impossible/config.toml"),
             manager,
-            peer_registry,
             event_tx,
             store,
         );

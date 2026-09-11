@@ -115,7 +115,6 @@ pub async fn action(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::sync::Arc;
 
     use axum::http::StatusCode;
@@ -126,7 +125,6 @@ mod tests {
     use crate::api::routes;
     use crate::backend::StubBackend;
     use crate::config::{Config, NodeConfig, NotificationsConfig, VapidConfig};
-    use crate::peers::PeerRegistry;
     use crate::session::manager::SessionManager;
     use crate::store::Store;
 
@@ -162,8 +160,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry, store.clone());
+        let state = AppState::new(config, manager, store.clone());
         let app = routes::build(state);
         (TestServer::new(app).unwrap(), store)
     }
@@ -442,8 +439,7 @@ mod tests {
         };
         let backend = Arc::new(StubBackend);
         let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
-        let peer_registry = PeerRegistry::new(&HashMap::new());
-        let state = AppState::new(config, manager, peer_registry, store);
+        let state = AppState::new(config, manager, store);
         let server = TestServer::new(routes::build(state)).unwrap();
 
         // No Authorization header at all.

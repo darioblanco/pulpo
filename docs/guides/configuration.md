@@ -28,9 +28,9 @@ default_command = "claude"   # Optional fallback when spawn has no command
 ```
 
 Bind modes:
-- `local` (default) — binds to `127.0.0.1`, no auth, no discovery
-- `public` — binds to `0.0.0.0`, requires auth token. Use manual `[peers]` config for multi-node.
-- `tailscale` — binds locally, auto-serves HTTPS via `tailscale serve`, peer discovery via Tailscale API
+- `local` (default) — binds to `127.0.0.1`, no auth
+- `public` — binds to `0.0.0.0`, requires auth token
+- `tailscale` — binds locally, auto-serves HTTPS over your tailnet via `tailscale serve`
 
 ## Watchdog
 
@@ -78,21 +78,6 @@ right on the phone notification, so you can kill a runaway session from the lock
 without opening the app. See the [Push Notifications reference](/reference/push) for the
 subscribe flow, payload schema, and the action-token endpoint.
 
-## Peers
-
-Manual peer entries coexist with automatic discovery:
-
-```toml
-[peers]
-mac = "10.0.0.1:7433"
-
-[peers.linux]
-address = "10.0.0.2:7433"
-token = "secret"
-```
-
-See [Discovery Guide](/guides/discovery) for automatic peer discovery options.
-
 ## Auth
 
 Only used with `bind = "public"`. Auto-generated on first run:
@@ -104,16 +89,17 @@ token = "auto-generated-uuid"
 
 For `local` and `tailscale` modes, auth is skipped.
 
-## Multi-Node
+## Multiple Machines
 
 There is no `[controller]` section — controller/node relay mode was removed. Every `pulpod`
-is standalone. A leftover `[controller]` section from an older config still loads (it's
-parsed but ignored) and is dropped the next time the config is saved — the same treatment
-already given the retired `[docker]` runtime section.
+is standalone. There is also no `[peers]` section — manual peer configuration and Tailscale
+peer discovery were removed for the same reason. A leftover `[controller]`, `[peers]`, or
+`discovery_interval_secs` key from an older config still loads (it's parsed but ignored) and
+is dropped the next time the config is saved — the same treatment already given the retired
+`[docker]` runtime section.
 
-To reach another machine, point the CLI or web UI at it directly (`pulpo --node <name>`, a
-saved web UI connection, or SSH + `pulpo attach`) — see the
-[Discovery Guide](/guides/discovery) for peer setup and
+To reach another machine, point the CLI or web UI at it directly (`pulpo --url <host:port>`,
+a saved web UI connection, or SSH + `pulpo attach`) — see
 [Control Your Agents From Anywhere](/guides/remote-control) for the daily workflow. For a
 view across machines, point every node's `[[webhooks]]` at the same collector.
 

@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 #[cfg_attr(coverage, allow(unused_imports))]
 use pulpo_common::api::{
-    CleanupResponse, CreateSessionResponse, InterventionEventResponse, PeersResponse,
-    UsageProjectionResponse, UsageScanResponse,
+    CleanupResponse, CreateSessionResponse, InterventionEventResponse, UsageProjectionResponse,
+    UsageScanResponse,
 };
 use pulpo_common::session::{Session, SessionStatus};
 
@@ -13,13 +13,13 @@ mod http;
 
 #[cfg_attr(coverage, allow(unused_imports))]
 use format::{
-    format_cleanup_message, format_interventions, format_nodes, format_schedules, format_sessions,
+    format_cleanup_message, format_interventions, format_schedules, format_sessions,
     format_usage_projection, format_usage_scan, format_worktree_sessions,
 };
 #[cfg_attr(coverage, allow(unused_imports))]
 use http::{
     authed_get, authed_post, base_url, friendly_error, get_json, is_localhost, ok_or_api_error,
-    request_json, request_text, resolve_node, resolve_token,
+    request_json, request_text, resolve_address, resolve_token,
 };
 
 #[derive(Parser, Debug)]
@@ -29,13 +29,13 @@ use http::{
     version = env!("PULPO_VERSION")
 )]
 pub struct Cli {
-    /// Target node (default: localhost)
+    /// Daemon address to talk to — `host:port` or a full URL (default: localhost)
     ///
     /// `global = true` so it parses before or after a subcommand
-    /// (`pulpo --node X ui` and `pulpo ui --node X` both work) without
+    /// (`pulpo --url X ui` and `pulpo ui --url X` both work) without
     /// `args_conflicts_with_subcommands` mistaking the subcommand for the quick-spawn path.
     #[arg(long, global = true, default_value = "localhost:7433")]
-    pub node: String,
+    pub url: String,
 
     /// Auth token (auto-discovered from local daemon if omitted)
     #[arg(long, global = true)]
@@ -181,10 +181,6 @@ pub enum Commands {
         /// Session name or ID
         name: String,
     },
-
-    /// List known nodes on the tailnet/peer registry
-    #[command(visible_alias = "n")]
-    Nodes,
 
     /// Show intervention history for a session
     #[command(visible_alias = "iv")]
@@ -948,16 +944,14 @@ pub async fn execute(cli: &Cli) -> Result<String> {
     }
 
     let client = reqwest::Client::new();
-    let (resolved_node, peer_token) = resolve_node(&client, &cli.node).await;
+    let resolved_node = resolve_address(&cli.url);
     let url = base_url(&resolved_node);
     let node = &resolved_node;
 
     // Auto-start pulpod if it's not running on localhost
     ensure_daemon_running(&client, &url, node).await;
 
-    let token = resolve_token(&client, &url, node, cli.token.as_deref())
-        .await
-        .or(peer_token);
+    let token = resolve_token(&client, &url, node, cli.token.as_deref()).await;
 
     // Handle `pulpo <path>` shortcut — spawn a session in the given directory
     if cli.command.is_none() && cli.path.is_none() {
@@ -1053,16 +1047,6 @@ pub async fn execute(cli: &Cli) -> Result<String> {
             let sessions: Vec<Session> =
                 get_json(&client, list_url, token.as_deref(), node).await?;
             Ok(format_sessions(&sessions))
-        }
-        Commands::Nodes => {
-            let resp: PeersResponse = get_json(
-                &client,
-                format!("{url}/api/v1/peers"),
-                token.as_deref(),
-                node,
-            )
-            .await?;
-            Ok(format_nodes(&resp))
         }
         Commands::Spawn {
             workdir,
@@ -1389,14 +1373,8 @@ mod tests {
     #[test]
     fn test_cli_parse_list() {
         let cli = Cli::try_parse_from(["pulpo", "list"]).unwrap();
-        assert_eq!(cli.node, "localhost:7433");
+        assert_eq!(cli.url, "localhost:7433");
         assert!(matches!(cli.command, Some(Commands::List { .. })));
-    }
-
-    #[test]
-    fn test_cli_parse_nodes() {
-        let cli = Cli::try_parse_from(["pulpo", "nodes"]).unwrap();
-        assert!(matches!(cli.command, Some(Commands::Nodes)));
     }
 
     #[test]
@@ -1406,28 +1384,28 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_ui_custom_node() {
-        // `--node` is global, so a subcommand after it parses as the subcommand
+    fn test_cli_parse_ui_custom_url() {
+        // `--url` is global, so a subcommand after it parses as the subcommand
         // (not swallowed as the quick-spawn path).
-        let cli = Cli::try_parse_from(["pulpo", "--node", "mac-mini:7433", "ui"]).unwrap();
-        assert_eq!(cli.node, "mac-mini:7433");
+        let cli = Cli::try_parse_from(["pulpo", "--url", "mac-mini:7433", "ui"]).unwrap();
+        assert_eq!(cli.url, "mac-mini:7433");
         assert!(cli.path.is_none());
         assert!(matches!(cli.command, Some(Commands::Ui)));
     }
 
     #[test]
-    fn test_cli_parse_node_after_subcommand() {
-        // Global `--node` also works *after* the subcommand.
-        let cli = Cli::try_parse_from(["pulpo", "ui", "--node", "mac-mini:7433"]).unwrap();
-        assert_eq!(cli.node, "mac-mini:7433");
+    fn test_cli_parse_url_after_subcommand() {
+        // Global `--url` also works *after* the subcommand.
+        let cli = Cli::try_parse_from(["pulpo", "ui", "--url", "mac-mini:7433"]).unwrap();
+        assert_eq!(cli.url, "mac-mini:7433");
         assert!(matches!(cli.command, Some(Commands::Ui)));
     }
 
     #[test]
-    fn test_cli_parse_node_with_quick_spawn_path() {
-        // A real path after `--node` is still the quick-spawn positional (not a subcommand).
-        let cli = Cli::try_parse_from(["pulpo", "--node", "box:7433", "/tmp/repo"]).unwrap();
-        assert_eq!(cli.node, "box:7433");
+    fn test_cli_parse_url_with_quick_spawn_path() {
+        // A real path after `--url` is still the quick-spawn positional (not a subcommand).
+        let cli = Cli::try_parse_from(["pulpo", "--url", "box:7433", "/tmp/repo"]).unwrap();
+        assert_eq!(cli.url, "box:7433");
         assert!(cli.command.is_none());
         assert_eq!(cli.path.as_deref(), Some("/tmp/repo"));
     }
@@ -1830,10 +1808,10 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_custom_node() {
-        // `--node` is global → `list` parses as the List subcommand, not the quick-spawn path.
-        let cli = Cli::try_parse_from(["pulpo", "--node", "win-pc:8080", "list"]).unwrap();
-        assert_eq!(cli.node, "win-pc:8080");
+    fn test_cli_parse_custom_url() {
+        // `--url` is global → `list` parses as the List subcommand, not the quick-spawn path.
+        let cli = Cli::try_parse_from(["pulpo", "--url", "win-pc:8080", "list"]).unwrap();
+        assert_eq!(cli.url, "win-pc:8080");
         assert!(cli.path.is_none());
         assert!(matches!(cli.command, Some(Commands::List { .. })));
     }
@@ -1882,9 +1860,8 @@ mod tests {
         let app = Router::new()
             .route(
                 "/api/v1/sessions",
-                get(|| async { Json::<Vec<()>>(vec![]) }).post(move || async move {
-                    (StatusCode::CREATED, create_json.clone())
-                }),
+                get(|| async { Json::<Vec<()>>(vec![]) })
+                    .post(move || async move { (StatusCode::CREATED, create_json.clone()) }),
             )
             .route(
                 "/api/v1/sessions/{id}",
@@ -1903,12 +1880,6 @@ mod tests {
                 get(|| async { r#"{"output":"test output"}"#.to_owned() }),
             )
             .route(
-                "/api/v1/peers",
-                get(|| async {
-                    r#"{"local":{"name":"test","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":0,"gpu":null},"peers":[]}"#.to_owned()
-                }),
-            )
-            .route(
                 "/api/v1/sessions/{id}/resume",
                 axum::routing::post(|| async { TEST_SESSION_JSON.to_owned() }),
             )
@@ -1922,8 +1893,7 @@ mod tests {
             )
             .route(
                 "/api/v1/schedules",
-                get(|| async { Json::<Vec<()>>(vec![]) })
-                    .post(|| async { StatusCode::CREATED }),
+                get(|| async { Json::<Vec<()>>(vec![]) }).post(|| async { StatusCode::CREATED }),
             )
             .route(
                 "/api/v1/schedules/{id}",
@@ -1941,7 +1911,7 @@ mod tests {
     async fn test_execute_list_success() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::List { all: false }),
             path: None,
@@ -1951,25 +1921,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_execute_nodes_success() {
-        let node = start_test_server().await;
-        let cli = Cli {
-            node,
-            token: None,
-            command: Some(Commands::Nodes),
-            path: None,
-        };
-        let result = execute(&cli).await.unwrap();
-        assert!(result.contains("test"));
-        assert!(result.contains("(local)"));
-        assert!(result.contains("NAME"));
-    }
-
-    #[tokio::test]
     async fn test_execute_spawn_success() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Spawn {
                 name: Some("test".into()),
@@ -1994,7 +1949,7 @@ mod tests {
     async fn test_execute_spawn_with_all_flags() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Spawn {
                 name: Some("test".into()),
@@ -2018,7 +1973,7 @@ mod tests {
     async fn test_execute_spawn_with_idle_threshold_and_worktree() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Spawn {
                 name: Some("full-opts".into()),
@@ -2042,7 +1997,7 @@ mod tests {
     async fn test_execute_spawn_no_name_derives_from_workdir() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Spawn {
                 name: None,
@@ -2066,7 +2021,7 @@ mod tests {
     async fn test_execute_spawn_no_command() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Spawn {
                 name: Some("test".into()),
@@ -2090,7 +2045,7 @@ mod tests {
     async fn test_execute_spawn_with_name() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Spawn {
                 name: Some("my-task".into()),
@@ -2114,7 +2069,7 @@ mod tests {
     async fn test_execute_spawn_auto_attach() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Spawn {
                 name: Some("test".into()),
@@ -2139,7 +2094,7 @@ mod tests {
     async fn test_execute_handoff_detached() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Handoff {
                 source: "plan-auth".into(),
@@ -2160,7 +2115,7 @@ mod tests {
     async fn test_execute_handoff_with_all_flags() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Handoff {
                 source: "plan-auth".into(),
@@ -2181,7 +2136,7 @@ mod tests {
     async fn test_execute_handoff_auto_attach() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Handoff {
                 source: "plan-auth".into(),
@@ -2201,7 +2156,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_handoff_connection_refused() {
         let cli = Cli {
-            node: "localhost:1".into(),
+            url: "localhost:1".into(),
             token: None,
             command: Some(Commands::Handoff {
                 source: "plan-auth".into(),
@@ -2238,7 +2193,7 @@ mod tests {
         let node = format!("127.0.0.1:{}", addr.port());
 
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Handoff {
                 source: "plan-auth".into(),
@@ -2259,7 +2214,7 @@ mod tests {
     async fn test_execute_stop_success() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Stop {
                 names: vec!["test-session".into()],
@@ -2276,7 +2231,7 @@ mod tests {
     async fn test_execute_stop_with_purge() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Stop {
                 names: vec!["test-session".into()],
@@ -2292,7 +2247,7 @@ mod tests {
     async fn test_execute_logs_success() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Logs {
                 name: "test-session".into(),
@@ -2308,7 +2263,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_list_connection_refused() {
         let cli = Cli {
-            node: "localhost:1".into(),
+            url: "localhost:1".into(),
             token: None,
             command: Some(Commands::List { all: false }),
             path: None,
@@ -2331,7 +2286,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_schedule_list_connection_refused() {
         let cli = Cli {
-            node: "localhost:1".into(),
+            url: "localhost:1".into(),
             token: None,
             command: Some(Commands::Schedule {
                 action: ScheduleAction::List,
@@ -2344,19 +2299,6 @@ mod tests {
             err.contains("Could not connect to pulpod"),
             "Expected friendly error, got: {err}"
         );
-    }
-
-    #[tokio::test]
-    async fn test_execute_nodes_connection_refused() {
-        let cli = Cli {
-            node: "localhost:1".into(),
-            token: None,
-            command: Some(Commands::Nodes),
-            path: None,
-        };
-        let result = execute(&cli).await;
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Could not connect to pulpod"));
     }
 
     #[tokio::test]
@@ -2378,7 +2320,7 @@ mod tests {
         let node = format!("127.0.0.1:{}", addr.port());
 
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Stop {
                 names: vec!["test-session".into()],
@@ -2409,7 +2351,7 @@ mod tests {
         let node = format!("127.0.0.1:{}", addr.port());
 
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Logs {
                 name: "ghost".into(),
@@ -2441,7 +2383,7 @@ mod tests {
         let node = format!("127.0.0.1:{}", addr.port());
 
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Resume {
                 name: "test-session".into(),
@@ -2471,7 +2413,7 @@ mod tests {
         let node = format!("127.0.0.1:{}", addr.port());
 
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Spawn {
                 name: Some("test".into()),
@@ -2510,7 +2452,7 @@ mod tests {
         let node = format!("127.0.0.1:{}", addr.port());
 
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Interventions {
                 name: "ghost".into(),
@@ -2525,7 +2467,7 @@ mod tests {
     async fn test_execute_resume_success() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Resume {
                 name: "test-session".into(),
@@ -2540,7 +2482,7 @@ mod tests {
     async fn test_execute_input_success() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Input {
                 name: "test-session".into(),
@@ -2556,7 +2498,7 @@ mod tests {
     async fn test_execute_input_no_text() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Input {
                 name: "test-session".into(),
@@ -2571,7 +2513,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_input_connection_refused() {
         let cli = Cli {
-            node: "localhost:1".into(),
+            url: "localhost:1".into(),
             token: None,
             command: Some(Commands::Input {
                 name: "test".into(),
@@ -2603,7 +2545,7 @@ mod tests {
         let node = format!("127.0.0.1:{}", addr.port());
 
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Input {
                 name: "ghost".into(),
@@ -2618,7 +2560,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_ui() {
         let cli = Cli {
-            node: "localhost:7433".into(),
+            url: "localhost:7433".into(),
             token: None,
             command: Some(Commands::Ui),
             path: None,
@@ -2631,7 +2573,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_hook_is_intercepted_before_node_preamble() {
         // Point at an unreachable address — if this fell through to the normal
-        // preamble (resolve_node/ensure_daemon_running) instead of being intercepted
+        // preamble (resolve_address/ensure_daemon_running) instead of being intercepted
         // up front, it could hang or error; the hook path must always resolve
         // cleanly (whatever PULPO_SESSION_ID happens to be in this environment,
         // `execute` never propagates an error for the hook subcommand). This test
@@ -2640,7 +2582,7 @@ mod tests {
         // regardless of `PULPO_SESSION_ID`, the same as `execute_hook_with_stdin`'s
         // callers get explicitly.
         let cli = Cli {
-            node: "127.0.0.1:1".into(),
+            url: "127.0.0.1:1".into(),
             token: None,
             command: Some(Commands::Hook {
                 harness: "claude".into(),
@@ -2658,7 +2600,7 @@ mod tests {
         // Same guarantee as the "claude" hook path above, for the "codex-notify"
         // dispatch branch specifically.
         let cli = Cli {
-            node: "127.0.0.1:1".into(),
+            url: "127.0.0.1:1".into(),
             token: None,
             command: Some(Commands::Hook {
                 harness: "codex-notify".into(),
@@ -2674,7 +2616,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_ui_custom_node() {
         let cli = Cli {
-            node: "mac-mini:7433".into(),
+            url: "mac-mini:7433".into(),
             token: None,
             command: Some(Commands::Ui),
             path: None,
@@ -2686,7 +2628,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_resume_connection_refused() {
         let cli = Cli {
-            node: "localhost:1".into(),
+            url: "localhost:1".into(),
             token: None,
             command: Some(Commands::Resume {
                 name: "test".into(),
@@ -2701,7 +2643,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_spawn_connection_refused() {
         let cli = Cli {
-            node: "localhost:1".into(),
+            url: "localhost:1".into(),
             token: None,
             command: Some(Commands::Spawn {
                 name: Some("test".into()),
@@ -2725,7 +2667,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_stop_connection_refused() {
         let cli = Cli {
-            node: "localhost:1".into(),
+            url: "localhost:1".into(),
             token: None,
             command: Some(Commands::Stop {
                 names: vec!["test".into()],
@@ -2741,7 +2683,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_logs_connection_refused() {
         let cli = Cli {
-            node: "localhost:1".into(),
+            url: "localhost:1".into(),
             token: None,
             command: Some(Commands::Logs {
                 name: "test".into(),
@@ -2791,7 +2733,7 @@ mod tests {
         let node = format!("127.0.0.1:{}", addr.port());
 
         let cli = Cli {
-            node,
+            url: node,
             token: Some("test-token".into()),
             command: Some(Commands::List { all: false }),
             path: None,
@@ -2892,7 +2834,7 @@ mod tests {
     async fn test_execute_interventions_empty() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Interventions {
                 name: "my-session".into(),
@@ -2920,7 +2862,7 @@ mod tests {
         let node = format!("127.0.0.1:{}", addr.port());
 
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Interventions {
                 name: "test".into(),
@@ -2935,7 +2877,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_interventions_connection_refused() {
         let cli = Cli {
-            node: "localhost:1".into(),
+            url: "localhost:1".into(),
             token: None,
             command: Some(Commands::Interventions {
                 name: "test".into(),
@@ -3005,7 +2947,7 @@ mod tests {
     async fn test_execute_attach_success() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Attach {
                 name: "test-session".into(),
@@ -3029,7 +2971,7 @@ mod tests {
         tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
 
         let cli = Cli {
-            node: format!("127.0.0.1:{}", addr.port()),
+            url: format!("127.0.0.1:{}", addr.port()),
             token: None,
             command: Some(Commands::Attach {
                 name: "my-session".into(),
@@ -3043,7 +2985,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_attach_connection_refused() {
         let cli = Cli {
-            node: "localhost:1".into(),
+            url: "localhost:1".into(),
             token: None,
             command: Some(Commands::Attach {
                 name: "test-session".into(),
@@ -3072,7 +3014,7 @@ mod tests {
         tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
 
         let cli = Cli {
-            node: format!("127.0.0.1:{}", addr.port()),
+            url: format!("127.0.0.1:{}", addr.port()),
             token: None,
             command: Some(Commands::Attach {
                 name: "nonexistent".into(),
@@ -3097,7 +3039,7 @@ mod tests {
         tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
 
         let cli = Cli {
-            node: format!("127.0.0.1:{}", addr.port()),
+            url: format!("127.0.0.1:{}", addr.port()),
             token: None,
             command: Some(Commands::Attach {
                 name: "stale-sess".into(),
@@ -3123,7 +3065,7 @@ mod tests {
         tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
 
         let cli = Cli {
-            node: format!("127.0.0.1:{}", addr.port()),
+            url: format!("127.0.0.1:{}", addr.port()),
             token: None,
             command: Some(Commands::Attach {
                 name: "dead-sess".into(),
@@ -3184,12 +3126,6 @@ mod tests {
             &cli.command,
             Some(Commands::Resume { name }) if name == "my-session"
         ));
-    }
-
-    #[test]
-    fn test_cli_parse_alias_nodes() {
-        let cli = Cli::try_parse_from(["pulpo", "n"]).unwrap();
-        assert!(matches!(&cli.command, Some(Commands::Nodes)));
     }
 
     #[test]
@@ -3321,7 +3257,7 @@ mod tests {
         let node = base.strip_prefix("http://").unwrap().to_owned();
 
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Logs {
                 name: "test".into(),
@@ -3338,7 +3274,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_logs_follow_connection_refused() {
         let cli = Cli {
-            node: "localhost:1".into(),
+            url: "localhost:1".into(),
             token: None,
             command: Some(Commands::Logs {
                 name: "test".into(),
@@ -3453,7 +3389,7 @@ mod tests {
         let node = format!("127.0.0.1:{}", addr.port());
 
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Logs {
                 name: "test".into(),
@@ -3505,9 +3441,9 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_schedule_add_with_node() {
-        // `--node` is the global connection flag: the schedule is created directly
-        // on that node's pulpod and fires locally there.
+    fn test_cli_parse_schedule_add_with_url() {
+        // `--url` is the global connection flag: the schedule is created directly
+        // on that daemon and fires locally there.
         let cli = Cli::try_parse_from([
             "pulpo",
             "schedule",
@@ -3516,13 +3452,13 @@ mod tests {
             "0 3 * * *",
             "--workdir",
             "/repo",
-            "--node",
+            "--url",
             "gpu-box",
             "--",
             "claude",
         ])
         .unwrap();
-        assert_eq!(cli.node, "gpu-box");
+        assert_eq!(cli.url, "gpu-box");
         assert!(matches!(
             &cli.command,
             Some(Commands::Schedule {
@@ -3644,7 +3580,7 @@ mod tests {
     async fn test_execute_schedule_list_via_execute() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             command: Some(Commands::Schedule {
                 action: ScheduleAction::List,
@@ -3743,7 +3679,7 @@ mod tests {
     async fn test_execute_no_args_shows_help() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             path: None,
             command: None,
@@ -3759,7 +3695,7 @@ mod tests {
     async fn test_execute_path_shortcut() {
         let node = start_test_server().await;
         let cli = Cli {
-            node,
+            url: node,
             token: None,
             path: Some("/tmp".into()),
             command: None,
@@ -3784,29 +3720,22 @@ mod tests {
 
         let call_count = std::sync::Arc::new(AtomicU32::new(0));
         let counter = call_count.clone();
-        let app = Router::new()
-            .route(
-                "/api/v1/sessions/{id}",
-                get(move || {
-                    let c = counter.clone();
-                    async move {
-                        let n = c.fetch_add(1, Ordering::SeqCst);
-                        if n == 0 {
-                            // First call (base name) → exists
-                            (axum::http::StatusCode::OK, TEST_SESSION_JSON.to_owned())
-                        } else {
-                            // Suffixed name → not found
-                            (axum::http::StatusCode::NOT_FOUND, "not found".to_owned())
-                        }
+        let app = Router::new().route(
+            "/api/v1/sessions/{id}",
+            get(move || {
+                let c = counter.clone();
+                async move {
+                    let n = c.fetch_add(1, Ordering::SeqCst);
+                    if n == 0 {
+                        // First call (base name) → exists
+                        (axum::http::StatusCode::OK, TEST_SESSION_JSON.to_owned())
+                    } else {
+                        // Suffixed name → not found
+                        (axum::http::StatusCode::NOT_FOUND, "not found".to_owned())
                     }
-                }),
-            )
-            .route(
-                "/api/v1/peers",
-                get(|| async {
-                    r#"{"local":{"name":"test","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":0,"gpu":null},"peers":[]}"#.to_owned()
-                }),
-            );
+                }
+            }),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
@@ -3816,21 +3745,21 @@ mod tests {
         assert_eq!(name, "repo-2");
     }
 
-    // -- Node resolution tests --
+    // -- Address resolution tests --
 
     #[tokio::test]
-    async fn test_execute_with_peer_name_resolution() {
-        // When node doesn't contain ':', resolve_node is called.
-        // Since there's no local daemon on port 7433, it falls back to appending :7433.
-        // The connection to the fallback address will fail, giving us a connection error.
+    async fn test_execute_with_bare_hostname_appends_default_port() {
+        // A bare hostname (no `:`) gets the default pulpod port appended by
+        // `resolve_address`. Since there's no daemon at that address, the
+        // connection fails, giving us a connection error.
         let cli = Cli {
-            node: "nonexistent-peer".into(),
+            url: "nonexistent-host".into(),
             token: None,
             command: Some(Commands::List { all: false }),
             path: None,
         };
         let result = execute(&cli).await;
-        // Should try to connect to nonexistent-peer:7433 and fail
+        // Should try to connect to nonexistent-host:7433 and fail
         assert!(result.is_err());
     }
 

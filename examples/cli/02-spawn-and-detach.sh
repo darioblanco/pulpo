@@ -3,10 +3,10 @@
 # The -d / --detach flag skips auto-attach.
 set -euo pipefail
 
-NODE="${NODE:-localhost:7433}"
+URL="${URL:-localhost:7433}"
 
 # Spawn detached — returns immediately
-pulpo --node "${NODE}" spawn lint-check \
+pulpo --url "${URL}" spawn lint-check \
   --workdir ~/repos/my-api \
   --detach \
   -- npm run lint

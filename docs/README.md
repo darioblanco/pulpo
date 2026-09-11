@@ -96,7 +96,7 @@ and SSE stream, the scheduler, and the event-forwarding backbone (webhooks + `/m
 
 Pulpo is **single-node-first** — each node meters and governs its own sessions with no central
 server required. There is deliberately no control plane: reach each node directly with
-`pulpo --node <name|host:port>`, a saved connection in the web UI, or SSH/tmux — see
+`pulpo --url <host:port>`, a saved connection in the web UI, or SSH/tmux — see
 [Control Your Agents From Anywhere](/guides/remote-control). For a view across machines, point
 every node's event forwarding (`[[webhooks]]` + `/metrics`) at the same collector you already
 run.
@@ -126,7 +126,6 @@ run.
 - [Session Lifecycle](/operations/session-lifecycle)
 - [Harness Adapters](/architecture/harness-adapters)
 - [Configuration Guide](/guides/configuration)
-- [Discovery Guide](/guides/discovery)
 - [Control Your Agents From Anywhere](/guides/remote-control)
 - [Nightly Code Review](/guides/nightly-code-review)
 - [Parallel Agents On One Repo](/guides/parallel-agents-one-repo)

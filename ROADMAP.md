@@ -92,6 +92,7 @@ unchanged — see git history of this file for the full sovereignty section.)
 | Event-forwarding backbone (`[[webhooks]]` + `/metrics`) | **The cross-node story**: forward signed events to your own collector; aggregate in Grafana/Datadog/SIEM. Replaces the removed bespoke controller for fleet visibility |
 | Tailscale transport (`bind = "tailscale"`) | Secure zero-setup remote access to a node's UI/API over the tailnet; standalone, no fleet required |
 | Controller / cross-node control plane | **REMOVED (July 2026)** — was frozen (2026-06-14), then deleted; not kept as dormant code (see Phase C) |
+| Peer registry, peer health probing, Tailscale peer discovery, `--node` CLI routing | **REMOVED (September 2026)** — a read-only list of other nodes' sessions with no way to act on them; `bind = "tailscale"` and `tailscale serve` stay as the remote-access transport, reached with `pulpo --url <host:port>` |
 | Inks (`[inks.<name>]` preset registry) | **REMOVED (July 2026)** — command set directly per session/schedule; budget moved onto schedules (`--budget-cost`); a shared blueprint added indirection without a corresponding need |
 | Secrets store | **REMOVED (2026-09)** — every supported agent reads its own credentials from its own config; an env var a session needs is exported in the shell or wrapped into the command |
 | PWA web UI | The gauge; mobile-first; single-node-first with an optional event-fed fleet pane |
@@ -221,12 +222,20 @@ headroom). It was frozen because:
 paying the maintenance tax on dead code with no active investment wasn't worth it. There is
 no `[controller]` config, no controller/node roles, and no fleet/enrollment/event-push/
 node-commands API surface; every `pulpod` is standalone. Cross-machine reach is direct:
-`pulpo --node <name|host:port>` from the CLI, saved connections in the web UI, or SSH/tmux —
+`pulpo --url <host:port>` from the CLI, saved connections in the web UI, or SSH/tmux —
 see [Control Your Agents From Anywhere](docs/guides/remote-control.md). **Tailscale stays**
 as *secure transport* (`bind = "tailscale"` → `tailscale serve` HTTPS + tailnet identity,
 reachable from your phone with zero setup) — standalone, independent of any fleet. The
 cross-node story is the event backbone; the dashboard is single-node-first, showing only the
 local node. If central governance is ever built, it starts from zero, not from this code.
+
+**Update (September 2026): the peer registry, peer health probing, and Tailscale peer
+discovery layered on top of the (already-removed) controller were removed too.** They only
+produced a read-only list of other nodes' sessions with no way to act on them — dead weight
+once the controller was gone. There is no `[peers]` config, no `pulpo nodes`, no
+`/api/v1/peers`, and the CLI's connection flag was renamed `--node` → `--url` — it now takes
+only a `host:port`/URL, no more resolving a bare peer name against the local registry.
+`bind = "tailscale"` and `tailscale serve` are unaffected.
 
 ### Phase M — Monitoring, alerting & operational optimization (a first-class pillar)
 
@@ -424,10 +433,11 @@ Core infrastructure:
 - Inks: reusable session blueprints (command, description, secrets, runtime defaults) —
   shipped, then removed in July 2026; command/budget now set directly per session/schedule
   (see Roadmap "Removed")
-- Multi-node: Tailscale peer discovery, manual peers (`pulpo nodes`); a controller/node
-  control plane (fleet dashboard, cross-node create/stop/resume, scheduled dispatch)
-  shipped, then was removed in July 2026 — every `pulpod` is standalone, reached directly
-  (see Phase C status above)
+- Multi-node: Tailscale peer discovery, manual peers (`pulpo nodes`), and a controller/node
+  control plane (fleet dashboard, cross-node create/stop/resume, scheduled dispatch) all
+  shipped, then were removed — the controller in July 2026 (see Phase C status above), the
+  peer registry and Tailscale peer discovery in September 2026 (see Phase C update above).
+  Every `pulpod` is standalone, reached directly with `pulpo --url <host:port>`.
 - SSE event stream, webhook notifications, Web Push, PWA
 - Secret store: plaintext-in-SQLite env vars injected into sessions — shipped, then removed
   in 2026-09 (see Roadmap "Removed")
@@ -435,7 +445,7 @@ Core infrastructure:
 - Scheduling: DB-backed cron schedules (local timezone), CRUD API + CLI, 60s scheduler
 - Observability: PR/branch detection, git branch/commit/diff tracking, rate-limit
   detection, token/cost scraping (superseded by Phase A readers), enriched notifications
-- Homebrew tap distribution, CLI auto-start daemon, node name resolution
+- Homebrew tap distribution, CLI auto-start daemon
 
 Shipped but scheduled for removal under Track R: Docker runtime, worktrees web-UI page,
 Tauri mobile builds, MCP server, Discord bot, voice experiments.
@@ -482,8 +492,20 @@ Revisit only on real demand:
 - ~~Controller/node control plane~~ (July 2026) — `[controller]` config, controller/node
   roles, the fleet/enrollment/event-push/node-commands API surface, `nodes enroll`/`nodes
   enrolled` CLI, per-schedule `target_node`. Cross-node orchestration was a dead product
-  lane (see Phase C); direct `pulpo --node <name>` access over Tailscale plus shared
+  lane (see Phase C); direct `pulpo --url <host:port>` access over Tailscale plus shared
   `[[webhooks]]` cover real usage.
+- ~~Peer registry, peer health probing, Tailscale peer discovery, `--node` CLI routing~~
+  (September 2026) — `[peers]` config, `PeerRegistry` + on-demand health prober,
+  `discovery::tailscale`, `GET/POST/DELETE /api/v1/peers`, `pulpo nodes`, `format_nodes`, the
+  web peer settings tab and fleet/peer widgets. Only ever produced a read-only list of other
+  nodes' sessions with no way to act on them — the cross-node story is the event-forwarding
+  backbone (`[[webhooks]]` + `/metrics`), which this removal doesn't touch. The CLI's
+  connection flag was renamed `--node` → `--url` (still `host:port`/URL, no more resolving a
+  bare peer name against the registry). `node.discovery_interval_secs` and a top-level
+  `[peers]` section are tolerated in old configs (parsed, ignored, dropped on next save) —
+  same treatment as the retired `[docker]`/`[controller]`/`[inks]` sections. **Kept:**
+  `bind = "tailscale"` and the `tailscale serve` HTTPS transport — that's how the owner
+  reaches the daemon from a phone; it was never peer discovery.
 - ~~Inks (`[inks.<name>]` preset registry)~~ (July 2026) — `pulpo ink` CLI, `GET/POST/PUT/
   DELETE /api/v1/inks`, `InkConfig`, `resolve_ink`, per-ink usage rollups. The community
   standardized agent-side config (AGENTS.md, skills) and shell-side presets (aliases,
@@ -518,7 +540,7 @@ Pulpo is succeeding if:
 - Command-agnostic: runs any agent; structured usage readers where available
   (Claude, Codex), output-scraping fallback everywhere else
 - Sovereign by architecture: self-hosted, no vendor relay, local-only account data
-- Single-node excellence first; multi-machine reach is direct (`pulpo --node <name>` over
+- Single-node excellence first; multi-machine reach is direct (`pulpo --url <host:port>` over
   Tailscale) plus shared webhooks for visibility, not a control plane
 - Mobile-first PWA: the phone is the primary gauge
 - Explicit failure semantics: every intervention is observable and auditable

@@ -22,7 +22,6 @@ pulpo usage --scan --by-worktree          Like --scan, but keep each git worktre
                                           its own row instead of rolling them up to the origin repo
 pulpo usage --scan --since <DAYS>         Like --scan, but limited to the last N days
 pulpo usage [--scan] --json               Output raw JSON instead of the formatted report
-pulpo nodes                               List known nodes/peers
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
 pulpo worktree list                       List worktree sessions (alias: wt ls)
 pulpo ui                                  Open web UI in browser
@@ -105,8 +104,8 @@ pulpo schedule remove <ID>                                      Remove a job
 | `--budget-cost <USD>` | Cost budget applied to every session this schedule fires (watchdog alerts at 80%, stops at 100%) |
 
 There is no per-schedule node flag — a schedule always fires on the node that holds it. To
-create it on another machine, use the global `--node` flag before the subcommand (see
-[Global Options](#global-options)): `pulpo --node gpu-box schedule add ...`.
+create it on another machine, use the global `--url` flag before the subcommand (see
+[Global Options](#global-options)): `pulpo --url gpu-box schedule add ...`.
 
 **Scheduler behavior:** Schedules run in the daemon's machine timezone. The scheduler loop ticks every 60 seconds, so cron expressions more granular than 1 minute won't fire more often. Each schedule fire creates a fresh session with a timestamped name (`<schedule>-YYYYMMDD-HHMM`).
 
@@ -153,21 +152,17 @@ always-exit-0/2s-timeout/silent contract as the general form.
 ## Global Options
 
 ```text
---node <HOST:PORT>   Target node (default: localhost:7433). Accepts peer names too.
---token <TOKEN>      Auth token (for remote nodes)
+--url <HOST:PORT>    Daemon address to talk to (default: localhost:7433)
+--token <TOKEN>      Auth token (for remote daemons)
 ```
 
-`--node` accepts either `host:port` or a peer name from your config (e.g., `--node mac-mini` resolves via the local daemon's peer registry).
+`--url` accepts `host:port` or a full URL (e.g. `https://mac-mini.tailnet.ts.net`). A bare
+hostname without a port gets the default pulpod port (`7433`) appended.
 
-## Spawn on Remote Nodes
+## Spawn on a Remote Daemon
 
 ```bash
-# By address
-pulpo --node mac-mini:7433 spawn my-task -- claude -p "fix bug"
-
-# By peer name (resolved via peer registry)
-pulpo --node mac-mini spawn my-task -- claude -p "fix bug"
-
+pulpo --url mac-mini:7433 spawn my-task -- claude -p "fix bug"
 ```
 
 ## Scripting Recipes
@@ -215,7 +210,7 @@ See [Nightly Code Review](/guides/nightly-code-review) for the complete recipe.
 ### Remote private-infra run with a credential
 
 ```bash
-pulpo --node mac-mini spawn review-backend \
+pulpo --url mac-mini spawn review-backend \
   --workdir ~/repos/backend \
   -- env GITHUB_TOKEN=ghp_work_xxxxxxxxxxxx claude -p "Review this service for correctness, security issues, and missing tests."
 ```

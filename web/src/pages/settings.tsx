@@ -3,13 +3,12 @@ import { AppHeader } from '@/components/layout/app-header';
 import { NodeSettings } from '@/components/settings/node-settings';
 import { WatchdogSettings } from '@/components/settings/watchdog-settings';
 import { NotificationsSettings } from '@/components/settings/notifications-settings';
-import { PeerSettings } from '@/components/settings/peer-settings';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { getConfig, updateConfig, getPeers } from '@/api/client';
+import { getConfig, updateConfig } from '@/api/client';
 import { toast } from 'sonner';
-import type { PeerInfo, UpdateConfigRequest } from '@/api/types';
+import type { UpdateConfigRequest } from '@/api/types';
 import type { WebhookFormData } from '@/components/settings/notifications-settings';
 
 export function SettingsPage() {
@@ -23,7 +22,6 @@ export function SettingsPage() {
   const [dataDir, setDataDir] = useState('');
   const [bind, setBind] = useState('local');
   const [tag, setTag] = useState('');
-  const [discoveryInterval, setDiscoveryInterval] = useState(60);
 
   // Watchdog
   const [watchdogEnabled, setWatchdogEnabled] = useState(true);
@@ -36,9 +34,6 @@ export function SettingsPage() {
   // Notifications
   const [webhooks, setWebhooks] = useState<WebhookFormData[]>([]);
 
-  // Peers
-  const [peers, setPeers] = useState<PeerInfo[]>([]);
-
   const loadConfig = useCallback(async () => {
     try {
       setLoading(true);
@@ -48,7 +43,6 @@ export function SettingsPage() {
       setDataDir(config.node.data_dir);
       setBind(config.node.bind);
       setTag(config.node.tag ?? '');
-      setDiscoveryInterval(config.node.discovery_interval_secs);
 
       setWatchdogEnabled(config.watchdog.enabled);
       setWatchdogMemoryThreshold(config.watchdog.memory_threshold);
@@ -59,8 +53,6 @@ export function SettingsPage() {
 
       setWebhooks((config.notifications.webhooks ?? []).map((w) => ({ ...w, secret: '' })));
 
-      const peersResp = await getPeers();
-      setPeers(peersResp.peers);
       setError(null);
     } catch {
       setError('Failed to load config');
@@ -82,7 +74,6 @@ export function SettingsPage() {
         data_dir: dataDir,
         bind,
         tag,
-        discovery_interval_secs: discoveryInterval,
         watchdog_enabled: watchdogEnabled,
         watchdog_memory_threshold: watchdogMemoryThreshold,
         watchdog_check_interval_secs: watchdogCheckInterval,
@@ -155,9 +146,6 @@ export function SettingsPage() {
                 <TabsTrigger value="notifications" data-testid="settings-tab-notifications">
                   Notifications
                 </TabsTrigger>
-                <TabsTrigger value="peers" data-testid="settings-tab-peers">
-                  Peers
-                </TabsTrigger>
               </TabsList>
 
               <TabsContent value="node">
@@ -173,8 +161,6 @@ export function SettingsPage() {
                     onBindChange={setBind}
                     tag={tag}
                     onTagChange={setTag}
-                    discoveryInterval={discoveryInterval}
-                    onDiscoveryIntervalChange={setDiscoveryInterval}
                   />
                 </section>
               </TabsContent>
@@ -200,10 +186,6 @@ export function SettingsPage() {
 
               <TabsContent value="notifications">
                 <NotificationsSettings webhooks={webhooks} onWebhooksChange={setWebhooks} />
-              </TabsContent>
-
-              <TabsContent value="peers">
-                <PeerSettings peers={peers} onUpdate={setPeers} bind={bind} />
               </TabsContent>
             </Tabs>
           </>

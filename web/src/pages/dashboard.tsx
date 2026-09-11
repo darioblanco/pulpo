@@ -6,7 +6,7 @@ import { NodeCard } from '@/components/dashboard/node-card';
 import { NewSessionDialog } from '@/components/dashboard/new-session-dialog';
 import { SessionFilter } from '@/components/history/session-filter';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getPeers, getSessions, cleanupSessions, stopSession } from '@/api/client';
+import { getNode, getSessions, cleanupSessions, stopSession } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { Trash2, CheckSquare } from 'lucide-react';
 import { useSSE } from '@/hooks/use-sse';
@@ -31,10 +31,10 @@ export function DashboardPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchLoading, setBatchLoading] = useState(false);
 
-  const fetchPeers = useCallback(async () => {
+  const fetchNode = useCallback(async () => {
     try {
-      const resp = await getPeers();
-      setLocalNode(resp.local);
+      const node = await getNode();
+      setLocalNode(node);
       setError(null);
     } catch {
       if (!isConnected) {
@@ -45,12 +45,12 @@ export function DashboardPage() {
     }
   }, [isConnected, navigate]);
 
-  // Fetch peers on mount and poll
+  // Fetch local node info on mount and poll
   useEffect(() => {
-    fetchPeers();
-    const interval = setInterval(fetchPeers, 30000);
+    fetchNode();
+    const interval = setInterval(fetchNode, 30000);
     return () => clearInterval(interval);
-  }, [fetchPeers]);
+  }, [fetchNode]);
 
   const handleRefresh = useCallback(async () => {
     try {
@@ -59,15 +59,15 @@ export function DashboardPage() {
     } catch {
       // Silently ignore — SSE will re-hydrate
     }
-    fetchPeers();
-  }, [setSessions, fetchPeers]);
+    fetchNode();
+  }, [setSessions, fetchNode]);
 
   const handleSessionCreated = useCallback(
     (session: Session) => {
       setSessions((prev: Session[]) => [...prev, session]);
-      fetchPeers();
+      fetchNode();
     },
-    [setSessions, fetchPeers],
+    [setSessions, fetchNode],
   );
 
   // Notification processing when SSE sessions change
@@ -250,9 +250,7 @@ export function DashboardPage() {
               <NodeCard
                 name={localNode.name}
                 nodeInfo={localNode}
-                status="online"
                 sessions={filteredSessions}
-                isLocal
                 onRefresh={handleRefresh}
                 selectionMode={selectionMode}
                 selectedIds={selectedIds}

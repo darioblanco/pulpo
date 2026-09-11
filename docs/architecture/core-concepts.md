@@ -99,7 +99,7 @@ These are not separate products. They are different interfaces to the same daemo
 
 Some features are important but still secondary to the core model:
 
-- multi-node fleet discovery
+- Tailscale bind for remote access
 - worktrees
 - schedules
 - notifications

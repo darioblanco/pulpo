@@ -2,7 +2,6 @@ import type {
   Session,
   UsageProjectionResponse,
   NodeInfo,
-  PeersResponse,
   ListSessionsParams,
   InterventionEvent,
   ConfigResponse,
@@ -85,11 +84,6 @@ export async function getNode(): Promise<NodeInfo> {
   return res.json();
 }
 
-export async function getPeers(): Promise<PeersResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/peers`);
-  return res.json();
-}
-
 export async function getSessions(params?: ListSessionsParams): Promise<Session[]> {
   const base = resolveBaseUrl();
   const url = new URL(`${base}/sessions`, base.startsWith('http') ? base : window.location.origin);
@@ -167,23 +161,6 @@ export async function downloadSessionOutput(id: string): Promise<Blob> {
   return res.blob();
 }
 
-export async function addPeer(name: string, address: string): Promise<PeersResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/peers`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, address }),
-  });
-  if (!res.ok) throw await apiError(res, 'Failed to add peer');
-  return res.json();
-}
-
-export async function removePeer(name: string): Promise<void> {
-  const res = await authFetch(`${resolveBaseUrl()}/peers/${encodeURIComponent(name)}`, {
-    method: 'DELETE',
-  });
-  if (!res.ok) throw await apiError(res, 'Failed to remove peer');
-}
-
 export async function getConfig(): Promise<ConfigResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/config`);
   return res.json();
@@ -201,20 +178,6 @@ export async function updateConfig(data: UpdateConfigRequest): Promise<UpdateCon
     body: JSON.stringify(data),
   });
   if (!res.ok) throw await apiError(res, 'Failed to update config');
-  return res.json();
-}
-
-export async function updateRemoteConfig(
-  address: string,
-  data: UpdateConfigRequest,
-): Promise<UpdateConfigResponse> {
-  const base = address.includes('://') ? address : `http://${address}`;
-  const res = await authFetch(`${base}/api/v1/config`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw await apiError(res, 'Failed to update remote config');
   return res.json();
 }
 

@@ -48,7 +48,6 @@ export default defineUserConfig({
         '/guides/private-infra-with-tailscale',
         '/guides/agent-examples',
         '/guides/configuration',
-        '/guides/discovery',
         '/guides/recovery',
         '/guides/worktrees',
       ],

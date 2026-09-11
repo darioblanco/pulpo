@@ -1,10 +1,10 @@
 //! Terminal output rendering for the `pulpo` CLI: table and report
-//! formatting for sessions, nodes, usage, and schedules.
+//! formatting for sessions, usage, and schedules.
 //!
 //! Pure move from `lib.rs` — no logic changes.
 
 use pulpo_common::api::{
-    DimensionRollup, InterventionEventResponse, PeersResponse, ScanRollup, SessionProjection,
+    DimensionRollup, InterventionEventResponse, ScanRollup, SessionProjection,
     UsageProjectionResponse, UsageScanResponse,
 };
 use pulpo_common::session::Session;
@@ -140,28 +140,6 @@ pub fn format_sessions(sessions: &[Session]) -> String {
             usage,
             truncate(branch, w_branch),
             truncate(cmd, 50)
-        ));
-    }
-    lines.join("\n")
-}
-
-/// Format the peers response as a table.
-pub fn format_nodes(resp: &PeersResponse) -> String {
-    let mut lines = vec![format!(
-        "{:<20} {:<25} {:<10} {}",
-        "NAME", "ADDRESS", "STATUS", "SESSIONS"
-    )];
-    lines.push(format!(
-        "{:<20} {:<25} {:<10} {}",
-        resp.local.name, "(local)", "online", "-"
-    ));
-    for p in &resp.peers {
-        let sessions = p
-            .session_count
-            .map_or_else(|| "-".into(), |c| c.to_string());
-        lines.push(format!(
-            "{:<20} {:<25} {:<10} {}",
-            p.name, p.address, p.status, sessions
         ));
     }
     lines.join("\n")
@@ -798,68 +776,6 @@ mod tests {
             !output.contains("[PR]"),
             "should not show PR indicator: {output}"
         );
-    }
-
-    #[test]
-    fn test_format_nodes() {
-        use pulpo_common::node::NodeInfo;
-        use pulpo_common::peer::{PeerInfo, PeerSource, PeerStatus};
-
-        let resp = PeersResponse {
-            local: NodeInfo {
-                name: "mac-mini".into(),
-                hostname: "h".into(),
-                os: "macos".into(),
-                arch: "arm64".into(),
-                cpus: 8,
-                memory_mb: 16384,
-                gpu: None,
-            },
-            peers: vec![PeerInfo {
-                name: "win-pc".into(),
-                address: "win-pc:7433".into(),
-                status: PeerStatus::Online,
-                node_info: None,
-                session_count: Some(3),
-                source: PeerSource::Configured,
-            }],
-        };
-        let output = format_nodes(&resp);
-        assert!(output.contains("mac-mini"));
-        assert!(output.contains("(local)"));
-        assert!(output.contains("win-pc"));
-        assert!(output.contains('3'));
-    }
-
-    #[test]
-    fn test_format_nodes_no_session_count() {
-        use pulpo_common::node::NodeInfo;
-        use pulpo_common::peer::{PeerInfo, PeerSource, PeerStatus};
-
-        let resp = PeersResponse {
-            local: NodeInfo {
-                name: "local".into(),
-                hostname: "h".into(),
-                os: "linux".into(),
-                arch: "x86_64".into(),
-                cpus: 4,
-                memory_mb: 8192,
-                gpu: None,
-            },
-            peers: vec![PeerInfo {
-                name: "peer".into(),
-                address: "peer:7433".into(),
-                status: PeerStatus::Offline,
-                node_info: None,
-                session_count: None,
-                source: PeerSource::Configured,
-            }],
-        };
-        let output = format_nodes(&resp);
-        assert!(output.contains("offline"));
-        // No session count → shows "-"
-        let lines: Vec<&str> = output.lines().collect();
-        assert!(lines[2].contains('-'));
     }
 
     fn sample_projection() -> SessionProjection {

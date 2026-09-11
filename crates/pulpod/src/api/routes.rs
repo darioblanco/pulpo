@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Router, middleware,
-    routing::{delete, get, post},
+    routing::{get, post},
 };
 use pulpo_common::auth::BindMode;
 use tower_http::cors::{AllowOrigin, Any, CorsLayer};
@@ -15,8 +15,6 @@ use super::health;
 use super::metrics;
 use super::node;
 use super::notifications;
-use super::peers;
-
 use super::push;
 use super::schedules;
 use super::sessions;
@@ -72,11 +70,6 @@ pub fn build(state: Arc<AppState>) -> Router {
             "/api/v1/notifications",
             get(notifications::get_notifications).put(notifications::update_notifications),
         )
-        .route(
-            "/api/v1/peers",
-            get(peers::list_peers).post(peers::add_peer),
-        )
-        .route("/api/v1/peers/{name}", delete(peers::remove_peer))
         .route(
             "/api/v1/sessions",
             get(sessions::list).post(sessions::create),
@@ -182,16 +175,6 @@ mod tests {
         resp.assert_status_ok();
         let body = resp.text();
         assert!(body.contains("test-node"));
-    }
-
-    #[tokio::test]
-    async fn test_get_peers() {
-        let server = test_server().await;
-        let resp = server.get("/api/v1/peers").await;
-        resp.assert_status_ok();
-        let body = resp.text();
-        assert!(body.contains("test-node")); // local node name
-        assert!(body.contains("\"peers\"")); // peers array
     }
 
     #[tokio::test]
@@ -597,27 +580,6 @@ mod tests {
         assert!(headers.get("access-control-allow-methods").is_some());
     }
 
-    #[tokio::test]
-    async fn test_cors_on_peers_endpoint() {
-        let server = test_server().await;
-        let resp = server
-            .get("/api/v1/peers")
-            .add_header(
-                axum::http::header::ORIGIN,
-                axum::http::HeaderValue::from_static("http://remote:7433"),
-            )
-            .await;
-        resp.assert_status_ok();
-        assert_eq!(
-            resp.headers()
-                .get("access-control-allow-origin")
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "*"
-        );
-    }
-
     async fn test_server_with_bind(bind: pulpo_common::auth::BindMode) -> TestServer {
         test_support::test_server_with(|cfg| {
             cfg.node.bind = bind;
@@ -684,55 +646,6 @@ mod tests {
         let body = resp.text();
         assert!(body.contains("9999"));
         assert!(body.contains("\"restart_required\":true"));
-    }
-
-    #[tokio::test]
-    async fn test_add_peer() {
-        let server = test_server().await;
-        let resp = server
-            .post("/api/v1/peers")
-            .json(&serde_json::json!({
-                "name": "new-node",
-                "address": "10.0.0.5:7433"
-            }))
-            .await;
-        resp.assert_status(StatusCode::CREATED);
-        let body = resp.text();
-        assert!(body.contains("new-node"));
-    }
-
-    #[tokio::test]
-    async fn test_add_peer_duplicate() {
-        let server = test_server().await;
-        let payload = serde_json::json!({
-            "name": "dup-node",
-            "address": "10.0.0.1:7433"
-        });
-        server.post("/api/v1/peers").json(&payload).await;
-        let resp = server.post("/api/v1/peers").json(&payload).await;
-        resp.assert_status(StatusCode::CONFLICT);
-    }
-
-    #[tokio::test]
-    async fn test_remove_peer() {
-        let server = test_server().await;
-        // Add then remove
-        server
-            .post("/api/v1/peers")
-            .json(&serde_json::json!({
-                "name": "temp-node",
-                "address": "10.0.0.1:7433"
-            }))
-            .await;
-        let resp = server.delete("/api/v1/peers/temp-node").await;
-        resp.assert_status(StatusCode::NO_CONTENT);
-    }
-
-    #[tokio::test]
-    async fn test_remove_peer_not_found() {
-        let server = test_server().await;
-        let resp = server.delete("/api/v1/peers/nonexistent").await;
-        resp.assert_status(StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

@@ -5,11 +5,11 @@
 # Detach with Ctrl-b d to return to your shell.
 set -euo pipefail
 
-NODE="${NODE:-localhost:7433}"
+URL="${URL:-localhost:7433}"
 
 # Spawn a session running Claude Code in a repo
 # The name is the first argument. Everything after -- is the command.
-pulpo --node "${NODE}" spawn my-api \
+pulpo --url "${URL}" spawn my-api \
   --workdir ~/repos/my-api \
   -- claude -p "Fix the failing auth tests"
 

@@ -8,8 +8,6 @@
 
 use anyhow::Result;
 use pulpo_common::api::AuthTokenResponse;
-#[cfg(not(coverage))]
-use pulpo_common::api::{ConfigResponse, PeersResponse};
 
 /// Format the base URL from the node address.
 pub fn base_url(node: &str) -> String {
@@ -91,62 +89,15 @@ fn node_needs_resolution(node: &str) -> bool {
     !node.contains(':')
 }
 
-/// Resolve a node reference to a `host:port` address.
+/// Resolve a daemon address to a `host:port` (or scheme-qualified URL) string.
 ///
-/// If `node` looks like `host:port` (contains `:`), return as-is with no peer token.
-/// Otherwise, query the local daemon's peer registry for a matching name. If a matching
-/// online peer is found, return its address and optionally its configured auth token
-/// (from the config endpoint). Falls back to appending `:7433` if the peer is not found.
-#[cfg(not(coverage))]
-pub async fn resolve_node(client: &reqwest::Client, node: &str) -> (String, Option<String>) {
-    // Already has port — use as-is
-    if !node_needs_resolution(node) {
-        return (node.to_owned(), None);
-    }
-
-    // Try to resolve via local daemon's peer registry
-    let local_base = "http://localhost:7433";
-    let mut resolved_address: Option<String> = None;
-
-    if let Ok(resp) = client
-        .get(format!("{local_base}/api/v1/peers"))
-        .send()
-        .await
-        && let Ok(peers_resp) = resp.json::<PeersResponse>().await
-    {
-        for peer in &peers_resp.peers {
-            if peer.name == node {
-                resolved_address = Some(peer.address.clone());
-                break;
-            }
-        }
-    }
-
-    let address = resolved_address.unwrap_or_else(|| format!("{node}:7433"));
-
-    // Try to get the peer's auth token from the config endpoint
-    let peer_token = if let Ok(resp) = client
-        .get(format!("{local_base}/api/v1/config"))
-        .send()
-        .await
-        && let Ok(config) = resp.json::<ConfigResponse>().await
-        && let Some(entry) = config.peers.get(node)
-    {
-        entry.token().map(String::from)
-    } else {
-        None
-    };
-
-    (address, peer_token)
-}
-
-/// Coverage stub — no real HTTP resolution during coverage builds.
-#[cfg(coverage)]
-pub async fn resolve_node(_client: &reqwest::Client, node: &str) -> (String, Option<String>) {
+/// If `node` already looks like `host:port` or a full URL (contains `:`), it is
+/// returned as-is. Otherwise (a bare hostname), the default pulpod port is appended.
+pub fn resolve_address(node: &str) -> String {
     if node_needs_resolution(node) {
-        (format!("{node}:7433"), None)
+        format!("{node}:7433")
     } else {
-        (node.to_owned(), None)
+        node.to_owned()
     }
 }
 
@@ -477,82 +428,21 @@ mod tests {
         assert!(node_needs_resolution("localhost"));
     }
 
-    #[tokio::test]
-    async fn test_resolve_node_with_port() {
-        let client = reqwest::Client::new();
-        let (addr, token) = resolve_node(&client, "mac-mini:7433").await;
-        assert_eq!(addr, "mac-mini:7433");
-        assert!(token.is_none());
+    #[test]
+    fn test_resolve_address_with_port() {
+        assert_eq!(resolve_address("mac-mini:7433"), "mac-mini:7433");
     }
 
-    #[tokio::test]
-    async fn test_resolve_node_fallback_appends_port() {
-        // No local daemon running on localhost:7433, so peer lookup fails
-        // and it falls back to appending :7433
-        let client = reqwest::Client::new();
-        let (addr, token) = resolve_node(&client, "unknown-host").await;
-        assert_eq!(addr, "unknown-host:7433");
-        assert!(token.is_none());
+    #[test]
+    fn test_resolve_address_fallback_appends_port() {
+        assert_eq!(resolve_address("unknown-host"), "unknown-host:7433");
     }
 
-    #[cfg(not(coverage))]
-    #[tokio::test]
-    async fn test_resolve_node_finds_peer() {
-        use axum::{Router, routing::get};
-
-        let app = Router::new()
-            .route(
-                "/api/v1/peers",
-                get(|| async {
-                    r#"{"local":{"name":"local","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":0,"gpu":null},"peers":[{"name":"mac-mini","address":"10.0.0.5:7433","status":"online","node_info":null,"session_count":2,"source":"configured"}]}"#.to_owned()
-                }),
-            )
-            .route(
-                "/api/v1/config",
-                get(|| async {
-                    r#"{"node":{"name":"local","port":7433,"data_dir":"/tmp","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{"mac-mini":{"address":"10.0.0.5:7433","token":"peer-secret"}},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"webhooks":[]}}"#.to_owned()
-                }),
-            );
-
-        // Port 7433 may be in use; skip test if so
-        let Ok(listener) = tokio::net::TcpListener::bind("127.0.0.1:7433").await else {
-            return;
-        };
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
-
-        let client = reqwest::Client::new();
-        let (addr, token) = resolve_node(&client, "mac-mini").await;
-        assert_eq!(addr, "10.0.0.5:7433");
-        assert_eq!(token, Some("peer-secret".into()));
-    }
-
-    #[cfg(not(coverage))]
-    #[tokio::test]
-    async fn test_resolve_node_peer_no_token() {
-        use axum::{Router, routing::get};
-
-        let app = Router::new()
-            .route(
-                "/api/v1/peers",
-                get(|| async {
-                    r#"{"local":{"name":"local","hostname":"h","os":"macos","arch":"arm64","cpus":8,"memory_mb":0,"gpu":null},"peers":[{"name":"test-peer","address":"10.0.0.9:7433","status":"online","node_info":null,"session_count":null,"source":"configured"}]}"#.to_owned()
-                }),
-            )
-            .route(
-                "/api/v1/config",
-                get(|| async {
-                    r#"{"node":{"name":"local","port":7433,"data_dir":"/tmp","bind":"local","tag":null,"seed":null,"discovery_interval_secs":30},"auth":{},"peers":{"test-peer":"10.0.0.9:7433"},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"webhooks":[]}}"#.to_owned()
-                }),
-            );
-
-        let Ok(listener) = tokio::net::TcpListener::bind("127.0.0.1:7433").await else {
-            return; // Port in use, skip
-        };
-        tokio::spawn(async { axum::serve(listener, app).await.unwrap() });
-
-        let client = reqwest::Client::new();
-        let (addr, token) = resolve_node(&client, "test-peer").await;
-        assert_eq!(addr, "10.0.0.9:7433");
-        assert!(token.is_none()); // Simple peer entry has no token
+    #[test]
+    fn test_resolve_address_url_passthrough() {
+        assert_eq!(
+            resolve_address("https://mac-mini.tailnet.ts.net"),
+            "https://mac-mini.tailnet.ts.net"
+        );
     }
 }

@@ -69,9 +69,7 @@ describe('types', () => {
         data_dir: '~/.pulpo/data',
         bind: 'local',
         tag: null,
-        discovery_interval_secs: 60,
       },
-      peers: {},
       watchdog: {
         enabled: true,
         memory_threshold: 85,

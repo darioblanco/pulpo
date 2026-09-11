@@ -12,10 +12,9 @@ import { FormField } from './form-field';
 const bindModes = ['local', 'tailscale', 'public'] as const;
 
 const bindDescriptions: Record<string, string> = {
-  local: 'Binds to 127.0.0.1. Only reachable from this machine. No discovery, no auth.',
-  tailscale:
-    'Binds locally and serves HTTPS via tailscale serve. Peers discovered via Tailscale API.',
-  public: 'Binds to 0.0.0.0. Requires auth token. Use manual [peers] config for multi-node.',
+  local: 'Binds to 127.0.0.1. Only reachable from this machine. No auth.',
+  tailscale: 'Binds locally and serves HTTPS via tailscale serve, reachable over your tailnet.',
+  public: 'Binds to 0.0.0.0. Requires auth token.',
 };
 
 interface NodeSettingsProps {
@@ -29,8 +28,6 @@ interface NodeSettingsProps {
   onBindChange: (bind: string) => void;
   tag: string;
   onTagChange: (tag: string) => void;
-  discoveryInterval: number;
-  onDiscoveryIntervalChange: (secs: number) => void;
 }
 
 export function NodeSettings({
@@ -44,16 +41,12 @@ export function NodeSettings({
   onBindChange,
   tag,
   onTagChange,
-  discoveryInterval,
-  onDiscoveryIntervalChange,
 }: NodeSettingsProps) {
-  const showNetworking = bind !== 'local';
-
   return (
     <Card data-testid="node-settings">
       <CardHeader>
         <CardTitle>Node</CardTitle>
-        <CardDescription>Identity, network, and discovery settings for this node.</CardDescription>
+        <CardDescription>Identity and network settings for this node.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-6">
         <div className="grid items-start gap-6 sm:grid-cols-2">
@@ -123,21 +116,6 @@ export function NodeSettings({
             />
           </FormField>
         </div>
-        {showNetworking && (
-          <FormField
-            label="Discovery interval"
-            htmlFor="node-discovery-interval"
-            description="How often to re-scan for peers (seconds)."
-          >
-            <Input
-              id="node-discovery-interval"
-              type="number"
-              value={discoveryInterval}
-              onChange={(e) => onDiscoveryIntervalChange(parseInt(e.target.value, 10) || 0)}
-              placeholder="60"
-            />
-          </FormField>
-        )}
       </CardContent>
     </Card>
   );
