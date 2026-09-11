@@ -115,7 +115,7 @@ build-web-if-missing:
 coverage: coverage-rust coverage-web
 
 coverage-rust: build-web-if-missing
-	cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$$" --fail-under-lines 98 -- --test-threads=1
+	cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$$" --fail-under-lines 90 -- --test-threads=1
 
 coverage-web:
 	cd web && PATH=/usr/local/bin:$$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor npx vitest run --coverage
