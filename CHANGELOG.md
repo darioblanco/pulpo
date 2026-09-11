@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.2.0](https://github.com/darioblanco/pulpo/compare/v0.1.1...v0.2.0) (2026-09-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove peer registry, peer discovery, and --node routing (keep tailscale bind) ([#104](https://github.com/darioblanco/pulpo/issues/104))
+* remove the secrets store ([#103](https://github.com/darioblanco/pulpo/issues/103))
+* **watchdog:** remove auto-adoption of external tmux sessions ([#102](https://github.com/darioblanco/pulpo/issues/102))
+* remove containerized pulpod deployment (docker/, bind = "container") ([#101](https://github.com/darioblanco/pulpo/issues/101))
+* drop the Windows build target ([#99](https://github.com/darioblanco/pulpo/issues/99))
+
+### Features
+
+* remove peer registry, peer discovery, and --node routing (keep tailscale bind) ([#104](https://github.com/darioblanco/pulpo/issues/104)) ([323b688](https://github.com/darioblanco/pulpo/commit/323b688c228062bdb3f115a8de8b77e5273d8b7b))
+* remove the secrets store ([#103](https://github.com/darioblanco/pulpo/issues/103)) ([add0624](https://github.com/darioblanco/pulpo/commit/add0624c0f21abbcc48d09023664a29359a79f89))
+* **watchdog:** remove auto-adoption of external tmux sessions ([#102](https://github.com/darioblanco/pulpo/issues/102)) ([675ba98](https://github.com/darioblanco/pulpo/commit/675ba98942b7844b685b0664a7a5de04ae08b5f6))
+
+
+### Bug Fixes
+
+* address review findings on the September removal batch ([#105](https://github.com/darioblanco/pulpo/issues/105)) ([8bdd51b](https://github.com/darioblanco/pulpo/commit/8bdd51b02b63093f08c942bab04715a0f2e17f2a))
+* implement documented behavior for idle threshold, hook URL, worktree_base, intervention cleanup, ready resume ([#109](https://github.com/darioblanco/pulpo/issues/109)) ([e842589](https://github.com/darioblanco/pulpo/commit/e8425891e564eca08020423a80e242fac3185398))
+
+
+### Miscellaneous Chores
+
+* drop the Windows build target ([#99](https://github.com/darioblanco/pulpo/issues/99)) ([dd8c556](https://github.com/darioblanco/pulpo/commit/dd8c5568cf0b7aba54282d296d33991cb7f5adf6))
+* remove containerized pulpod deployment (docker/, bind = "container") ([#101](https://github.com/darioblanco/pulpo/issues/101)) ([2ba8a06](https://github.com/darioblanco/pulpo/commit/2ba8a06847bf6374118cfe7b46748718eab6535a))
+
 ## [0.1.1](https://github.com/darioblanco/pulpo/compare/v0.1.0...v0.1.1) (2026-09-10)
 
 
