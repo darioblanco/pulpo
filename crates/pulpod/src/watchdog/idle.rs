@@ -47,6 +47,23 @@ pub(super) async fn check_idle_sessions(
     }
 }
 
+/// Resolve the effective Active→Idle threshold (seconds) for a session: the
+/// session's own `idle_threshold_secs` overrides `idle_config.threshold_secs`
+/// when set. `Some(0)` on the session disables the time-based transition for
+/// that session entirely (never idle on elapsed time alone); `None` on the
+/// session falls back to the global default. Returns `None` when the
+/// time-based transition must never fire, `Some(secs)` otherwise.
+pub(super) fn effective_idle_threshold_secs(
+    session: &Session,
+    idle_config: &IdleConfig,
+) -> Option<u64> {
+    match session.idle_threshold_secs {
+        Some(0) => None,
+        Some(secs) => Some(u64::from(secs)),
+        None => Some(idle_config.threshold_secs),
+    }
+}
+
 pub(super) async fn check_session_idle(
     backend: &Arc<dyn Backend>,
     store: &Store,
@@ -108,9 +125,11 @@ pub(super) async fn check_session_idle(
 
     if !signals.lifecycle && session.status == SessionStatus::Active {
         let immediate = detect_waiting_for_input(&current_output, extra_waiting_patterns);
+        let effective_threshold_secs = effective_idle_threshold_secs(session, idle_config);
         let last_change = session.last_output_at.unwrap_or(session.created_at);
-        let sustained = (now - last_change).num_seconds()
-            >= i64::try_from(idle_config.threshold_secs).unwrap_or(i64::MAX);
+        let sustained = effective_threshold_secs.is_some_and(|threshold_secs| {
+            (now - last_change).num_seconds() >= i64::try_from(threshold_secs).unwrap_or(i64::MAX)
+        });
         if immediate || sustained {
             info!(
                 "Session {} idle ({}), transitioning to idle",
