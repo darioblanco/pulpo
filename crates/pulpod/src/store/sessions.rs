@@ -284,6 +284,23 @@ impl Store {
         rows.iter().map(row_to_session).collect()
     }
 
+    /// True when another (non-dead) session still references `worktree_path`.
+    /// Shared guard used before *any* worktree reclamation — `pulpo handoff`-shared
+    /// worktrees must survive both the normal stop/purge/cleanup paths
+    /// (`session::manager`) and a forced watchdog intervention (budget/burn/idle/
+    /// memory stop, `watchdog::intervention::stop_and_record`) on just one of the
+    /// sessions sharing it.
+    pub async fn worktree_in_use_elsewhere(
+        &self,
+        worktree_path: &str,
+        exclude_id: &str,
+    ) -> Result<bool> {
+        let others = self
+            .find_live_sessions_by_worktree(worktree_path, exclude_id)
+            .await?;
+        Ok(!others.is_empty())
+    }
+
     pub const fn pool(&self) -> &sqlx::SqlitePool {
         &self.pool
     }

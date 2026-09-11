@@ -461,6 +461,41 @@ async fn test_find_live_sessions_by_worktree_no_match() {
 }
 
 #[tokio::test]
+async fn test_worktree_in_use_elsewhere_true_when_another_live_session_shares_it() {
+    let store = test_store().await;
+    let mut source = make_session("plan-auth");
+    source.worktree_path = Some("/tmp/wt/plan-auth".into());
+    store.insert_session(&source).await.unwrap();
+
+    let mut handoff = make_session("plan-auth-2");
+    handoff.worktree_path = Some("/tmp/wt/plan-auth".into());
+    handoff.status = SessionStatus::Active;
+    store.insert_session(&handoff).await.unwrap();
+
+    assert!(
+        store
+            .worktree_in_use_elsewhere("/tmp/wt/plan-auth", &source.id.to_string())
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn test_worktree_in_use_elsewhere_false_when_no_other_session_shares_it() {
+    let store = test_store().await;
+    let mut source = make_session("solo-task");
+    source.worktree_path = Some("/tmp/wt/solo-task".into());
+    store.insert_session(&source).await.unwrap();
+
+    assert!(
+        !store
+            .worktree_in_use_elsewhere("/tmp/wt/solo-task", &source.id.to_string())
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
 async fn test_unique_index_prevents_duplicate_live_names() {
     let store = test_store().await;
     let s1 = make_session("dup-name");
