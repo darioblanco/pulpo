@@ -307,7 +307,11 @@ impl SessionManager {
         // The docker runtime was removed — reject it wherever it comes from.
         let runtime = req.runtime.unwrap_or_default();
         validate_runtime(runtime)?;
-        let wants_worktree = req.worktree.unwrap_or(false);
+        // `worktree_base` implies worktree isolation even when `worktree` itself is
+        // omitted — matches the CLI's own normalization (`pulpo-cli/src/lib.rs`,
+        // `--base-branch implies --worktree`), so an API caller that sends only
+        // `worktree_base` doesn't silently run the agent in the main checkout.
+        let wants_worktree = req.worktree.unwrap_or(false) || req.worktree_base.is_some();
         validate_workdir(&workdir)?;
 
         // Create a git worktree if requested, or adopt one handed off from another
@@ -3176,6 +3180,49 @@ mod tests {
         mgr.stop_session(&id, true).await.unwrap();
         let fetched = mgr.get_session(&id).await.unwrap();
         assert!(fetched.is_none());
+    }
+
+    /// `worktree_base` alone (no explicit `worktree: true`) must still isolate the
+    /// session in a git worktree — matching the CLI's own normalization
+    /// (`pulpo-cli/src/lib.rs`: "--base-branch implies --worktree"). Uses a real git
+    /// repo, like `session::utils::git_integration_tests` — gated `not(coverage)`
+    /// for the same reason: the coverage build has no real repos, and
+    /// `build_create_plan`'s worktree-creation call itself is `cfg(not(coverage))`.
+    #[cfg(not(coverage))]
+    #[tokio::test]
+    async fn test_create_session_worktree_base_without_worktree_flag_still_isolates() {
+        let repo = tempfile::tempdir().unwrap();
+        let repo_path = repo.path().to_str().unwrap().to_owned();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&repo_path)
+                .output()
+                .expect("git should run")
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "qa@pulpo.test"]);
+        git(&["config", "user.name", "pulpo-qa"]);
+        std::fs::write(repo.path().join("README.md"), "seed").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "init"]);
+
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new()).await;
+        let mut req = make_req("worktree-base-only");
+        req.workdir = Some(repo_path);
+        req.worktree = None;
+        req.worktree_base = Some("HEAD".into());
+
+        let session = mgr.create_session(req).await.unwrap();
+
+        assert!(
+            session.worktree_path.is_some(),
+            "worktree_base alone should trigger worktree isolation"
+        );
+        assert_eq!(
+            session.worktree_branch.as_deref(),
+            Some("worktree-base-only")
+        );
     }
 
     // -- Handoff tests --
