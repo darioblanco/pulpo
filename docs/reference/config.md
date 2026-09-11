@@ -23,6 +23,10 @@ delete `~/.pulpo/state.db` and restart.
 | `log_retain_days` | u32 | `7` | Days of rotated daemon logs (`logs/pulpod.log.*`) to keep (hourly rotation) |
 | `capture_session_output` | bool | `false` | Mirror each session's full terminal output to `logs/<id>.log` via `tmux pipe-pane`. Off by default — the capture is unbounded and fills the disk on long/chatty sessions. Enable only for debugging; the watchdog reads the live tail from tmux scrollback and persists the last snapshot in the database regardless. |
 
+Every pulpo-managed session gets `PULPO_URL=http://127.0.0.1:<port>` exported alongside
+`PULPO_SESSION_ID`/`PULPO_SESSION_NAME` — `pulpo hook` reads it to reach the daemon, so
+hooks work correctly whatever `port` is configured here, not just the default `7433`.
+
 ## `[auth]`
 
 | Field | Type | Default | Description |
@@ -48,11 +52,15 @@ Not needed for `local` or `tailscale` modes. Pulpo still auto-generates one on f
 | `burn_ceiling_tokens_per_hour` | integer | — | Alert when a session's lifetime-average token rate exceeds this — covers agents with no cost signal (e.g. Codex). Unset disables the check. |
 | `burn_action` | string | `"alert"` | `"alert"` (emit a `usage_alert.burn_ceiling` event) or `"stop"` (also stop the session via the intervention path) when a burn ceiling is crossed |
 
-For harnesses with their own lifecycle hooks (Claude Code, Codex, pi), most of these
-watchdog fields (`idle_timeout_secs`, `idle_threshold_secs`, and the waiting-pattern
-detection they gate) stop applying once a session's events start flowing — the harness's
-own signals drive state instead. `memory_threshold`, `ready_ttl_secs`, and the budget/burn
-fields still apply unconditionally. See [Harness Adapters](/architecture/harness-adapters).
+For harnesses with their own lifecycle hooks (Claude Code, Codex, pi), once a session's
+events start flowing, the watchdog stops applying its own scrollback-based *detection*
+heuristics for that session: waiting-for-input pattern matching, the time-based
+Active→Idle transition (`idle_threshold_secs`), and — for a harness whose adapter doesn't
+own it (Codex has no error/rate-limit hook) — error/rate-limit scraping. The harness's own
+events drive those transitions instead. Everything else still applies unconditionally,
+including to harness-managed sessions: `idle_timeout_secs`/`idle_action` (alert/kill after
+a session has sat idle too long), `memory_threshold`, `ready_ttl_secs`, and the budget/burn
+fields. See [Harness Adapters](/architecture/harness-adapters).
 
 ## `[plans.<name>]`
 
@@ -178,8 +186,8 @@ and only via the dedicated `/api/v1/push/vapid-key` endpoint.
 
 These keys existed in earlier releases and are gone. A config file written before a given
 removal still **loads**: the key is parsed, ignored, and dropped the next time the config
-is saved (`watchdog.adopt_tmux` additionally logs a startup warning). Do not set any of
-these in a new config — they have no effect.
+is saved (`watchdog.adopt_tmux` and `node.tag` additionally log a startup warning; the
+rest are dropped silently). Do not set any of these in a new config — they have no effect.
 
 | Key | Removed | Replacement |
 |-----|---------|-------------|

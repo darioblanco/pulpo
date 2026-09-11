@@ -95,7 +95,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 | From State | Resume? | What happens |
 |-----------|---------|--------------|
 | **Lost** | Yes | Recreates tmux session, re-executes the session command |
-| **Ready** | Yes | Re-executes the command in the tmux session (or recreates if gone) |
+| **Ready** | Yes | Recreates the backend and re-executes the command, even if the fallback shell is still alive — the agent process has already exited, so resume never just flips the status back to Active |
 | **Stopped** | Yes | Recreates tmux session, re-executes the session command |
 | **Active/Idle** | No | Error: session is still running |
 | **Creating** | No | Error: session is still running |

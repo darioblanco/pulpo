@@ -28,7 +28,12 @@ pulpo resume my-api
 
 It works for **lost** (tmux gone after crash/reboot), **ready** (agent exited normally),
 and **stopped** (terminated by user, watchdog, or TTL cleanup) sessions. The session
-command is re-executed in a new tmux session.
+command is re-executed in a new tmux session — for a harness with its own resume
+mechanism (Claude Code, Codex, pi), that means the harness's resume command, so the
+conversation continues. A **ready** session's fallback shell is often still alive (the
+tmux pane lingers after the agent exits), but resume still recreates it and reruns the
+resume command rather than just flipping the status back to active — the agent process
+itself has already exited, so there's nothing to "reattach" to otherwise.
 
 A session still **active**, **idle**, or **creating** cannot be resumed — it's still
 running. Start a fresh session with `pulpo spawn` instead.
@@ -52,9 +57,10 @@ pulpo interventions <name>
 Common intervention reasons:
 - `memory_pressure` — system memory exceeded the configured threshold
 - `idle_timeout` — session was idle longer than allowed (when `idle_action = "kill"`)
-- `user_stop` — the session was stopped via `pulpo stop` (or the API)
 - `budget_exceeded` — the session's `--budget-cost` cap was reached
 - `burn_rate` — the burn-velocity governor's ceiling was crossed with `burn_action = "stop"`
 
-`ready_ttl_secs` cleanup is a separate, unrecorded path: it stops the tmux shell of a
-long-idle `Ready` session directly and does not appear in `pulpo interventions`.
+A plain `pulpo stop` (or the API's stop endpoint) is **not** an intervention and is never
+recorded here — interventions are only the watchdog's own forced stops. `ready_ttl_secs`
+cleanup is likewise a separate, unrecorded path: it stops the tmux shell of a long-idle
+`Ready` session directly and does not appear in `pulpo interventions`.
