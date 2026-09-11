@@ -44,7 +44,7 @@ These are mandatory for all code changes:
 ## Engineering Standards
 
 - **TDD**: write failing test, implement, refactor, verify coverage.
-- **Coverage**: 98% line coverage enforced locally and in CI. Use `cfg(coverage)` only for genuinely untestable I/O.
+- **Coverage**: 90% line coverage enforced locally and in CI (Rust and web). Use `cfg(coverage)` only for genuinely untestable I/O.
 - **CI**: `--test-threads=1` for coverage runs (prevents sqlx-sqlite prepared statement cache races).
 - Rust logic in `lib.rs`; `main.rs` is a thin wrapper.
 - Use `tracing` for operational events.

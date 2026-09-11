@@ -92,10 +92,10 @@ fn main() {}
 3. **Dead code under coverage** — helpers that become unused when their callers are excluded use `#[cfg_attr(coverage, allow(dead_code))]` to suppress warnings.
 
 **Enforced threshold:**
-- Local and CI Rust coverage gate: **98%** line coverage via `make coverage-rust`
+- Local and CI Rust coverage gate: **90%** line coverage via `make coverage-rust` (the web gate is also 90%)
 - `main.rs` and `embed.rs` excluded via `cargo-llvm-cov` filename regex
 
-> **Note:** `cargo-llvm-cov 0.8+` counts `?` error-path regions as "missed lines" even when the line itself executes, and `cfg(coverage)` exclusions for I/O code further reduce the measurable surface. The 98% threshold accounts for this.
+> **Note:** `cargo-llvm-cov 0.8+` counts `?` error-path regions as "missed lines" even when the line itself executes, and `cfg(coverage)` exclusions for I/O code further reduce the measurable surface. The gate was 98% until September 2026; it was lowered to 90% because the last few points were being bought with tests of removal-resistant plumbing rather than behavior. The bar for new code is unchanged: every new function, branch, and error path gets a test.
 
 **When to exclude:** Only for genuinely untestable I/O (process spawning, network listeners, real hardware). All business logic must be testable and tested. Do not use `cfg(coverage)` to skip testable code.
 
