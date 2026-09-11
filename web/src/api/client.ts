@@ -7,7 +7,6 @@ import type {
   ConfigResponse,
   UpdateConfigRequest,
   UpdateConfigResponse,
-  PairingUrlResponse,
   CreateSessionRequest,
   CreateSessionResponse,
   CleanupSessionsResponse,
@@ -163,11 +162,6 @@ export async function downloadSessionOutput(id: string): Promise<Blob> {
 
 export async function getConfig(): Promise<ConfigResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/config`);
-  return res.json();
-}
-
-export async function getPairingUrl(): Promise<PairingUrlResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/auth/pairing-url`);
   return res.json();
 }
 

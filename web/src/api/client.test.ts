@@ -13,7 +13,6 @@ import {
   getInterventionEvents,
   getConfig,
   updateConfig,
-  getPairingUrl,
   resolveWsUrl,
   resolveBaseUrl,
   authHeaders,
@@ -479,18 +478,6 @@ describe('updateConfig', () => {
     });
 
     await expect(updateConfig({ port: 9000 })).rejects.toThrow('Failed to update config');
-  });
-});
-
-describe('getPairingUrl', () => {
-  it('fetches /api/v1/auth/pairing-url', async () => {
-    const resp = { url: 'http://mac-mini:7433/?token=abc123' };
-    mockFetch.mockResolvedValue(jsonResponse(resp));
-
-    const result = await getPairingUrl();
-
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/auth/pairing-url', { headers: {} });
-    expect(result).toEqual(resp);
   });
 });
 
