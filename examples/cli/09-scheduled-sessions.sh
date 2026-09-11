@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Scheduled sessions — run agents on a cron schedule.
 #
-# Pulpo manages crontab entries that spawn sessions automatically.
+# Schedules are DB-backed rows in pulpod's own SQLite store, fired by a 60s
+# scheduler loop inside the daemon — no crontab entries are written anywhere.
 # Useful for nightly code reviews, periodic security scans, etc.
 set -euo pipefail
 
@@ -22,7 +23,7 @@ pulpo --url "${URL}" schedule install weekly-scan \
 # List installed schedules
 pulpo --url "${URL}" schedule list
 
-# Pause a schedule (comments out the crontab line)
+# Pause a schedule (flips its `enabled` flag off — the scheduler loop skips it)
 pulpo --url "${URL}" schedule pause nightly-review
 
 # Resume a paused schedule

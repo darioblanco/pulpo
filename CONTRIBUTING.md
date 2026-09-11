@@ -4,7 +4,8 @@ Thanks for your interest in contributing to Pulpo!
 
 ## Getting Started
 
-**Requirements:** Rust 1.82+, Node.js 22+, tmux 3.2+
+**Requirements:** Rust — pinned via `rust-toolchain.toml` (currently 1.93.1; `rustup` picks
+it up automatically — edition 2024 and let-chains need at least 1.88), Node.js 22+, tmux 3.2+
 
 ```bash
 git clone https://github.com/darioblanco/pulpo.git
