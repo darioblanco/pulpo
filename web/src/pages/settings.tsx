@@ -21,7 +21,6 @@ export function SettingsPage() {
   const [port, setPort] = useState(7433);
   const [dataDir, setDataDir] = useState('');
   const [bind, setBind] = useState('local');
-  const [tag, setTag] = useState('');
 
   // Watchdog
   const [watchdogEnabled, setWatchdogEnabled] = useState(true);
@@ -42,7 +41,6 @@ export function SettingsPage() {
       setPort(config.node.port);
       setDataDir(config.node.data_dir);
       setBind(config.node.bind);
-      setTag(config.node.tag ?? '');
 
       setWatchdogEnabled(config.watchdog.enabled);
       setWatchdogMemoryThreshold(config.watchdog.memory_threshold);
@@ -73,7 +71,6 @@ export function SettingsPage() {
         port,
         data_dir: dataDir,
         bind,
-        tag,
         watchdog_enabled: watchdogEnabled,
         watchdog_memory_threshold: watchdogMemoryThreshold,
         watchdog_check_interval_secs: watchdogCheckInterval,
@@ -159,8 +156,6 @@ export function SettingsPage() {
                     onDataDirChange={setDataDir}
                     bind={bind}
                     onBindChange={setBind}
-                    tag={tag}
-                    onTagChange={setTag}
                   />
                 </section>
               </TabsContent>

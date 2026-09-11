@@ -7,7 +7,7 @@ use axum::extract::{ConnectInfo, State};
 use axum::http::{Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use pulpo_common::api::{AuthTokenResponse, PairingUrlResponse};
+use pulpo_common::api::AuthTokenResponse;
 use pulpo_common::auth::BindMode;
 
 use super::AppState;
@@ -124,25 +124,6 @@ pub async fn get_token(State(state): State<Arc<AppState>>) -> Json<AuthTokenResp
     Json(AuthTokenResponse { token })
 }
 
-/// Resolve hostname, falling back to `"localhost"` on error.
-fn resolve_hostname(result: std::io::Result<std::ffi::OsString>) -> String {
-    result.map_or_else(|_| "localhost".into(), |h| h.to_string_lossy().into_owned())
-}
-
-/// `GET /api/v1/auth/pairing-url` — returns the URL for QR code pairing.
-///
-/// Protected by the same middleware exemption as `get_token`.
-pub async fn get_pairing_url(State(state): State<Arc<AppState>>) -> Json<PairingUrlResponse> {
-    let config = state.config.read().await;
-    let token = config.auth.token.clone();
-    let port = config.node.port;
-    drop(config);
-
-    let hostname = resolve_hostname(hostname::get());
-    let url = format!("http://{hostname}:{port}/?token={token}");
-    Json(PairingUrlResponse { url, token })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,18 +225,6 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         assert_eq!(extract_query_token(&req), Some(String::new()));
-    }
-
-    #[test]
-    fn test_resolve_hostname_ok() {
-        let result = Ok(std::ffi::OsString::from("myhost"));
-        assert_eq!(resolve_hostname(result), "myhost");
-    }
-
-    #[test]
-    fn test_resolve_hostname_err() {
-        let result: std::io::Result<std::ffi::OsString> = Err(std::io::Error::other("fail"));
-        assert_eq!(resolve_hostname(result), "localhost");
     }
 
     // -- constant_time_eq tests --

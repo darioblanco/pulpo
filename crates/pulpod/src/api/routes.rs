@@ -56,7 +56,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/usage/projection", get(usage::projection))
         .route("/api/v1/usage/scan", get(usage::scan))
         .route("/api/v1/auth/token", get(auth::get_token))
-        .route("/api/v1/auth/pairing-url", get(auth::get_pairing_url))
         .route("/api/v1/node", get(node::get_info))
         .route(
             "/api/v1/config",
@@ -1132,24 +1131,6 @@ mod tests {
         resp.assert_status_ok();
         let body = resp.text();
         assert!(body.contains(TEST_TOKEN));
-    }
-
-    #[tokio::test]
-    async fn test_auth_pairing_url_endpoint() {
-        let server = authed_test_server().await;
-        // No ConnectInfo in test → fail closed (treated as remote), so pass token
-        let bearer = format!("Bearer {TEST_TOKEN}");
-        let resp = server
-            .get("/api/v1/auth/pairing-url")
-            .add_header(
-                axum::http::header::AUTHORIZATION,
-                axum::http::HeaderValue::from_str(&bearer).unwrap(),
-            )
-            .await;
-        resp.assert_status_ok();
-        let body = resp.text();
-        assert!(body.contains(TEST_TOKEN));
-        assert!(body.contains("7433"));
     }
 
     #[tokio::test]

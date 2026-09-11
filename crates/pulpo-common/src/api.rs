@@ -121,18 +121,11 @@ pub struct AuthTokenResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct PairingUrlResponse {
-    pub url: String,
-    pub token: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct NodeConfigResponse {
     pub name: String,
     pub port: u16,
     pub data_dir: String,
     pub bind: BindMode,
-    pub tag: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -187,7 +180,6 @@ pub struct UpdateConfigRequest {
     pub port: Option<u16>,
     pub data_dir: Option<String>,
     pub bind: Option<BindMode>,
-    pub tag: Option<String>,
     // Watchdog
     pub watchdog_enabled: Option<bool>,
     pub watchdog_memory_threshold: Option<u8>,
@@ -487,7 +479,6 @@ mod tests {
                 port: 7433,
                 data_dir: "/tmp".into(),
                 bind: BindMode::Local,
-                tag: None,
             },
             auth: AuthConfigResponse {},
             watchdog: WatchdogConfigResponse {
@@ -515,7 +506,7 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local","tag":null},"auth":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"webhooks":[]}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local"},"auth":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"webhooks":[]}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
@@ -538,7 +529,6 @@ mod tests {
             port: 7433,
             data_dir: "/tmp".into(),
             bind: BindMode::Local,
-            tag: None,
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("test"));
@@ -1177,7 +1167,6 @@ mod tests {
             port: 7433,
             data_dir: "/tmp".into(),
             bind: BindMode::Tailscale,
-            tag: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"bind\":\"tailscale\""));
@@ -1206,34 +1195,6 @@ mod tests {
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("tok"));
-    }
-
-    #[test]
-    fn test_pairing_url_response_serialize() {
-        let resp = PairingUrlResponse {
-            url: "http://example.com/pair?token=abc".into(),
-            token: "abc".into(),
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("http://example.com/pair?token=abc"));
-    }
-
-    #[test]
-    fn test_pairing_url_response_deserialize() {
-        let json = r#"{"url":"http://pair.test","token":"tok"}"#;
-        let resp: PairingUrlResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.url, "http://pair.test");
-        assert_eq!(resp.token, "tok");
-    }
-
-    #[test]
-    fn test_pairing_url_response_debug() {
-        let resp = PairingUrlResponse {
-            url: "u".into(),
-            token: "t".into(),
-        };
-        let debug = format!("{resp:?}");
-        assert!(debug.contains("PairingUrlResponse"));
     }
 
     #[test]

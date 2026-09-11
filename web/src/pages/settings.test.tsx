@@ -30,7 +30,6 @@ const testConfig: ConfigResponse = {
     port: 7433,
     data_dir: '~/.pulpo/data',
     bind: 'local',
-    tag: null,
   },
   watchdog: {
     enabled: true,
