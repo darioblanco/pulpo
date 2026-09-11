@@ -26,8 +26,6 @@ interface NodeSettingsProps {
   onDataDirChange: (dir: string) => void;
   bind: string;
   onBindChange: (bind: string) => void;
-  tag: string;
-  onTagChange: (tag: string) => void;
 }
 
 export function NodeSettings({
@@ -39,8 +37,6 @@ export function NodeSettings({
   onDataDirChange,
   bind,
   onBindChange,
-  tag,
-  onTagChange,
 }: NodeSettingsProps) {
   return (
     <Card data-testid="node-settings">
@@ -88,34 +84,20 @@ export function NodeSettings({
             placeholder="~/.pulpo/data"
           />
         </FormField>
-        <div className="grid items-start gap-6 sm:grid-cols-2">
-          <FormField label="Bind mode" htmlFor="node-bind" description={bindDescriptions[bind]}>
-            <Select value={bind} onValueChange={onBindChange}>
-              <SelectTrigger data-testid="bind-mode-trigger" id="node-bind" className="w-full">
-                <SelectValue placeholder="Select bind mode" />
-              </SelectTrigger>
-              <SelectContent>
-                {bindModes.map((m) => (
-                  <SelectItem key={m} value={m} data-testid={`bind-mode-${m}`}>
-                    {m}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </FormField>
-          <FormField
-            label="Tag"
-            htmlFor="node-tag"
-            description="Optional label for scheduling (e.g. gpu, fast)."
-          >
-            <Input
-              id="node-tag"
-              value={tag}
-              onChange={(e) => onTagChange(e.target.value)}
-              placeholder="gpu"
-            />
-          </FormField>
-        </div>
+        <FormField label="Bind mode" htmlFor="node-bind" description={bindDescriptions[bind]}>
+          <Select value={bind} onValueChange={onBindChange}>
+            <SelectTrigger data-testid="bind-mode-trigger" id="node-bind" className="w-full">
+              <SelectValue placeholder="Select bind mode" />
+            </SelectTrigger>
+            <SelectContent>
+              {bindModes.map((m) => (
+                <SelectItem key={m} value={m} data-testid={`bind-mode-${m}`}>
+                  {m}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FormField>
       </CardContent>
     </Card>
   );

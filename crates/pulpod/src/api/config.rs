@@ -16,7 +16,6 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
             port: config.node.port,
             data_dir: config.node.data_dir.clone(),
             bind: config.node.bind,
-            tag: config.node.tag.clone(),
         },
         auth: AuthConfigResponse {},
         watchdog: WatchdogConfigResponse {
@@ -62,7 +61,6 @@ pub async fn get_config(
 fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) -> bool {
     let original_port = config.node.port;
     let original_bind = config.node.bind;
-    let original_tag = config.node.tag.clone();
 
     // Node settings
     if let Some(name) = &req.node_name {
@@ -76,9 +74,6 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
     }
     if let Some(bind) = req.bind {
         config.node.bind = bind;
-    }
-    if let Some(tag) = req.tag {
-        config.node.tag = if tag.is_empty() { None } else { Some(tag) };
     }
 
     // Watchdog
@@ -120,10 +115,8 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
         config.notifications.webhooks.clear();
     }
 
-    // Restart required for port, bind, or tag changes (affects network setup, e.g. tailscale serve)
-    config.node.port != original_port
-        || config.node.bind != original_bind
-        || config.node.tag != original_tag
+    // Restart required for port or bind changes (affects network setup, e.g. tailscale serve)
+    config.node.port != original_port || config.node.bind != original_bind
 }
 
 pub async fn update_config(
@@ -412,38 +405,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_config_tag_requires_restart() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            tag: Some("gpu".into()),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.node.tag, Some("gpu".into()));
-        assert!(resp.restart_required);
-    }
-
-    #[tokio::test]
-    async fn test_update_config_tag_empty_clears() {
-        let state = test_state().await;
-        // Set tag first
-        let req = UpdateConfigRequest {
-            tag: Some("gpu".into()),
-            ..Default::default()
-        };
-        let _ = update_config(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        // Clear it with empty string
-        let req = UpdateConfigRequest {
-            tag: Some(String::new()),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.node.tag, None);
-    }
-
-    #[tokio::test]
     async fn test_update_config_watchdog() {
         let state = test_state().await;
         let req = UpdateConfigRequest {
@@ -472,7 +433,6 @@ mod tests {
                 name: "test".into(),
                 port: 7433,
                 data_dir: "/tmp".into(),
-                tag: Some("gpu".into()),
                 ..NodeConfig::default()
             },
             watchdog: crate::config::WatchdogConfig {
@@ -503,8 +463,6 @@ mod tests {
             ..Default::default()
         };
         let resp = config_to_response(&config);
-        // Node fields
-        assert_eq!(resp.node.tag, Some("gpu".into()));
         // Watchdog
         assert!(resp.watchdog.enabled);
         assert_eq!(resp.watchdog.memory_threshold, 85);

@@ -11,8 +11,6 @@ const defaults = {
   onDataDirChange: vi.fn(),
   bind: 'local',
   onBindChange: vi.fn(),
-  tag: '',
-  onTagChange: vi.fn(),
 };
 
 describe('NodeSettings', () => {
@@ -22,7 +20,6 @@ describe('NodeSettings', () => {
     expect(screen.getByLabelText('Name')).toHaveValue('my-node');
     expect(screen.getByLabelText('Port')).toHaveValue(7433);
     expect(screen.getByLabelText('Data directory')).toHaveValue('/data');
-    expect(screen.getByLabelText('Tag')).toHaveValue('');
   });
 
   it('renders bind mode select', () => {
@@ -56,13 +53,6 @@ describe('NodeSettings', () => {
     render(<NodeSettings {...defaults} onDataDirChange={onDataDirChange} />);
     fireEvent.change(screen.getByLabelText('Data directory'), { target: { value: '/new/dir' } });
     expect(onDataDirChange).toHaveBeenCalledWith('/new/dir');
-  });
-
-  it('calls onTagChange', () => {
-    const onTagChange = vi.fn();
-    render(<NodeSettings {...defaults} onTagChange={onTagChange} />);
-    fireEvent.change(screen.getByLabelText('Tag'), { target: { value: 'gpu' } });
-    expect(onTagChange).toHaveBeenCalledWith('gpu');
   });
 
   it('shows bind mode description', () => {

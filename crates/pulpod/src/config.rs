@@ -447,9 +447,12 @@ pub struct NodeConfig {
     /// `tailscale serve` is used to expose the dashboard over the tailnet.
     #[serde(default)]
     pub bind: BindMode,
-    /// Tailscale ACL tag (e.g. `"pulpo"`). Reserved for future ACL-based scoping.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tag: Option<String>,
+    /// Retired `tag` key (its only reader was the removed Tailscale peer discovery).
+    /// This field only exists so configs written before the removal still load
+    /// (`deny_unknown_fields` would otherwise reject them). It is ignored and
+    /// dropped on save.
+    #[serde(default, skip_serializing)]
+    pub tag: Option<toml::Value>,
     /// Retired `discovery_interval_secs` key (Tailscale peer discovery was removed).
     /// This field only exists so configs written before the removal still load
     /// (`deny_unknown_fields` would otherwise reject them). It is ignored and
@@ -573,6 +576,13 @@ pub fn load(path: &str) -> Result<Config> {
                 "config: watchdog.adopt_tmux is retired (auto-adoption of external tmux \
                  sessions was removed) — ignoring it; it will be dropped from the config \
                  file the next time it is saved"
+            );
+        }
+        if config.node.tag.is_some() {
+            warn!(
+                "config: node.tag is retired (Tailscale peer discovery, its only reader, was \
+                 removed) — ignoring it; it will be dropped from the config file the next \
+                 time it is saved"
             );
         }
         Ok(config)
@@ -857,12 +867,6 @@ name = "partial"
 
         // Restore permissions for cleanup
         std::fs::set_permissions(tmpfile.path(), std::fs::Permissions::from_mode(0o644)).unwrap();
-    }
-
-    #[test]
-    fn test_missing_config_has_no_peers() {
-        let config = load("/nonexistent/peers/config.toml").unwrap();
-        assert!(config.peers.is_none());
     }
 
     #[test]
@@ -1879,13 +1883,42 @@ url = "https://example.com"
 [node]
 name = "test"
 bind = "tailscale"
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Tailscale);
+    }
+
+    /// `tag` under `[node]` is a retired key (its only reader was the removed
+    /// Tailscale peer discovery). A config written before the removal that still
+    /// carries it must keep loading (`deny_unknown_fields` would otherwise reject
+    /// `NodeConfig`), and the key must be dropped on the next save.
+    #[test]
+    fn test_load_config_tolerates_legacy_tag() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+bind = "tailscale"
 tag = "pulpo"
 "#,
         )
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
         assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Tailscale);
-        assert_eq!(config.node.tag, Some("pulpo".into()));
+
+        save(&config, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("tag"),
+            "retired tag key is dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.node.tag.is_none());
     }
 
     /// Peer discovery over Tailscale was removed; `discovery_interval_secs` under
@@ -1954,22 +1987,6 @@ token = "secret"
         assert!(reloaded.peers.is_none());
     }
 
-    #[test]
-    fn test_load_config_without_peers_section() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("config.toml");
-        std::fs::write(
-            &path,
-            r#"
-[node]
-name = "test"
-"#,
-        )
-        .unwrap();
-        let config = load(path.to_str().unwrap()).unwrap();
-        assert!(config.peers.is_none());
-    }
-
     /// `bind = "container"` (deploying pulpod itself inside Docker/Podman) was
     /// removed alongside `docker/` — a containerized pulpod can't see the agents'
     /// own session files that exact usage metering depends on. Loading such a
@@ -2010,7 +2027,6 @@ name = "test"
         .unwrap();
         let config = load(path.to_str().unwrap()).unwrap();
         assert_eq!(config.node.bind, pulpo_common::auth::BindMode::Local);
-        assert!(config.node.tag.is_none());
     }
 
     #[test]
@@ -2023,7 +2039,6 @@ name = "test"
                 port: 7433,
                 data_dir: "/tmp/test".into(),
                 bind: pulpo_common::auth::BindMode::Tailscale,
-                tag: Some("my-tag".into()),
                 ..NodeConfig::default()
             },
             ..Default::default()
@@ -2031,25 +2046,6 @@ name = "test"
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
         assert_eq!(loaded.node.bind, pulpo_common::auth::BindMode::Tailscale);
-        assert_eq!(loaded.node.tag, Some("my-tag".into()));
-    }
-
-    #[test]
-    fn test_node_config_tag_skip_serializing_if_none() {
-        let config = NodeConfig {
-            name: "test".into(),
-            port: 7433,
-            data_dir: "/tmp".into(),
-            bind: pulpo_common::auth::BindMode::Public,
-            tag: None,
-            discovery_interval_secs: None,
-            default_command: None,
-            log_retain_days: 7,
-            capture_session_output: false,
-        };
-        let toml_str = toml::to_string(&config).unwrap();
-        // tag should be skipped (None + skip_serializing_if)
-        assert!(!toml_str.contains("tag"));
     }
 
     // -- VAPID key generation tests --

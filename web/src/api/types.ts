@@ -76,7 +76,6 @@ export interface NodeConfigResponse {
   port: number;
   data_dir: string;
   bind: string;
-  tag: string | null;
 }
 
 export interface WatchdogConfigResponse {
@@ -118,7 +117,6 @@ export interface UpdateConfigRequest {
   port?: number;
   data_dir?: string;
   bind?: string;
-  tag?: string;
   watchdog_enabled?: boolean;
   watchdog_memory_threshold?: number;
   watchdog_check_interval_secs?: number;
@@ -131,10 +129,6 @@ export interface UpdateConfigRequest {
 export interface UpdateConfigResponse {
   config: ConfigResponse;
   restart_required: boolean;
-}
-
-export interface PairingUrlResponse {
-  url: string;
 }
 
 export interface CreateSessionRequest {

@@ -945,7 +945,6 @@ name = "test"
 port = 0
 data_dir = "{}"
 bind = "tailscale"
-tag = "pulpo"
 "#,
                 data_dir.display()
             ),
