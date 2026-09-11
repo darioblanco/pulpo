@@ -964,6 +964,20 @@ tag = "pulpo"
     }
 
     #[test]
+    fn test_shutdown_handle_tailscale_serve_flag() {
+        let mut handle = ShutdownHandle::new();
+        assert!(!handle.tailscale_serve_active);
+        handle.tailscale_serve_active = true;
+        assert!(handle.tailscale_serve_active);
+    }
+
+    /// Exercises the `tailscale_serve_active` branch inside `shutdown()`. Gated to
+    /// coverage builds only: `tailscale_serve_cleanup()` is a real no-op there (see
+    /// the `#[cfg(coverage)]` stub above it), but under a normal `cargo test` it
+    /// shells out to the real `tailscale` binary — no test may spawn that on a
+    /// developer's machine.
+    #[cfg(coverage)]
+    #[test]
     fn test_shutdown_handle_tailscale_serve_cleanup() {
         let mut handle = ShutdownHandle::new();
         assert!(!handle.tailscale_serve_active);
