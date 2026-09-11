@@ -20,7 +20,7 @@ idle_action = "alert"            # "alert" (mark idle) or "kill" (terminate sess
 # Ready session cleanup
 ready_ttl_secs = 3600            # Kill tmux shell 1 hour after agent exits (0 = disabled)
 
-# Extra waiting-for-input patterns (appended to 29 built-in patterns)
+# Extra waiting-for-input patterns (appended to the built-in patterns)
 # Built-in patterns cover: Claude Code, Codex, Gemini CLI, Aider, Amazon Q, SSH, sudo
 waiting_patterns = [
     "custom-tool>",              # Your custom tool's prompt
