@@ -209,8 +209,9 @@ current terminal content and stores it in the DB. This means:
 
 - The web UI can show recent output even without a live WebSocket connection
 - After a reboot, you can see what the agent was doing before it died
-- Log files are also written to `~/.pulpo/logs/<session-id>.log` via
-  `tmux pipe-pane`
+- Optionally (`node.capture_session_output = true`, off by default since it's an
+  unbounded capture), full output is also mirrored to `~/.pulpo/logs/<session-id>.log`
+  via `tmux pipe-pane`
 
 ### Interventions
 
@@ -295,7 +296,8 @@ pulpod
        └─▶ <command>  (e.g. claude, codex, gemini, or any shell command)
 ```
 
-- Output streaming: `tmux pipe-pane` to a log file + periodic `capture-pane`
+- Output streaming: periodic `capture-pane` (always on) + `tmux pipe-pane` to a log file
+  (opt-in via `node.capture_session_output`, off by default)
 - Input: `tmux send-keys -t <session-name> "text" Enter`
 - Attach (web): WebSocket ↔ PTY bridge that connects to the tmux session
 
@@ -431,6 +433,9 @@ GET    /events                SSE event stream
 
 `/events` emits tagged SSE events:
 - `event: session` — session lifecycle updates (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`)
+- `event: session_deleted` — a session was removed (`stop --purge`, `pulpo cleanup`)
+- `event: intervention` — a watchdog forced stop (memory/idle/budget/burn)
+- `event: usage_alert` — a budget or burn-rate ceiling was crossed
 
 ### Quick Reference
 
@@ -466,7 +471,6 @@ GET    /events                SSE event stream
 | `POST`   | `/push/unsubscribe`             | Remove a Web Push subscription |
 | `POST`   | `/push/action`                  | Act on a push action token (e.g. "Stop session"); unauthenticated |
 | `GET`    | `/auth/token`                   | Get auth token (local only)    |
-| `GET`    | `/auth/pairing-url`             | Get QR pairing URL (local)     |
 | `GET`    | `/events`                       | SSE event stream               |
 
 Full request/response shapes, the harness-events payload, and the push action-token
@@ -487,27 +491,26 @@ Single binary to distribute — no separate web server needed.
 │  pulpo            ⚙ Settings │
 ├─────────────────────────────┤
 │                             │
-│  ● mac-mini (2 running)    │
 │  ┌─────────────────────┐   │
 │  │ ● my-api            │──▶│
 │  │   Fix auth   2h ago │   │
 │  ├─────────────────────┤   │
 │  │ ○ docs              │──▶│
 │  │   Update API  done  │   │
-│  └─────────────────────┘   │
-│                             │
-│  ● server (1 running)      │
-│  ┌─────────────────────┐   │
+│  ├─────────────────────┤   │
 │  │ ● ml-model          │──▶│
 │  │   Train      3h ago │   │
 │  └─────────────────────┘   │
-│                             │
-│  ○ macbook (offline)        │
 │                             │
 │        [ + New Session ]    │
 │                             │
 └─────────────────────────────┘
 ```
+
+Single-node dashboard — a web UI instance shows only the sessions on the node it's
+connected to, with no cross-node aggregation (see [ROADMAP.md](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md)
+"Phase C"). Reach another node's UI directly, or use a saved connection to switch
+between them (see [Control Your Agents From Anywhere](docs/guides/remote-control.md)).
 
 **Session Detail View:**
 
@@ -622,7 +625,7 @@ Ship the smallest useful thing first.
 - WebSocket streaming with the embedded terminal view
 - Full interactive terminal in the web UI
 - Session resume after reboot
-- Output log files via `tmux pipe-pane`
+- Output log files via `tmux pipe-pane` (opt-in via `node.capture_session_output`)
 
 ### Phase 3: Multi-Node ✅
 
@@ -672,7 +675,8 @@ the primary management surface.
 **Deliverables:**
 
 - ✅ Token authentication + bind modes (local/public/tailscale)
-- ✅ QR code pairing for mobile clients
+- ~~QR code pairing for mobile clients~~ — removed September 2026 (#105); use the web UI's
+  own token entry, or `pulpo --url <host:port>` for the CLI
 - ~~Tailscale auto-discovery~~ — removed September 2026; `bind = "tailscale"` (HTTPS via
   `tailscale serve`) stays
 - ✅ PWA install + Web Push notifications

@@ -3,7 +3,7 @@
 ## Commands
 
 ```text
-pulpo spawn [NAME] [OPTIONS] [-- <COMMAND...>]  Spawn a new session (auto-attaches)
+pulpo spawn [NAME] [OPTIONS] [-- <COMMAND...>]  Spawn a new session (auto-attaches; alias: s)
 pulpo handoff <SOURCE> [NAME] [OPTIONS] [-- <COMMAND...>]  Hand off a finished
                                           session's context to a new session (alias: h)
 pulpo list [--all]                        List sessions, live only by default (alias: ls; -a/--all includes stopped/lost)
@@ -22,7 +22,9 @@ pulpo usage --scan --by-worktree          Like --scan, but keep each git worktre
                                           its own row instead of rolling them up to the origin repo
 pulpo usage --scan --since <DAYS>         Like --scan, but limited to the last N days
 pulpo usage [--scan] --json               Output raw JSON instead of the formatted report
-pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (crontab)
+pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (alias: sched;
+                                          cron-expression syntax, run by pulpod's own 60s
+                                          scheduler loop — not crontab)
 pulpo worktree list                       List worktree sessions (alias: wt ls)
 pulpo ui                                  Open web UI in browser
 pulpo <PATH>                              Quick spawn: spawns a session in that directory
@@ -91,10 +93,10 @@ handy for wrapping up manually.
 ```text
 pulpo schedule add <NAME> <CRON> [OPTIONS] [-- <COMMAND...>]   Add a cron job
 pulpo schedule install <NAME> <CRON> [OPTIONS] [-- <COMMAND...>]   Alias for add
-pulpo schedule list                                             List installed jobs
-pulpo schedule pause <ID>                                       Pause a job
-pulpo schedule resume <ID>                                      Resume a paused job
-pulpo schedule remove <ID>                                      Remove a job
+pulpo schedule list                                             List installed jobs (alias: ls)
+pulpo schedule pause <NAME|ID>                                  Pause a job
+pulpo schedule resume <NAME|ID>                                 Resume a paused job
+pulpo schedule remove <NAME|ID>                                 Remove a job (alias: rm)
 ```
 
 | Flag | Description |
@@ -111,7 +113,7 @@ create it on another machine, use the global `--url` flag before the subcommand 
 
 **Scheduler behavior:** Schedules run in the daemon's machine timezone. The scheduler loop ticks every 60 seconds, so cron expressions more granular than 1 minute won't fire more often. Each schedule fire creates a fresh session with a timestamped name (`<schedule>-YYYYMMDD-HHMM`).
 
-**Worktree schedules:** When `--worktree` is set, each scheduled run creates a fresh git worktree, giving the agent an isolated copy of the repository. The worktree is cleaned up when the session is stopped.
+**Worktree schedules:** When `--worktree` is set, each scheduled run creates a fresh git worktree, giving the agent an isolated copy of the repository. A plain `pulpo stop` on that run's session leaves the worktree on disk; it's reclaimed on the next `pulpo stop --purge`, `pulpo cleanup`, or watchdog intervention. See [Worktrees](/guides/worktrees) for the full cleanup model.
 
 ## Hook (internal)
 
@@ -130,6 +132,10 @@ the agent needs a permission decision, the session ends, ...).
 - Resolves the session from the `PULPO_SESSION_ID` environment variable, which the
   session wrapper already exports into every pulpo-managed process. If it's unset (the
   harness is running outside pulpo), the hook exits immediately without a network call.
+- Talks to the daemon at `PULPO_URL` (also exported into every session, alongside
+  `PULPO_SESSION_ID`/`PULPO_SESSION_NAME`) rather than the CLI's own `--url` default —
+  so a hook always reaches the daemon on whatever `[node].port` it's actually configured
+  with, not just `7433`.
 - `--event <NAME>` fills in `hook_event_name` in the payload when the harness's own
   JSON doesn't already carry one; pulpo's own Claude settings never need it. The Codex
   adapter uses this for every hook it wires (`pulpo hook codex --event SessionStart`,
@@ -175,13 +181,19 @@ pulpo --url mac-mini:7433 spawn my-task -- claude -p "fix bug"
 ### Approve all idle sessions
 
 ```bash
-pulpo list | grep idle | awk '{print $1}' | xargs -I{} pulpo input {} "y"
+pulpo list | grep idle | awk '{print $2}' | xargs -I{} pulpo input {} "y"
 ```
+
+(Column 1 is only an 8-char ID prefix — `pulpo input`/`stop`/`logs` need the full ID or
+the name, so use column 2, the session name, instead. Since session names are always a
+single kebab-case token, `$2` gives you the bare name even for a session whose NAME
+column also carries a `[wt]`/`[PR]`/`[!]` badge — awk splits those into their own,
+later fields.)
 
 ### Stop all active sessions
 
 ```bash
-pulpo list | grep active | awk '{print $1}' | xargs -I{} pulpo stop {}
+pulpo list | grep active | awk '{print $2}' | xargs -I{} pulpo stop {}
 ```
 
 ### Spawn agents across multiple repos
@@ -237,7 +249,7 @@ The `--worktree` flag gives the agent an isolated git worktree on its own branch
 
 ```bash
 tmux new-session -d -s monitor
-for name in $(pulpo list | awk 'NR>1 {print $1}'); do
+for name in $(pulpo list | awk 'NR>1 {print $2}'); do
   tmux split-window -t monitor "pulpo logs ${name} --follow"
   tmux select-layout -t monitor tiled
 done
