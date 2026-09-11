@@ -49,11 +49,12 @@ If you don't name the handoff session, Pulpo auto-generates one: `plan-auth-2`,
 If the source session used a worktree, the handoff session **adopts** it — no second
 worktree or branch is created. The shared worktree is only reclaimed once *every*
 session referencing it has stopped, so purging `plan-auth` right after handoff never
-deletes work the build session still needs:
+deletes work the build session still needs. The unnamed `pulpo handoff plan-auth -- ...`
+above auto-generated `plan-auth-2`:
 
 ```bash
-pulpo stop plan-auth --purge         # worktree survives — implement-auth still needs it
-pulpo stop implement-auth --purge    # now nothing references it
+pulpo stop plan-auth --purge         # worktree survives — plan-auth-2 still needs it
+pulpo stop plan-auth-2 --purge       # now nothing references it
 pulpo cleanup                        # reclaims it (also a safe no-op if already gone)
 ```
 

@@ -6,7 +6,11 @@ Pulpo runs with zero config — all sections are optional with sensible defaults
 
 Breaking cleanup note:
 
-- unknown or deprecated config keys now fail at startup instead of being ignored
+- truly unknown config keys now fail at startup instead of being silently ignored; a
+  short list of **retired** keys (superseded features — `watchdog.adopt_tmux`,
+  `node.tag`, `[controller]`, `[peers]`, `[inks]`, `[docker]`, ...) is the exception —
+  those still load with a startup warning and are dropped the next time the config is
+  saved (see [Config Reference](/reference/config) "Retired keys")
 - pre-`sqlx` legacy databases are no longer upgraded in place; if Pulpo reports an unsupported legacy schema, delete `~/.pulpo/state.db` and restart
 
 ## Minimal Example
@@ -97,7 +101,7 @@ Only used with `bind = "public"`. Auto-generated on first run:
 
 ```toml
 [auth]
-token = "auto-generated-uuid"
+token = "auto-generated-base64url-token"  # 32 random bytes, base64url-encoded (43 chars)
 ```
 
 For `local` and `tailscale` modes, auth is skipped.
