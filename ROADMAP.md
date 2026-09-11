@@ -426,7 +426,13 @@ Core infrastructure:
 - `pulpod` daemon + REST API + embedded web UI (single binary)
 - `pulpo` CLI with attach, spawn, resume, stop, logs, schedule
 - SQLite-backed session persistence with full lifecycle state machine
-  (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`; resume from `lost`/`ready`)
+  (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`; resume from `lost`/`ready`/`stopped`)
+- Harness adapters: hook-driven lifecycle events for Claude Code (hook mechanics verified
+  against v2.1.266), Codex and pi (implemented from their docs, unverified in the field) —
+  replace scrollback-only detection once a session's events start flowing, drive real
+  resume via each harness's own resume/session-id mechanism, and surface a
+  `needs input (<reason>)` status label distinct from plain idle. See
+  `docs/architecture/harness-adapters.md`.
 - Watchdog: memory pressure intervention, idle detection, ready TTL cleanup,
   error/failure detection
 - Command-agnostic sessions (any CLI tool, any command)
@@ -447,8 +453,9 @@ Core infrastructure:
   detection, token/cost scraping (superseded by Phase A readers), enriched notifications
 - Homebrew tap distribution, CLI auto-start daemon
 
-Shipped but scheduled for removal under Track R: Docker runtime, worktrees web-UI page,
-Tauri mobile builds, MCP server, Discord bot, voice experiments.
+Track R (removals) is complete: Docker runtime, worktrees web-UI page, Tauri mobile
+builds, MCP server, Discord bot, and voice experiments were all shipped, then removed —
+see the "Cut" list above.
 
 ## Parked
 
@@ -470,32 +477,46 @@ Revisit only on real demand:
 
 ## Removed
 
-- ~~Watchdog auto-adoption of external tmux sessions (`adopt_tmux`)~~ (2026-09) — the
-  watchdog used to discover tmux sessions pulpo didn't spawn and bring them under
-  management via a scrollback-only classification (`watchdog/adopt.rs`). Since harness
-  adapters (PR #97) a session spawned through `pulpo spawn` gets real hooks, a preset
-  session id, and resume; an adopted session got none of that, and adoption's
-  interaction with the tmux `$N` id space was implicated in the zombie `$4`–`$8`
-  sessions seen after a reboot. Sessions that matter should be started with
-  `pulpo spawn`. A leftover `watchdog.adopt_tmux` key from a config written before the
-  removal is tolerated: it still parses, logs a startup warning, and is dropped the
-  next time the config is saved.
-- ~~Ocean gamification UI~~ (2026-09) — the canvas-based octopus/session visualization
-  (`web/src/components/ocean/**`, `web/src/pages/ocean.tsx`) was frozen since 2026-06-12
-  and is now extracted to a separate `pulpo-ocean` repo, with its git history intact.
-  Sessions is the web UI's landing page again.
-- ~~mDNS + seed-based discovery~~ (v0.0.41) — Tailscale + manual peers cover real usage
-- ~~Provider-specific features, guard rails, culture system~~ — agents handle these
-- ~~Per-peer session tabs, fleet click-through, `target_node` on schedules,
-  naive `--auto`~~ — replaced by controller mode, which was itself removed (July 2026,
-  see Phase C); cross-node placement is not coming back
-- ~~Controller/node control plane~~ (July 2026) — `[controller]` config, controller/node
-  roles, the fleet/enrollment/event-push/node-commands API surface, `nodes enroll`/`nodes
-  enrolled` CLI, per-schedule `target_node`. Cross-node orchestration was a dead product
-  lane (see Phase C); direct `pulpo --url <host:port>` access over Tailscale plus shared
-  `[[webhooks]]` cover real usage.
+Newest first. Every September 2026 entry landed the same week as harness adapters (PR
+#97) and is independent of it, except `adopt_tmux` (see below).
+
+- ~~Windows build target~~ (September 2026, PR #99) — `x86_64-pc-windows-msvc` dropped
+  from `dist-workspace.toml`, the vendored `openssl` dependency removed (it existed only
+  to avoid needing a system OpenSSL on Windows), and every Windows-only code path deleted
+  (`WindowsStubBackend`, the CLI's Windows attach/open-command branches, the `windows` arm
+  of `platform::os_name()`). Sessions run in `tmux`, which native Windows doesn't have —
+  the Docker session runtime that once made a Windows binary useful was itself removed in
+  v0.1.0 (PR #53). WSL2 users already run the Linux binary and are unaffected.
+- ~~Containerized `pulpod` deployment~~ (September 2026, PR #101) — `docker/` (the
+  `pulpo-base`/`pulpo-agents` Docker Hub images, compose files, entrypoints), the
+  `.github/workflows/docker-images.yml` publish job, and `BindMode::Container` (`bind =
+  "container"`). This was the deployment side of a hosted/fleet scenario retired with the
+  controller in v0.1.0; a containerized `pulpod` can't see the agents' own session files
+  that exact usage metering depends on. `pulpod` is installed via Homebrew or systemd on
+  the machines it supervises. Distinct from the Docker *session runtime* (`--runtime
+  docker`, removed earlier in v0.1.0 / PR #53) — that removal's historical leftovers
+  (`runtime = "docker"` DB rows, the retired `[docker]` config section) are untouched by
+  this one. Loading `bind = "container"` now fails at config load, naming the remaining
+  modes (`local`/`tailscale`/`public`).
+- ~~Watchdog auto-adoption of external tmux sessions (`adopt_tmux`)~~ (September 2026, PR
+  #102) — the watchdog used to discover tmux sessions pulpo didn't spawn and bring them
+  under management via a scrollback-only classification (`watchdog/adopt.rs`). Since
+  harness adapters (PR #97) a session spawned through `pulpo spawn` gets real hooks, a
+  preset session id, and resume; an adopted session got none of that, and adoption's
+  interaction with the tmux `$N` id space was implicated in the zombie `$4`–`$8` sessions
+  seen after a reboot. Sessions that matter should be started with `pulpo spawn`. A
+  leftover `watchdog.adopt_tmux` key from a config written before the removal is
+  tolerated: it still parses, logs a startup warning, and is dropped the next time the
+  config is saved.
+- ~~Secrets store~~ (September 2026, PR #103) — `pulpo secret` CLI, `GET/PUT/DELETE
+  /api/v1/secrets`, the `secrets` SQLite table, `--secret` on `pulpo spawn`/`pulpo
+  handoff`/`pulpo schedule add`, the web settings secrets tab, and the temp-file injection
+  on every session spawn. Every supported agent (Claude Code, Codex, pi, Gemini) reads its
+  own credentials from its own config, and the owner's database had zero secrets stored
+  after five months in production. An env var a session needs is exported in the shell
+  `pulpod` runs under, or prefixed onto the spawned command (`-- env KEY=value ...`).
 - ~~Peer registry, peer health probing, Tailscale peer discovery, `--node` CLI routing~~
-  (September 2026) — `[peers]` config, `PeerRegistry` + on-demand health prober,
+  (September 2026, PR #104) — `[peers]` config, `PeerRegistry` + on-demand health prober,
   `discovery::tailscale`, `GET/POST/DELETE /api/v1/peers`, `pulpo nodes`, `format_nodes`, the
   web peer settings tab and fleet/peer widgets. Only ever produced a read-only list of other
   nodes' sessions with no way to act on them — the cross-node story is the event-forwarding
@@ -506,6 +527,15 @@ Revisit only on real demand:
   same treatment as the retired `[docker]`/`[controller]`/`[inks]` sections. **Kept:**
   `bind = "tailscale"` and the `tailscale serve` HTTPS transport — that's how the owner
   reaches the daemon from a phone; it was never peer discovery.
+- ~~Ocean gamification UI~~ (September 2026) — the canvas-based octopus/session visualization
+  (`web/src/components/ocean/**`, `web/src/pages/ocean.tsx`) was frozen since 2026-06-12
+  and is now extracted to a separate `pulpo-ocean` repo, with its git history intact.
+  Sessions is the web UI's landing page again.
+- ~~Controller/node control plane~~ (July 2026) — `[controller]` config, controller/node
+  roles, the fleet/enrollment/event-push/node-commands API surface, `nodes enroll`/`nodes
+  enrolled` CLI, per-schedule `target_node`. Cross-node orchestration was a dead product
+  lane (see Phase C); direct `pulpo --url <host:port>` access over Tailscale plus shared
+  `[[webhooks]]` cover real usage.
 - ~~Inks (`[inks.<name>]` preset registry)~~ (July 2026) — `pulpo ink` CLI, `GET/POST/PUT/
   DELETE /api/v1/inks`, `InkConfig`, `resolve_ink`, per-ink usage rollups. The community
   standardized agent-side config (AGENTS.md, skills) and shell-side presets (aliases,
@@ -513,13 +543,11 @@ Revisit only on real demand:
   is set directly per session/schedule; the recurring cost budget moved onto the schedule
   itself (`pulpo schedule add --budget-cost <USD>`). `Session.ink` and `Schedule.ink`
   remain on the wire for historical rows; never set for new ones.
-- ~~Secrets store~~ (2026-09) — `pulpo secret` CLI, `GET/PUT/DELETE /api/v1/secrets`, the
-  `secrets` SQLite table, `--secret` on `pulpo spawn`/`pulpo handoff`/`pulpo schedule add`,
-  the web settings secrets tab, and the temp-file injection on every session spawn. Every
-  supported agent (Claude Code, Codex, pi, Gemini) reads its own credentials from its own
-  config, and the owner's database had zero secrets stored after five months in
-  production. An env var a session needs is exported in the shell `pulpod` runs under, or
-  prefixed onto the spawned command (`-- env KEY=value ...`).
+- ~~mDNS + seed-based discovery~~ (v0.0.41) — Tailscale + manual peers cover real usage
+- ~~Provider-specific features, guard rails, culture system~~ — agents handle these
+- ~~Per-peer session tabs, fleet click-through, `target_node` on schedules,
+  naive `--auto`~~ — replaced by controller mode, which was itself removed (July 2026,
+  see Phase C); cross-node placement is not coming back
 
 ## Success Criteria
 

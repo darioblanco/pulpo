@@ -1,176 +1,120 @@
 # Pulpo Positioning Memo
 
-Last updated: 2026-03-30
+Last updated: 2026-09-11
 
 ## Category
 
-Pulpo is a self-hosted control plane for background coding agents.
+Pulpo is a self-hosted **meter and breaker box for coding agents**. It is not an agent
+model, IDE, prompt framework, or multi-agent planner. It runs your agent sessions as
+durable background workers on machines you own, measures exactly what each one costs, and
+can stop one before it runs past a budget you set.
 
-It is not an agent model, IDE, prompt framework, or multi-agent planner. It is
-the infrastructure layer that lets you run coding agents on your own machines
-with durable state, explicit lifecycle semantics, and remote supervision.
+## Market Context & Core Problem
 
-## Market Context
+The 2026 shakeout settled the orchestration question: Terragon dead, Vibe Kanban dead at
+27k stars, Crystal deprecated, Omnara pivoted. First parties absorbed the value — Claude
+Code ships native worktrees and Remote Control; Codex ships a desktop command center.
+Wrapping tmux/worktrees/guardrails is a losing race.
 
-The market has shifted from "AI pair programmer in my editor" to "background
-coding agent that works while I am away." Managed platforms now offer cloud
-agents, PR-based delegation, remote sandboxes, and async task execution.
-
-That validates Pulpo's core thesis:
-
-- agents increasingly run unattended
-- unattended agents need supervision and recovery
-- agents need durable execution environments
-- developers need status, alerts, and control without staying attached
-
-The opportunity is not to outdo hosted vendors at model quality or cloud UX. The
-opportunity is to be the best way to run agents on infrastructure you control.
+What nobody ships — and what first parties are structurally unable to ship — is
+cross-account, cross-machine, cross-agent cost telemetry and the enforcement that goes
+with it. A vendor's `/usage` is one account, one machine, checked after the fact; no
+vendor will aggregate spend across *your* accounts, since that helps you arbitrage their
+own rate limits. Only the thing actually running a session can stop a runaway before the
+wall — that's the gap Pulpo fills. The rest of the gap: SSH-plus-tmux as ad hoc
+infrastructure, no clear signal for "working," "blocked on me," "finished," or "dead," and
+nothing watching the meter closely enough to pull the plug before it's expensive.
 
 ## Target Users
 
-### Primary ICP
+**Primary:** power users and small teams who already run coding agents heavily, often
+across more than one account, on always-on machines (a Mac mini, a home server, a spare
+Linux box) — and want to know what all of that costs before the invoice or the weekly
+quota resets. They care about self-hosting, sovereignty, and vendor independence.
 
-Individual power users and small engineering teams who:
-
-- already use coding agents heavily
-- run private infrastructure or always-on machines
-- want agents to work in the background on servers, not laptops
-- need access to private repos, VPN-only services, or internal environments
-- care about self-hosting, auditability, and vendor independence
-
-### Secondary ICP
-
-Teams adopting coding agents operationally who need:
-
-- repeatable scheduled runs
-- per-session policies and recovery behavior
-- remote visibility for long-running tasks
-- a path from one machine to a small fleet
-
-## Core Problem
-
-Running a coding agent in a terminal is easy.
-
-Running many agents reliably, across machines, while you are not watching is not.
-
-The gap shows up as:
-
-- SSH + tmux as ad hoc infrastructure
-- lost state after reboots or crashes
-- poor visibility into whether an agent is active, waiting, finished, or dead
-- conflicts when multiple agents touch the same repo
-- no clean mobile or remote management surface
+**Secondary:** operators running repeated agent work — nightly reviews, scheduled scans —
+who need a budget that actually intervenes, alerts that reach a phone before a runaway
+gets expensive, and signals forwarded into infrastructure they already run (Grafana,
+Datadog, a SIEM).
 
 ## Positioning Statement
 
-For developers and teams who want coding agents to run in the background on
-their own infrastructure, Pulpo is the self-hosted control plane that runs,
-supervises, and recovers agent sessions across machines.
+For developers and teams who run coding agents unattended on infrastructure they own,
+Pulpo is the self-hosted meter and breaker box that measures exactly what every agent
+session costs, enforces budgets before the wall, and forwards alerts to the observability
+stack they already run.
 
-Unlike vendor-hosted coding agents or local-only session managers, Pulpo is
-command-agnostic, multi-node aware, durable across failures, and designed for
-private infrastructure you control.
+Unlike vendor `/usage` pages or single-machine cost readers, Pulpo runs the sessions
+itself — so a cap actually stops something — and stays sovereign: usage and account data
+never leave the machine that generated them.
 
 ## Wedge
 
-Pulpo wins where hosted products and local tools both fall short:
-
-- self-hosted execution on your own machines
-- support for any CLI agent, not one vendor
-- explicit session lifecycle with resume and intervention semantics
-- fleet visibility across multiple nodes
-- mobile-friendly remote supervision
-- worktree and Docker isolation for concurrent or risky tasks
+- It also runs the sessions — a cost reader only tells you after the fact.
+- Exact usage metering from the agent's own session files, not scraped output.
+- Budgets that alert at 80% and can auto-stop at 100%, plus a burn-velocity governor for
+  the runaway a flat cap misses.
+- Hook-driven supervision for harnesses with their own lifecycle signals (Claude Code,
+  Codex, pi) — real status instead of a scrollback guess, and real resume of the same
+  conversation after a reboot.
+- Self-hosted, single-node-first: no control plane to operate; `bind = "tailscale"` for
+  reaching it from a phone.
+- Command-agnostic: any terminal agent, not one vendor.
 
 ## What Pulpo Is Not
 
-- not a better model than Claude, Codex, Gemini, or Aider
-- not a replacement for IDE-native coding UX
-- not a multi-agent planning framework
-- not a hosted code-review bot
-- not "tmux, but prettier"
+Not a better model than Claude, Codex, Gemini, or Aider. Not a replacement for
+IDE-native coding UX. Not a multi-agent planning framework. Not a fleet control plane —
+there's no cross-node orchestration, by design. Not "tmux, but prettier."
 
 ## Messaging Guidance
 
-### Lead with
+**Lead with:** what every coding agent costs, across every machine and account; a budget
+that actually pulls the plug, not a post-hoc invoice; self-hosted and sovereign — your
+code and usage data never leave your infrastructure; run any agent, on your machines.
 
-- run coding agents on your servers, not theirs
-- self-hosted background agents
-- supervise agents from anywhere
-- durable sessions across your machines
-- private control plane for agent fleets
-
-### Avoid leading with
-
-- tmux abstraction
-- implementation details before user value
-- "universal runtime" as the primary frame
-- feature lists before the core problem
+**Avoid leading with:** tmux abstraction or implementation details; "control plane" or
+"orchestrator" as the primary frame (that race is lost); multi-node fleet management
+(explicitly not a goal); a feature list before the cost problem.
 
 ## Proof Points
 
-Pulpo should repeatedly demonstrate these outcomes:
-
-- spawn an agent on a remote machine without SSH
-- check status from a phone while away from the desk
-- survive reboot or backend loss and resume work
-- run multiple agents on one repo without collisions
-- schedule recurring agent work on the right machine
-- keep risky or high-permission sessions isolated in Docker
+`pulpo usage --scan` shows real spend across Claude Code, Codex, and pi with zero setup. A
+budget cap stops a runaway session and records why. An agent blocked on a permission
+prompt shows `needs input (<reason>)` and pings a phone. A session survives a reboot and
+resumes the same conversation, not a fresh one. Every alert reaches a webhook or a phone,
+not just a dashboard nobody's watching.
 
 ## Competitive Framing
 
-### Hosted coding agents
+- **Cost readers** (ccusage, vendor `/usage`) win on a read-only report, one machine,
+  right now. Pulpo also runs the session — a cap can stop something — and aggregates
+  across machines and accounts.
+- **Native multi-agent UX tools** (Conductor, Claude Code Remote Control, Codex desktop)
+  win on the nicest interactive experience on one Mac. Pulpo is self-hostable and
+  headless, command-agnostic, and meters/enforces in the daemon, not the terminal app —
+  a session survives a closed laptop lid.
+- **Hosted coding-agent clouds** win on zero infrastructure. Pulpo keeps the runtime, the
+  credentials, and the cost data on hardware the operator administers.
 
-Examples: OpenAI Codex app, GitHub Copilot coding agent, Cursor background
-agents, Claude cloud sessions, OpenHands Cloud.
-
-Pulpo should not compete on hosted convenience or model ownership. It should
-compete on infrastructure control, private-network access, and bring-your-own
-agent flexibility.
-
-### Local session managers
-
-Examples: Agent Deck and similar terminal-first tools.
-
-Pulpo should position beyond "command center" toward "durable control plane":
-multi-node, recovery semantics, watchdog behavior, scheduling, notifications,
-and API-driven operation.
-
-### Agent orchestration frameworks
-
-Examples: multi-agent planners and task routers.
-
-Pulpo is complementary. Those tools decide what agents should do. Pulpo decides
-where and how they run, how they are supervised, and what happens when things go
-wrong.
+See [Alternatives And Comparisons](docs/getting-started/alternatives.md) for the fully
+sourced version.
 
 ## Recommended One-Liners
 
-- Self-hosted background agents for your own machines.
-- Run any coding agent on your servers. Supervise it from anywhere.
-- The private control plane for background coding agents.
+- The self-hosted meter and breaker box for coding agents.
+- See — and control — what every coding agent costs, across all your machines and accounts.
+- Run any coding agent on your machines. Know exactly what it costs. Pull the plug before
+  the wall.
 
-## Documentation Implications
+## Documentation & Roadmap Implications
 
-Top-level docs should:
+Docs should open with the meter/breaker framing (not control-plane/orchestration), state
+the cost problem and primary user early, treat tmux as plumbing rather than the headline,
+and be explicit that Pulpo is single-node-first — direct (`--url`) multi-machine access
+and shared webhooks for cross-machine visibility, never a fleet control plane.
 
-- open with the control-plane framing
-- state the primary user and problem early
-- describe tmux and Docker as execution backends, not the headline
-- emphasize remote supervision, durability, and multi-machine operation
-- treat worktrees, scheduling, and notifications as operational depth
-
-## Roadmap Implications
-
-Near-term roadmap priority should favor:
-
-- clearer distribution and onboarding
-- stronger proof of value in docs and demos
-- reliability and policy features that reinforce the control-plane position
-- team-readiness features only when they strengthen auditability and governance
-
-Lower priority:
-
-- broadening into orchestration or prompt-layer features
-- speculative platform expansion without user pull
+Roadmap priority favors exact usage metering for more agents, budget/burn-velocity depth,
+and hook-driven supervision for more harnesses. Deprioritize cross-node orchestration,
+multi-user/team features, and anything agents now handle natively (worktrees, sandboxing,
+guardrails).
