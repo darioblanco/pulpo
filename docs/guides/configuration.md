@@ -47,11 +47,24 @@ ready_ttl_secs = 0             # Seconds after Ready before stop (0 = disabled)
 memory_threshold = 90          # Memory % to trigger intervention (default: 90)
 breach_count = 3               # Consecutive breaches before stop (default: 3)
 waiting_patterns = ["custom prompt>"]  # Extra waiting-for-input patterns (default: [])
+burn_ceiling_usd_per_hour = 20.0       # Alert (or stop) if lifetime-average $/hr exceeds this (default: unset)
+burn_action = "alert"                  # "alert" (default) or "stop" when a burn ceiling is crossed
 ```
 
 Per-session idle threshold: `pulpo spawn my-task --idle-threshold 0` (never idle) or `--idle-threshold 120` (2 minutes).
 
-See [Session Lifecycle](/operations/session-lifecycle) for how the watchdog drives state transitions.
+For harnesses with their own lifecycle hooks (Claude Code, Codex, pi), most of this idle
+detection stops applying once a session's events start flowing — see
+[Harness Adapters](/architecture/harness-adapters). See
+[Session Lifecycle](/operations/session-lifecycle) for the full state-transition picture.
+
+## Cost Rates, Quotas, and Metrics
+
+`[rates.<model>]` prices a model for exact cost accounting (`pulpo usage`); `[plans.<name>]`
+supplies the weekly token allowance Anthropic doesn't publish, enabling Claude's "% of
+weekly cap" projection; `[metrics]` toggles the opt-in Prometheus `/api/v1/metrics`
+endpoint (off by default). All three are covered field-by-field in the
+[Config Reference](/reference/config).
 
 ## Notifications
 

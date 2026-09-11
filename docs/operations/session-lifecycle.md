@@ -100,6 +100,29 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 | **Active/Idle** | No | Error: session is still running |
 | **Creating** | No | Error: session is still running |
 
+For a session whose harness has a resume mechanism (Claude Code, Codex, pi), "re-executes
+the session command" above means the harness's *own* resume command — `claude --resume <id>`,
+`codex resume <id>`, or pi's idempotent `--session-id <id>` — so the conversation
+continues where it left off instead of starting fresh. See
+[Harness Adapters](/architecture/harness-adapters) for the exact rewrite per harness.
+
+## Harness-Driven Transitions (Claude Code, Codex, pi)
+
+Everything above describes scrollback-based detection — the default for any command.
+For a harness with its own lifecycle hooks, `pulpo hook <harness>` reports real events
+(`SessionStarted`, `Working`, `TurnFinished`, `NeedsInput`, `Failed`, `SessionEnded`) that
+drive the *same* `Active`/`Idle`/`Ready`/`Stopped` states directly, and — once a session's
+first event lands — the watchdog stops applying the waiting-for-input/rate-limit/error
+heuristics below for whatever signals that harness's events cover (an adapter missing a
+signal, like Codex's rate-limit/error detection, keeps the scrollback fallback for just
+that signal).
+
+The one additive piece: a `NeedsInput` event sets `Idle` plus a `needs_input` metadata
+reason (`permission`, `question`, `idle`, ...), rendered as `needs input (<reason>)` in
+`pulpo ls` and the web UI — distinguishing "blocked on me" from a plain idle prompt. The
+`SessionStatus` enum itself is unchanged. Full event mapping, per-harness spawn/resume
+rewrites, and the watchdog-bypass mechanism: [Harness Adapters](/architecture/harness-adapters).
+
 ## Waiting Patterns (Idle Detection)
 
 The watchdog inspects the last 5 lines of terminal output for these patterns (case-insensitive). The built-in patterns cover major coding agents and common CLI prompts:
@@ -190,7 +213,10 @@ cleanup`.
 
 - **Ready + TTL → Stopped**: When `ready_ttl_secs > 0`, ready sessions are automatically
   cleaned up after the grace period. This prevents tmux shell accumulation. The status
-  changes from Ready to Stopped, blocking further resume. With `ready_ttl_secs` at its
+  changes from Ready to Stopped (still resumable via `pulpo resume`, like any other
+  Stopped session — this only stops the lingering tmux shell, not the session record).
+  This path records no intervention (`pulpo interventions` won't show it — unlike the
+  memory/idle/budget/burn interventions above). With `ready_ttl_secs` at its
   default of `0` (disabled), a `Ready` session whose tmux process later dies is still
   reclassified — it goes through the same exit-marker sweep as `Active`/`Idle` sessions
   (`Stopped` with a marker present, `Lost` without one), so it never gets stuck as

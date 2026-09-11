@@ -101,7 +101,7 @@ From there you can:
 - inspect each branch manually
 - open PRs from each branch
 - merge selected work
-- resume a session if it is `ready` or `lost`
+- resume a session if it is `ready`, `stopped`, or `lost`
 
 ## Choosing Good Task Boundaries
 

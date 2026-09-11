@@ -39,7 +39,11 @@ export default defineUserConfig({
         '/getting-started/install',
         '/getting-started/quickstart',
       ],
-      '/architecture/': ['/architecture/core-concepts', '/architecture/overview'],
+      '/architecture/': [
+        '/architecture/core-concepts',
+        '/architecture/overview',
+        '/architecture/harness-adapters',
+      ],
       '/guides/': [
         '/guides/remote-control',
         '/guides/nightly-code-review',

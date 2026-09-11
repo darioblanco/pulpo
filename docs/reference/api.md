@@ -21,6 +21,14 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | PUT | `/api/v1/watchdog` | Update watchdog config (live reload) |
 | GET | `/api/v1/notifications` | Notification config |
 | PUT | `/api/v1/notifications` | Update notification config |
+| GET | `/api/v1/metrics` | Prometheus text exposition (opt-in — `404` unless `[metrics] enabled = true`) |
+
+## Usage
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/usage/projection` | Live per-session burn rate ($/hr, tokens/hr) and time-to-cap for pulpo-managed sessions |
+| GET | `/api/v1/usage/scan` | Scan-only: total spend across *all* local agent history (Claude Code, Codex, pi), no sessions routed through pulpo required (`?since_days=`, `?by_worktree=true`) |
 
 ## Auth
 
@@ -44,6 +52,7 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | GET | `/api/v1/sessions/:id/interventions` | List watchdog interventions |
 | GET | `/api/v1/sessions/:id/stream` | WebSocket terminal stream |
 | POST | `/api/v1/sessions/:id/harness-events` | Ingest a harness lifecycle event (posted by `pulpo hook <harness>`) |
+| POST | `/api/v1/sessions/:id/handoff` | Spawn a new session inheriting this one's working directory and git worktree |
 | POST | `/api/v1/sessions/cleanup` | Remove all stopped and lost sessions |
 
 ### Create Session (POST /api/v1/sessions)
@@ -70,6 +79,25 @@ receives it. To spawn on another machine, send the request to that machine direc
 the CLI or an HTTP client at its address, e.g. `pulpo --url gpu-box spawn ...`).
 `GET /api/v1/sessions/:id/stream` is local-only by the same principle; remote terminal
 proxying is intentionally out of scope.
+
+### Handoff Session (POST /api/v1/sessions/:id/handoff)
+
+```json
+{
+  "name": "my-api-2",
+  "command": "codex 'implement PLAN.md'",
+  "description": "Build from the plan",
+  "budget_cost_usd": 5.0,
+  "idle_threshold_secs": null
+}
+```
+
+`:id` is the **source** session (resolved by ID or name, same as `GET .../sessions/:id`).
+Every field is optional: `name` auto-generates as `<source>-2`, `-3`, ... when omitted;
+without `command`, the new session opens a login shell. The new session inherits the
+source's working directory and, if the source used one, its git worktree (`adopted`, not
+copied — no new branch or checkout). Returns `201 Created` with the same shape as
+`POST /api/v1/sessions`. See [Plan Then Build](/guides/plan-then-build).
 
 ### Harness Events (POST /api/v1/sessions/:id/harness-events)
 
@@ -128,8 +156,14 @@ payload schema, token format, and status codes: [Push Notifications reference](/
 |--------|------|-------------|
 | GET | `/api/v1/events` | Server-Sent Events stream |
 
-Event types:
-- **Session events**: `created`, `active`, `idle`, `ready`, `stopped`, `lost`, `resumed`
+Each SSE frame's `event:` field is one of:
+- **`session`**: a session's status changed — `status` is one of `creating`, `active`,
+  `idle`, `ready`, `stopped`, `lost` (`needs_input` is set alongside `idle` when a harness
+  adapter reports the session is blocked on the user; see
+  [Harness Adapters](/architecture/harness-adapters))
+- **`session_deleted`**: a session was purged (`stop --purge` or `pulpo cleanup`)
+- **`usage_alert`**: a budget or burn-ceiling threshold fired
+- **`intervention`**: the watchdog forcibly stopped a session
 
 ```bash
 curl -N http://localhost:7433/api/v1/events

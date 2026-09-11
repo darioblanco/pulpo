@@ -98,6 +98,14 @@ The watchdog is the supervision loop. It is responsible for:
 - enforcing ready TTL cleanup
 - recording interventions
 
+For a harness with its own lifecycle hooks (Claude Code, Codex, pi), a **harness
+adapter** rewrites the spawn to wire those hooks to `pulpo hook <harness>` and the
+resulting events drive the same transitions directly — the watchdog stops guessing from
+scrollback for whatever signals that harness's events cover. A session blocked on the
+harness (a permission prompt, a question) shows as `idle` with a `needs input
+(<reason>)` label rather than plain `idle`. See
+[Harness Adapters](/architecture/harness-adapters).
+
 ## Control Surfaces
 
 | Surface | Use Case |
@@ -245,10 +253,9 @@ All session operations go through a `Backend` trait. The session lifecycle, watc
 
 | Backend | Use case | Backend ID format |
 |---------|----------|-------------------|
-| **tmux** (default) | Local/remote servers, zero infrastructure | `$0`, `$1`, ... |
-| **Kubernetes** (future) | Cluster scale, team infrastructure | — |
+| **tmux** (only backend today) | Local/remote servers, zero infrastructure | `$0`, `$1`, ... |
 
-Adding a new backend means implementing ~10 methods (`create_session`, `kill_session`, `is_alive`, `capture_output`, etc.). Everything above the backend layer — lifecycle states, watchdog, scheduler, web UI — works unchanged.
+Adding a new backend means implementing ~10 methods (`create_session`, `kill_session`, `is_alive`, `capture_output`, etc.) — everything above the backend layer (lifecycle states, watchdog, scheduler, web UI) works unchanged. A Kubernetes (or other cluster) backend is a hypothetical illustration of that extension point, not a roadmap item — it's explicitly parked (see [ROADMAP.md](https://github.com/darioblanco/pulpo/blob/main/ROADMAP.md) "Parked"), and a containerized *agent* runtime was tried and removed (containerized agents hide their session files from the exact-usage-metering readers).
 
 ## Design Principles
 
