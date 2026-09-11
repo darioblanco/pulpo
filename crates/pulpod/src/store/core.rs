@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use pulpo_common::session::InterventionCode;
 use sqlx::SqlitePool;
 use sqlx::migrate::Migrator;
+use tracing::warn;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
@@ -63,8 +64,42 @@ impl Store {
 
     pub async fn migrate(&self) -> Result<()> {
         self.reject_unsupported_legacy_schema().await?;
+        self.warn_before_dropping_secrets().await?;
         MIGRATOR.run(&self.pool).await?;
         self.enforce_db_permissions();
+
+        Ok(())
+    }
+
+    /// Migration 0008 drops the `secrets` table (and `schedules.secrets` column):
+    /// the secrets store was removed because every supported agent reads its own
+    /// credentials from its own config now. That migration is irreversible — there
+    /// is no `pulpo-secrets-backup` export tool — so warn loudly here, before it
+    /// runs, if a pre-0008 database still has rows in `secrets`. This never blocks
+    /// startup; it only gives the operator a chance to notice before the data is
+    /// gone (downgrading to pulpo 0.1.1 is the only way to read it back out).
+    async fn warn_before_dropping_secrets(&self) -> Result<()> {
+        let has_secrets_table: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'secrets'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_secrets_table == 0 {
+            return Ok(());
+        }
+
+        let secret_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM secrets")
+            .fetch_one(&self.pool)
+            .await?;
+        if secret_count > 0 {
+            warn!(
+                secret_count,
+                "store: the secrets table is about to be dropped irreversibly by migration \
+                 0008 — {secret_count} stored secret(s) will be lost. There is no export \
+                 tool; downgrade to pulpo 0.1.1 first if you need to read them out before \
+                 upgrading."
+            );
+        }
 
         Ok(())
     }

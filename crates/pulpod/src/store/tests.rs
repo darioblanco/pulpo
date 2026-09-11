@@ -80,6 +80,87 @@ async fn test_migrate_uses_sqlx_migrations_table() {
     assert_eq!(has_secrets_column, 0);
 }
 
+/// Build a database at the pre-0008 schema (migrations 1-7 applied, `secrets`
+/// intact) by running a runtime `Migrator` over a copy of the migrations
+/// directory with `0008_drop_secrets.sql` excluded. Same migration file
+/// content as the embedded `MIGRATOR`, so checksums line up when `migrate()`
+/// (which uses the real, full `MIGRATOR`) is run afterwards.
+async fn store_at_migration_0007() -> Store {
+    let tmpdir = tempfile::tempdir().unwrap();
+    let tmpdir = Box::leak(Box::new(tmpdir));
+    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+
+    let migrations_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let partial_dir = tempfile::tempdir().unwrap();
+    for entry in std::fs::read_dir(&migrations_src).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with("0008") {
+            continue;
+        }
+        std::fs::copy(entry.path(), partial_dir.path().join(name)).unwrap();
+    }
+    let partial = sqlx::migrate::Migrator::new(partial_dir.path())
+        .await
+        .unwrap();
+    partial.run(store.pool()).await.unwrap();
+
+    store
+}
+
+#[tokio::test]
+async fn test_migrate_warns_before_dropping_secrets() {
+    let store = store_at_migration_0007().await;
+
+    sqlx::query("INSERT INTO secrets (name, value, created_at) VALUES (?, ?, ?)")
+        .bind("token-a")
+        .bind("value-a")
+        .bind("2026-01-01T00:00:00Z")
+        .execute(store.pool())
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO secrets (name, value, created_at) VALUES (?, ?, ?)")
+        .bind("token-b")
+        .bind("value-b")
+        .bind("2026-01-01T00:00:00Z")
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+    let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM secrets")
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    assert_eq!(count_before, 2);
+
+    // Migrating drops the secrets table (migration 0008) but must not fail or
+    // block startup — the warning is best-effort operator notice, not a gate.
+    store.migrate().await.unwrap();
+
+    let has_secrets_table: i32 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='secrets'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(has_secrets_table, 0);
+}
+
+#[tokio::test]
+async fn test_migrate_warns_before_dropping_secrets_noop_when_empty() {
+    // No rows in `secrets` (or no table at all, on a fresh DB) — migrate() must
+    // still succeed with no warning path exercised beyond the early return.
+    let store = store_at_migration_0007().await;
+
+    let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM secrets")
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    assert_eq!(count_before, 0);
+
+    store.migrate().await.unwrap();
+}
+
 #[tokio::test]
 async fn test_migrate_rejects_unsupported_legacy_schema() {
     let tmpdir = tempfile::tempdir().unwrap();
