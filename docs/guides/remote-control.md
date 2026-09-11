@@ -82,8 +82,8 @@ pulpo list
 ```
 
 ```
-NAME   STATUS   AGE   COMMAND
-fix    active   4m    claude -p "Fix the failing auth tests"
+ID        NAME   STATUS   USAGE     BRANCH   COMMAND
+a1b2c3d4  fix    active   1.2K tok  -        claude -p "Fix the failing auth tests"
 ```
 
 The statuses that matter day to day:
@@ -111,8 +111,9 @@ pulpo resume fix
 
 `pulpo resume` re-creates the `tmux` session, re-runs the command, and auto-attaches. It
 works on `lost` sessions (the backend disappeared), `ready` sessions (the agent already
-finished, but you want the shell back), and `stopped` sessions (terminated on purpose or
-exited cleanly). `pulpod` also auto-resumes sessions that were
+exited — resume still recreates the backend and reruns the command even if the fallback
+shell is still lingering, since the agent process itself is gone), and `stopped` sessions
+(terminated on purpose or exited cleanly). `pulpod` also auto-resumes sessions that were
 `active` when it shut down, the next time it starts — you often won't need to run `resume` by
 hand at all. See [Session Lifecycle](/operations/session-lifecycle) and
 [Recovery](/guides/recovery) for the exact state machine and detection rules.

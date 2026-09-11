@@ -4,7 +4,7 @@ Instructions for coding agents (Codex, Claude, and compatible tools).
 
 ## Product Focus
 
-Pulpo is a **self-hosted control plane for background coding agents** — agent-agnostic infrastructure you own. It runs any CLI agent (Claude Code, Codex, Aider, Goose, etc.) on your machines with durable session lifecycle, watchdog supervision, and scheduling. Each machine's `pulpod` is standalone (no controller/fleet control plane); reach any of them directly over Tailscale.
+Pulpo is a **self-hosted meter and breaker box for coding agents** — agent-agnostic infrastructure you own. It runs any CLI agent (Claude Code, Codex, Aider, Goose, etc.) on your machines with exact usage metering, budget/burn-rate enforcement, durable session lifecycle, hook-driven watchdog supervision, and scheduling. Each machine's `pulpod` is standalone (no controller/fleet control plane); reach any of them directly over Tailscale.
 
 **Positioning:** infrastructure layer, not an agent. Sovereign by architecture — code never leaves your infrastructure. Key differentiators: scheduling, cost control, direct multi-machine access over Tailscale, EU sovereignty compliance.
 
@@ -13,11 +13,13 @@ Do not expand scope into desktop/mobile clients unless explicitly requested.
 
 ## What to Build Next
 
-See `ROADMAP.md` "What's Next" section. In priority order:
+See `ROADMAP.md` "Phase D — Reposition + distribution" for current live work. Cost
+tracking (budgets, burn-rate governor, config-overridable rates) is already shipped —
+see ROADMAP.md Phase B / M2. In priority order:
 
-1. **Cost tracking (P5.1)** — token parsing exists, need cost rates, per-session budgets, auto-stop
+1. **Landing page + demo video** — the one Phase D item still open; the README/SPEC
+   reposition already shipped.
 2. ~~Agent completion callbacks~~ — superseded by harness adapters (shipped for Claude Code — hook mechanics verified against v2.1.266 — plus Codex and pi, implemented from their docs and unverified in the field; see `docs/architecture/harness-adapters.md`)
-3. **Landing page + demo video**
 
 **Do NOT build:** mDNS/seed discovery (removed), Tailscale peer discovery or a peer registry (removed — `bind = "tailscale"` stays for transport), MCP server (removed), Kubernetes backend, team/multi-user features. The ocean gamification UI was extracted to a separate `pulpo-ocean` repo (with history) — do not re-add canvas/game code to this repo.
 

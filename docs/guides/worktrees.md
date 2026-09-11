@@ -136,8 +136,9 @@ Create PRs from each branch, or merge directly.
 Sessions using worktrees show a `[wt]` badge in `pulpo list`:
 
 ```
-fix-auth [wt]   active   2m   claude -p "fix auth middleware"
-add-tests [wt]  idle     5m   claude -p "add missing unit tests"
+ID        NAME            STATUS   USAGE     BRANCH      COMMAND
+a1b2c3d4  fix-auth [wt]   active   1.2K tok  fix-auth    claude -p "fix auth middleware"
+e5f6a7b8  add-tests [wt]  idle     840 tok   add-tests   claude -p "add missing unit tests"
 ```
 
 ## Requirements

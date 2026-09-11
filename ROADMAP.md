@@ -6,15 +6,19 @@ Strategic direction for Pulpo: the self-hosted meter and breaker box for coding 
 
 Pulpo runs coding agents as background workers on your machines, **measures exactly what
 every session costs** — across all your agents, accounts, and machines — **monitors and
-alerts** on cost/quota/waste, and **optimizes the things it controls** (kills waste, runs
-work on the cheapest pool with headroom, right-sizes defaults) so you get the maximum out
-of your subscriptions without ever blowing a limit.
+alerts** on cost/quota/waste, and **optimizes the things it controls on the node it runs
+on** (kills waste via budget/burn-rate auto-stop, right-sizes defaults) so you get the
+maximum out of your subscriptions without ever blowing a limit. Routing work to whichever
+node or account has the most headroom — quota-aware placement across a fleet — is a
+parked future direction (see Phase C), not something Pulpo does today: each `pulpod` is
+single-node, standalone infrastructure you reach directly.
 
-Scope boundary: Pulpo optimizes the *operation* of agents (when/whether/where a session
-runs, what it launches with, when to stop it, which pool it draws from) — never the
-*inference path* (no prompt caching, per-request routing, or context trimming; that's the
-agent's job, not ours). It can't make a unit of work cheaper; it makes sure you don't pay
-for waste and that you use capacity you've already bought.
+Scope boundary: Pulpo optimizes the *operation* of agents on the node you run it on
+(whether a session runs, what it launches with, when to stop it) — never the *inference
+path* (no prompt caching, per-request routing, or context trimming; that's the agent's
+job, not ours) and, today, never cross-node placement. It can't make a unit of work
+cheaper; it makes sure you don't pay for waste and that you use capacity you've already
+bought.
 
 It works with any command-line agent: Claude Code, Codex, Aider, Goose, OpenCode, or
 anything that runs in a terminal. It is not an agent framework, not a prompt tool, and
@@ -44,9 +48,12 @@ What nobody ships — and what first parties are **incentive-blocked** from ever
 2. **Enforcement.** Budget caps that auto-stop, pause-on-rate-limit-thrash, alerts before
    the wall. Vendors tell you that you overspent; only the thing running the session can
    prevent it.
-3. **Quota-aware placement.** "Spawn this on whichever node/account has the most
-   headroom; defer the nightly run until the window resets." Requires fleet state +
-   quota data + a scheduler — Pulpo has all three.
+3. **Quota-aware placement** — "spawn this on whichever node/account has the most
+   headroom; defer the nightly run until the window resets." This needs a cross-node
+   control plane, which Pulpo built and then deliberately removed (Phase C, June/July
+   2026) once it was clear a proprietary fleet controller was the losing race, not a
+   differentiator. **Parked, not planned**: single-node metering and enforcement come
+   first; placement would need to be rebuilt from zero on real demand.
 
 The #1 community complaint about parallel agents is that they are a *quota multiplier*
 (Max users burning 20% of a weekly allowance in 2 hours). That pain grows with every
@@ -250,9 +257,10 @@ folded into the event-forwarding backbone below.
 
 ### Event-forwarding backbone (the monitoring system) — finalized 2026-06-13
 
-Pulpo becomes a universal event/control plane: it forwards **alerts and important events**
-to wherever you run observability. Model-agnostic and sovereign (data goes to *your*
-collector, not a vendor relay). Decisions locked:
+Pulpo becomes a universal event plane (not a control plane — one-way forwarding, no
+remote commands): it forwards **alerts and important events** to wherever you run
+observability. Model-agnostic and sovereign (data goes to *your* collector, not a vendor
+relay). Decisions locked:
 
 - **Canonical event envelope + taxonomy/severity.** One header (`event_id` idempotency key,
   `schema_version`, `type`, `severity`, `occurred_at`, `node`, `session_id?`, `payload`).
@@ -481,12 +489,15 @@ Newest first. Every September 2026 entry landed the same week as harness adapter
 #97) and is independent of it, except `adopt_tmux` (see below).
 
 - ~~Windows build target~~ (September 2026, PR #99) — `x86_64-pc-windows-msvc` dropped
-  from `dist-workspace.toml`, the vendored `openssl` dependency removed (it existed only
-  to avoid needing a system OpenSSL on Windows), and every Windows-only code path deleted
+  from `dist-workspace.toml` and every Windows-only code path deleted
   (`WindowsStubBackend`, the CLI's Windows attach/open-command branches, the `windows` arm
   of `platform::os_name()`). Sessions run in `tmux`, which native Windows doesn't have —
   the Docker session runtime that once made a Windows binary useful was itself removed in
-  v0.1.0 (PR #53). WSL2 users already run the Linux binary and are unaffected.
+  v0.1.0 (PR #53). WSL2 users already run the Linux binary and are unaffected. PR #99 also
+  dropped the vendored `openssl` dependency, believing it was Windows-only cruft — it
+  wasn't (`web-push`/`isahc` pull in OpenSSL on every platform, so release binaries would
+  have linked it dynamically instead of self-contained); PR #105 restored
+  `openssl = { features = ["vendored"] }` the same week.
 - ~~Containerized `pulpod` deployment~~ (September 2026, PR #101) — `docker/` (the
   `pulpo-base`/`pulpo-agents` Docker Hub images, compose files, entrypoints), the
   `.github/workflows/docker-images.yml` publish job, and `BindMode::Container` (`bind =
@@ -556,7 +567,8 @@ Pulpo is succeeding if:
 - You know exactly what every agent session cost — before you check any vendor dashboard
 - You see one gauge for all machines, accounts, and agents, from your phone
 - The watchdog stops a runaway session before it burns your weekly quota
-- A scheduled overnight run lands on the account with headroom, or waits for the reset
+- A scheduled overnight run alerts you before it burns through a budget or the weekly
+  quota, instead of a surprise on the invoice
 - An agent blocked on a permission prompt pings your phone within seconds
 - Sessions survive reboots; you wake up to PRs and an exact cost number, not crashed
   terminals
@@ -564,7 +576,8 @@ Pulpo is succeeding if:
 
 ## Architectural Principles
 
-- Meter and breaker box, not orchestrator: measure, budget, place — don't wrap agent UX
+- Meter and breaker box, not orchestrator: measure, budget, enforce — don't wrap agent UX
+  or chase cross-node placement (parked, see Phase C)
 - Command-agnostic: runs any agent; structured usage readers where available
   (Claude, Codex), output-scraping fallback everywhere else
 - Sovereign by architecture: self-hosted, no vendor relay, local-only account data

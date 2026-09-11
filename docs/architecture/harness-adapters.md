@@ -74,12 +74,17 @@ from their docs, unverified in the field).
 v2.1.266: `--session-id <uuid>`, `--settings <file-or-json>` (highest CLI precedence),
 `-r`/`--resume [session-id]`, `-c`/`--continue`.
 
-**On spawn** (no existing `--resume`/`-r`/`--continue`/`-c`/`--session-id`/`--settings`
-flag): generates a UUID, writes `<data_dir>/harness/<session_id>/claude-settings.json`
-wiring every hook of interest to `pulpo hook claude`, and rewrites the command to
+**On spawn** (no existing `--session-id`/`--settings` flag — those two mean identity is
+already fully pinned down, so the command is spawned unchanged): generates a UUID,
+writes `<data_dir>/harness/<session_id>/claude-settings.json` wiring every hook of
+interest to `pulpo hook claude`, and rewrites the command to
 `claude --session-id <uuid> --settings <path> <original args>`. The id is known
 up front and stored immediately — resume still works even if the `SessionStart` hook
-never fires (e.g. the agent crashes before Claude's hook runner starts).
+never fires (e.g. the agent crashes before Claude's hook runner starts). If the spawn
+command already carries `--resume`/`-r`/`--continue`/`-c` (spawning straight into an
+existing conversation), `--settings` is still injected so hooks stay wired — only
+`--session-id` is skipped, since Claude Code doesn't expect both a resume target and a
+preset id on the same invocation.
 
 ```json
 {
@@ -104,9 +109,14 @@ produces `claude --resume <id> <remaining args>`. That command is run through
 
 **Event mapping**: `SessionStart` → `SessionStarted`, `UserPromptSubmit` → `Working`,
 `Stop` → `TurnFinished`, `StopFailure` → `Failed` (rate-limited when the error mentions
-`rate`/`429`/`overloaded`), `SessionEnd` → `SessionEnded`, `Notification` → `NeedsInput`
-(`permission_prompt` → Permission, `idle_prompt` → Idle, `agent_needs_input`/
-`elicitation_*` → Question). Anything else is `Ok(None)` — pulpo doesn't care about it.
+`rate`/`429`/`overloaded`), `SessionEnd` → `SessionEnded` **except** when its `reason` is
+`clear` (`/clear`) or `resume` (`/resume`) — those are in-process session replacement,
+not the harness process actually exiting (verified against the v2.1.266 binary's reason
+enum: `clear, resume, logout, prompt_input_exit, other`), so they're ignored (`Ok(None)`)
+rather than flipping a still-running session to `Ready`/`Stopped` out from under itself.
+`Notification` → `NeedsInput` (`permission_prompt` → Permission, `idle_prompt` → Idle,
+`agent_needs_input`/`elicitation_*` → Question). Anything else is `Ok(None)` — pulpo
+doesn't care about it.
 
 > Verified 2026-09-09 against Claude Code v2.1.266 with a real permission prompt: the
 > `Notification` payload carries `"notification_type": "permission_prompt"` plus a
@@ -385,9 +395,12 @@ is the ingestion endpoint; `pulpo hook <harness>` (see the
 [CLI reference](/reference/cli#hook-internal)) is what actually posts to it — command
 hooks receive the harness's JSON on stdin and inherit the harness process's
 environment, so `PULPO_SESSION_ID` (exported by the session wrapper into every
-pulpo-managed process) is how the hook knows which session it's reporting for. A hook
-always exits `0` and prints nothing on success: it must never block or break the agent
-it's wired into, regardless of what the daemon does or doesn't do.
+pulpo-managed process, alongside `PULPO_SESSION_NAME` and `PULPO_URL`) is how the hook
+knows which session it's reporting for. `PULPO_URL` (`http://127.0.0.1:<port>`) is what
+the hook actually posts to, so it reaches the daemon on whatever port it's configured
+with rather than a hardcoded default. A hook always exits `0` and prints nothing on
+success: it must never block or break the agent it's wired into, regardless of what the
+daemon does or doesn't do.
 
 On ingestion the daemon resolves the session's adapter, calls `parse_event`, applies
 the state transition below, stamps `harness_last_event_at`, stores

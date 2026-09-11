@@ -99,7 +99,9 @@ pulpo schedule add nightly-review "0 3 * * *" \
   -- claude -p "Review this repository for bugs, regressions, risky changes, and missing tests. Summarize findings clearly."
 ```
 
-Each run gets a fresh git worktree on its own branch, cleaned up when the session is stopped.
+Each run gets a fresh git worktree on its own branch. A plain `pulpo stop` leaves it on
+disk for inspection; it's reclaimed on the next `pulpo stop --purge`, `pulpo cleanup`, or
+watchdog intervention — see [Worktrees](/guides/worktrees).
 
 ### Review On Another Machine
 

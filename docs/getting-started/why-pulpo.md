@@ -16,7 +16,8 @@ pulpo usage --scan
 ```
 
 That reads the agent history already on your disk (Claude Code, Codex, pi) and reports spend
-by agent, model, and repo — no daemon, no session routed through Pulpo. From there, the loop
+by agent, model, and repo — no session needs to be routed through Pulpo first (it still
+talks to `pulpod`, auto-starting it on first run). From there, the loop
 that matters day to day is spawn, detach, reattach from wherever you are:
 
 ```bash

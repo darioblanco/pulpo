@@ -14,17 +14,24 @@ Primary docs:
 - /docs/getting-started/why-pulpo.md
 - /docs/getting-started/install.md
 - /docs/getting-started/quickstart.md
+- /docs/getting-started/use-cases.md
+- /docs/getting-started/alternatives.md
 - /docs/guides/remote-control.md
 - /docs/guides/agent-examples.md
 - /docs/guides/configuration.md
 - /docs/guides/recovery.md
 - /docs/guides/plan-then-build.md
+- /docs/guides/worktrees.md
+- /docs/guides/parallel-agents-one-repo.md
+- /docs/guides/nightly-code-review.md
+- /docs/guides/private-infra-with-tailscale.md
+- /docs/architecture/overview.md
+- /docs/architecture/core-concepts.md
 - /docs/architecture/harness-adapters.md
 - /docs/reference/cli.md
 - /docs/reference/config.md
 - /docs/reference/api.md
 - /docs/reference/push.md
-- /docs/architecture/overview.md
 - /docs/operations/session-lifecycle.md
 - /docs/operations/release-and-distribution.md
 

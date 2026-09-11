@@ -35,7 +35,6 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/auth/token` | Get current auth token |
-| GET | `/api/v1/auth/pairing-url` | Get pairing URL for web UI connection |
 
 ## Sessions
 
@@ -77,8 +76,9 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 There is no cross-node targeting — a create request always runs on the `pulpod` that
 receives it. To spawn on another machine, send the request to that machine directly (point
 the CLI or an HTTP client at its address, e.g. `pulpo --url gpu-box spawn ...`).
-`GET /api/v1/sessions/:id/stream` is local-only by the same principle; remote terminal
-proxying is intentionally out of scope.
+`GET /api/v1/sessions/:id/stream` is node-local by the same principle (any client that can
+reach this node can open it — there's no loopback-only check); remote terminal proxying
+*across* nodes is intentionally out of scope.
 
 ### Handoff Session (POST /api/v1/sessions/:id/handoff)
 
@@ -114,8 +114,22 @@ it (for `"pi"`, whatever `pulpo.ts` posted), passed through unchanged. The daemo
 resolves the session's harness adapter, translates the payload into a normalized
 lifecycle event, applies the resulting state transition (see
 [Harness Adapters](/architecture/harness-adapters)), and emits the existing SSE `session`
-event — no separate notification channel. Returns `204 No Content` on success, `404` if
-the session doesn't exist, `400` for an unrecognized `harness` id.
+event — no separate notification channel.
+
+Status codes, checked in this order:
+- `404` if the session doesn't exist.
+- `204 No Content` (no-op) if the session is already `Stopped` or `Lost` — a hook can
+  fire after the harness process (and pulpo's own bookkeeping for it) is already done,
+  which is expected and racy, not an error. This check runs *before* the harness-id
+  check below, so a terminal session's events are never rejected just because
+  `harness` looks wrong.
+- `400` if `harness` doesn't match the session's own stored harness (set once, at spawn
+  time) — including an unrecognized `harness` id. The request body's `harness` field is
+  untrusted client input; it's never used to resolve the adapter unless it agrees with
+  `session.harness`, so a spoofed value can't run the wrong adapter's parser against this
+  session's payload.
+- `204 No Content` on a successful, recognized event.
+- `500` for anything else (an internal/store failure applying the event).
 
 This endpoint isn't meant to be called directly — it's what `pulpo hook <harness>`
 (injected into the harness's own hook config at spawn time) posts to.

@@ -22,9 +22,10 @@ pulpo usage --scan
 ```
 
 This reads Claude Code's, Codex's, and pi's own session files (`~/.claude`, `~/.codex`,
-`~/.pi`) and reports total tokens and spend by agent, model, and repo — no daemon, no
-spawning, nothing routed through Pulpo. It's the fastest way to find out whether you have a
-cost problem before you set anything else up.
+`~/.pi`) and reports total tokens and spend by agent, model, and repo — no spawning, no
+session needs to be routed through Pulpo first. (It still talks to `pulpod`, auto-starting
+it if it isn't already running — the scan itself runs in the daemon, not the CLI.) It's the
+fastest way to find out whether you have a cost problem before you set anything else up.
 
 ## 3. Spawn A Session
 
@@ -121,7 +122,7 @@ For higher-risk runs, give the agent an isolated git worktree on its own branch 
 pulpo spawn risky-task --workdir ~/repo --worktree -- claude --dangerously-skip-permissions -p "refactor everything"
 ```
 
-The session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the session name; the worktree and branch are cleaned up when the session is stopped.
+The session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the session name. A plain `pulpo stop` leaves it on disk; it's reclaimed on the next `pulpo stop --purge`, `pulpo cleanup`, or watchdog intervention.
 
 For the full workflow, see [Worktrees](/guides/worktrees).
 

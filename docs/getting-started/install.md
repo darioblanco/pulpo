@@ -28,7 +28,8 @@ This installs:
 
 Requirements:
 
-- Rust 1.82+
+- Rust — pinned via `rust-toolchain.toml` (currently 1.93.1); `rustup` picks it up
+  automatically. Edition 2024 and let-chains need at least 1.88.
 - Node.js 22+
 - tmux 3.2+ (macOS/Linux only)
 

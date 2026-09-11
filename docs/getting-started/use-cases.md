@@ -14,9 +14,10 @@ pulpo usage --scan
 ```
 
 This reads each agent's own on-disk history (`~/.claude`, `~/.codex`, `~/.pi`) and reports spend
-and tokens by agent, model, and repo, unified across vendors — no daemon, nothing routed through
-Pulpo first. Git worktrees and subdirectories roll up to their origin repo, so "this repo" means
-the whole thing, not one checkout.
+and tokens by agent, model, and repo, unified across vendors — no session needs to be routed
+through Pulpo first (it still talks to `pulpod`, auto-starting it if needed). Git worktrees and
+subdirectories roll up to their origin repo, so "this repo" means the whole thing, not one
+checkout.
 
 Best docs to read next:
 
