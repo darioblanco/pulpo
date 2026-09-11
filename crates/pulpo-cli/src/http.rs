@@ -47,8 +47,16 @@ pub fn friendly_error(err: &reqwest::Error, node: &str) -> anyhow::Error {
     }
 }
 
-/// Check if the node address points to localhost.
+/// Check if the node address points to localhost. Strips a leading `http://`/
+/// `https://` scheme first (e.g. `PULPO_URL=http://127.0.0.1:<port>`, exported by
+/// `wrap_command` for `pulpo hook` to pick up) so a scheme-qualified loopback URL
+/// is still recognized — without this, `node.split(':')` would see `"http"` as the
+/// host instead of `"127.0.0.1"` and wrongly skip local-token auto-discovery.
 pub fn is_localhost(node: &str) -> bool {
+    let node = node
+        .strip_prefix("http://")
+        .or_else(|| node.strip_prefix("https://"))
+        .unwrap_or(node);
     let host = node.split(':').next().unwrap_or(node);
     host == "localhost" || host == "127.0.0.1" || node.starts_with("[::1]") || node == "::1"
 }
@@ -234,6 +242,14 @@ mod tests {
         assert!(is_localhost("localhost"));
         assert!(!is_localhost("mac-mini:7433"));
         assert!(!is_localhost("192.168.1.100:7433"));
+    }
+
+    #[test]
+    fn test_is_localhost_strips_scheme() {
+        // PULPO_URL (exported by wrap_command) is scheme-qualified.
+        assert!(is_localhost("http://127.0.0.1:9999"));
+        assert!(is_localhost("https://localhost:9999"));
+        assert!(!is_localhost("http://mac-mini:7433"));
     }
 
     #[test]

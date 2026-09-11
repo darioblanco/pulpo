@@ -17,6 +17,33 @@ use crate::http::{authed_post, base_url, resolve_address, resolve_token};
 /// running in.
 pub const SESSION_ID_ENV: &str = "PULPO_SESSION_ID";
 
+/// Environment variable the daemon exports into every pulpo session (see
+/// `session/utils.rs::wrap_command`), carrying its own loopback address
+/// (`http://127.0.0.1:<port>`) — how a hook finds a daemon bound to a
+/// non-default `[node].port` when `--url` was left at its default.
+pub const URL_ENV: &str = "PULPO_URL";
+
+/// `Cli::url`'s own `default_value` (see `lib.rs`). Used to detect whether the
+/// hook's caller left `--url` unset, in which case `URL_ENV` should be preferred
+/// when present.
+const DEFAULT_CLI_URL: &str = "localhost:7433";
+
+/// Resolve the daemon address a hook should talk to: an explicit `--url` (i.e.
+/// anything other than the CLI's own default) always wins. Otherwise prefer
+/// `env_url` — the caller's `PULPO_URL` environment variable, exported by
+/// `wrap_command` with the daemon's actual loopback `host:port` — so hook-driven
+/// state and resume keep working when the daemon isn't on the CLI's hardcoded
+/// default port. Falls back to the CLI default when neither is set (or `env_url`
+/// is empty).
+fn resolve_hook_url(cli_url: &str, env_url: Option<&str>) -> String {
+    if cli_url == DEFAULT_CLI_URL
+        && let Some(env_url) = env_url.filter(|u| !u.is_empty())
+    {
+        return env_url.to_owned();
+    }
+    cli_url.to_owned()
+}
+
 /// Parse a hook's raw stdin payload into a JSON value. Empty/whitespace-only input
 /// (and anything that fails to parse as JSON) becomes an empty object — a hook must
 /// never fail the hosting agent's turn just because pulpo couldn't make sense of what
@@ -137,7 +164,8 @@ pub async fn execute_hook_with_stdin(
     };
 
     let client = reqwest::Client::new();
-    let resolved_node = resolve_address(&cli.url);
+    let url = resolve_hook_url(&cli.url, std::env::var(URL_ENV).ok().as_deref());
+    let resolved_node = resolve_address(&url);
     let base = base_url(&resolved_node);
     let token = resolve_token(&client, &base, &resolved_node, cli.token.as_deref()).await;
 
@@ -196,7 +224,8 @@ pub async fn execute_codex_notify_hook(
     };
 
     let client = reqwest::Client::new();
-    let resolved_node = resolve_address(&cli.url);
+    let url = resolve_hook_url(&cli.url, std::env::var(URL_ENV).ok().as_deref());
+    let resolved_node = resolve_address(&url);
     let base = base_url(&resolved_node);
     let token = resolve_token(&client, &base, &resolved_node, cli.token.as_deref()).await;
 
@@ -230,6 +259,34 @@ mod tests {
             }),
             path: None,
         }
+    }
+
+    // -- resolve_hook_url --
+
+    #[test]
+    fn test_resolve_hook_url_prefers_env_when_url_is_default() {
+        assert_eq!(
+            resolve_hook_url(DEFAULT_CLI_URL, Some("http://127.0.0.1:9999")),
+            "http://127.0.0.1:9999"
+        );
+    }
+
+    #[test]
+    fn test_resolve_hook_url_explicit_url_wins_over_env() {
+        assert_eq!(
+            resolve_hook_url("some-other-host:1234", Some("http://127.0.0.1:9999")),
+            "some-other-host:1234"
+        );
+    }
+
+    #[test]
+    fn test_resolve_hook_url_falls_back_to_default_without_env() {
+        assert_eq!(resolve_hook_url(DEFAULT_CLI_URL, None), DEFAULT_CLI_URL);
+    }
+
+    #[test]
+    fn test_resolve_hook_url_ignores_empty_env() {
+        assert_eq!(resolve_hook_url(DEFAULT_CLI_URL, Some("")), DEFAULT_CLI_URL);
     }
 
     // -- parse_hook_event_json --

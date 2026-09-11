@@ -271,7 +271,8 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
 
     let manager = SessionManager::new(backend, store.clone(), config.node.default_command.clone())
         .with_capture_session_output(config.node.capture_session_output)
-        .with_event_tx(event_tx.clone(), node_name.clone());
+        .with_event_tx(event_tx.clone(), node_name.clone())
+        .with_daemon_port(config.node.port);
 
     // Auto-resume sessions that were active before a restart
     match manager.resume_lost_sessions().await {

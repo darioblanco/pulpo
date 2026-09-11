@@ -15,10 +15,10 @@ use crate::harness::{self, HarnessRegistry};
 #[cfg(not(coverage))]
 use crate::session::utils::create_worktree;
 use crate::session::utils::{
-    DOCKER_RUNTIME_REMOVED, cleanup_harness_dir, exit_dir, find_orphan_exit_markers,
-    find_orphan_session_logs, find_orphan_worktree_dirs, has_exit_marker, read_exit_code_marker,
-    remove_exit_markers, remove_session_log, session_log_path, validate_runtime,
-    validate_session_name, validate_workdir, worktrees_dir, wrap_command,
+    DEFAULT_DAEMON_PORT, DOCKER_RUNTIME_REMOVED, cleanup_harness_dir, exit_dir,
+    find_orphan_exit_markers, find_orphan_session_logs, find_orphan_worktree_dirs, has_exit_marker,
+    read_exit_code_marker, remove_exit_markers, remove_session_log, session_log_path,
+    validate_runtime, validate_session_name, validate_workdir, worktrees_dir, wrap_command,
 };
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -47,6 +47,12 @@ pub struct SessionManager {
     /// Resolves a session's command line (or explicit harness id) to a
     /// [`crate::harness::HarnessAdapter`]. See `spawn`/resume integration below.
     harness_registry: Arc<HarnessRegistry>,
+    /// The daemon's own `[node].port` — threaded into `wrap_command` so it can
+    /// export `PULPO_URL=http://127.0.0.1:<port>` into every session, letting
+    /// `pulpo hook` find a daemon bound to a non-default port. Defaults to the
+    /// CLI's own default port for callers that never set it explicitly (tests,
+    /// mainly — `build_app` always calls `with_daemon_port`).
+    daemon_port: u16,
 }
 
 /// Result of resolving the command and description to launch a session with.
@@ -90,7 +96,17 @@ impl SessionManager {
             stale_grace_secs: 5,
             capture_session_output: false,
             harness_registry: Arc::new(HarnessRegistry::default()),
+            daemon_port: DEFAULT_DAEMON_PORT,
         }
+    }
+
+    /// Set the daemon's own `[node].port`, exported into every session as
+    /// `PULPO_URL` (see `wrap_command`). Called once at startup with
+    /// `config.node.port`.
+    #[must_use]
+    pub const fn with_daemon_port(mut self, port: u16) -> Self {
+        self.daemon_port = port;
+        self
     }
 
     #[cfg(test)]
@@ -360,6 +376,7 @@ impl SessionManager {
             &name,
             req.term_program.as_deref(),
             self.store.data_dir(),
+            self.daemon_port,
         );
 
         // Fold the explicit cost budget into the session metadata so the watchdog can
@@ -480,6 +497,7 @@ impl SessionManager {
             &session.name,
             None,
             self.store.data_dir(),
+            self.daemon_port,
         );
         self.backend
             .create_session(create_id, effective_workdir, &final_command)
@@ -1433,6 +1451,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_create_session_exports_configured_daemon_port() {
+        // `with_daemon_port` must reach the wrapped command's `PULPO_URL` export —
+        // how `pulpo hook` finds a daemon bound to a non-default `[node].port`.
+        let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
+        let mgr = mgr.with_daemon_port(9999);
+        mgr.create_session(make_req("port-check")).await.unwrap();
+
+        assert!(backend.calls.lock().unwrap()[0].contains("PULPO_URL=http://127.0.0.1:9999"));
+    }
+
+    #[tokio::test]
     async fn test_create_session_no_command_falls_back_to_shell() {
         let (mgr, backend, _pool) = test_manager(MockBackend::new()).await;
         let req = CreateSessionRequest {
@@ -1494,10 +1523,24 @@ mod tests {
     fn test_wrap_command_escapes_session_name() {
         // Even if validation is bypassed, wrap_command should escape the name
         let id = uuid::Uuid::new_v4();
-        let wrapped = wrap_command("echo test", &id, "safe-name", None, "/tmp");
+        let wrapped = wrap_command(
+            "echo test",
+            &id,
+            "safe-name",
+            None,
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
         assert!(wrapped.contains("PULPO_SESSION_NAME=safe-name"));
         // Verify single quotes in name would be escaped (defense-in-depth)
-        let wrapped = wrap_command("echo test", &id, "name'inject", None, "/tmp");
+        let wrapped = wrap_command(
+            "echo test",
+            &id,
+            "name'inject",
+            None,
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
         assert!(!wrapped.contains("name'inject"));
         assert!(wrapped.contains("name'\\''inject"));
     }
@@ -2214,7 +2257,14 @@ mod tests {
     #[test]
     fn test_wrap_command_basic() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo hello", &id, "test-session", None, "/tmp");
+        let cmd = wrap_command(
+            "echo hello",
+            &id,
+            "test-session",
+            None,
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
         assert!(cmd.contains("-l -c"));
         assert!(cmd.contains("echo hello"));
         assert!(cmd.contains("[pulpo] Agent exited (session: test-session)"));
@@ -2229,12 +2279,31 @@ mod tests {
         assert!(cmd.contains(&format!("{id}.clean")));
         assert!(cmd.contains(&format!("PULPO_SESSION_ID={id}")));
         assert!(cmd.contains("PULPO_SESSION_NAME=test-session"));
+        assert!(cmd.contains(&format!("PULPO_URL=http://127.0.0.1:{DEFAULT_DAEMON_PORT}")));
+    }
+
+    #[test]
+    fn test_wrap_command_exports_configured_daemon_port() {
+        // `PULPO_URL` must reflect whatever port was threaded in, not just the
+        // default — this is how `pulpo hook` finds a daemon on a non-default
+        // `[node].port` (see `pulpo-cli/src/hook.rs`).
+        let id = uuid::Uuid::new_v4();
+        let cmd = wrap_command("echo hello", &id, "test-session", None, "/tmp", 9999);
+        assert!(cmd.contains("PULPO_URL=http://127.0.0.1:9999"));
+        assert!(!cmd.contains(&format!("PULPO_URL=http://127.0.0.1:{DEFAULT_DAEMON_PORT}")));
     }
 
     #[test]
     fn test_wrap_command_single_quotes() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude -p 'Fix the bug'", &id, "my-task", None, "/tmp");
+        let cmd = wrap_command(
+            "claude -p 'Fix the bug'",
+            &id,
+            "my-task",
+            None,
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
         assert!(cmd.contains("-l -c"));
         // Single quotes should be properly escaped
         assert!(cmd.contains("claude -p"));
@@ -2250,7 +2319,14 @@ mod tests {
         // Verify the wrapped command has balanced single quotes so it doesn't
         // cause "unmatched '" errors when tmux passes it to the shell.
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude", &id, "test-session", None, "/tmp");
+        let cmd = wrap_command(
+            "claude",
+            &id,
+            "test-session",
+            None,
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
 
         // Count single quotes outside of escaped sequences (\')
         // The '\'' pattern (end-quote, escaped-quote, start-quote) is valid.
@@ -2270,7 +2346,14 @@ mod tests {
         // quoting bugs. The wrapped command is a complete shell invocation like
         // `/bin/zsh -l -c '...'`, so we parse it as a whole.
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("true", &id, "test-session", None, "/tmp");
+        let cmd = wrap_command(
+            "true",
+            &id,
+            "test-session",
+            None,
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
 
         let output = std::process::Command::new("sh")
             .args(["-n", "-c", &cmd])
@@ -2288,7 +2371,14 @@ mod tests {
     fn test_wrap_command_with_quotes_executes_without_parse_error() {
         // Same test but with a command containing single quotes (common with claude -p).
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo 'hello world'", &id, "quoted-session", None, "/tmp");
+        let cmd = wrap_command(
+            "echo 'hello world'",
+            &id,
+            "quoted-session",
+            None,
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
 
         let output = std::process::Command::new("sh")
             .args(["-n", "-c", &cmd])
@@ -2320,13 +2410,14 @@ mod tests {
     #[test]
     fn test_wrap_command_shell_no_exit_marker() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("bash", &id, "my-shell", None, "/tmp");
+        let cmd = wrap_command("bash", &id, "my-shell", None, "/tmp", DEFAULT_DAEMON_PORT);
         // Bare-shell spawns are NOT exec'd — the wrapper must regain control to
         // write the `.clean` marker after the interactive shell exits.
         assert!(cmd.contains("bash;"));
         assert!(!cmd.contains("exec bash"));
         assert!(cmd.contains(&format!("PULPO_SESSION_ID={id}")));
         assert!(cmd.contains("PULPO_SESSION_NAME=my-shell"));
+        assert!(cmd.contains(&format!("PULPO_URL=http://127.0.0.1:{DEFAULT_DAEMON_PORT}")));
         // Shell sessions should NOT have the agent-exit hint, nor an exit-code marker
         // (only `.clean` is written on this path).
         assert!(!cmd.contains("[pulpo] Agent exited"));
@@ -2338,7 +2429,14 @@ mod tests {
     #[test]
     fn test_wrap_command_shell_with_path() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("/usr/bin/zsh", &id, "zsh-session", None, "/tmp");
+        let cmd = wrap_command(
+            "/usr/bin/zsh",
+            &id,
+            "zsh-session",
+            None,
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
         assert!(cmd.contains("/usr/bin/zsh;"));
         assert!(!cmd.contains("exec /usr/bin/zsh"));
         assert!(!cmd.contains("[pulpo] Agent exited"));
@@ -2350,7 +2448,7 @@ mod tests {
         // exit-marker directory must be quoted defensively, just like session names.
         let id = uuid::Uuid::new_v4();
         let data_dir = "/tmp/pulpo test dir";
-        let cmd = wrap_command("echo hi", &id, "test", None, data_dir);
+        let cmd = wrap_command("echo hi", &id, "test", None, data_dir, DEFAULT_DAEMON_PORT);
         assert!(cmd.contains(&format!("{id}.code")));
         assert!(cmd.contains(&format!("{id}.clean")));
         assert!(cmd.contains("pulpo test dir"));
@@ -2370,14 +2468,28 @@ mod tests {
     #[test]
     fn test_wrap_command_term_program() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude", &id, "test-session", Some("ghostty"), "/tmp");
+        let cmd = wrap_command(
+            "claude",
+            &id,
+            "test-session",
+            Some("ghostty"),
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
         assert!(cmd.contains("export TERM_PROGRAM='ghostty'"));
     }
 
     #[test]
     fn test_wrap_command_no_term_program() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("claude", &id, "test-session", None, "/tmp");
+        let cmd = wrap_command(
+            "claude",
+            &id,
+            "test-session",
+            None,
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
         assert!(!cmd.contains("TERM_PROGRAM"));
     }
 
@@ -3422,7 +3534,14 @@ mod tests {
     #[test]
     fn test_wrap_command_double_quotes() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo \"hello world\"", &id, "test", None, "/tmp");
+        let cmd = wrap_command(
+            "echo \"hello world\"",
+            &id,
+            "test",
+            None,
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
         assert!(cmd.contains("echo \"hello world\""));
         assert!(cmd.contains("-l -c"));
     }
@@ -3430,21 +3549,35 @@ mod tests {
     #[test]
     fn test_wrap_command_backticks() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo `date`", &id, "test", None, "/tmp");
+        let cmd = wrap_command(
+            "echo `date`",
+            &id,
+            "test",
+            None,
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
         assert!(cmd.contains("echo `date`"));
     }
 
     #[test]
     fn test_wrap_command_dollar_variables() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("echo $HOME $USER", &id, "test", None, "/tmp");
+        let cmd = wrap_command(
+            "echo $HOME $USER",
+            &id,
+            "test",
+            None,
+            "/tmp",
+            DEFAULT_DAEMON_PORT,
+        );
         assert!(cmd.contains("echo $HOME $USER"));
     }
 
     #[test]
     fn test_wrap_command_empty_string() {
         let id = uuid::Uuid::new_v4();
-        let cmd = wrap_command("", &id, "test", None, "/tmp");
+        let cmd = wrap_command("", &id, "test", None, "/tmp", DEFAULT_DAEMON_PORT);
         // Empty command is not a shell command, so gets agent wrapper
         assert!(cmd.contains("-l -c"));
         assert!(cmd.contains("[pulpo] Agent exited"));
@@ -3454,7 +3587,7 @@ mod tests {
     fn test_wrap_command_very_long() {
         let id = uuid::Uuid::new_v4();
         let long_cmd = "echo ".to_owned() + &"a".repeat(10_000);
-        let cmd = wrap_command(&long_cmd, &id, "test", None, "/tmp");
+        let cmd = wrap_command(&long_cmd, &id, "test", None, "/tmp", DEFAULT_DAEMON_PORT);
         assert!(cmd.contains(&"a".repeat(10_000)));
         assert!(cmd.contains("-l -c"));
     }

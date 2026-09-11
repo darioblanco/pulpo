@@ -329,6 +329,12 @@ pub fn find_orphan_exit_markers(exit_dir: &Path, known_ids: &HashSet<String>) ->
     orphans
 }
 
+/// The daemon's default `[node].port` (mirrors `config::default_port()`, which
+/// stays private to the config module). Used as the fallback `PULPO_URL` port for
+/// callers that don't thread the configured port through explicitly, and by
+/// `wrap_command_for_test`.
+pub const DEFAULT_DAEMON_PORT: u16 = 7433;
+
 #[cfg(test)]
 #[allow(dead_code)]
 pub fn wrap_command_for_test(
@@ -337,7 +343,14 @@ pub fn wrap_command_for_test(
     session_name: &str,
     data_dir: &str,
 ) -> String {
-    wrap_command(command, session_id, session_name, None, data_dir)
+    wrap_command(
+        command,
+        session_id,
+        session_name,
+        None,
+        data_dir,
+        DEFAULT_DAEMON_PORT,
+    )
 }
 
 /// Wrap a command with env vars, exit markers, and (for agent commands) a fallback shell.
@@ -357,12 +370,19 @@ pub fn wrap_command_for_test(
 /// after the wrapped command / fallback shell exits. Running it as a plain (non-exec'd)
 /// command lets the wrapper shell regain control and write the `.clean` marker right
 /// before it terminates.
+///
+/// `daemon_port` (the daemon's own `[node].port`) is exported as `PULPO_URL=
+/// http://127.0.0.1:<port>` — the loopback address, never the tailscale one, since
+/// hooks always run on the same host as the daemon that spawned them. This is how
+/// `pulpo hook` (see `pulpo-cli/src/hook.rs`) finds a daemon bound to a non-default
+/// port: it prefers `PULPO_URL` from the environment over its own `--url` default.
 pub fn wrap_command(
     command: &str,
     session_id: &uuid::Uuid,
     session_name: &str,
     term_program: Option<&str>,
     data_dir: &str,
+    daemon_port: u16,
 ) -> String {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_owned());
     let safe_name = session_name.replace('\'', "'\\''");
@@ -379,7 +399,7 @@ pub fn wrap_command(
     let clean_path = format!("{safe_exit_dir}/{session_id}.clean");
 
     let env = format!(
-        "mkdir -p '\\''{safe_exit_dir}'\\''; export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={safe_name}; {term_program_export}export BROWSER=true; \
+        "mkdir -p '\\''{safe_exit_dir}'\\''; export PULPO_SESSION_ID={session_id}; export PULPO_SESSION_NAME={safe_name}; export PULPO_URL=http://127.0.0.1:{daemon_port}; {term_program_export}export BROWSER=true; \
          open() {{ case \"$1\" in http://*|https://*) return 0;; *) command open \"$@\";; esac; }}; "
     );
 
