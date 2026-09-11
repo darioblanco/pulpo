@@ -991,6 +991,126 @@ async fn test_idle_detection_marks_idle() {
 }
 
 #[tokio::test]
+async fn test_idle_threshold_override_honored() {
+    let backend = Arc::new(MockBackend::new());
+    let store = test_store().await;
+
+    // Global threshold is very high (would never trigger for 700s of quiet
+    // output), but the session's own override (60s) should be used instead.
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "override-session".into(),
+        workdir: "/tmp/repo".into(),
+        command: "echo hello".into(),
+        description: Some("test".into()),
+        status: SessionStatus::Active,
+        backend_session_id: Some("override-session".into()),
+        output_snapshot: Some("test output".into()),
+        last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+        idle_threshold_secs: Some(60),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 6000,
+        action: IdleAction::Alert,
+        threshold_secs: 6000,
+    };
+
+    let dyn_backend: Arc<dyn Backend> = backend;
+    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Idle);
+}
+
+#[tokio::test]
+async fn test_idle_threshold_zero_disables_transition() {
+    let backend = Arc::new(MockBackend::new());
+    let store = test_store().await;
+
+    // Global threshold would normally mark this idle (700s > 60s), but the
+    // session's own override of 0 disables the time-based transition.
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "never-idle-session".into(),
+        workdir: "/tmp/repo".into(),
+        command: "echo hello".into(),
+        description: Some("test".into()),
+        status: SessionStatus::Active,
+        backend_session_id: Some("never-idle-session".into()),
+        output_snapshot: Some("test output".into()),
+        last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+        idle_threshold_secs: Some(0),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 6000,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+
+    let dyn_backend: Arc<dyn Backend> = backend;
+    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Active);
+    assert!(fetched.idle_since.is_none());
+}
+
+#[tokio::test]
+async fn test_idle_threshold_none_falls_back_to_global() {
+    let backend = Arc::new(MockBackend::new());
+    let store = test_store().await;
+
+    // No per-session override: the global threshold_secs (60) applies.
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "global-threshold-session".into(),
+        workdir: "/tmp/repo".into(),
+        command: "echo hello".into(),
+        description: Some("test".into()),
+        status: SessionStatus::Active,
+        backend_session_id: Some("global-threshold-session".into()),
+        output_snapshot: Some("test output".into()),
+        last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+        idle_threshold_secs: None,
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 6000,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+
+    let dyn_backend: Arc<dyn Backend> = backend;
+    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Idle);
+}
+
+#[tokio::test]
 async fn test_idle_detection_kill_action() {
     let backend = Arc::new(MockBackend::new());
     let store = test_store().await;

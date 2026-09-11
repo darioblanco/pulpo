@@ -100,7 +100,31 @@ pub(super) async fn stop_and_record(
     }
     emit_intervention(ready_ctx, session, code, reason);
     if let Some(ref wt_path) = session.worktree_path {
-        crate::session::manager::cleanup_worktree(wt_path, &session.workdir);
+        // Mirror `session::manager`'s own guard on the normal stop/purge/cleanup
+        // paths: a worktree `pulpo handoff` made two sessions share must survive a
+        // forced intervention (budget/burn/idle/memory stop) on just one of them —
+        // it's only reclaimed once every referencing session is dead.
+        let in_use = store
+            .worktree_in_use_elsewhere(wt_path, &session.id.to_string())
+            .await
+            .unwrap_or_else(|error| {
+                coverage_warn!(
+                    session_id = %session.id,
+                    session_name = %session.name,
+                    "Failed to check worktree usage before intervention cleanup, leaving worktree in place: {error}"
+                );
+                true
+            });
+        if in_use {
+            tracing::debug!(
+                session_id = %session.id,
+                session_name = %session.name,
+                path = %wt_path,
+                "Skipping worktree cleanup on intervention — still referenced by another session"
+            );
+        } else {
+            crate::session::manager::cleanup_worktree(wt_path, &session.workdir);
+        }
     }
     true
 }
@@ -205,6 +229,93 @@ mod tests {
             &Session::default(),
             InterventionCode::IdleTimeout,
             "idle",
+        );
+    }
+
+    // -- stop_and_record: worktree cleanup must respect sharing --
+
+    fn ready_ctx() -> ReadyContext {
+        ReadyContext {
+            event_tx: None,
+            node_name: "test-node".into(),
+        }
+    }
+
+    fn session_with_worktree(name: &str, worktree_path: &str) -> Session {
+        Session {
+            id: uuid::Uuid::new_v4(),
+            name: name.into(),
+            workdir: "/tmp/repo".into(),
+            command: "claude".into(),
+            status: SessionStatus::Active,
+            backend_session_id: Some(name.into()),
+            worktree_path: Some(worktree_path.into()),
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stop_and_record_preserves_worktree_shared_with_another_live_session() {
+        // Two sessions (as `pulpo handoff` produces) sharing one worktree path — an
+        // intervention (budget/burn/idle/memory stop) on one must not delete the
+        // worktree (or its branch) out from under the other, still-live session.
+        let store = crate::store::test_store().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let wt_path = tmp.path().to_str().unwrap().to_owned();
+
+        let session_a = session_with_worktree("shared-a", &wt_path);
+        let session_b = session_with_worktree("shared-b", &wt_path);
+        store.insert_session(&session_a).await.unwrap();
+        store.insert_session(&session_b).await.unwrap();
+
+        let backend: Arc<dyn Backend> = Arc::new(crate::backend::StubBackend);
+        let stopped = stop_and_record(
+            &backend,
+            &store,
+            &session_a,
+            InterventionCode::IdleTimeout,
+            "idle for too long",
+            &ready_ctx(),
+            "kill failed",
+            "record failed",
+        )
+        .await;
+
+        assert!(stopped);
+        assert!(
+            std::path::Path::new(&wt_path).exists(),
+            "worktree shared with a still-live session must survive the intervention"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stop_and_record_cleans_up_worktree_when_not_shared() {
+        // Sanity check for the guard above: a worktree with no other live session
+        // referencing it is still cleaned up as before.
+        let store = crate::store::test_store().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let wt_path = tmp.path().to_str().unwrap().to_owned();
+
+        let session = session_with_worktree("solo", &wt_path);
+        store.insert_session(&session).await.unwrap();
+
+        let backend: Arc<dyn Backend> = Arc::new(crate::backend::StubBackend);
+        let stopped = stop_and_record(
+            &backend,
+            &store,
+            &session,
+            InterventionCode::IdleTimeout,
+            "idle for too long",
+            &ready_ctx(),
+            "kill failed",
+            "record failed",
+        )
+        .await;
+
+        assert!(stopped);
+        assert!(
+            !std::path::Path::new(&wt_path).exists(),
+            "an unshared worktree should still be cleaned up on intervention"
         );
     }
 }
