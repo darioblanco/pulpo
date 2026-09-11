@@ -242,6 +242,9 @@ pulpo/
 ├── AGENTS.md                     # Agent guardrails (concise, for any coding agent)
 ├── SPEC.md                       # Architecture spec and lifecycle design
 ├── ROADMAP.md                    # Project sequencing and next steps
+├── POSITIONING.md                # Positioning memo (ICPs, wedge, messaging)
+├── MISSION.md                    # One-page mission and non-goals
+├── CONTRIBUTING.md               # Contributor workflow
 ├── Cargo.toml                    # Workspace root + shared deps + lints
 ├── Makefile                      # All development commands
 ├── rustfmt.toml                  # Rust formatter config
@@ -253,22 +256,36 @@ pulpo/
 ├── contrib/
 │   ├── com.pulpo.daemon.plist    # macOS launchd service definition
 │   ├── pulpo.service             # Linux systemd user service
+│   └── examples/webhook-discord/ # Reference webhook consumer (see docs/reference/config.md)
+├── docs/                         # VuePress docs site (getting-started/guides/reference/architecture/operations)
+├── examples/                     # Runnable CLI/API/config examples
+├── scripts/                      # demo.sh, e2e.sh, install-pulpo.sh
+├── .pulpo/config.toml.example    # `make dev` local-dev config template
 ├── crates/
 │   ├── pulpod/src/
 │   │   ├── main.rs               # Thin entry point (cfg(coverage) excluded)
 │   │   ├── lib.rs                # Daemon logic: Cli, init_tracing, build_app
 │   │   ├── config.rs             # TOML config loading
 │   │   ├── platform.rs           # OS detection (macOS/Linux/WSL2)
+│   │   ├── auth_info.rs          # Credential/plan extraction from agent config files
+│   │   ├── coverage_macros.rs    # coverage_warn!/coverage_info! (keep rare log-only branches out of coverage)
 │   │   ├── api/                  # Axum REST API
 │   │   │   ├── mod.rs            # AppState, router setup
 │   │   │   ├── routes.rs         # Route definitions + auth middleware
-│   │   │   ├── auth.rs           # Auth token endpoint
+│   │   │   ├── auth.rs           # Auth token + pairing-URL endpoints
 │   │   │   ├── config.rs         # Config API endpoint
 │   │   │   ├── health.rs         # Health check endpoint
-│   │   │   ├── sessions.rs       # Session CRUD handlers
-│   │   │   ├── node.rs           # Node info + memory detection
+│   │   │   ├── sessions.rs       # Session CRUD + input/stop/resume/handoff/harness-events handlers
+│   │   │   ├── node.rs           # Node info endpoint
+│   │   │   ├── schedules.rs      # Schedule CRUD + run-history handlers
+│   │   │   ├── notifications.rs  # Notification config endpoint
+│   │   │   ├── push.rs           # Web Push subscribe/unsubscribe/action endpoints
+│   │   │   ├── usage.rs          # Usage projection + scan endpoints
+│   │   │   ├── metrics.rs        # Prometheus /metrics endpoint
+│   │   │   ├── watchdog.rs       # Watchdog config endpoint
 │   │   │   ├── ws.rs             # WebSocket terminal streaming
 │   │   │   ├── events.rs         # SSE event stream endpoint
+│   │   │   ├── error.rs          # Shared API handler error type
 │   │   │   ├── static_files.rs   # rust-embed static file serving
 │   │   │   └── embed.rs          # rust-embed derive (excluded from coverage)
 │   │   ├── backend/              # Terminal backends
@@ -276,11 +293,20 @@ pulpo/
 │   │   │   └── tmux.rs           # tmux backend (macOS/Linux)
 │   │   ├── session/              # Session lifecycle
 │   │   │   ├── mod.rs            # Session module
-│   │   │   ├── manager.rs        # Orchestration (spawn, stop, resume)
-│   │   │   └── pty_bridge.rs     # PTY bridge for WebSocket streaming
-│   │   ├── store/                # Persistence
-│   │   │   └── mod.rs            # SQLite store API
-│   │   ├── notifications/        # Push notifications
+│   │   │   ├── manager.rs        # Orchestration (spawn, stop, resume, handoff)
+│   │   │   ├── pty_bridge.rs     # PTY bridge for WebSocket streaming
+│   │   │   └── utils.rs          # Session/schedule name validation, workdir checks
+│   │   ├── store/                # Persistence (SQLite via sqlx)
+│   │   │   ├── mod.rs            # Public store API + module wiring
+│   │   │   ├── core.rs           # Store, migrations, test_store helper
+│   │   │   ├── rows.rs           # SQLite row → domain type mapping
+│   │   │   ├── sessions.rs       # Session CRUD queries
+│   │   │   ├── schedules.rs      # Schedule CRUD queries
+│   │   │   ├── session_metadata.rs      # Session metadata key/value queries
+│   │   │   ├── session_interventions.rs # Intervention event queries
+│   │   │   ├── outbox.rs         # Webhook outbox queries
+│   │   │   └── push.rs           # Push subscription queries
+│   │   ├── notifications/        # Push + webhook notifications
 │   │   │   ├── mod.rs            # Module declaration + dispatcher
 │   │   │   ├── webhook.rs        # Signed webhook delivery (lifecycle/intervention/usage_alert/fleet)
 │   │   │   ├── web_push.rs       # Web Push notifications (VAPID)
@@ -296,7 +322,7 @@ pulpo/
 │   │   │   ├── burn.rs           # Burn-rate ceiling governor (cost/token per hour)
 │   │   │   ├── intervention.rs   # Shared stop-and-record path for forced session stops
 │   │   │   └── memory.rs         # System memory probing
-│   │   ├── harness/               # Harness adapters (agent lifecycle events)
+│   │   ├── harness/              # Harness adapters (agent lifecycle events)
 │   │   │   ├── mod.rs            # HarnessAdapter trait, HarnessEvent, state transitions
 │   │   │   ├── registry.rs       # HarnessRegistry: resolve a command line to an adapter
 │   │   │   ├── generic.rs        # Fallback adapter: no rewrite, no events
@@ -304,6 +330,15 @@ pulpo/
 │   │   │   ├── codex.rs          # Codex adapter (isolated CODEX_HOME + hooks/notify)
 │   │   │   ├── pi.rs             # pi adapter (pulpo.ts extension, --session-id)
 │   │   │   └── pulpo.ts.tmpl     # pi extension file template (embedded via include_str!)
+│   │   ├── scheduler/mod.rs      # Cron schedule loop (60s tick, fires sessions)
+│   │   └── usage/                # Structured usage readers (exact tokens/cost from agent files)
+│   │       ├── mod.rs            # UsageReader plumbing, rate table, RateOverrides
+│   │       ├── claude.rs         # Claude Code transcript reader
+│   │       ├── codex.rs          # Codex rollout-file reader
+│   │       ├── pi.rs             # pi session-file reader (scan only)
+│   │       ├── pool.rs           # Billing-pool attribution (subscription vs headless)
+│   │       ├── projection.rs     # Burn-rate/time-to-cap projection
+│   │       └── scan.rs           # Read-only scan of all local agent history
 │   ├── pulpo-cli/src/
 │   │   ├── main.rs               # Thin entry point (cfg(coverage) excluded)
 │   │   ├── lib.rs                # CLI logic: Cli, Commands, execute
@@ -312,36 +347,46 @@ pulpo/
 │   │   └── http.rs               # HTTP client helpers (auth, base-URL/token resolution)
 │   └── pulpo-common/src/
 │       ├── lib.rs
-│       ├── session.rs            # Session, SessionStatus types
+│       ├── session.rs            # Session, SessionStatus, InterventionCode types
 │       ├── node.rs               # NodeInfo type
 │       ├── event.rs              # SessionEvent for SSE + notifications
+│       ├── auth.rs               # BindMode (local/tailscale/public)
 │       └── api.rs                # API request/response types
 └── web/                          # React 19 + Vite + Tailwind v4 + shadcn/ui
     ├── src/
     │   ├── index.css             # Tailwind imports + dark theme CSS vars
     │   ├── main.tsx              # Entry point
-    │   ├── App.tsx               # React Router setup
+    │   ├── App.tsx                # React Router setup
+    │   ├── sw.ts                  # Service worker (push notifications)
     │   ├── api/
     │   │   ├── types.ts          # Shared TypeScript interfaces
-    │   │   ├── client.ts         # API fetch functions (20+)
+    │   │   ├── client.ts         # API fetch functions
     │   │   └── connection.ts     # testConnection
     │   ├── hooks/
-    │   │   ├── use-connection.tsx # Connection context (baseUrl, token, saved)
-    │   │   └── use-sse.tsx       # SSE event stream + session state
+    │   │   ├── use-connection.tsx      # Connection context (baseUrl, token, saved)
+    │   │   ├── use-sse.tsx             # SSE event stream + session state
+    │   │   ├── use-push-notifications.tsx # Push subscribe/unsubscribe
+    │   │   ├── use-schedules-filter.ts # Schedule list filtering
+    │   │   └── use-mobile.ts           # Mobile breakpoint detection
     │   ├── lib/
-    │   │   ├── utils.ts          # cn() helper, formatDuration
-    │   │   └── notifications.ts  # Desktop notification helpers
+    │   │   ├── utils.ts          # cn() helper, formatDuration, formatSessionStatus
+    │   │   ├── notifications.ts  # Desktop notification helpers
+    │   │   ├── cron.ts           # Cron expression parsing/formatting
+    │   │   └── push-sw.ts        # Service-worker-side push payload handling
     │   ├── components/
     │   │   ├── ui/               # shadcn generated components
-    │   │   ├── layout/           # Sidebar, header, app shell
-    │   │   ├── dashboard/        # Status summary, node/session cards, new session
-    │   │   ├── session/          # Chat view, terminal view (ghostty-web)
+    │   │   ├── layout/           # Sidebar, header, app shell, disconnected banner
+    │   │   ├── dashboard/        # Status summary, node/session cards, new session dialog
+    │   │   ├── session/          # Output view, terminal view (ghostty-web)
+    │   │   ├── schedules/        # Schedule dialog, run-history panel, schedule row
     │   │   ├── history/          # Session filter (reused by dashboard)
-    │   │   ├── settings/         # Node, watchdog, notifications, secrets settings
+    │   │   ├── settings/         # Node, watchdog, notifications settings
     │   │   └── connect/          # Connect form, saved connections
     │   └── pages/
-    │       ├── dashboard.tsx     # Sessions dashboard with status filters
+    │       ├── dashboard.tsx     # Sessions list (the landing page)
+    │       ├── session-detail.tsx # Single-session detail view
     │       ├── schedules.tsx     # Schedule management
+    │       ├── usage.tsx         # Usage/cost gauge
     │       ├── settings.tsx      # Node, watchdog, notifications config
     │       └── connect.tsx       # Connection screen (standalone)
     ├── eslint.config.js

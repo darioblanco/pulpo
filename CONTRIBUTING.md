@@ -53,7 +53,7 @@ Open http://localhost:5173 for the dashboard with hot reload.
 ```bash
 # Terminal C — use the CLI from source
 cargo run -p pulpo-cli -- list
-cargo run -p pulpo-cli -- spawn --workdir ~/repos/some-repo "Do something"
+cargo run -p pulpo-cli -- spawn some-repo --workdir ~/repos/some-repo -- claude -p "Do something"
 cargo run -p pulpo-cli -- logs some-repo
 
 # Or hit the API directly
