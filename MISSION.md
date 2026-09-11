@@ -1,18 +1,23 @@
 # Mission
 
-Pulpo is a self-hosted control plane for background coding agents on your own
-machines.
+Pulpo is the self-hosted meter and breaker box for background coding agents on your
+own machines.
 
 It provides:
+- exact usage metering — what every agent session actually costs, across accounts and
+  machines,
+- budgets and a burn-rate governor that intervene before you blow a limit, not a
+  post-hoc invoice,
 - durable sessions with explicit lifecycle state,
-- supervision and recovery when agents are running unattended,
-- policy and safety guardrails for local and remote execution,
+- hook-driven supervision and recovery when agents are running unattended,
 - and interface-agnostic control via API, CLI, and web UI.
 
-Pulpo is infrastructure, not a prompt framework, IDE, or agent planner.
+Pulpo is infrastructure, not a prompt framework, IDE, or agent planner — and not a
+fleet control plane: each node meters and governs its own sessions standalone, with no
+cross-node orchestration.
 
-Its job is to let you run any coding agent on infrastructure you control, check
-status from anywhere, and recover cleanly when things go wrong.
+Its job is to let you run any coding agent on infrastructure you control, know exactly
+what it costs, check status from anywhere, and recover cleanly when things go wrong.
 
 ## Non-Goals
 

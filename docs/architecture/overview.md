@@ -1,6 +1,8 @@
 # Architecture Overview
 
-Pulpo is a self-hosted control plane for background coding agents.
+Pulpo is a self-hosted meter and breaker box for background coding agents: it runs them
+as durable workers, measures exactly what each session costs, and enforces budgets before
+you blow a limit.
 
 Architecturally, the shortest accurate description is:
 
@@ -117,8 +119,11 @@ harness (a permission prompt, a question) shows as `idle` with a `needs input
 
 These are all clients of the same session model. If one surface disappears, the core runtime is still intact.
 
-This is why "control plane" is the right framing: the daemon owns the truth,
-and every surface reflects or operates on that same truth.
+The daemon owns the truth, and every surface reflects or operates on that same truth —
+but "control plane" is deliberately not the framing (see
+[POSITIONING.md](https://github.com/darioblanco/pulpo/blob/main/POSITIONING.md)): there
+is no cross-node orchestration, by design. Each node's `pulpod` is standalone
+infrastructure that meters and governs its own sessions; reach it directly.
 
 ## Command-Based Sessions
 
@@ -143,7 +148,7 @@ pulpo spawn auth-fix --workdir ~/repo --worktree -- claude -p "fix auth"
 pulpo spawn perf-fix --workdir ~/repo --worktree -- codex "optimize queries"
 ```
 
-Each session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the session name. Worktrees and their branches are cleaned up when sessions are stopped.
+Each session gets `~/.pulpo/worktrees/<session-name>/` on a branch matching the session name. A plain `pulpo stop` leaves the worktree on disk; it's reclaimed on the next purge — `pulpo stop --purge`, `pulpo cleanup`, or a watchdog intervention (budget/burn/idle/memory) that stops the session. See [Worktrees](/guides/worktrees) for the full cleanup model.
 
 ### Built-in Scheduler
 

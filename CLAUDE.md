@@ -1,7 +1,8 @@
 # Pulpo Development Guide
 
-Agent session orchestrator — runs coding agents as durable background workers on a machine
-you own, reachable remotely over Tailscale.
+Self-hosted meter and breaker box for coding agents — runs them as durable background
+workers on a machine you own, meters exactly what they cost, enforces budgets before you
+blow a limit, and stays reachable remotely over Tailscale.
 
 ## Architecture
 
@@ -193,9 +194,9 @@ describe('api', () => {
 
 - **Error handling**: Use `anyhow::Result` for application errors; API errors use hand-rolled response types (e.g. `ErrorResponse` in `pulpo-common`).
 - **Async**: All I/O is async via `tokio`. Backend trait methods are sync (tmux commands are fast) but called from async context via `tokio::task::spawn_blocking` when needed.
-- **Naming**: Session names are kebab-case, **validated server-side** by `validate_session_name()` in `session/manager.rs` (`[a-z0-9-]`, max 128 chars). This is security-critical — session names are interpolated into shell commands in `wrap_command`. Schedule names follow the same rules. Any new code path that accepts session/schedule names MUST validate them.
+- **Naming**: Session names are kebab-case, **validated server-side** by `validate_session_name()` in `session/utils.rs` (`[a-z0-9-]`, max 128 chars). This is security-critical — session names are interpolated into shell commands in `wrap_command`. Schedule names follow the same rules. Any new code path that accepts session/schedule names MUST validate them.
 - **Exit markers**: `wrap_command` writes `{data_dir}/exit/{id}.code` (agent exit code) and `{id}.clean` (shell ended normally). A dead tmux session WITH a marker resolves to `Stopped` (clean end); without → `Lost` (crash). Markers are purged with the session and swept by `pulpo cleanup`.
-- **Harness adapters**: `session/manager.rs` resolves a `HarnessAdapter` (`harness/`) at spawn/resume time to rewrite the command so the harness (Claude Code, Codex, pi) reports lifecycle events to `pulpo hook <harness>` → `POST /api/v1/sessions/{id}/harness-events`. Shipped for Claude Code (hook mechanics verified against v2.1.266), Codex and pi (implemented from their docs, unverified in the field). Once a session's `harness_last_event_at` is set, the watchdog stops applying scrollback heuristics to it (see `watchdog::harness_owns_state`) — hook events own its state instead. See `docs/architecture/harness-adapters.md`.
+- **Harness adapters**: `session/manager.rs` resolves a `HarnessAdapter` (`harness/`) at spawn/resume time to rewrite the command so the harness (Claude Code, Codex, pi) reports lifecycle events to `pulpo hook <harness>` → `POST /api/v1/sessions/{id}/harness-events`. Shipped for Claude Code (hook mechanics verified against v2.1.266), Codex and pi (implemented from their docs, unverified in the field). Once a session's `harness_last_event_at` is set, the watchdog stops applying scrollback-heuristic *detection* to it — but per-signal (`watchdog::owned_signals`/`HarnessAdapter::owned_signals`), not all-or-nothing: an adapter missing a signal (Codex has no error/rate-limit hook) keeps that one heuristic running from scrollback even while its lifecycle events flow. Memory intervention, `idle_timeout`, and the budget/burn fields always apply regardless of harness ownership. See `docs/architecture/harness-adapters.md`.
 - **Session IDs**: `backend_session_id` stores the tmux `$N` session ID (monotonically increasing, never reused while tmux server runs). At startup, name-based IDs are upgraded to `$N` IDs.
 - **Database**: SQLite via `sqlx`. Versioned schema migrations live in `crates/pulpod/migrations/`; `store/mod.rs` contains the runtime store API only. Use `sqlx::query!` macro for compile-time checked queries when possible.
 - **Config**: TOML config at `~/.pulpo/config.toml`. All fields have sensible defaults — pulpod runs with zero config. Key watchdog config fields: `idle_threshold_secs` (seconds of unchanged output before Active→Idle, default 60), `waiting_patterns` (extra user-defined patterns appended to the built-in waiting-for-input patterns).
@@ -272,10 +273,12 @@ pulpo/
 │   │   ├── api/                  # Axum REST API
 │   │   │   ├── mod.rs            # AppState, router setup
 │   │   │   ├── routes.rs         # Route definitions + auth middleware
-│   │   │   ├── auth.rs           # Auth token + pairing-URL endpoints
+│   │   │   ├── auth.rs           # Bearer-token middleware + GET /auth/token endpoint
 │   │   │   ├── config.rs         # Config API endpoint
 │   │   │   ├── health.rs         # Health check endpoint
 │   │   │   ├── sessions.rs       # Session CRUD + input/stop/resume/handoff/harness-events handlers
+│   │   │   ├── sessions_tests.rs # Session handler tests (split out of sessions.rs)
+│   │   │   ├── test_support.rs   # Shared API test fixtures/helpers
 │   │   │   ├── node.rs           # Node info endpoint
 │   │   │   ├── schedules.rs      # Schedule CRUD + run-history handlers
 │   │   │   ├── notifications.rs  # Notification config endpoint
@@ -305,7 +308,8 @@ pulpo/
 │   │   │   ├── session_metadata.rs      # Session metadata key/value queries
 │   │   │   ├── session_interventions.rs # Intervention event queries
 │   │   │   ├── outbox.rs         # Webhook outbox queries
-│   │   │   └── push.rs           # Push subscription queries
+│   │   │   ├── push.rs           # Push subscription queries
+│   │   │   └── tests.rs          # Integration tests exercising the store API end-to-end
 │   │   ├── notifications/        # Push + webhook notifications
 │   │   │   ├── mod.rs            # Module declaration + dispatcher
 │   │   │   ├── webhook.rs        # Signed webhook delivery (lifecycle/intervention/usage_alert/fleet)
@@ -321,7 +325,8 @@ pulpo/
 │   │   │   ├── budget.rs         # Per-session cost budget alerts + auto-stop
 │   │   │   ├── burn.rs           # Burn-rate ceiling governor (cost/token per hour)
 │   │   │   ├── intervention.rs   # Shared stop-and-record path for forced session stops
-│   │   │   └── memory.rs         # System memory probing
+│   │   │   ├── memory.rs         # System memory probing
+│   │   │   └── tests.rs          # Integration tests exercising the watchdog loop end-to-end
 │   │   ├── harness/              # Harness adapters (agent lifecycle events)
 │   │   │   ├── mod.rs            # HarnessAdapter trait, HarnessEvent, state transitions
 │   │   │   ├── registry.rs       # HarnessRegistry: resolve a command line to an adapter

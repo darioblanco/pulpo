@@ -19,7 +19,7 @@ You can combine the same agent command with Pulpo features such as:
 - `env VAR=value` prefixed onto the command for one-off credentials
 - `pulpo schedule add ...` for recurring runs
 
-The command is the agent. Pulpo is the runtime and control plane around it.
+The command is the agent. Pulpo is the runtime, meter, and breaker box around it.
 
 ## Claude Code
 
@@ -51,8 +51,8 @@ pulpo spawn codex-refactor --workdir ~/repos/my-api --worktree -d -- codex "Refa
 
 ## pi
 
-pi (`@mariozechner/pi-coding-agent`) is BYOK and provider-agnostic — point it at whichever
-model you have API access to.
+pi (`@earendil-works/pi-coding-agent`) is BYOK and provider-agnostic — point it at
+whichever model you have API access to.
 
 Basic session:
 
