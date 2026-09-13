@@ -6,8 +6,7 @@ own machines.
 It provides:
 - exact usage metering — what every agent session actually costs, across accounts and
   machines,
-- budgets and a burn-rate governor that intervene before you blow a limit, not a
-  post-hoc invoice,
+- budget caps that intervene before you blow a limit, not a post-hoc invoice,
 - durable sessions with explicit lifecycle state,
 - hook-driven supervision and recovery when agents are running unattended,
 - and interface-agnostic control via API, CLI, and web UI.

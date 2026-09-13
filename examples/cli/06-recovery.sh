@@ -23,7 +23,7 @@ pulpo --url "${URL}" list
 
 # 4. Check intervention history (why was it stopped?)
 # pulpo --url "${URL}" interventions my-api
-# Shows: idle_timeout, budget_exceeded, burn_rate
+# Shows: idle_timeout, budget_exceeded
 # (a plain `pulpo stop` is not an intervention and never shows up here)
 
 # 5. After daemon restart, pulpod auto-resumes active sessions.

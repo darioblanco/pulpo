@@ -343,9 +343,10 @@ pub struct ScanRollup {
 
 /// `GET /api/v1/usage/scan` — read-only sweep of *all* local agent history.
 ///
-/// Unlike the projection (pulpo-managed sessions), the scan reads every Claude/Codex
-/// session file on the machine and reports total spend by agent and by repo — the
-/// low-friction "what did my agents cost?" view, across agents, with no behavior change.
+/// Unlike [`UsageSessionsResponse`] (pulpo-managed sessions only), the scan reads every
+/// Claude/Codex/pi session file on the machine and reports total spend by agent and by
+/// repo — the low-friction "what did my agents cost?" view, across agents, with no
+/// behavior change.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UsageScanResponse {
     pub node_name: String,

@@ -279,7 +279,7 @@ describe('api', () => {
 - **Async**: All I/O is async via `tokio`. Backend trait methods are sync (tmux commands are fast) but called from async context via `tokio::task::spawn_blocking` when needed.
 - **Naming**: Session names are kebab-case, **validated server-side** by `validate_session_name()` in `session/utils.rs` (`[a-z0-9-]`, max 128 chars). This is security-critical — session names are interpolated into shell commands in `wrap_command`. Schedule names follow the same rules. Any new code path that accepts session/schedule names MUST validate them.
 - **Exit markers**: `wrap_command` writes `{data_dir}/exit/{id}.code` (agent exit code) and `{id}.clean` (shell ended normally). A dead tmux session WITH a marker resolves to `Stopped` (clean end); without → `Lost` (crash). Markers are purged with the session and swept by `pulpo cleanup`.
-- **Harness adapters**: `session/manager.rs` resolves a `HarnessAdapter` (`harness/`) at spawn/resume time to rewrite the command so the harness (Claude Code, Codex, pi) reports lifecycle events to `pulpo hook <harness>` → `POST /api/v1/sessions/{id}/harness-events`. Shipped for Claude Code (hook mechanics verified against v2.1.266), Codex and pi (implemented from their docs, unverified in the field). Once a session's `harness_last_event_at` is set, the watchdog stops applying scrollback-heuristic *detection* to it — but per-signal (`watchdog::owned_signals`/`HarnessAdapter::owned_signals`), not all-or-nothing: an adapter missing a signal (Codex has no error/rate-limit hook) keeps that one heuristic running from scrollback even while its lifecycle events flow. `idle_timeout` and the budget/burn fields always apply regardless of harness ownership. See `docs/architecture/harness-adapters.md`.
+- **Harness adapters**: `session/manager.rs` resolves a `HarnessAdapter` (`harness/`) at spawn/resume time to rewrite the command so the harness (Claude Code, Codex, pi) reports lifecycle events to `pulpo hook <harness>` → `POST /api/v1/sessions/{id}/harness-events`. Shipped for Claude Code (hook mechanics verified against v2.1.266), Codex and pi (implemented from their docs, unverified in the field). Once a session's `harness_last_event_at` is set, the watchdog stops applying scrollback-heuristic *detection* to it — but per-signal (`watchdog::owned_signals`/`HarnessAdapter::owned_signals`), not all-or-nothing: an adapter missing a signal (Codex has no error/rate-limit hook) keeps that one heuristic running from scrollback even while its lifecycle events flow. `idle_timeout` and the budget-cap fields always apply regardless of harness ownership. See `docs/architecture/harness-adapters.md`.
 - **Session IDs**: `backend_session_id` stores the tmux `$N` session ID (monotonically increasing, never reused while tmux server runs). At startup, name-based IDs are upgraded to `$N` IDs.
 - **Database**: SQLite via `sqlx`. Versioned schema migrations live in `crates/pulpod/migrations/`; `store/mod.rs` contains the runtime store API only. Use `sqlx::query!` macro for compile-time checked queries when possible.
 - **Config**: TOML config at `~/.pulpo/config.toml`. All fields have sensible defaults — pulpod runs with zero config. Key watchdog config fields: `idle_threshold_secs` (seconds of unchanged output before Active→Idle, default 60), `waiting_patterns` (extra user-defined patterns appended to the built-in waiting-for-input patterns).
@@ -352,7 +352,7 @@ pulpo/
 │   │   ├── lib.rs                # Daemon logic: Cli, init_tracing, build_app
 │   │   ├── config.rs             # TOML config loading
 │   │   ├── platform.rs           # OS detection (macOS/Linux/WSL2)
-│   │   ├── auth_info.rs          # Credential/plan extraction from agent config files
+│   │   ├── auth_info.rs          # Agent-name detection for command -> usage-reader dispatch
 │   │   ├── coverage_macros.rs    # coverage_warn!/coverage_info! (keep rare log-only branches out of coverage)
 │   │   ├── api/                  # Axum REST API
 │   │   │   ├── mod.rs            # AppState, router setup
@@ -366,7 +366,7 @@ pulpo/
 │   │   │   ├── node.rs           # Node info endpoint
 │   │   │   ├── schedules.rs      # Schedule CRUD + run-history handlers
 │   │   │   ├── notifications.rs  # Notification config endpoint
-│   │   │   ├── usage.rs          # Usage projection + scan endpoints
+│   │   │   ├── usage.rs          # Exact per-session usage + scan endpoints
 │   │   │   ├── watchdog.rs       # Watchdog config endpoint
 │   │   │   ├── ws.rs             # WebSocket terminal streaming
 │   │   │   ├── events.rs         # SSE event stream endpoint
@@ -400,7 +400,6 @@ pulpo/
 │   │   │   ├── output_patterns.rs # Waiting-for-input/rate-limit/error/PR-URL pattern matching
 │   │   │   ├── git.rs            # Branch/commit detection for sessions
 │   │   │   ├── budget.rs         # Per-session cost budget alerts + auto-stop
-│   │   │   ├── burn.rs           # Burn-rate ceiling governor (cost/token per hour)
 │   │   │   ├── intervention.rs   # Shared stop-and-record path for forced session stops
 │   │   │   └── tests.rs          # Integration tests exercising the watchdog loop end-to-end
 │   │   ├── harness/              # Harness adapters (agent lifecycle events)
@@ -417,8 +416,7 @@ pulpo/
 │   │       ├── claude.rs         # Claude Code transcript reader
 │   │       ├── codex.rs          # Codex rollout-file reader
 │   │       ├── pi.rs             # pi session-file reader (scan only)
-│   │       ├── pool.rs           # Billing-pool attribution (subscription vs headless)
-│   │       ├── projection.rs     # Burn-rate/time-to-cap projection
+│   │       ├── rollup.rs         # Per-session exact usage + per-repo/worktree rollups
 │   │       └── scan.rs           # Read-only scan of all local agent history
 │   ├── pulpo-cli/src/
 │   │   ├── main.rs               # Thin entry point (cfg(coverage) excluded)

@@ -57,7 +57,11 @@ pulpo interventions <name>
 Common intervention reasons:
 - `idle_timeout` — session was idle longer than allowed (when `idle_action = "kill"`)
 - `budget_exceeded` — the session's `--budget-cost` cap was reached
-- `burn_rate` — the burn-velocity governor's ceiling was crossed with `burn_action = "stop"`
+
+A historical session stopped by the burn-velocity governor before its removal
+(September 2026) may still show `burn_rate` in its own stored record, but the code no
+longer produces it and `pulpo interventions`/the session's `intervention_code` reads that
+value back as unset rather than erroring.
 
 A plain `pulpo stop` (or the API's stop endpoint) is **not** an intervention and is never
 recorded here — interventions are only the watchdog's own forced stops.

@@ -45,15 +45,15 @@ session costs, enforces budgets before the wall, and forwards alerts to the obse
 stack they already run.
 
 Unlike vendor `/usage` pages or single-machine cost readers, Pulpo runs the sessions
-itself — so a cap actually stops something — and stays sovereign: usage and account data
-never leave the machine that generated them.
+itself — so a cap actually stops something — and stays sovereign: usage data never leaves
+the machine that generated it.
 
 ## Wedge
 
 - It also runs the sessions — a cost reader only tells you after the fact.
 - Exact usage metering from the agent's own session files, not scraped output.
-- Budgets that alert at 80% and can auto-stop at 100%, plus a burn-velocity governor for
-  the runaway a flat cap misses.
+- Budgets that alert at 80% and stop the session at 100% — recorded as an intervention
+  you can audit.
 - Hook-driven supervision for harnesses with their own lifecycle signals (Claude Code,
   Codex, pi) — real status instead of a scrollback guess, and real resume of the same
   conversation after a reboot.
@@ -114,7 +114,9 @@ the cost problem and primary user early, treat tmux as plumbing rather than the 
 and be explicit that Pulpo is single-node-first — direct (`--url`) multi-machine access
 and shared webhooks for cross-machine visibility, never a fleet control plane.
 
-Roadmap priority favors exact usage metering for more agents, budget/burn-velocity depth,
-and hook-driven supervision for more harnesses. Deprioritize cross-node orchestration,
+Roadmap priority favors exact usage metering for more agents, deeper hook-driven
+supervision for more harnesses, and nothing else layered onto the budget cap — a
+burn-velocity governor was tried and removed as redundant complexity. Deprioritize
+cross-node orchestration,
 multi-user/team features, and anything agents now handle natively (worktrees, sandboxing,
 guardrails).

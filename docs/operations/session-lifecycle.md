@@ -69,7 +69,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 - **Side effects**: SSE event emitted.
 
 ### Active/Idle/Ready → Stopped
-- **Trigger**: User runs `pulpo stop`, a watchdog intervention (budget/burn/idle
+- **Trigger**: User runs `pulpo stop`, a watchdog intervention (budget/idle
   kill) — or the session's shell exits normally (the user typed `exit`, or closed tmux
   after the agent finished). This applies to **Active**, **Idle**, and **Ready**
   sessions alike: a `Ready` session's fallback shell dying counts the same as an

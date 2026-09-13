@@ -18,8 +18,8 @@ Claude Code Remote Control), and hosted agent clouds.
 
 **What makes Pulpo unique**:
 
-- **Exact usage metering** — structured readers for Claude Code, Codex, and pi; cross-account/cross-agent rollups; `[rates.<model>]` for new or repriced models
-- **Cost control** — per-session/schedule budget caps (alert 80%, stop 100%) plus a burn-velocity governor
+- **Exact usage metering** — structured readers for Claude Code, Codex, and pi; per-repo/cross-agent rollups; `[rates.<model>]` for new or repriced models
+- **Cost control** — per-session/schedule budget caps (alert 80%, stop 100%)
 - **Hook-driven supervision** — Claude Code, Codex, and pi report real lifecycle events (`needs input (<reason>)`, real resume) instead of scrollback guessing; any other command falls back to watchdog heuristics (idle, error, completion)
 - **Monitoring backbone** — events forwarded to any number of `[[webhooks]]` (plain POST, fixed retry schedule, in-memory)
 - **Command-agnostic** — runs Claude Code, Codex, Gemini CLI, Aider, shell scripts, anything

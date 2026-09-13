@@ -7,7 +7,7 @@ Strategic direction for Pulpo: the self-hosted meter and breaker box for coding 
 Pulpo runs coding agents as background workers on your machines, **measures exactly what
 every session costs** — across all your agents, accounts, and machines — **monitors and
 alerts** on cost/quota/waste, and **optimizes the things it controls on the node it runs
-on** (kills waste via budget/burn-rate auto-stop, right-sizes defaults) so you get the
+on** (kills waste via a flat budget-cost auto-stop, right-sizes defaults) so you get the
 maximum out of your subscriptions without ever blowing a limit. Routing work to whichever
 node or account has the most headroom — quota-aware placement across a fleet — is a
 parked future direction (see Phase C), not something Pulpo does today: each `pulpod` is
@@ -64,26 +64,28 @@ fleets of agents on metered subscriptions and API keys. This is the gap Pulpo fi
 reprice, and get pulled — Fable 5 was withdrawn worldwide in June 2026, months after
 launch. A cost-and-control layer welded to one model or vendor inherits that whiplash;
 Pulpo doesn't. It meters and governs whatever you're actually allowed to run today
-(Claude Opus/Sonnet/Haiku, Codex, and any future CLI agent) via structured readers with an
-output-scraping fallback, and a built-in rate table that is **user-overridable in config**
+(Claude Opus/Sonnet/Haiku, Codex, and any future CLI agent) via structured readers —
+Claude Code, Codex, and pi; a harness without one simply shows no usage, no
+output-scraping guess — and a built-in rate table that is **user-overridable in config**
 so a new or repriced model never needs a code change. "Don't bet your tooling on one
 model" is itself a positioning line.
 
-Sovereignty remains the supporting argument: the daemon reads usage and account identity
-from local files and never ships them anywhere except your own collector. Exactly
-the data you'd least want in a third-party relay. (CLOUD Act / EU AI Act / GDPR context
-unchanged — see git history of this file for the full sovereignty section.)
+Sovereignty remains the supporting argument: the daemon reads usage from local files and
+never ships it anywhere except your own collector. Exactly the data you'd least want in a
+third-party relay. (CLOUD Act / EU AI Act / GDPR context unchanged — see git history of
+this file for the full sovereignty section.)
 
 ## Gauge vs. Control System — what Pulpo answers that `/usage` can't
 
-1. **Attribution** — "work in ~/repos/api costs €11/week". Per-session, per-account/pool,
-   and **per-repo** rollups all ship today (`build_repo_rollups`, surfaced in `pulpo usage`
-   and the web gauge). Only the thing managing sessions can tie spend to where the work
-   happened.
+1. **Attribution** — "work in ~/repos/api costs €11/week". Per-session and **per-repo**
+   rollups ship today (`usage::rollup::build_repo_rollups`, surfaced in `pulpo usage` and
+   the web gauge). Only the thing managing sessions can tie spend to where the work
+   happened. (Per-account/pool rollups were tried and removed — see "Removed": the
+   billing-pool split needed reading agent credential files to attribute sessions to an
+   account, which a metering tool has no business doing.)
 2. **Fleet gauge** — all accounts, machines, and agents on one phone screen.
-3. **Projection** — "at this burn rate you hit the weekly cap Thursday 15:00."
-4. **Placement** — spawn where there's headroom.
-5. **Enforcement** — stop anything that exceeds its budget; recorded as interventions.
+3. **Placement** — spawn where there's headroom.
+4. **Enforcement** — stop anything that exceeds its budget; recorded as interventions.
 
 ## Scope: Keep / Cut
 
@@ -147,46 +149,58 @@ Replace terminal-scraping with structured readers of the agents' own session fil
    operators add or reprice models without a code change — case-insensitive substring
    match, most-specific key wins, overrides beat built-ins, unknown models still report
    tokens with cost withheld. The concrete embodiment of "don't depend on a built-in
-   model list." **Done:** the CLI USAGE column and web badges now mark cost exact (from a
-   structured reader) vs estimated (`~`, output-scraped) via `AccountRollup.cost_is_exact`.
+   model list." **Done, later simplified:** the CLI USAGE column and web badges briefly
+   marked cost exact (from a structured reader) vs estimated (`~`, output-scraped) via
+   `AccountRollup.cost_is_exact`. Once the output-scraping fallback was removed
+   (September 2026, see "Removed") every recorded cost is exact by construction, so the
+   exact/estimated distinction — and `AccountRollup` itself — went with it.
 
 ### Phase B — Visibility first; enforcement as a thin credibility proof
 
 **Positioning principle (decided 2026-06-13):** the OSS adoption driver in this category
 is *visibility*, not enforcement. ccusage has ~16k stars doing nothing but read-only,
 single-machine, Claude-only, post-hoc cost display — people star "show me the number,"
-not "stop my agent." So the project's identity is the **live, cross-machine,
-cross-account, cross-agent burn-rate gauge** (B1+B2) — the thing ccusage can't do (it
-doesn't run your sessions) and first parties won't (it arbitrages their rate limits).
-A *minimal* enforcement (B3) earns its place only as the one-line proof that Pulpo is
-infrastructure, not a dashboard: "ccusage shows you the bill; Pulpo can also pull the
-plug, because it runs your sessions." Elaborate enforcement and thrash handling are
-fleet-ops depth nobody stars you for — parked until real fleet usage asks.
+not "stop my agent." So the project's identity at the time was framed as the **live,
+cross-machine, cross-account, cross-agent burn-rate gauge** (B1+B2, both since removed —
+see below) — the thing ccusage can't do (it doesn't run your sessions) and first parties
+won't (it arbitrages their rate limits). A *minimal* enforcement (B3) earned its place as
+the one-line proof that Pulpo is infrastructure, not a dashboard: "ccusage shows you the
+bill; Pulpo can also pull the plug, because it runs your sessions." Elaborate enforcement
+and thrash handling are fleet-ops depth nobody stars you for — parked until real fleet
+usage asks.
 
-**One-liner:** *See and control what every coding agent costs — across all your machines
-and accounts. Self-hosted.* Lead with **see**; **control** is the half-sentence that
-proves it's a breaker box. Explicit foil: live and fleet-wide, not post-hoc and
-single-machine (ccusage).
+**One-liner (superseded — see "Removed"):** the launch pitch below leaned on the B1
+burn-rate/projection gauge and B2 pool attribution, both since removed. The current
+one-liner is exact metering + a flat budget cap: *see, and cap, exactly what every coding
+agent costs.*
 
-**Launch set = B1 + B2 + minimal B3.** Ship when the surface is ready — the launch is no
-longer pinned to a model-specific date (the Fable cliff is moot; Fable was pulled). The
-durable hook is evergreen: agent cost/quota burn across machines and accounts.
+**Launch set = B1 + B2 + minimal B3.** Shipped mid-2026; B1 and B2 were removed
+**September 2026** (owner's call — see "Removed" for the rationale). Only B3 (the budget
+cap) remains.
 
-**B1 — Projection / burn-rate (SHIP — this is the identity).** Burn rate ($/hr, tokens/hr)
-and time-to-wall, per-session and per-account. **Codex:** exact, extrapolated from the
-`rate_limits` snapshot (`used_percent` → 100% within the window, bounded by `resets_at`).
-**Claude:** honest estimation — always show $/hr and tokens/hr; show "% of weekly cap" and
-time-to-wall **only if** the user configures `[plans]` allowances (Anthropic doesn't
-publish the token allowance), labeled "estimated." `GET /api/v1/usage/projection`, a BURN
-column on `pulpo list` / `pulpo usage`, web badges. Read-only, zero config risk. Pure
-projection math in a `usage::projection` module → high-value unit tests.
+**B1 — Projection / burn-rate — SHIPPED, then REMOVED (September 2026).** Burn rate
+($/hr, tokens/hr) and time-to-wall, per-session and per-account. **Codex:** exact,
+extrapolated from the `rate_limits` snapshot (`used_percent` → 100% within the window,
+bounded by `resets_at`). **Claude:** honest estimation — always show $/hr and tokens/hr;
+show "% of weekly cap" and time-to-wall **only if** the user configures `[plans]`
+allowances (Anthropic doesn't publish the token allowance), labeled "estimated."
+`GET /api/v1/usage/projection`, a BURN column on `pulpo list` / `pulpo usage`, web badges.
+Pure projection math lived in a `usage::projection` module. **Removed** because forecasting
+math built on scraped/estimated inputs was a second, weaker product surface next to exact
+metering + a flat budget cap — see "Removed" for the full rationale. The exact per-session
+totals and per-repo rollups it also carried moved to `usage::rollup` and
+`GET /api/v1/usage/sessions`.
 
-**B2 — Pool attribution (SHIP — cheap, makes rollups honest, the launch talking point).**
-Detect `-p`/`--print` in a session command → `usage_pool` = `subscription` (interactive
-tmux, our default) vs `headless` (the separate monthly credit pool Anthropic confirmed
-effective June 15, 2026). Projection rollups become pool-aware. Documents the structural
-advantage: Pulpo's interactive-in-tmux sessions stay on the subscription pool, unlike
-SDK-built orchestrators on `claude -p`.
+**B2 — Pool attribution — SHIPPED, then REMOVED (September 2026).** Detected `-p`/`--print`
+in a session command → `usage_pool` = `subscription` (interactive tmux, our default) vs
+`headless` (the separate monthly credit pool Anthropic confirmed effective June 15, 2026).
+Projection rollups were pool-aware; documented the structural advantage that Pulpo's
+interactive-in-tmux sessions stay on the subscription pool, unlike SDK-built orchestrators
+on `claude -p`. **Removed** together with B1 — pool-aware rollups only mattered to the
+projection they fed, and classifying a command as headless never needed reading any
+credentials, but the account attribution alongside it (`auth_provider`/`auth_plan`/
+`auth_email`, read from each agent's local credential file) did, which a metering tool has
+no business doing.
 
 **B3 — Minimal budget guardrail (SHIP — credibility proof, not a headline).** Per-session
 **cost cap only**: alert at 80% (one-shot, deduped via metadata flag), stop at 100% via the
@@ -195,14 +209,16 @@ existing intervention path (new `InterventionCode::BudgetExceeded`). Config on
 *allocates the shared pool* (a runaway session can starve the rest until reset); on prepaid
 credits / API keys it protects real dollars. NOT overdraft prevention on subscriptions.
 (Originally resolved spawn flag > ink default > global; the ink layer was removed July
-2026 — budget is now set directly per session/schedule, see Roadmap "Removed".)
+2026 — budget is now set directly per session/schedule, see Roadmap "Removed".) **Still
+shipped** — this is the whole of Pulpo's cost *control* surface today.
 
 **Parked (build on real fleet demand, not for launch):**
 - Multi-dimension budgets (token caps, quota-% guard, per-day per-node rollup cap)
 - Rate-limit thrash handling (pause + auto-resume after `resets_at`) — high complexity
   (new session state + scheduling), narrow benefit, undemoable
-- Daily cost digest — cheap (cron + B1 endpoint + existing notifiers) and good for the
-  "phone is the gauge" story, but retention not acquisition; post-launch only if cheap
+- Daily cost digest — cheap (cron + the `/usage/sessions` endpoint + existing notifiers)
+  and good for the "phone is the gauge" story, but retention not acquisition; post-launch
+  only if cheap
 
 ### Phase C — Fleet rollups + placement — FROZEN (2026-06-14), REMOVED (July 2026)
 
@@ -246,10 +262,12 @@ only a `host:port`/URL, no more resolving a bare peer name against the local reg
 
 ### Phase M — Monitoring, alerting & operational optimization (a first-class pillar)
 
-The measurement (B1/B2) and the blunt breaker (B3 stop-at-budget) are the floor. This
-pillar turns the signals into **real notifications** and into **operational optimizations
-Pulpo controls** — never the inference path. Everything here is alert-first and
-non-destructive by default; any auto-action (stop/pause/defer) is opt-in config.
+Exact metering (Phase A) and the blunt breaker (B3 stop-at-budget) are the floor — B1/B2's
+projection and pool attribution, which this pillar originally built on top of, were removed
+September 2026 (see "Removed"). This pillar turns the signals into **real notifications**
+and into **operational optimizations Pulpo controls** — never the inference path.
+Everything here is alert-first and non-destructive by default; any auto-action
+(stop/pause/defer) is opt-in config.
 
 **M1 — Make alerts real (DONE).** `UsageAlert` event on the bus, delivered via SSE +
 in-app toast; emitted on the budget 80% crossing (deduped). External-channel delivery is
@@ -264,8 +282,8 @@ relay). Decisions locked:
 
 - **Canonical event envelope + taxonomy/severity.** One header (`event_id` idempotency key,
   `schema_version`, `type`, `severity`, `occurred_at`, `node`, `session_id?`, `payload`).
-  Types: `lifecycle` (ready/stopped/lost/error/rate-limited), `intervention` (idle/budget/
-  burn stop), `usage_alert` (budget/burn/quota/rate-limit), `fleet` (node/peer health).
+  Types: `lifecycle` (ready/stopped/lost/error/rate-limited), `intervention` (idle/budget
+  stop), `usage_alert` (budget/quota/rate-limit), `fleet` (node/peer health).
   `severity` (info/warn/critical) is the universal filter knob.
 - **`EventSink` trait + one shared dispatcher** (owns bus subscription, filtering,
   serialization, retries) replacing the per-notifier loops.
@@ -279,8 +297,8 @@ relay). Decisions locked:
   Discord webhook notifier + `[notifications.discord]` config + its config-API surface;
   tolerate a leftover `[notifications.discord]` section so old configs still boot.
 - **`/metrics` Prometheus endpoint (decided), toggleable, off by default.** Pull-based,
-  stateless (active sessions by status, $/hr, cost today, quota %, budget-breach +
-  intervention counters — computed on scrape, nothing stored). Gated by bind mode.
+  stateless (active sessions by status, per-session cost/tokens, sessions-with-a-budget —
+  computed on scrape, nothing stored). Gated by bind mode.
   Push (webhooks) for discrete events; pull (`/metrics`) for continuous dashboard state.
 - **Scope boundary:** Pulpo emits events + exposes metrics; it is **not** a TSDB or log
   store — forward to the user's stack (collector, Slack webhook, ntfy, Datadog, …).
@@ -312,7 +330,7 @@ POST <endpoint-url>
   "session": {                // present for session-scoped events
     "id": "...", "name": "fix-auth", "status": "idle",
     "git_branch": "...", "pr_url": null,
-    "cost_usd": 2.5, "total_tokens": 1234000, "pool": "subscription"
+    "cost_usd": 2.5, "total_tokens": 1234000
   },
   "payload": { }              // type-specific extras (budget_usd, quota_used_percent,
                               // intervention_reason, ...)
@@ -324,7 +342,7 @@ Event catalogue (`type.subtype` → severity):
   `lifecycle.lost` (critical)
 - `intervention.{idle_timeout,budget_exceeded,burn_rate,user_stop}` (warn/critical),
   `payload.intervention_reason`
-- `usage_alert.{budget_threshold,burn_ceiling,quota_threshold,rate_limit}` (warn/critical),
+- `usage_alert.{budget_threshold,quota_threshold,rate_limit}` (warn/critical),
   `payload.{cost_usd,budget_usd,quota_used_percent}`
 - `fleet.{node_up,node_down,peer_unreachable}` (warn/critical)
 
@@ -347,13 +365,17 @@ fanned them out to the controller's `[[webhooks]]` (durable outbox) and its SSE 
 **Backbone status: COMPLETE.** Today, aggregation is direct — point every node's
 `[[webhooks]]` at the same collector; there is no controller to fan out through. Optional
 additive polish, parked (not core; build on demand): a *persistent/queryable* event log
-(`GET /events?since=` history vs the live SSE per node). Pre-existing M2 (burn-velocity
-governor, alert-only) remains the open optimizer.
+(`GET /events?since=` history vs the live SSE per node).
 
-**M2 — Burn-velocity governor (the marquee optimizer).** A configurable `$/hr` (and/or
-tokens/hr) ceiling on the watchdog: crossing it **alerts** by default; **opt-in** to pause
-or stop. Catches the catastrophic runaway/loop ("$90 at 2am") that flat budgets miss
-because they only trip at the total. Smart mode (N× a session's own median) is a follow-up.
+**M2 — Burn-velocity governor — SHIPPED, then REMOVED (September 2026).** A configurable
+`$/hr` (and/or tokens/hr) ceiling on the watchdog: crossing it **alerted** by default,
+with an opt-in to pause or stop. Meant to catch the catastrophic runaway/loop ("$90 at
+2am") that a flat budget misses because it only trips at the total. **Removed** alongside
+B1/B2 as part of the same "exact metering + flat budget cap only" simplification (see
+"Removed") — a second cost-control knob, layered on the same lifetime-average rate math as
+the removed projection, added a config surface (three watchdog fields) and an alert kind
+for a scenario the flat per-session/per-schedule budget cap already bounds, just less
+tightly at the peak. There is no smart/N×-median follow-up either — it was never built.
 
 **M3 — Waste elimination — SKIPPED for now (2026-06-14, owner's call).** Rate-limit thrash →
 pause until `resets_at`; stuck/idle reclamation. High complexity (new session state +
@@ -368,20 +390,25 @@ controller freeze reaffirmed. Marginal machinery for something inks already cove
 themselves were removed July 2026; the underlying point stands unchanged — a session's
 `command` string is still the place to pin a cheaper model, ink or no ink.)
 
-**M5 — Cheapest-pool-first placement — OUT (controller removed July 2026).** Depended on
-cross-node spawn via the Phase C controller. That controller was frozen (2026-06-14), then
-removed (not just frozen), so cross-node placement isn't coming back without rebuilding a
-control plane, which isn't planned. *Single-node* pool awareness (prefer the subscription
-pool with headroom before spilling to paid API credits on the machine you're on) can still
-be revisited later as a local policy — it never needed the controller.
+**M5 — Cheapest-pool-first placement — OUT (controller removed July 2026; pool detection
+removed September 2026).** Depended on cross-node spawn via the Phase C controller. That
+controller was frozen (2026-06-14), then removed (not just frozen), so cross-node
+placement isn't coming back without rebuilding a control plane, which isn't planned.
+*Single-node* pool awareness (prefer the subscription pool with headroom before spilling
+to paid API credits on the machine you're on) was floated as something that could be
+revisited as a local policy without the controller — moot now that the `usage::pool`
+command classifier it would have reused was itself removed with B2; reviving this would
+start from zero.
 
 **Config-overridable rates** (the model-agnostic follow-up from Phase A) — **DONE**:
-`[rates.<model>]` so cost/burn math never needs a code change when a model reprices or a
-new one ships, directly serving the "monitor cost accurately for any model" goal. Built
-into the usage readers via `RateOverrides`/`resolve_rates`, installed once at startup.
+`[rates.<model>]` so cost math never needs a code change when a model reprices or a new
+one ships, directly serving the "monitor cost accurately for any model" goal. Built into
+the usage readers via `RateOverrides`/`resolve_rates`, installed once at startup.
 
-Sequence: M1 ✅ → M2 ✅ (+ config rates ✅) → M3/M4 anytime → M5 stays out (no controller).
-M1+M2 are the visible "Pulpo watches your spend and catches runaways" story.
+Sequence: M1 ✅ → M2 ✅, then **removed** (September 2026, with B1/B2) → config rates ✅ →
+M3/M4 anytime → M5 stays out (no controller, no pool detection). M1 (real alerts on the
+budget cap) is the surviving "Pulpo watches your spend" story; M2's runaway-catching case
+is now covered only by the flat budget cap, not a separate rate ceiling.
 
 ### Phase D — Reposition + distribution (gates the payoff)
 
@@ -399,13 +426,14 @@ M1+M2 are the visible "Pulpo watches your spend and catches runaways" story.
   *gained* from Fable's removal: models get banned and pulled; your cost-control layer
   shouldn't depend on any one of them — Pulpo is model- and vendor-agnostic.
 - ~~Verify the June 15 headless billing split~~ — confirmed by Anthropic (2026-06-13).
-  Pool attribution is now Phase B item 2; the "interactive-in-tmux stays on your
-  subscription pool" advantage goes in the launch messaging.
+  Became Phase B item 2 (pool attribution); shipped, then removed September 2026 along
+  with B1 — see "Removed".
 - Homebrew-core once ≥75 stars
 
-**Sequencing:** R + A + B + M (M1/M2 + config rates) are done. **C was frozen, then removed**
-(cross-node control plane — see Phase C). Remaining live work is single-node optimizers
-(M3/M4) and Phase D reposition; D's launch moment is after B (now satisfied).
+**Sequencing:** R + A + B + M (M1 + config rates) are done; B2 and M2 were shipped and then
+removed (September 2026, see "Removed"). **C was frozen, then removed** (cross-node
+control plane — see Phase C). Remaining live work is single-node optimizers (M3/M4) and
+Phase D reposition; D's launch moment is after B (now satisfied).
 
 ~~Also still planned: agent completion callbacks (`PULPO_CALLBACK_URL` env var; Claude
 Code hooks can call it)~~ — **superseded by harness adapters** (shipped for Claude Code
@@ -457,7 +485,10 @@ Core infrastructure:
 - Per-session idle threshold, configurable waiting patterns (extends the built-in set)
 - Scheduling: DB-backed cron schedules (local timezone), CRUD API + CLI, 60s scheduler
 - Observability: PR/branch detection, git branch/commit/diff tracking, rate-limit
-  detection, token/cost scraping (superseded by Phase A readers), enriched notifications
+  detection, enriched notifications. Output-scraped token/cost extraction (the
+  keyword-proximity fallback for agents without a structured reader) was superseded by
+  the Phase A readers and then removed outright in September 2026 (see "Removed") — a
+  session run with an unsupported harness now shows no usage rather than a scraped guess.
 - Homebrew tap distribution, CLI auto-start daemon
 
 Track R (removals) is complete: Docker runtime, worktrees web-UI page, Tauri mobile
@@ -485,8 +516,45 @@ Revisit only on real demand:
 ## Removed
 
 Newest first. Every September 2026 entry landed the same week as harness adapters (PR
-#97) and is independent of it, except `adopt_tmux` (see below).
+#97) and is independent of it, except `adopt_tmux` (see below) and the two entries
+directly below (the burn/projection/pool/scraping removal and the Web Push/metrics/
+outbox removal), which landed later the same month, independently of each other.
 
+- ~~Burn-velocity governor (M2), usage projection (B1), pool attribution (B2), and the
+  output-scraping usage fallback~~ (September 2026) — the biggest
+  simplification of the metering/enforcement surface since Phase A shipped exact
+  readers. Kept: exact per-session/per-repo usage (Claude/Codex/pi structured readers),
+  `pulpo usage` / `pulpo usage --scan`, and the flat per-session/per-schedule budget cap
+  (alert 80%, stop 100%, `InterventionCode::BudgetExceeded`). Removed:
+  - **Burn-velocity governor** (M2) — `watchdog/burn.rs`, `BurnAction`/`BurnConfig`,
+    `watchdog.burn_ceiling_usd_per_hour`/`burn_ceiling_tokens_per_hour`/`burn_action`
+    config, the `usage_alert.burn_ceiling` event, and `InterventionCode::BurnRate`. A
+    second, more complex spend-rate ceiling next to the flat budget cap wasn't worth the
+    config surface — see M2 above.
+  - **Projection** (B1) — `usage/projection.rs`, `GET /api/v1/usage/projection`, the
+    $/hr / tokens-per-hour / time-to-cap columns, and the `[plans]` weekly-allowance
+    config that fed Claude's estimated %-of-cap. Forecasting built on top of exact
+    metering was a second, weaker product surface — see B1 above. Per-session exact
+    usage and per-repo rollups (the part of projection that wasn't forecasting) moved to
+    `usage/rollup.rs` behind a new `GET /api/v1/usage/sessions`.
+  - **Pool attribution** (B2) — `usage/pool.rs` (`detect_pool`, the `subscription` vs
+    `headless` classifier), `AccountRollup`, and the account-identity metadata
+    (`auth_provider`/`auth_plan`/`auth_email`) it was grouped by. `auth_info.rs` was
+    trimmed to just `agent_provider_for_command` (still needed to route a session to its
+    usage reader); the credential-file readers (`extract_claude_auth`/
+    `extract_codex_auth`/`extract_gemini_auth`, `detect_auth_for_command`) are gone — a
+    metering tool has no business reading agent credentials off disk (the removed code's
+    own doc comment even mentioned trying the macOS keychain). The web session-card
+    "auth plan" badge, the only other consumer of that metadata, was removed with it.
+  - **Output-scraping usage fallback** — the keyword-proximity token/cost extractor in
+    `watchdog/output_patterns.rs` (`extract_agent_usage`, `KEYWORD_RULES`,
+    `COST_KEYWORDS`) and the metadata-accumulation path it fed. Exact readers (Claude,
+    Codex, pi) are the only source of usage now; a session run with any other harness
+    shows no usage instead of a scraped guess — see the Mission/Bet updates above.
+  - A historical `intervention_code = 'burn_rate'` DB row (or any other unrecognized
+    value) now degrades to `None` when read instead of failing the whole session/
+    intervention-event query — the same tolerance the `runtime` column already had for
+    historical `docker` rows — so no migration was needed for the enum change.
 - ~~Web Push, `/api/v1/metrics`, and the durable webhook outbox~~ (September 2026) — one
   notification channel now: `[[webhooks]]` delivered as a plain POST (no HMAC signing,
   no `X-Pulpo-Signature`) with a fixed retry schedule (~1s/3s/9s) from an in-memory

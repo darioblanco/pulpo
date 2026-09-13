@@ -71,6 +71,14 @@ Canonical runtime concepts:
   (no signing) with a fixed retry schedule (~1s/3s/9s) from an in-memory queue; an event that
   exhausts its retries is logged and dropped rather than persisted. See
   /docs/reference/config.md#webhooks.
+- There is no burn-velocity governor, usage projection ($/hr, time-to-cap), or billing-pool
+  attribution (subscription vs headless) — all removed September 2026 in favor of exact
+  metering plus a flat per-session/per-schedule budget cap only (`--budget-cost`: alert at
+  80%, stop at 100%). There is no output-scraping usage fallback either — a session run
+  with a harness that has no structured reader (only Claude Code, Codex, and pi have one)
+  shows no usage. `pulpod` never reads agent account credentials/identity from disk; the
+  removed pool attribution was its only consumer, alongside a since-removed web "auth plan"
+  badge. See /ROADMAP.md "Removed" for the full rationale.
 
 Installation:
 - Homebrew: brew install darioblanco/tap/pulpo

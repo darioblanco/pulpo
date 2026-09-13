@@ -8,8 +8,8 @@ Pulpo is a lightweight daemon that runs coding-agent sessions as durable backgro
 workers, **measures exactly what each one costs** (across agents, accounts, and
 machines), **enforces budgets**, and **forwards alerts and events to your own
 observability stack**. It abstracts `tmux` behind a clean API and ships a
-mobile-friendly web UI. Sovereign by architecture: usage and account data are read
-from local files and never relayed to a vendor.
+mobile-friendly web UI. Sovereign by architecture: usage data is read from local
+files and never relayed to a vendor.
 
 It is **not** an agent framework, a prompt tool, or a terminal-orchestration UX —
 modern agents handle interactive worktrees, sandboxing, and guardrails themselves.
@@ -23,16 +23,15 @@ few in parallel can burn a weekly subscription allowance in an afternoon. The to
 that could warn you won't: a vendor's `/usage` is one account, one machine, one
 vendor, shown after the fact; no vendor will aggregate spend across *your* accounts
 (it would help you arbitrage their limits); and only the thing actually running the
-session can stop a runaway before the wall. Meanwhile your usage and account data are
+session can stop a runaway before the wall. Meanwhile your usage data is
 exactly what you'd least want flowing through a third-party relay.
 
 ## Goals
 
 1. **Single binary** (`pulpod`) runs on each machine as a daemon (embedded web UI)
 2. **Exact usage metering** — read tokens/cost from each agent's own session files,
-   attributed per session and rolled up per account/pool and per repo
-3. **Cost control** — per-session/schedule budget caps (alert 80%, stop 100%) and a
-   burn-velocity governor; alert-first, opt-in auto-stop
+   attributed per session and rolled up per repo
+3. **Cost control** — per-session/schedule budget caps (alert 80%, stop 100%)
 4. **Monitoring backbone** — canonical events delivered as a plain POST to multiple
    webhooks, in-memory queue with a fixed retry schedule
 5. **Durable sessions** — explicit lifecycle that survives reboots; `tmux` backend;
@@ -128,7 +127,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 
 - **Dashboard**: sessions at a glance, with status filtering
 - **Session detail**: live terminal output, input field, metadata (incl. per-session cost/tokens)
-- **Usage**: cost/burn gauge — account cards + per-session table (the meter)
+- **Usage**: exact cost/token gauge — per-session table + per-repo rollups (the meter)
 - **Schedules**: cron schedule management
 - **Settings**: node config, watchdog, notifications
 
@@ -432,8 +431,8 @@ GET    /events                SSE event stream
 `/events` emits tagged SSE events:
 - `event: session` — session lifecycle updates (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`)
 - `event: session_deleted` — a session was removed (`stop --purge`, `pulpo cleanup`)
-- `event: intervention` — a watchdog forced stop (idle/budget/burn)
-- `event: usage_alert` — a budget or burn-rate ceiling was crossed
+- `event: intervention` — a watchdog forced stop (idle/budget)
+- `event: usage_alert` — a budget threshold was crossed
 
 ### Quick Reference
 
@@ -458,7 +457,7 @@ GET    /events                SSE event stream
 | `PUT`    | `/config`                       | Update daemon config           |
 | `GET`/`PUT` | `/watchdog`                  | Get/update watchdog config     |
 | `GET`/`PUT` | `/notifications`             | Get/update notification config |
-| `GET`    | `/usage/projection`             | Live burn-rate/time-to-cap projection |
+| `GET`    | `/usage/sessions`               | Exact per-session usage + per-repo rollups (pulpo-managed sessions) |
 | `GET`    | `/usage/scan`                   | Scan all local agent history (Claude + Codex + pi) |
 | `GET`/`POST` | `/schedules`                 | List/create cron schedules     |
 | `GET`/`PUT`/`DELETE` | `/schedules/:id`        | Get/update/delete a schedule   |
@@ -722,12 +721,13 @@ events = ["lifecycle.*", "usage_alert.*", "intervention.*"]  # "<type>.<subtype>
 
 Every field is optional with a sensible default — `pulpod` runs with zero config. This is
 a minimal illustration, not the full field list: `[rates.<model>]` (per-model cost
-overrides), `[plans.<name>]` (quota estimates for Claude's "% of weekly cap"), and the
-complete `[node]`/`[watchdog]`/`[auth]`/`[[webhooks]]` field sets are in
-[Config Reference](docs/reference/config.md). Config keys retired by earlier removals
-(`[docker]`, `[controller]`, `[inks]`, `[peers]`, `[metrics]`, `[notifications.vapid]`,
-`watchdog.adopt_tmux`, `node.discovery_interval_secs`) still parse from an old config
-file (ignored, dropped on next save) — see that same reference's "Retired keys" section.
+overrides), and the complete `[node]`/`[watchdog]`/`[auth]`/`[[webhooks]]` field sets are
+in [Config Reference](docs/reference/config.md). Config keys retired by earlier removals
+(`[docker]`, `[controller]`, `[inks]`, `[peers]`, `[plans]`, `[metrics]`,
+`[notifications.vapid]`, `watchdog.adopt_tmux`,
+`watchdog.burn_ceiling_usd_per_hour`/`burn_ceiling_tokens_per_hour`/`burn_action`,
+`node.discovery_interval_secs`) still parse from an old config file (ignored, dropped on
+next save) — see that same reference's "Retired keys" section.
 
 ---
 

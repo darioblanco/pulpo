@@ -4,7 +4,7 @@ Instructions for coding agents (Codex, Claude, and compatible tools).
 
 ## Product Focus
 
-Pulpo is a **self-hosted meter and breaker box for coding agents** — agent-agnostic infrastructure you own. It runs any CLI agent (Claude Code, Codex, Aider, Goose, etc.) on your machines with exact usage metering, budget/burn-rate enforcement, durable session lifecycle, hook-driven watchdog supervision, and scheduling. Each machine's `pulpod` is standalone (no controller/fleet control plane); reach any of them directly over Tailscale.
+Pulpo is a **self-hosted meter and breaker box for coding agents** — agent-agnostic infrastructure you own. It runs any CLI agent (Claude Code, Codex, Aider, Goose, etc.) on your machines with exact usage metering, a flat budget-cost cap (alert 80%, stop 100%), durable session lifecycle, hook-driven watchdog supervision, and scheduling. Each machine's `pulpod` is standalone (no controller/fleet control plane); reach any of them directly over Tailscale.
 
 **Positioning:** infrastructure layer, not an agent. Sovereign by architecture — code never leaves your infrastructure. Key differentiators: scheduling, cost control, direct multi-machine access over Tailscale, EU sovereignty compliance.
 
@@ -14,8 +14,10 @@ Do not expand scope into desktop/mobile clients unless explicitly requested.
 ## What to Build Next
 
 See `ROADMAP.md` "Phase D — Reposition + distribution" for current live work. Cost
-tracking (budgets, burn-rate governor, config-overridable rates) is already shipped —
-see ROADMAP.md Phase B / M2. In priority order:
+tracking (a flat budget cap, config-overridable rates) is already shipped — see
+ROADMAP.md Phase B item 3 (B3). The burn-velocity governor and usage projection (M2, B1)
+were shipped and then removed (September 2026, see ROADMAP.md "Removed") — do not
+re-add a cost-rate ceiling or forecasting math on top of the flat cap. In priority order:
 
 1. **Landing page + demo video** — the one Phase D item still open; the README/SPEC
    reposition already shipped.
