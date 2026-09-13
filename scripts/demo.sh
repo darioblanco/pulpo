@@ -67,10 +67,10 @@ run "pulpo spawn demo-review --budget-cost 5 --workdir $DEMO_REPO -- $DEMO_AGENT
 pause
 
 bold $'\n4) Monitor — forward every event to your own stack'
-dim "signed canonical events to your webhooks (durable outbox + backoff) + a Prometheus"
-dim "/metrics endpoint (opt-in). Pulpo is the event plane; your Grafana / Datadog / Slack"
-dim "is the dashboard. Add to ~/.pulpo/config.toml:"
-run "printf '%s\n' '[[webhooks]]' 'name = \"ops\"' 'url = \"https://collector.example.com/pulpo\"' 'secret = \"…\"' 'events = [\"usage_alert.*\", \"intervention.*\", \"lifecycle.lost\"]' 'min_severity = \"warn\"' '' '[metrics]' 'enabled = true'"
+dim "canonical events delivered as a plain POST to your webhooks (in-memory queue, fixed"
+dim "retry schedule). Pulpo is the event plane; your Grafana / Datadog / Slack is the"
+dim "dashboard. Add to ~/.pulpo/config.toml:"
+run "printf '%s\n' '[[webhooks]]' 'name = \"ops\"' 'url = \"https://collector.example.com/pulpo\"' 'events = [\"usage_alert.*\", \"intervention.*\", \"lifecycle.lost\"]' 'min_severity = \"warn\"'"
 pause
 
 bold $'\n5) The gauge on your phone'

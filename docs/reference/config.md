@@ -109,32 +109,22 @@ cache_write_5m = 6.25
 cache_write_1h = 10.0
 ```
 
-## `[metrics]`
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `enabled` | bool | `false` | Serve the Prometheus `/api/v1/metrics` endpoint |
-
-Off by default. When enabled, every gauge (active sessions by status, cost today, quota %,
-budget-breach/intervention counters) is computed from the current store state on each
-scrape — pull-based and stateless, nothing persisted. Complements `[[webhooks]]` (push of
-discrete events) with continuous dashboard state.
-
 ## `[[webhooks]]`
 
-Each `[[webhooks]]` table is a delivery endpoint that subscribes to the universal event
-stream. Pulpo POSTs the canonical event envelope (see
-[the webhook example](https://github.com/darioblanco/pulpo/tree/main/contrib/examples/webhook-discord))
-to every endpoint whose filter admits the event. Delivery is at-least-once from a durable
-outbox with exponential backoff.
+`[[webhooks]]` is pulpo's only notification channel — each table is a delivery endpoint
+that subscribes to the universal event stream. Pulpo POSTs the canonical event envelope
+(see [the webhook example](https://github.com/darioblanco/pulpo/tree/main/contrib/examples/webhook-discord))
+to every endpoint whose filter admits the event. Delivery is a **plain POST** from an
+in-memory queue: the initial attempt plus up to 3 retries (~1s, 3s, 9s), and an event
+that exhausts every attempt is logged and dropped — there is no persistence, so nothing
+survives a restart or is retried after the daemon gives up.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `name` | string | — | Endpoint name (must be unique — used to track deliveries) |
+| `name` | string | — | Endpoint name (must be unique — used to identify deliveries in logs) |
 | `url` | string | — | Webhook URL to POST events to |
 | `events` | string[] | `[]` | `<type>.<subtype>` glob filter; empty means all events |
 | `min_severity` | string | — | Drop events below this floor (`info` < `warn` < `critical`); absent means no floor |
-| `secret` | string | — | Optional HMAC-SHA256 signing secret (`X-Pulpo-Signature`) |
 
 `events` patterns are matched against the event's `"<type>.<subtype>"` key:
 
@@ -149,8 +139,13 @@ name = "ops"
 url = "https://example.com/hooks/pulpo"
 events = ["lifecycle.*", "usage_alert.*", "intervention.*"]
 min_severity = "warn"
-secret = "optional-hmac-signing-secret"
 ```
+
+Each request carries `Content-Type: application/json`, `User-Agent: pulpo/<version>`,
+`X-Pulpo-Event: <type>.<subtype>`, and `X-Pulpo-Event-Id: <uuid>` (a fresh id per event —
+there's no durable outbox to dedupe retries against, but a receiver that wants
+idempotency can still key on it). There is no request signing; treat the URL itself as
+the shared secret, or put the endpoint behind your own auth.
 
 Event types are `lifecycle`, `intervention`, and `usage_alert`; see the
 [session lifecycle reference](/operations/session-lifecycle) and the linked webhook example
@@ -163,31 +158,13 @@ The nested `[[notifications.webhooks]]` form is **deprecated** but still read fo
 back-compat: any endpoints there are unioned with the top-level `[[webhooks]]` list at
 startup. Prefer the top-level form for new configs. The fields are identical.
 
-## `[notifications.vapid]`
-
-The Web Push keys and action-token signing secret used by `pulpo`'s built-in push
-notifications (see the [Push Notifications reference](/reference/push) for the wire
-contract). Every field is auto-generated on first run and persisted here — there is
-nothing to configure by hand.
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `private_key` | string | auto-generated | Base64url P-256 VAPID private key (32 bytes) |
-| `public_key` | string | auto-generated | Base64url P-256 VAPID public key (65 bytes), served by `GET /api/v1/push/vapid-key` |
-| `action_secret` | string | auto-generated | Base64url 256-bit HMAC secret signing the "Stop session" push action tokens |
-
-`action_secret` is generated independently of the VAPID key pair, so a config that
-already has VAPID keys from before this field existed still gets one backfilled on the
-next startup rather than left empty. None of these three fields is ever returned by
-`GET /api/v1/config` or `GET /api/v1/notifications` — only the public key is exposed,
-and only via the dedicated `/api/v1/push/vapid-key` endpoint.
-
 ## Retired keys (ignored with a warning)
 
 These keys existed in earlier releases and are gone. A config file written before a given
 removal still **loads**: the key is parsed, ignored, and dropped the next time the config
-is saved (`watchdog.adopt_tmux` and `node.tag` additionally log a startup warning; the
-rest are dropped silently). Do not set any of these in a new config — they have no effect.
+is saved (all of the keys below log a startup warning; a few older removals — `[docker]`,
+`[controller]`, `[inks.<name>]`, `[peers]`, `notifications.discord` — are dropped
+silently). Do not set any of these in a new config — they have no effect.
 
 | Key | Removed | Replacement |
 |-----|---------|-------------|
@@ -195,6 +172,9 @@ rest are dropped silently). Do not set any of these in a new config — they hav
 | `[controller]` | Controller/node control plane removed (July 2026) | `pulpo --url <host:port>` for direct multi-machine access |
 | `[inks.<name>]` | Ink preset registry removed (July 2026) | Command set directly per session/schedule; `pulpo schedule add --budget-cost <USD>` for recurring budgets |
 | `[peers]` | Peer registry + Tailscale peer discovery removed (September 2026) | `pulpo --url <host:port>`, a saved web UI connection, or SSH — see [Control Your Agents From Anywhere](/guides/remote-control) |
+| `[metrics]` | Prometheus `/api/v1/metrics` endpoint removed (September 2026) | `[[webhooks]]` for event-driven monitoring; scrape/aggregate on the receiving end if you need dashboards |
+| `[notifications.vapid]` | Web Push (VAPID keys, push subscriptions, the "Stop session" action token) removed (September 2026) | `[[webhooks]]` is the only notification channel |
+| `webhooks.secret` (per-endpoint) | HMAC-SHA256 request signing removed along with the durable outbox (September 2026) | None — treat the URL as the shared secret, or put the endpoint behind your own auth |
 | `notifications.discord` | Discord webhook notifier removed | `[[webhooks]]` to any HTTP endpoint (see `contrib/examples/webhook-discord` for a Discord relay) |
 | `node.discovery_interval_secs` | Tailscale peer-discovery scan frequency; peer discovery removed (September 2026) | No replacement needed — `bind = "tailscale"` requires no discovery |
 | `node.tag` | Reserved for a Tailscale-ACL-based peer scoping that was never built; its only reader was the removed peer discovery | No replacement needed |

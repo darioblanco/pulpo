@@ -406,7 +406,7 @@ On ingestion the daemon resolves the session's adapter, calls `parse_event`, app
 the state transition below, stamps `harness_last_event_at`, stores
 `harness_session_id` on `SessionStarted`, and emits the existing SSE `session` event —
 notifications for `NeedsInput`/`Failed` ride that same event through the existing
-webhook/push paths; no new channel was added.
+webhook path; no new channel was added.
 
 ## State transitions
 

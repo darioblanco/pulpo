@@ -23,7 +23,7 @@ features:
   - title: 2. Control — before the wall
     details: "Per-session and per-schedule cost caps that alert at 80% and stop at 100%, plus a burn-velocity ($/hr) governor that catches the 2 a.m. runaway a flat budget misses. Alert-first; opt in to auto-stop."
   - title: 3. Monitor — to your own stack
-    details: "Signed canonical events (lifecycle changes, interventions, usage/cost alerts) delivered to any number of webhooks with a durable outbox, plus a toggleable Prometheus `/metrics` endpoint. Pulpo is the event plane; your Grafana/Datadog/SIEM is the dashboard."
+    details: "Canonical events (lifecycle changes, interventions, usage/cost alerts) delivered as a plain POST to any number of webhooks, in-memory queue with a fixed retry schedule. Pulpo is the event plane; your Grafana/Datadog/SIEM is the dashboard."
   - title: 4. Run — durable & unattended
     details: "Each agent runs in a `tmux` session with an explicit lifecycle that survives reboots, a watchdog for idle/memory/error/completion, and per-session git worktrees so parallel agents never collide. Command-agnostic."
 ---
@@ -90,7 +90,7 @@ See [Why Pulpo](/getting-started/why-pulpo) for the full ICP and competitor view
 4. The **watchdog** reads exact usage, enforces budgets, drives lifecycle, and emits events.
 
 Everything else is a surface over that core: the `pulpo` CLI, the web UI / PWA, the REST API
-and SSE stream, the scheduler, and the event-forwarding backbone (webhooks + `/metrics`).
+and SSE stream, the scheduler, and the event-forwarding backbone (`[[webhooks]]`).
 
 ## Multi-machine
 
@@ -98,8 +98,7 @@ Pulpo is **single-node-first** — each node meters and governs its own sessions
 server required. There is deliberately no control plane: reach each node directly with
 `pulpo --url <host:port>`, a saved connection in the web UI, or SSH/tmux — see
 [Control Your Agents From Anywhere](/guides/remote-control). For a view across machines, point
-every node's event forwarding (`[[webhooks]]` + `/metrics`) at the same collector you already
-run.
+every node's event forwarding (`[[webhooks]]`) at the same collector you already run.
 
 ## Read In Order
 

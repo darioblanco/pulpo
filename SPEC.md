@@ -33,8 +33,8 @@ exactly what you'd least want flowing through a third-party relay.
    attributed per session and rolled up per account/pool and per repo
 3. **Cost control** — per-session/schedule budget caps (alert 80%, stop 100%) and a
    burn-velocity governor; alert-first, opt-in auto-stop
-4. **Monitoring backbone** — signed canonical events to multiple webhooks (durable
-   outbox + backoff + HMAC) and a toggleable Prometheus `/metrics` endpoint
+4. **Monitoring backbone** — canonical events delivered as a plain POST to multiple
+   webhooks, in-memory queue with a fixed retry schedule
 5. **Durable sessions** — explicit lifecycle that survives reboots; `tmux` backend;
    per-session git worktrees; watchdog supervision
 6. **Sovereign** — self-hosted, local-only account data, Tailscale transport for
@@ -460,21 +460,16 @@ GET    /events                SSE event stream
 | `PUT`    | `/config`                       | Update daemon config           |
 | `GET`/`PUT` | `/watchdog`                  | Get/update watchdog config     |
 | `GET`/`PUT` | `/notifications`             | Get/update notification config |
-| `GET`    | `/metrics`                      | Prometheus metrics (opt-in, `[metrics] enabled = true`) |
 | `GET`    | `/usage/projection`             | Live burn-rate/time-to-cap projection |
 | `GET`    | `/usage/scan`                   | Scan all local agent history (Claude + Codex + pi) |
 | `GET`/`POST` | `/schedules`                 | List/create cron schedules     |
 | `GET`/`PUT`/`DELETE` | `/schedules/:id`        | Get/update/delete a schedule   |
 | `GET`    | `/schedules/:id/runs`           | Schedule run history           |
-| `GET`    | `/push/vapid-key`               | Get the public VAPID key       |
-| `POST`   | `/push/subscribe`               | Register a Web Push subscription |
-| `POST`   | `/push/unsubscribe`             | Remove a Web Push subscription |
-| `POST`   | `/push/action`                  | Act on a push action token (e.g. "Stop session"); unauthenticated |
 | `GET`    | `/auth/token`                   | Get auth token (local only)    |
 | `GET`    | `/events`                       | SSE event stream               |
 
-Full request/response shapes, the harness-events payload, and the push action-token
-contract: [API Reference](docs/reference/api.md), [Push Notifications](docs/reference/push.md).
+Full request/response shapes and the harness-events payload:
+[API Reference](docs/reference/api.md).
 
 ---
 
@@ -559,7 +554,7 @@ pulpo/
 │   │   ├── backend/            #   tmux.rs — terminal backend
 │   │   ├── session/            #   manager, state machine, output capture, PTY bridge
 │   │   ├── store/              #   SQLite persistence + migrations
-│   │   └── notifications/      #   webhook + web-push notifiers
+│   │   └── notifications/      #   webhook notifications
 │   ├── pulpo-cli/src/          # CLI: thin client, clap commands
 │   └── pulpo-common/src/       # Shared types: Session, NodeInfo,
 │                               #   SessionEvent, API request/response
@@ -607,7 +602,7 @@ Ship the smallest useful thing first.
 - [x] Multi-node peer discovery
 - [x] Session resume after reboot
 - [x] In-app + desktop notifications (Notification API)
-- [x] Installable mobile app (PWA + Web Push; native Tauri builds retired June 2026)
+- [x] Installable mobile app (PWA; ~~Web Push~~ removed September 2026, see Phase 6; native Tauri builds retired June 2026)
 
 ---
 
@@ -664,13 +659,13 @@ Ship the smallest useful thing first.
 
 ### Phase 6: Mobile + Notifications
 
-**Stack:** PWA (installable web app + service worker) + Web Push
+**Stack:** PWA (installable web app + service worker)
 
 The mobile surface is the embedded web UI, installable as a PWA on iOS and
 Android. Native Tauri builds and the voice-command experiments (formerly
-Phase 7) were retired in June 2026: the PWA plus Web Push covers remote
-monitoring without app-store distribution overhead, and the phone remains
-the primary management surface.
+Phase 7) were retired in June 2026: the PWA covers remote monitoring without
+app-store distribution overhead, and the phone remains the primary
+management surface.
 
 **Deliverables:**
 
@@ -679,7 +674,10 @@ the primary management surface.
   own token entry, or `pulpo --url <host:port>` for the CLI
 - ~~Tailscale auto-discovery~~ — removed September 2026; `bind = "tailscale"` (HTTPS via
   `tailscale serve`) stays
-- ✅ PWA install + Web Push notifications
+- ✅ PWA install
+- ~~Web Push notifications (VAPID, push subscriptions, "Stop session" action token)~~ —
+  removed September 2026: `[[webhooks]]` is the only notification channel; a phone can
+  still receive alerts by pointing a webhook at a push-capable relay you run
 - ~~Tauri iOS/Android native builds~~ — retired June 2026 in favor of the PWA
 - ~~Voice commands (Siri Shortcuts / Google Assistant)~~ — retired June 2026
 
@@ -687,7 +685,8 @@ the primary management surface.
 
 - ✅ Flexible session model (command, description, metadata)
 - ✅ SSE event stream (`GET /api/v1/events`, broadcast channel, SessionEvent)
-- ✅ Generic webhook notifications (`[[notifications.webhooks]]` config) + Web Push
+- ✅ Generic webhook notifications (`[[notifications.webhooks]]` config) — see Phase 6 for
+  the removed Web Push channel
 - ~~Ink config (`[inks.name]` preset registry, `GET/POST/PUT/DELETE /api/v1/inks`)~~ — removed July 2026: command set directly per session/schedule; budget moved onto schedules (`--budget-cost`)
 - ~~Discord webhook notifier (`[notifications.discord]` config)~~ — removed June 2026: use `[[notifications.webhooks]]`
 - ~~Discord bot (`contrib/discord-bot/`)~~ — removed June 2026
@@ -727,12 +726,12 @@ events = ["lifecycle.*", "usage_alert.*", "intervention.*"]  # "<type>.<subtype>
 
 Every field is optional with a sensible default — `pulpod` runs with zero config. This is
 a minimal illustration, not the full field list: `[rates.<model>]` (per-model cost
-overrides), `[plans.<name>]` (quota estimates for Claude's "% of weekly cap"), `[metrics]`
-(the opt-in Prometheus endpoint), and the complete `[node]`/`[watchdog]`/`[auth]` field
-sets are in [Config Reference](docs/reference/config.md). Config keys retired by earlier
-removals (`[docker]`, `[controller]`, `[inks]`, `[peers]`, `watchdog.adopt_tmux`,
-`node.discovery_interval_secs`) still parse from an old config file (ignored, dropped on
-next save) — see that same reference's "Retired keys" section.
+overrides), `[plans.<name>]` (quota estimates for Claude's "% of weekly cap"), and the
+complete `[node]`/`[watchdog]`/`[auth]`/`[[webhooks]]` field sets are in
+[Config Reference](docs/reference/config.md). Config keys retired by earlier removals
+(`[docker]`, `[controller]`, `[inks]`, `[peers]`, `[metrics]`, `[notifications.vapid]`,
+`watchdog.adopt_tmux`, `node.discovery_interval_secs`) still parse from an old config
+file (ignored, dropped on next save) — see that same reference's "Retired keys" section.
 
 ---
 

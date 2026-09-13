@@ -10,8 +10,6 @@ import type {
   CreateSessionRequest,
   CreateSessionResponse,
   CleanupSessionsResponse,
-  VapidPublicKeyResponse,
-  PushSubscriptionRequest,
   ScheduleInfo,
   CreateScheduleRequest,
 } from './types';
@@ -173,37 +171,6 @@ export async function updateConfig(data: UpdateConfigRequest): Promise<UpdateCon
   });
   if (!res.ok) throw await apiError(res, 'Failed to update config');
   return res.json();
-}
-
-export async function getVapidKey(): Promise<VapidPublicKeyResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/push/vapid-key`);
-  if (!res.ok) throw await apiError(res, 'Failed to get VAPID key');
-  return res.json();
-}
-
-export async function subscribePush(subscription: PushSubscriptionJSON): Promise<void> {
-  const body: PushSubscriptionRequest = {
-    endpoint: subscription.endpoint ?? '',
-    keys: {
-      p256dh: subscription.keys?.p256dh ?? '',
-      auth: subscription.keys?.auth ?? '',
-    },
-  };
-  const res = await authFetch(`${resolveBaseUrl()}/push/subscribe`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw await apiError(res, 'Failed to subscribe');
-}
-
-export async function unsubscribePush(endpoint: string): Promise<void> {
-  const res = await authFetch(`${resolveBaseUrl()}/push/unsubscribe`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ endpoint }),
-  });
-  if (!res.ok) throw await apiError(res, 'Failed to unsubscribe');
 }
 
 export async function getSchedules(): Promise<ScheduleInfo[]> {

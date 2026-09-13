@@ -7,14 +7,6 @@ use tracing::warn;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
-/// A Web Push subscription stored for sending push notifications.
-#[derive(Debug, Clone)]
-pub struct PushSubscription {
-    pub endpoint: String,
-    pub p256dh: String,
-    pub auth: String,
-}
-
 /// A single intervention event for audit trail purposes.
 #[derive(Debug, Clone)]
 pub struct InterventionEvent {
@@ -23,25 +15,6 @@ pub struct InterventionEvent {
     pub code: Option<InterventionCode>,
     pub reason: String,
     pub created_at: DateTime<Utc>,
-}
-
-/// A durable webhook-delivery row from the `webhook_outbox` table.
-///
-/// One pending/delivered/dead delivery attempt of a single canonical event to a
-/// single endpoint. The stored `envelope_json` is posted verbatim on every
-/// retry so the receiver can dedupe on the stable `event_id`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WebhookOutboxRow {
-    pub id: i64,
-    pub endpoint: String,
-    pub event_id: String,
-    pub envelope_json: String,
-    pub status: String,
-    pub attempts: i64,
-    pub next_attempt_at: String,
-    pub last_error: Option<String>,
-    pub created_at: String,
-    pub delivered_at: Option<String>,
 }
 
 #[derive(Clone)]
@@ -65,6 +38,7 @@ impl Store {
     pub async fn migrate(&self) -> Result<()> {
         self.reject_unsupported_legacy_schema().await?;
         self.warn_before_dropping_secrets().await?;
+        self.warn_before_dropping_push_subscriptions().await?;
         MIGRATOR.run(&self.pool).await?;
         self.enforce_db_permissions();
 
@@ -98,6 +72,37 @@ impl Store {
                  0008 — {secret_count} stored secret(s) will be lost. There is no export \
                  tool; downgrade to pulpo 0.1.1 first if you need to read them out before \
                  upgrading."
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Migration 0009 drops the `push_subscriptions` table: Web Push was
+    /// removed — `[[webhooks]]` is now the only notification channel. Unlike
+    /// the secrets table this data isn't sensitive or irreplaceable (it's just
+    /// stale browser push endpoints a client would recreate by re-subscribing),
+    /// but warn loudly here, before the drop runs, so an operator relying on
+    /// push notifications isn't surprised when they silently stop working.
+    async fn warn_before_dropping_push_subscriptions(&self) -> Result<()> {
+        let has_table: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'push_subscriptions'",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if has_table == 0 {
+            return Ok(());
+        }
+
+        let subscription_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM push_subscriptions")
+            .fetch_one(&self.pool)
+            .await?;
+        if subscription_count > 0 {
+            warn!(
+                subscription_count,
+                "store: the push_subscriptions table is about to be dropped by migration 0009 \
+                 (Web Push was removed) — {subscription_count} stored subscription(s) will be \
+                 lost. Notifications now flow only through [[webhooks]]."
             );
         }
 

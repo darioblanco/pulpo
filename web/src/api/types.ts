@@ -92,14 +92,12 @@ export interface WebhookEndpointConfigResponse {
   name: string;
   url: string;
   events: string[];
-  has_secret: boolean;
 }
 
 export interface WebhookEndpointUpdateRequest {
   name: string;
   url: string;
   events: string[];
-  secret?: string | null;
 }
 
 export interface NotificationsConfigResponse {
@@ -149,18 +147,6 @@ export interface CleanupSessionsResponse {
 
 export interface CreateSessionResponse {
   session: Session;
-}
-
-export interface VapidPublicKeyResponse {
-  public_key: string;
-}
-
-export interface PushSubscriptionRequest {
-  endpoint: string;
-  keys: {
-    p256dh: string;
-    auth: string;
-  };
 }
 
 export interface ScheduleInfo {

@@ -125,12 +125,11 @@ pulpo spawn fix --budget-cost 10 -- claude -p "..."   # hard $10 cap, recorded a
 ```
 
 **Monitor — forward to your own stack.** Every lifecycle change, intervention, and usage/cost
-alert becomes a signed canonical event delivered to any number of `[[webhooks]]` (durable
-outbox, exponential backoff, HMAC; receivers dedupe on a stable event id), plus an optional
-Prometheus metrics endpoint (`/api/v1/metrics`). Pulpo is the event plane; your Grafana / Datadog / SIEM /
-Slack is the dashboard. Budget and burn alerts also reach your phone directly via standard
-Web Push (no relay), with a **Stop session** button right on the lock-screen notification
-([docs](docs/reference/push.md)).
+alert becomes a canonical event delivered as a plain POST to any number of `[[webhooks]]`
+(in-memory queue, a fixed retry schedule, then logged and dropped — no durable outbox).
+Pulpo is the event plane; your Grafana / Datadog / SIEM / Slack is the dashboard, reached
+through your own webhook receiver — see the
+[reference webhook consumer](contrib/examples/webhook-discord).
 
 **Run — durable and unattended.** Each agent runs in a `tmux` session with explicit lifecycle
 states that survive reboots (drop into the live terminal anytime with `pulpo attach`), a
@@ -176,15 +175,15 @@ no central server required, and nothing breaks if you only ever run one machine.
 There is deliberately no control plane joining machines together. Reach any node directly —
 `pulpo --url <host:port>` from the CLI, a saved connection in the web UI, or SSH/tmux
 — see [Control Your Agents From Anywhere](docs/guides/remote-control.md). For a view across
-machines, point every node's **event forwarding** (`[[webhooks]]` + Prometheus metrics) at a
-collector you already run, and aggregate there. This is the supported cross-node story: it
-adds no single point of failure and integrates with your existing observability.
+machines, point every node's **event forwarding** (`[[webhooks]]`) at a collector you
+already run, and aggregate there. This is the supported cross-node story: it adds no
+single point of failure and integrates with your existing observability.
 
 ## Core Capabilities
 
 - **Exact usage metering**: structured readers for Claude Code, Codex & pi (tokens, cost, cache, quota; pi in `--scan` only for now), cross-account / cross-agent rollups, `[rates.<model>]` config, output-scraping fallback for other agents.
 - **Cost control**: per-session / per-schedule budget caps (alert 80%, stop 100%) and a burn-velocity ($/hr) governor — alert-first, opt-in stop.
-- **Monitoring backbone**: signed canonical events to multiple webhooks with a durable outbox + backoff; toggleable Prometheus metrics; SSE stream; web push.
+- **Monitoring backbone**: canonical events delivered as a plain POST to multiple webhooks (in-memory queue, fixed retry schedule); SSE stream.
 - **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots.
 - **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error/completion patterns, git telemetry (branch, diff; PR URL detected from output).
 - **Harness adapters**: hook-driven lifecycle for Claude Code, Codex, and pi — a `needs input (<reason>)` status label and real resume of the harness's own conversation, once events are flowing; scrollback heuristics remain the fallback for every other command.
@@ -215,7 +214,7 @@ The daemon owns the truth; every surface reflects or operates on the same sessio
 | Live burn rate + projection | Yes | No | Post-hoc |
 | Budget enforcement (auto-stop) | Yes | No | No |
 | Alerts before the wall | Yes | No | No |
-| Forward events to your stack | Webhooks + Prometheus | No | No |
+| Forward events to your stack | Webhooks | No | No |
 | Self-hosted, data stays local | Yes | n/a | Yes |
 | Runs the sessions | Yes | n/a | No (reads logs) |
 

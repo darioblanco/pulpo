@@ -51,7 +51,20 @@ async fn test_migrate_uses_sqlx_migrations_table() {
             .fetch_all(store.pool())
             .await
             .unwrap();
-    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(versions, vec![1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+    // Web Push and the durable outbox were removed: both tables must be gone
+    // after migrating.
+    for table in ["push_subscriptions", "webhook_outbox"] {
+        let has_table: i32 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+        )
+        .bind(table)
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(has_table, 0, "{table} should be dropped");
+    }
 
     let has_sandbox: i32 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM pragma_table_info('sessions') WHERE name = 'sandbox'",
@@ -153,6 +166,81 @@ async fn test_migrate_warns_before_dropping_secrets_noop_when_empty() {
     let store = store_at_migration_0007().await;
 
     let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM secrets")
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    assert_eq!(count_before, 0);
+
+    store.migrate().await.unwrap();
+}
+
+/// Build a database at the pre-0009 schema (migrations 1-8 applied,
+/// `push_subscriptions`/`webhook_outbox` intact) the same way
+/// [`store_at_migration_0007`] builds a pre-0008 one.
+async fn store_at_migration_0008() -> Store {
+    let tmpdir = tempfile::tempdir().unwrap();
+    let tmpdir = Box::leak(Box::new(tmpdir));
+    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
+
+    let migrations_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let partial_dir = tempfile::tempdir().unwrap();
+    for entry in std::fs::read_dir(&migrations_src).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with("0009") {
+            continue;
+        }
+        std::fs::copy(entry.path(), partial_dir.path().join(name)).unwrap();
+    }
+    let partial = sqlx::migrate::Migrator::new(partial_dir.path())
+        .await
+        .unwrap();
+    partial.run(store.pool()).await.unwrap();
+
+    store
+}
+
+#[tokio::test]
+async fn test_migrate_warns_before_dropping_push_subscriptions() {
+    let store = store_at_migration_0008().await;
+
+    sqlx::query(
+        "INSERT INTO push_subscriptions (endpoint, p256dh, auth, created_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind("https://push.example.com/1")
+    .bind("p256dh-key")
+    .bind("auth-key")
+    .bind("2026-01-01T00:00:00Z")
+    .execute(store.pool())
+    .await
+    .unwrap();
+
+    let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM push_subscriptions")
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    assert_eq!(count_before, 1);
+
+    // Migrating drops push_subscriptions (migration 0009) but must not fail or
+    // block startup — the warning is best-effort operator notice, not a gate.
+    store.migrate().await.unwrap();
+
+    let has_table: i32 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='push_subscriptions'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap();
+    assert_eq!(has_table, 0);
+}
+
+#[tokio::test]
+async fn test_migrate_warns_before_dropping_push_subscriptions_noop_when_empty() {
+    // No rows in push_subscriptions — migrate() must still succeed with no
+    // warning path exercised beyond the early return.
+    let store = store_at_migration_0008().await;
+
+    let count_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM push_subscriptions")
         .fetch_one(store.pool())
         .await
         .unwrap();
@@ -1661,103 +1749,3 @@ async fn test_idle_status_roundtrip() {
     assert_eq!(fetched.status, SessionStatus::Idle);
 }
 
-// -- Push subscription tests --
-
-#[tokio::test]
-async fn test_push_subscription_save_and_list() {
-    let store = test_store().await;
-    store
-        .save_push_subscription("https://push.example.com/1", "p256dh-key", "auth-key")
-        .await
-        .unwrap();
-
-    let subs = store.list_push_subscriptions().await.unwrap();
-    assert_eq!(subs.len(), 1);
-    assert_eq!(subs[0].endpoint, "https://push.example.com/1");
-    assert_eq!(subs[0].p256dh, "p256dh-key");
-    assert_eq!(subs[0].auth, "auth-key");
-}
-
-#[tokio::test]
-async fn test_push_subscription_save_replaces_on_same_endpoint() {
-    let store = test_store().await;
-    store
-        .save_push_subscription("https://push.example.com/1", "old-p256dh", "old-auth")
-        .await
-        .unwrap();
-    store
-        .save_push_subscription("https://push.example.com/1", "new-p256dh", "new-auth")
-        .await
-        .unwrap();
-
-    let subs = store.list_push_subscriptions().await.unwrap();
-    assert_eq!(subs.len(), 1);
-    assert_eq!(subs[0].p256dh, "new-p256dh");
-    assert_eq!(subs[0].auth, "new-auth");
-}
-
-#[tokio::test]
-async fn test_push_subscription_multiple_endpoints() {
-    let store = test_store().await;
-    store
-        .save_push_subscription("https://push.example.com/1", "p1", "a1")
-        .await
-        .unwrap();
-    store
-        .save_push_subscription("https://push.example.com/2", "p2", "a2")
-        .await
-        .unwrap();
-
-    let subs = store.list_push_subscriptions().await.unwrap();
-    assert_eq!(subs.len(), 2);
-}
-
-#[tokio::test]
-async fn test_push_subscription_delete() {
-    let store = test_store().await;
-    store
-        .save_push_subscription("https://push.example.com/1", "p1", "a1")
-        .await
-        .unwrap();
-    store
-        .save_push_subscription("https://push.example.com/2", "p2", "a2")
-        .await
-        .unwrap();
-
-    store
-        .delete_push_subscription("https://push.example.com/1")
-        .await
-        .unwrap();
-
-    let subs = store.list_push_subscriptions().await.unwrap();
-    assert_eq!(subs.len(), 1);
-    assert_eq!(subs[0].endpoint, "https://push.example.com/2");
-}
-
-#[tokio::test]
-async fn test_push_subscription_delete_nonexistent() {
-    let store = test_store().await;
-    // Should not error when deleting a non-existent endpoint
-    store
-        .delete_push_subscription("https://push.example.com/nonexistent")
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
-async fn test_push_subscription_list_empty() {
-    let store = test_store().await;
-    let subs = store.list_push_subscriptions().await.unwrap();
-    assert!(subs.is_empty());
-}
-
-#[tokio::test]
-async fn test_push_subscription_debug_clone() {
-    let sub = PushSubscription {
-        endpoint: "https://push.example.com/1".into(),
-        p256dh: "key".into(),
-        auth: "auth".into(),
-    };
-    let debug = format!("{sub:?}");
-    assert!(debug.contains("push.example.com"));
-}

@@ -228,15 +228,9 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     let config_path = std::path::PathBuf::from(expanded.as_ref());
 
     // Auto-generate auth token on first run
-    let mut config_changed = config::ensure_auth_token(&mut config);
+    let config_changed = config::ensure_auth_token(&mut config);
     if config_changed {
         info!("Generated new auth token");
-    }
-
-    // Auto-generate VAPID keys on first run
-    if config::ensure_vapid_keys(&mut config) {
-        info!("Generated new VAPID keys for Web Push");
-        config_changed = true;
     }
 
     if config_changed {
@@ -355,52 +349,29 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
 
     let bind_mode = config.node.bind;
 
-    // Event forwarding: a single dispatcher converts bus events to the canonical
-    // envelope and routes them — webhooks through the durable SQLite outbox
-    // (delivered by a separate worker with retry + backoff, surviving restarts),
-    // web-push inline best-effort. The outbox worker also drains any rows left
-    // pending from before a restart, which is the durability guarantee.
+    // Event forwarding: a single dispatcher converts bus events to the
+    // canonical envelope and, for each configured webhook whose filter
+    // admits the event, delivers it with a fixed retry schedule (see
+    // `notifications::webhook::deliver`) — an in-memory, best-effort queue;
+    // there is no durable outbox, so a delivery still retrying when the
+    // daemon exits is simply lost, and nothing is replayed across a restart.
     // Union of the canonical top-level `[[webhooks]]` and the deprecated
     // `[notifications.webhooks]` form, so existing configs keep working.
     let webhooks = config.webhook_endpoints();
     for webhook_config in &webhooks {
-        info!(webhook = %webhook_config.name, "Webhook endpoint enabled (durable outbox)");
+        info!(webhook = %webhook_config.name, "Webhook endpoint enabled");
     }
-    let web_push = if !config.notifications.vapid.private_key.is_empty()
-        && !config.notifications.vapid.public_key.is_empty()
-    {
-        info!("Web Push sink enabled");
-        Some(notifications::web_push::WebPushSink::new(
-            store.clone(),
-            config.notifications.vapid.private_key.clone(),
-            config.notifications.vapid.action_secret.clone(),
-        ))
-    } else {
-        None
-    };
-    if !webhooks.is_empty() || web_push.is_some() {
+    if !webhooks.is_empty() {
         let dispatcher_rx = event_tx.subscribe();
         let (dispatcher_shutdown_tx, dispatcher_shutdown_rx) = watch::channel(false);
         tokio::spawn(notifications::run_dispatcher_loop(
-            store.clone(),
-            webhooks.clone(),
-            web_push,
+            webhooks,
             config.node.name.clone(),
             dispatcher_rx,
             dispatcher_shutdown_rx,
         ));
         shutdown_handle.add_sender(dispatcher_shutdown_tx);
         info!("Event dispatcher started");
-    }
-    if !webhooks.is_empty() {
-        let (outbox_shutdown_tx, outbox_shutdown_rx) = watch::channel(false);
-        tokio::spawn(notifications::outbox::run_outbox_worker(
-            store.clone(),
-            webhooks,
-            outbox_shutdown_rx,
-        ));
-        shutdown_handle.add_sender(outbox_shutdown_tx);
-        info!("Webhook outbox worker started");
     }
 
     #[cfg(not(coverage))]
@@ -775,46 +746,11 @@ events = ["ready", "killed"]
     }
 
     #[tokio::test]
-    async fn test_build_app_generates_vapid_keys() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let config_path = tmpdir.path().join("config.toml");
-        let data_dir = tmpdir.path().join("data");
-        std::fs::write(
-            &config_path,
-            format!(
-                r#"
-[node]
-name = "test"
-port = 0
-data_dir = "{}"
-"#,
-                data_dir.display()
-            ),
-        )
-        .unwrap();
-
-        let cli = Cli {
-            config: config_path.to_str().unwrap().into(),
-            port: Some(0),
-        };
-
-        let (_app, _addr, handle) = build_app(&cli).await.unwrap();
-
-        // VAPID keys should have been auto-generated and saved
-        let saved = config::load(config_path.to_str().unwrap()).unwrap();
-        assert!(!saved.notifications.vapid.private_key.is_empty());
-        assert!(!saved.notifications.vapid.public_key.is_empty());
-        assert_eq!(saved.notifications.vapid.private_key.len(), 43);
-        assert_eq!(saved.notifications.vapid.public_key.len(), 87);
-        // The push action-token HMAC secret is generated alongside the VAPID keys.
-        assert!(!saved.notifications.vapid.action_secret.is_empty());
-        assert_eq!(saved.notifications.vapid.action_secret.len(), 43);
-
-        handle.shutdown();
-    }
-
-    #[tokio::test]
-    async fn test_build_app_preserves_existing_vapid_keys() {
+    async fn test_build_app_tolerates_retired_vapid_config() {
+        // Web Push was removed; a config written before the removal may still
+        // carry a `[notifications.vapid]` table. The daemon must boot and
+        // ignore it rather than reject it (same treatment as the retired
+        // `[notifications.discord]` section).
         let tmpdir = tempfile::tempdir().unwrap();
         let config_path = tmpdir.path().join("config.toml");
         let data_dir = tmpdir.path().join("data");
@@ -844,16 +780,12 @@ public_key = "existing-pub"
             port: Some(0),
         };
 
-        let (_app, _addr, handle) = build_app(&cli).await.unwrap();
-
-        // Existing keys should be preserved
+        let (_app, addr, handle) = build_app(&cli).await.unwrap();
+        assert_eq!(addr, "127.0.0.1:0");
+        // The pre-existing auth token is preserved (no config_changed rewrite
+        // needed just because a retired section is present).
         let saved = config::load(config_path.to_str().unwrap()).unwrap();
-        assert_eq!(saved.notifications.vapid.private_key, "existing-priv");
-        assert_eq!(saved.notifications.vapid.public_key, "existing-pub");
         assert_eq!(saved.auth.token, "existing-token");
-        // This config predates the action_secret field — it should be backfilled
-        // rather than left empty, without touching the pre-existing VAPID keys.
-        assert!(!saved.notifications.vapid.action_secret.is_empty());
 
         handle.shutdown();
     }

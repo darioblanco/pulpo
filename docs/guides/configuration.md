@@ -62,18 +62,18 @@ detection stops applying once a session's events start flowing — see
 [Harness Adapters](/architecture/harness-adapters). See
 [Session Lifecycle](/operations/session-lifecycle) for the full state-transition picture.
 
-## Cost Rates, Quotas, and Metrics
+## Cost Rates and Quotas
 
 `[rates.<model>]` prices a model for exact cost accounting (`pulpo usage`); `[plans.<name>]`
 supplies the weekly token allowance Anthropic doesn't publish, enabling Claude's "% of
-weekly cap" projection; `[metrics]` toggles the opt-in Prometheus `/api/v1/metrics`
-endpoint (off by default). All three are covered field-by-field in the
+weekly cap" projection. Both are covered field-by-field in the
 [Config Reference](/reference/config).
 
 ## Notifications
 
-Define one `[[webhooks]]` table per delivery endpoint. Each filters the universal event
-stream by `events` (`<type>.<subtype>` globs) and `min_severity`:
+`[[webhooks]]` is the only notification channel. Define one table per delivery endpoint;
+each filters the universal event stream by `events` (`<type>.<subtype>` globs) and
+`min_severity`:
 
 ```toml
 [[webhooks]]
@@ -81,19 +81,14 @@ name = "ops"
 url = "https://example.com/hooks/pulpo"
 events = ["lifecycle.*", "usage_alert.*", "intervention.*"]  # empty means all events
 min_severity = "warn"                       # info < warn < critical; omit for no floor
-secret = "optional-hmac-signing-secret"     # signs requests with X-Pulpo-Signature
 ```
 
-The older `[[notifications.webhooks]]` form is deprecated but still read for back-compat
-(unioned with the top-level list). See the [config reference](/reference/config#webhooks)
-for the glob forms and the full event catalogue.
-
-**Web Push** is the other delivery channel — standard Web Push (VAPID + ECE), straight to
-the browser, no relay. Every subscriber gets lifecycle changes, budget/burn alerts, and
-interventions; budget/burn alerts additionally carry a **"Stop session" action button**
-right on the phone notification, so you can kill a runaway session from the lock screen
-without opening the app. See the [Push Notifications reference](/reference/push) for the
-subscribe flow, payload schema, and the action-token endpoint.
+Delivery is a plain POST (no signing) from an in-memory queue: the initial attempt plus
+up to 3 retries (~1s, 3s, 9s), then the event is logged and dropped — there's no durable
+outbox, so nothing is retried after a restart. The older `[[notifications.webhooks]]`
+form is deprecated but still read for back-compat (unioned with the top-level list). See
+the [config reference](/reference/config#webhooks) for the glob forms and the full event
+catalogue.
 
 ## Auth
 
