@@ -2123,6 +2123,113 @@ async fn test_ready_transition_via_exit_code_marker_nonzero_persists_value() {
     assert_eq!(fetched.exit_code, Some(127));
 }
 
+/// Build a `Ready` session with no `exit_code` recorded yet — the state a
+/// hook-driven `SessionEnded` event leaves a session in (see
+/// `session::manager::apply_harness_event`), which never reads the `.code`
+/// marker itself.
+fn ready_session_pending_exit_code(name: &str) -> Session {
+    Session {
+        id: uuid::Uuid::new_v4(),
+        name: name.into(),
+        workdir: "/tmp/repo".into(),
+        command: "echo hello".into(),
+        description: Some("test".into()),
+        status: SessionStatus::Ready,
+        backend_session_id: Some(name.to_owned()),
+        exit_code: None,
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn test_ready_session_exit_code_recorded_via_watchdog_sweep() {
+    // A hook-driven `SessionEnded` event moves a session straight to `Ready`
+    // without ever reading the `.code` exit marker — only the watchdog's own
+    // marker sweep does that (see `check_idle_sessions`). Use a backend whose
+    // `capture_output` always fails to prove the sweep is marker-only and never
+    // touches the backend for a `Ready` session, unlike the full Active/Idle
+    // `check_session_idle` path.
+    let backend = Arc::new(MockBackend::failing_capture());
+    let store = test_store().await;
+    let session = ready_session_pending_exit_code("hook-ended");
+    store.insert_session(&session).await.unwrap();
+
+    let marker_path =
+        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string());
+    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
+    std::fs::write(&marker_path, "0").unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+
+    let dyn_backend: Arc<dyn Backend> = backend;
+    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Ready);
+    assert_eq!(fetched.exit_code, Some(0));
+}
+
+#[tokio::test]
+async fn test_ready_session_without_marker_yet_stays_pending() {
+    // The marker hasn't been written yet (a race between the hook firing and
+    // `wrap_command` observing the agent process exit) — the sweep must do
+    // nothing and try again on the next tick, not error out or fake a code.
+    let backend = Arc::new(MockBackend::new());
+    let store = test_store().await;
+    let session = ready_session_pending_exit_code("hook-ended-no-marker-yet");
+    store.insert_session(&session).await.unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+
+    let dyn_backend: Arc<dyn Backend> = backend;
+    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Ready);
+    assert!(fetched.exit_code.is_none());
+}
+
+#[tokio::test]
+async fn test_sweep_ready_exit_code_direct_unit() {
+    // Direct unit coverage of `sweep_ready_exit_code` itself, isolated from the
+    // `check_idle_sessions` loop above it.
+    let store = test_store().await;
+    let session = ready_session_pending_exit_code("direct-sweep");
+    store.insert_session(&session).await.unwrap();
+
+    let marker_path =
+        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string());
+    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
+    std::fs::write(&marker_path, "42").unwrap();
+
+    sweep_ready_exit_code(&store, &session).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.exit_code, Some(42));
+}
+
 #[tokio::test]
 async fn test_ready_transition_text_pattern_still_works_without_marker() {
     // Regression lock: the historical text-scrape path must keep working unchanged
