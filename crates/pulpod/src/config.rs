@@ -71,6 +71,34 @@ pub struct Config {
     /// cost withheld rather than guessed.
     #[serde(default)]
     pub rates: HashMap<String, RateConfig>,
+    /// Built-in cron scheduler tuning.
+    #[serde(default)]
+    pub scheduler: SchedulerConfig,
+}
+
+/// Built-in cron scheduler configuration (`[scheduler]`).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SchedulerConfig {
+    /// How often the scheduler checks for due schedules, in seconds. Production
+    /// default is 60 (matching cron's own minute granularity); the end-to-end
+    /// scenario suite (`crates/pulpo-e2e`) overrides this much lower so a schedule
+    /// test doesn't have to wait a full minute for the first check after the
+    /// schedule becomes due.
+    #[serde(default = "default_scheduler_tick_secs")]
+    pub tick_secs: u64,
+}
+
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            tick_secs: default_scheduler_tick_secs(),
+        }
+    }
+}
+
+const fn default_scheduler_tick_secs() -> u64 {
+    60
 }
 
 /// One `[rates.<model>]` entry: USD per million tokens.

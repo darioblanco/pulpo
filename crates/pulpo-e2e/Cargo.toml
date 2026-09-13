@@ -1,0 +1,34 @@
+[package]
+name = "pulpo-e2e"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "End-to-end scenario suite: real pulpod + real tmux + a fake harness"
+publish = false
+
+[lib]
+name = "pulpo_e2e"
+path = "src/lib.rs"
+
+# Fake harness binaries imitating a coding agent CLI's surface (Claude Code today;
+# designed so a fake-codex/fake-pi is one more file). Dev-only tooling for the
+# scenario suite below — never part of a release build (no `[package.metadata.dist]`
+# entry, and this whole crate is excluded from `dist-workspace.toml`).
+[[bin]]
+name = "fake-claude"
+path = "src/bin/fake-claude.rs"
+
+[dependencies]
+pulpo-common = { path = "../pulpo-common", version = "0.2.0" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+tempfile = "3"
+
+[lints]
+workspace = true
