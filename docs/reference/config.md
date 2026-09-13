@@ -110,7 +110,11 @@ that subscribes to the universal event stream. Pulpo POSTs the canonical event e
 to every endpoint whose filter admits the event. Delivery is a **plain POST** from an
 in-memory queue: the initial attempt plus up to 3 retries (~1s, 3s, 9s), and an event
 that exhausts every attempt is logged and dropped — there is no persistence, so nothing
-survives a restart or is retried after the daemon gives up.
+survives a restart or is retried after the daemon gives up. Delivery is also bounded — a
+5s connect / 10s total per-attempt timeout, and at most 16 deliveries in flight across
+every endpoint at once — and a failed delivery's log line never includes the URL itself
+(it's the shared secret); see [API Reference § Webhooks](/reference/api#webhooks) for
+the full envelope shape and these bounds.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -156,10 +160,13 @@ startup. Prefer the top-level form for new configs. The fields are identical.
 These keys existed in earlier releases and are gone. A config file written before a given
 removal still **loads**: the key is parsed and ignored (all of the keys below log a
 startup warning; a few older removals — `[docker]`, `[controller]`, `[inks.<name>]`,
-`[peers]`, `notifications.discord` — are ignored silently, with no warning). Nothing in
-`pulpod` writes the config file back on its own, so a retired key stays in the file,
-still ignored, until you edit it out by hand. Do not set any of these in a new config —
-they have no effect.
+`[peers]`, `notifications.discord` — are ignored silently, with no warning). `pulpod`
+only ever writes the config file back once, automatically, the very first time it runs
+with an empty `auth.token` (to persist the freshly generated one) — that save happens to
+drop any retired key present at that moment too, since retired fields are never
+serialized. Once a token exists, nothing writes the file again, so a retired key you add
+or leave afterward stays in the file, still ignored, until you edit it out by hand. Do
+not set any of these in a new config — they have no effect.
 
 | Key | Removed | Replacement |
 |-----|---------|-------------|
