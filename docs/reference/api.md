@@ -15,12 +15,13 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/node` | Node info (name, hostname, os, arch, cpus, memory, GPU) |
-| GET | `/api/v1/config` | Current config |
-| PUT | `/api/v1/config` | Update config (live reload) |
+| GET | `/api/v1/config` | Current effective config |
 | GET | `/api/v1/watchdog` | Watchdog config |
-| PUT | `/api/v1/watchdog` | Update watchdog config (live reload) |
 | GET | `/api/v1/notifications` | Notification config |
-| PUT | `/api/v1/notifications` | Update notification config |
+
+These are all read-only. The config file (`~/.pulpo/config.toml`) is the source of
+truth — there is no API to edit it. To change anything, edit the file and restart
+`pulpod`; see [Configuration](/guides/configuration).
 
 `[[webhooks]]` is the only notification channel — see
 [Config Reference § webhooks](/reference/config#webhooks) for the config shape and

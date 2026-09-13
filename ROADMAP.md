@@ -516,10 +516,31 @@ Revisit only on real demand:
 ## Removed
 
 Newest first. Every September 2026 entry landed the same week as harness adapters (PR
-#97) and is independent of it, except `adopt_tmux` (see below) and the two entries
-directly below (the burn/projection/pool/scraping removal and the Web Push/metrics/
-outbox removal), which landed later the same month, independently of each other.
+#97) and is independent of it, except `adopt_tmux` (see below) and the burn/projection/
+pool/scraping removal and the Web Push/metrics/outbox removal entries below, which
+landed later the same month, independently of each other.
 
+- ~~Config-editing API (`PUT /api/v1/config`/`/watchdog`/`/notifications`), the settings
+  tabbar UI, and the PWA service worker~~ (September 2026) — the config file
+  (`~/.pulpo/config.toml`) is now the sole source of truth; the web UI reads it but does
+  not write it back. Removed: the three `PUT` handlers and their
+  `UpdateConfigRequest`/`UpdateConfigResponse`/`UpdateWatchdogRequest`/
+  `UpdateNotificationsRequest`/`WebhookEndpointUpdateRequest` types (`pulpo-common`), the
+  "restart required" detection, and the config-file rewrite the daemon did on every
+  settings save (a retired key like `watchdog.adopt_tmux` is now simply ignored forever
+  rather than dropped the next time a save happened to fire). `web/src/pages/settings.tsx`
+  became a single read-only "Configuration" view (formatted effective-config list, with a
+  hint to edit the file and restart); `components/settings/{node,watchdog,notifications}-
+  settings.tsx` and `form-field.tsx` were deleted with their tests, and the now-unused
+  `components/ui/tabs.tsx` (its only caller) went with them. The PWA install path
+  (`web/src/sw.ts`, `vite-plugin-pwa`, `workbox-precaching`/`workbox-routing`, the web
+  manifest config, and the `apple-mobile-web-app-*`/`apple-touch-icon` tags + icon assets
+  in `index.html`/`public/icons/`) was removed too — an installable icon wasn't worth a
+  service worker once the settings UI it was bundled with went read-only; the web UI is
+  now a plain responsive page. `GET /api/v1/config`/`/watchdog`/`/notifications` are kept
+  as read-only views. A web-wide dead-code sweep in the same PR also deleted three
+  `lib/notifications.ts` exports (`formatStatusLabel`, `processSessionChanges`,
+  `requestNotificationPermission`) that had no non-test callers.
 - ~~Burn-velocity governor (M2), usage projection (B1), pool attribution (B2), and the
   output-scraping usage fallback~~ (September 2026) — the biggest
   simplification of the metering/enforcement surface since Phase A shipped exact
@@ -576,7 +597,7 @@ outbox removal), which landed later the same month, independently of each other.
   is kept on the wire (never emitted by new code) since historical
   `sessions.intervention_code`/`intervention_events.code` rows may still carry it — same
   treatment as the retired `Runtime::Docker` variant. The three retired config keys are
-  tolerated in old configs (parsed, ignored, dropped on next save), same as
+  tolerated in old configs (parsed and ignored), same as
   `watchdog.adopt_tmux`. `NodeInfo.memory_mb` (total system RAM, shown in the node info bar
   alongside hostname/OS/arch/CPU count) is unrelated general system info and was kept —
   its reader moved from `watchdog::memory` to `platform::total_memory_mb`.

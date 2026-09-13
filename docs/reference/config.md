@@ -5,11 +5,16 @@ Default file: `~/.pulpo/config.toml`
 All sections are optional. Pulpo runs with zero config.
 
 Unknown config fields are rejected — except a short list of **retired keys** (see the
-section at the bottom), which still parse from a config written before their removal, are
-ignored, and are dropped the next time the config is saved. Any other unrecognized field
-is rejected outright.
+section at the bottom), which still parse from a config written before their removal and
+are ignored. Any other unrecognized field is rejected outright.
 Pre-`sqlx` legacy databases are unsupported; if startup reports an unsupported legacy schema,
 delete `~/.pulpo/state.db` and restart.
+
+The config file is the source of truth: `pulpod` and the web UI only read it (see
+[`GET /api/v1/config`](/reference/api#node-config)). To change anything, edit the file
+by hand and restart `pulpod` — there is no API or UI to write it back, so a retired key
+you remove yourself simply stays gone; one you leave in place stays in the file (ignored)
+until you edit it out.
 
 ## `[node]`
 
@@ -140,10 +145,12 @@ startup. Prefer the top-level form for new configs. The fields are identical.
 ## Retired keys (ignored with a warning)
 
 These keys existed in earlier releases and are gone. A config file written before a given
-removal still **loads**: the key is parsed, ignored, and dropped the next time the config
-is saved (all of the keys below log a startup warning; a few older removals — `[docker]`,
-`[controller]`, `[inks.<name>]`, `[peers]`, `notifications.discord` — are dropped
-silently). Do not set any of these in a new config — they have no effect.
+removal still **loads**: the key is parsed and ignored (all of the keys below log a
+startup warning; a few older removals — `[docker]`, `[controller]`, `[inks.<name>]`,
+`[peers]`, `notifications.discord` — are ignored silently, with no warning). Nothing in
+`pulpod` writes the config file back on its own, so a retired key stays in the file,
+still ignored, until you edit it out by hand. Do not set any of these in a new config —
+they have no effect.
 
 | Key | Removed | Replacement |
 |-----|---------|-------------|

@@ -60,7 +60,7 @@ pulpo spawn nightly-review --budget-cost 5 -- claude -p "review today's diff"
 # Plan with one model, build with another — same worktree, one command
 pulpo handoff my-api -- codex "implement the fix"
 
-# Open the dashboard (installable as a PWA on your phone)
+# Open the dashboard (bookmark it on your phone)
 pulpo ui
 ```
 
@@ -186,7 +186,7 @@ single point of failure and integrates with your existing observability.
 - **Harness adapters**: hook-driven lifecycle for Claude Code, Codex, and pi — a `needs input (<reason>)` status label and real resume of the harness's own conversation, once events are flowing; scrollback heuristics remain the fallback for every other command.
 - **Execution isolation**: per-session git worktrees for parallel work on one repo.
 - **Scheduled runs**: cron-based schedules (`pulpo schedule`) with the same budgets and worktree support.
-- **Sovereign access**: single binary with embedded web UI/PWA, CLI, REST API; Tailscale transport for private remote access.
+- **Sovereign access**: single binary with embedded web UI, CLI, REST API; Tailscale transport for private remote access.
 - **Command-agnostic**: any terminal agent or command.
 
 ## How It Works

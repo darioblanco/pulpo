@@ -10,8 +10,12 @@ Breaking cleanup note:
   short list of **retired** keys (superseded features — `watchdog.adopt_tmux`,
   `node.tag`, `[controller]`, `[peers]`, `[inks]`, `[docker]`, `[plans]`, the three
   `watchdog.burn_*` keys, ...) is the exception — those still load with a startup warning
-  and are dropped the next time the config is saved (see
-  [Config Reference](/reference/config) "Retired keys")
+  and are ignored (see [Config Reference](/reference/config) "Retired keys"). Nothing
+  rewrites the config file on its own, so a retired key stays in the file, still
+  ignored, until you remove it by hand.
+- the config file is the source of truth — `pulpod` and the web UI only read it (there
+  is no settings-editing API or UI). Change anything by editing the file directly and
+  restarting `pulpod`.
 - pre-`sqlx` legacy databases are no longer upgraded in place; if Pulpo reports an unsupported legacy schema, delete `~/.pulpo/state.db` and restart
 
 ## Minimal Example

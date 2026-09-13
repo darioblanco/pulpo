@@ -47,6 +47,12 @@ Canonical runtime concepts:
   /docs/architecture/harness-adapters.md.
 - pulpod exposes REST and SSE on port 7433 by default.
 - Config path defaults to ~/.pulpo/config.toml.
+- There is no config-editing API or UI (removed September 2026) — config.toml is the sole
+  source of truth. `GET /api/v1/config`/`/watchdog`/`/notifications` and the web UI's
+  Configuration page are read-only views of the effective config; to change anything,
+  edit the file and restart pulpod.
+- There is no PWA/service worker (removed September 2026) — the web UI is a plain
+  responsive page, reached by bookmarking it rather than installing it.
 - `pulpo usage --scan` reads Claude Code, Codex, and pi session files directly from disk —
   cross-agent spend with no daemon routing required.
 - `pulpo handoff <SOURCE> [NAME]` (alias `h`) spawns a new session inheriting a source
