@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
 use axum::{Json, extract::State};
-use pulpo_common::api::{
-    NotificationsConfigResponse, UpdateNotificationsRequest, WebhookEndpointConfigResponse,
-};
+use pulpo_common::api::{NotificationsConfigResponse, WebhookEndpointConfigResponse};
 
-use crate::api::error::{ApiError, internal_error};
+use crate::api::error::ApiError;
 
 fn to_response(config: &crate::config::Config) -> NotificationsConfigResponse {
     NotificationsConfigResponse {
@@ -24,6 +22,9 @@ fn to_response(config: &crate::config::Config) -> NotificationsConfigResponse {
     }
 }
 
+/// Read-only view of pulpod's effective notification configuration. The config file
+/// (`~/.pulpo/config.toml`) is the source of truth — editing happens by hand-editing
+/// the file and restarting pulpod.
 pub async fn get_notifications(
     State(state): State<Arc<super::AppState>>,
 ) -> Result<Json<NotificationsConfigResponse>, ApiError> {
@@ -33,158 +34,17 @@ pub async fn get_notifications(
     Ok(Json(resp))
 }
 
-pub async fn update_notifications(
-    State(state): State<Arc<super::AppState>>,
-    Json(req): Json<UpdateNotificationsRequest>,
-) -> Result<Json<NotificationsConfigResponse>, ApiError> {
-    let mut config = state.config.write().await;
-
-    // Webhooks (full replace when provided). Writes the canonical top-level
-    // `[[webhooks]]` list and clears the deprecated `[notifications.webhooks]`
-    // form so the edited set is authoritative.
-    if let Some(webhooks) = req.webhooks {
-        config.webhooks = webhooks
-            .into_iter()
-            .map(|w| crate::config::WebhookEndpointConfig {
-                name: w.name,
-                url: w.url,
-                events: w.events,
-                min_severity: w.min_severity,
-                secret: None,
-            })
-            .collect();
-        config.notifications.webhooks.clear();
-    }
-
-    // Save to disk
-    if !state.config_path.as_os_str().is_empty() {
-        crate::config::save(&config, &state.config_path)
-            .map_err(|e| internal_error(&e.to_string()))?;
-    }
-
-    let resp = to_response(&config);
-    drop(config);
-    Ok(Json(resp))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::test_support::{test_state, test_state_with_config_path};
+    use crate::api::test_support::test_state;
     use crate::config::{Config, NodeConfig};
-    use axum::extract::State;
-    use pulpo_common::api::WebhookEndpointUpdateRequest;
 
     #[tokio::test]
     async fn test_get_notifications_empty() {
         let state = test_state().await;
         let Json(resp) = get_notifications(State(state)).await.unwrap();
         assert!(resp.webhooks.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_update_notifications_set_webhooks() {
-        let state = test_state().await;
-        let req = UpdateNotificationsRequest {
-            webhooks: Some(vec![
-                WebhookEndpointUpdateRequest {
-                    name: "ci-hook".into(),
-                    url: "https://example.com/hook".into(),
-                    events: vec!["ready".into()],
-                    min_severity: None,
-                },
-                WebhookEndpointUpdateRequest {
-                    name: "logs-hook".into(),
-                    url: "https://logs.example.com".into(),
-                    events: vec![],
-                    min_severity: None,
-                },
-            ]),
-        };
-        let Json(resp) = update_notifications(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.webhooks.len(), 2);
-        assert_eq!(resp.webhooks[0].name, "ci-hook");
-        assert_eq!(resp.webhooks[1].name, "logs-hook");
-    }
-
-    #[tokio::test]
-    async fn test_update_notifications_webhooks_replaces() {
-        let state = test_state().await;
-        // Set initial
-        let req = UpdateNotificationsRequest {
-            webhooks: Some(vec![WebhookEndpointUpdateRequest {
-                name: "old".into(),
-                url: "https://old.com".into(),
-                events: vec![],
-                min_severity: None,
-            }]),
-        };
-        let _ = update_notifications(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        // Replace
-        let req = UpdateNotificationsRequest {
-            webhooks: Some(vec![WebhookEndpointUpdateRequest {
-                name: "new".into(),
-                url: "https://new.com".into(),
-                events: vec!["killed".into()],
-                min_severity: None,
-            }]),
-        };
-        let Json(resp) = update_notifications(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.webhooks.len(), 1);
-        assert_eq!(resp.webhooks[0].name, "new");
-    }
-
-    #[tokio::test]
-    async fn test_update_notifications_empty_webhooks_clears() {
-        let state = test_state().await;
-        // Set initial
-        let req = UpdateNotificationsRequest {
-            webhooks: Some(vec![WebhookEndpointUpdateRequest {
-                name: "hook".into(),
-                url: "https://a.com".into(),
-                events: vec![],
-                min_severity: None,
-            }]),
-        };
-        let _ = update_notifications(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        // Clear
-        let req = UpdateNotificationsRequest {
-            webhooks: Some(vec![]),
-        };
-        let Json(resp) = update_notifications(State(state), Json(req)).await.unwrap();
-        assert!(resp.webhooks.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_update_notifications_empty_request() {
-        let state = test_state().await;
-        let req = UpdateNotificationsRequest::default();
-        let Json(resp) = update_notifications(State(state), Json(req)).await.unwrap();
-        assert!(resp.webhooks.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_update_notifications_saves_to_disk() {
-        let state = test_state_with_config_path().await;
-        let req = UpdateNotificationsRequest {
-            webhooks: Some(vec![WebhookEndpointUpdateRequest {
-                name: "save-hook".into(),
-                url: "https://example.com/save".into(),
-                events: vec!["active".into()],
-                min_severity: None,
-            }]),
-        };
-        let _ = update_notifications(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        let loaded = crate::config::load(state.config_path.to_str().unwrap()).unwrap();
-        // Updates write the canonical top-level `[[webhooks]]` list.
-        assert_eq!(loaded.webhooks.len(), 1);
-        assert_eq!(loaded.webhooks[0].url, "https://example.com/save");
     }
 
     #[test]

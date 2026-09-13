@@ -64,34 +64,6 @@ pub async fn test_state_with(mutate: impl FnOnce(&mut Config)) -> Arc<AppState> 
     AppState::new(config, manager, store)
 }
 
-/// [`test_state`], but built with `AppState::with_event_tx` and a real
-/// `{tmpdir}/config.toml` path — for handlers that persist config to disk.
-pub async fn test_state_with_config_path() -> Arc<AppState> {
-    let tmpdir = tempfile::tempdir().unwrap();
-    let tmpdir = Box::leak(Box::new(tmpdir));
-    let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-    store.migrate().await.unwrap();
-    let backend = Arc::new(StubBackend);
-    let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
-    let config_path = tmpdir.path().join("config.toml");
-    let (event_tx, _) = tokio::sync::broadcast::channel(16);
-    AppState::with_event_tx(
-        Config {
-            node: NodeConfig {
-                name: "test-node".into(),
-                port: 7433,
-                data_dir: tmpdir.path().to_str().unwrap().into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        },
-        config_path,
-        manager,
-        event_tx,
-        store,
-    )
-}
-
 /// A [`test_state`] backed by a caller-supplied backend, for tests that need
 /// non-default `is_alive`/`kill_session`/etc behavior (dead sessions, failing
 /// backends, ...).

@@ -1,10 +1,13 @@
 use std::sync::Arc;
 
 use axum::{Json, extract::State};
-use pulpo_common::api::{UpdateWatchdogRequest, WatchdogConfigResponse};
+use pulpo_common::api::WatchdogConfigResponse;
 
-use crate::api::error::{ApiError, bad_request, internal_error};
+use crate::api::error::ApiError;
 
+/// Read-only view of pulpod's effective watchdog configuration. The config file
+/// (`~/.pulpo/config.toml`) is the source of truth — editing happens by hand-editing
+/// the file and restarting pulpod.
 pub async fn get_watchdog(
     State(state): State<Arc<super::AppState>>,
 ) -> Result<Json<WatchdogConfigResponse>, ApiError> {
@@ -21,82 +24,10 @@ pub async fn get_watchdog(
     Ok(Json(resp))
 }
 
-pub async fn update_watchdog(
-    State(state): State<Arc<super::AppState>>,
-    Json(req): Json<UpdateWatchdogRequest>,
-) -> Result<Json<WatchdogConfigResponse>, ApiError> {
-    let mut config = state.config.write().await;
-
-    if let Some(enabled) = req.enabled {
-        config.watchdog.enabled = enabled;
-    }
-    if let Some(interval) = req.check_interval_secs {
-        config.watchdog.check_interval_secs = interval;
-    }
-    if let Some(timeout) = req.idle_timeout_secs {
-        config.watchdog.idle_timeout_secs = timeout;
-    }
-    if let Some(action) = req.idle_action {
-        config.watchdog.idle_action = action;
-    }
-    if let Some(threshold) = req.idle_threshold_secs {
-        config.watchdog.idle_threshold_secs = threshold;
-    }
-    if let Some(patterns) = req.extra_waiting_patterns {
-        config.watchdog.waiting_patterns = patterns;
-    }
-
-    // Validate the updated config
-    config
-        .watchdog
-        .validate()
-        .map_err(|e| bad_request(&e.to_string()))?;
-
-    // Save to disk
-    if !state.config_path.as_os_str().is_empty() {
-        crate::config::save(&config, &state.config_path)
-            .map_err(|e| internal_error(&e.to_string()))?;
-    }
-
-    // Push updated config to the running watchdog loop
-    if let Some(tx) = &state.watchdog_config_tx {
-        let runtime_cfg = crate::watchdog::WatchdogRuntimeConfig {
-            interval: std::time::Duration::from_secs(config.watchdog.check_interval_secs),
-            idle: crate::watchdog::IdleConfig {
-                enabled: config.watchdog.idle_timeout_secs > 0,
-                timeout_secs: config.watchdog.idle_timeout_secs,
-                action: if config.watchdog.idle_action == "kill" {
-                    crate::watchdog::IdleAction::Kill
-                } else {
-                    crate::watchdog::IdleAction::Alert
-                },
-                threshold_secs: config.watchdog.idle_threshold_secs,
-            },
-            extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
-        };
-        // Ignore send error — watchdog may have shut down
-        let _ = tx.send(runtime_cfg);
-    }
-
-    let resp = WatchdogConfigResponse {
-        enabled: config.watchdog.enabled,
-        check_interval_secs: config.watchdog.check_interval_secs,
-        idle_timeout_secs: config.watchdog.idle_timeout_secs,
-        idle_action: config.watchdog.idle_action.clone(),
-        idle_threshold_secs: config.watchdog.idle_threshold_secs,
-        extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
-    };
-    drop(config);
-    Ok(Json(resp))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::AppState;
-    use crate::api::test_support::{self, test_state, test_state_with_config_path};
-    use axum::extract::State;
-    use axum::http::StatusCode;
+    use crate::api::test_support::test_state;
 
     #[tokio::test]
     async fn test_get_watchdog_returns_defaults() {
@@ -106,158 +37,5 @@ mod tests {
         assert_eq!(resp.check_interval_secs, 10);
         assert_eq!(resp.idle_timeout_secs, 600);
         assert_eq!(resp.idle_action, "alert");
-    }
-
-    #[tokio::test]
-    async fn test_update_watchdog_all_fields() {
-        let state = test_state().await;
-        let req = UpdateWatchdogRequest {
-            enabled: Some(false),
-            check_interval_secs: Some(30),
-            idle_timeout_secs: Some(300),
-            idle_action: Some("kill".into()),
-            idle_threshold_secs: None,
-            extra_waiting_patterns: None,
-        };
-        let Json(resp) = update_watchdog(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        assert!(!resp.enabled);
-        assert_eq!(resp.check_interval_secs, 30);
-        assert_eq!(resp.idle_timeout_secs, 300);
-        assert_eq!(resp.idle_action, "kill");
-
-        // Verify persisted in memory
-        let Json(current) = get_watchdog(State(state)).await.unwrap();
-        assert!(!current.enabled);
-        assert_eq!(current.check_interval_secs, 30);
-    }
-
-    #[tokio::test]
-    async fn test_update_watchdog_partial() {
-        let state = test_state().await;
-        let req = UpdateWatchdogRequest {
-            enabled: Some(false),
-            ..Default::default()
-        };
-        let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
-        assert!(!resp.enabled);
-        // Others unchanged from defaults
-        assert_eq!(resp.check_interval_secs, 10);
-    }
-
-    #[tokio::test]
-    async fn test_update_watchdog_invalid_interval() {
-        let state = test_state().await;
-        let req = UpdateWatchdogRequest {
-            check_interval_secs: Some(0),
-            ..Default::default()
-        };
-        let result = update_watchdog(State(state), Json(req)).await;
-        assert!(result.is_err());
-        let (status, _) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn test_update_watchdog_invalid_idle_action() {
-        let state = test_state().await;
-        let req = UpdateWatchdogRequest {
-            idle_action: Some("explode".into()),
-            ..Default::default()
-        };
-        let result = update_watchdog(State(state), Json(req)).await;
-        assert!(result.is_err());
-        let (status, Json(err)) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert!(err.error.contains("idle_action"));
-    }
-
-    #[tokio::test]
-    async fn test_update_watchdog_saves_to_disk() {
-        let state = test_state_with_config_path().await;
-        let req = UpdateWatchdogRequest {
-            enabled: Some(false),
-            check_interval_secs: Some(75),
-            ..Default::default()
-        };
-        let _ = update_watchdog(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        let loaded = crate::config::load(state.config_path.to_str().unwrap()).unwrap();
-        assert!(!loaded.watchdog.enabled);
-        assert_eq!(loaded.watchdog.check_interval_secs, 75);
-    }
-
-    #[tokio::test]
-    async fn test_update_watchdog_empty_request() {
-        let state = test_state().await;
-        let req = UpdateWatchdogRequest::default();
-        let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
-        // No changes, all defaults
-        assert!(resp.enabled);
-        assert_eq!(resp.check_interval_secs, 10);
-    }
-
-    #[tokio::test]
-    async fn test_update_watchdog_pushes_config_to_channel() {
-        let (config, manager, store) = test_support::test_parts().await;
-        let initial = crate::watchdog::WatchdogRuntimeConfig {
-            interval: std::time::Duration::from_secs(10),
-            idle: crate::watchdog::IdleConfig::default(),
-            extra_waiting_patterns: Vec::new(),
-        };
-        let (config_tx, config_rx) = tokio::sync::watch::channel(initial);
-        let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        let state = AppState::with_all(
-            config,
-            std::path::PathBuf::new(),
-            manager,
-            event_tx,
-            Some(config_tx),
-            store,
-        );
-
-        // Update check interval via API
-        let req = UpdateWatchdogRequest {
-            check_interval_secs: Some(30),
-            idle_action: Some("kill".into()),
-            ..Default::default()
-        };
-        let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.check_interval_secs, 30);
-
-        // Verify the watch channel received the update
-        let received = config_rx.borrow().clone();
-        assert_eq!(received.interval, std::time::Duration::from_secs(30));
-        assert_eq!(received.idle.action, crate::watchdog::IdleAction::Kill);
-    }
-
-    #[tokio::test]
-    async fn test_update_watchdog_no_channel_still_works() {
-        // When watchdog_config_tx is None, update should still succeed
-        let state = test_state().await;
-        assert!(state.watchdog_config_tx.is_none());
-        let req = UpdateWatchdogRequest {
-            check_interval_secs: Some(80),
-            ..Default::default()
-        };
-        let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.check_interval_secs, 80);
-    }
-
-    #[tokio::test]
-    async fn test_update_watchdog_remaining_fields() {
-        let state = test_state().await;
-        let req = UpdateWatchdogRequest {
-            idle_threshold_secs: Some(120),
-            idle_action: Some("alert".into()),
-            extra_waiting_patterns: Some(vec!["custom>".into()]),
-            ..Default::default()
-        };
-        let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.idle_threshold_secs, 120);
-        assert_eq!(resp.idle_action, "alert");
-        assert_eq!(resp.extra_waiting_patterns, vec!["custom>"]);
     }
 }
