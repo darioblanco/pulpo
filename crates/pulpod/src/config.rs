@@ -543,7 +543,11 @@ pub fn load(path: &str) -> Result<Config> {
                  from the config file the next time it is saved"
             );
         }
-        if config.webhook_endpoints().iter().any(|w| w.secret.is_some()) {
+        if config
+            .webhook_endpoints()
+            .iter()
+            .any(|w| w.secret.is_some())
+        {
             warn!(
                 "config: webhook `secret` is retired (HMAC request signing was removed along \
                  with the durable outbox) — ignoring it; it will be dropped from the config \

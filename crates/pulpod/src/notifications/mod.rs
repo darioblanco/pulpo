@@ -105,7 +105,11 @@ mod tests {
         let event = Event::from_pulpo_event(&session_pulpo_event("active"), "mac-mini").unwrap();
         let webhooks = vec![
             webhook_config("all", "http://127.0.0.1:1/a", vec![]), // empty filter -> admits
-            webhook_config("stopped-only", "http://127.0.0.1:1/b", vec!["stopped".into()]), // filtered out
+            webhook_config(
+                "stopped-only",
+                "http://127.0.0.1:1/b",
+                vec!["stopped".into()],
+            ), // filtered out
         ];
 
         let n = dispatch_webhooks(&client, &webhooks, &event);
@@ -161,7 +165,11 @@ mod tests {
         let client = reqwest::Client::new();
         let event = Event::from_pulpo_event(&usage_alert_pulpo_event(), "n").unwrap();
         let webhooks = vec![
-            webhook_config("usage", "http://127.0.0.1:1/a", vec!["usage_alert.*".into()]),
+            webhook_config(
+                "usage",
+                "http://127.0.0.1:1/a",
+                vec!["usage_alert.*".into()],
+            ),
             webhook_config(
                 "lifecycle-only",
                 "http://127.0.0.1:1/b",

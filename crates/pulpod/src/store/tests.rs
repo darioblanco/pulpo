@@ -56,13 +56,12 @@ async fn test_migrate_uses_sqlx_migrations_table() {
     // Web Push and the durable outbox were removed: both tables must be gone
     // after migrating.
     for table in ["push_subscriptions", "webhook_outbox"] {
-        let has_table: i32 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
-        )
-        .bind(table)
-        .fetch_one(store.pool())
-        .await
-        .unwrap();
+        let has_table: i32 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?")
+                .bind(table)
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
         assert_eq!(has_table, 0, "{table} should be dropped");
     }
 
@@ -1748,4 +1747,3 @@ async fn test_idle_status_roundtrip() {
         .unwrap();
     assert_eq!(fetched.status, SessionStatus::Idle);
 }
-

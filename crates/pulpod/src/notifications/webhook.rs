@@ -80,10 +80,11 @@ async fn deliver_with_delays(
     let total_attempts = delays.len() + 1;
 
     for attempt in 1..=total_attempts {
-        let result = build_webhook_request(client, config, body.clone(), &event_header, &event.event_id)
-            .send()
-            .await
-            .and_then(reqwest::Response::error_for_status);
+        let result =
+            build_webhook_request(client, config, body.clone(), &event_header, &event.event_id)
+                .send()
+                .await
+                .and_then(reqwest::Response::error_for_status);
 
         match result {
             Ok(_) => {
@@ -374,25 +375,23 @@ mod tests {
 
         let app = axum::Router::new().route(
             "/hook",
-            axum::routing::post(
-                move |headers: axum::http::HeaderMap, body: String| {
-                    let captured = captured_clone.clone();
-                    let seen = seen.clone();
-                    async move {
-                        let mut hdrs = Vec::new();
-                        for (k, v) in &headers {
-                            hdrs.push((k.to_string(), v.to_str().unwrap_or("").to_string()));
-                        }
-                        captured.lock().await.push((hdrs, body));
-                        let n = seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        if n < fail_count {
-                            axum::http::StatusCode::INTERNAL_SERVER_ERROR
-                        } else {
-                            axum::http::StatusCode::OK
-                        }
+            axum::routing::post(move |headers: axum::http::HeaderMap, body: String| {
+                let captured = captured_clone.clone();
+                let seen = seen.clone();
+                async move {
+                    let mut hdrs = Vec::new();
+                    for (k, v) in &headers {
+                        hdrs.push((k.to_string(), v.to_str().unwrap_or("").to_string()));
                     }
-                },
-            ),
+                    captured.lock().await.push((hdrs, body));
+                    let n = seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if n < fail_count {
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR
+                    } else {
+                        axum::http::StatusCode::OK
+                    }
+                }
+            }),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -468,7 +467,10 @@ mod tests {
 
         deliver_with_delays(&client, &config, &lifecycle_event("active"), &FAST_DELAYS).await;
 
-        assert_eq!(captured_requests(&captured).await.len(), FAST_DELAYS.len() + 1);
+        assert_eq!(
+            captured_requests(&captured).await.len(),
+            FAST_DELAYS.len() + 1
+        );
     }
 
     #[tokio::test]
