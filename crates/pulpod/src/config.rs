@@ -2341,7 +2341,7 @@ port = 7433
             tmpfile,
             r#"
 [node]
-name = "with-metrics"
+name = "test"
 
 [metrics]
 enabled = true
@@ -2356,7 +2356,7 @@ enabled = true
         save(&config, path).unwrap();
         let content = std::fs::read_to_string(path).unwrap();
         assert!(
-            !content.contains("metrics"),
+            !content.contains("[metrics]"),
             "retired [metrics] is dropped on save: {content}"
         );
         let reloaded = load(path.to_str().unwrap()).unwrap();

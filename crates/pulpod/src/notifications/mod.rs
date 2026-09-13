@@ -99,8 +99,8 @@ mod tests {
 
     // --- dispatch_webhooks ---
 
-    #[test]
-    fn test_dispatch_admitting_endpoints_only() {
+    #[tokio::test]
+    async fn test_dispatch_admitting_endpoints_only() {
         let client = reqwest::Client::new();
         let event = Event::from_pulpo_event(&session_pulpo_event("active"), "mac-mini").unwrap();
         let webhooks = vec![
@@ -116,8 +116,8 @@ mod tests {
         assert_eq!(n, 1);
     }
 
-    #[test]
-    fn test_dispatch_multiple_endpoints() {
+    #[tokio::test]
+    async fn test_dispatch_multiple_endpoints() {
         let client = reqwest::Client::new();
         let event = Event::from_pulpo_event(&session_pulpo_event("ready"), "n").unwrap();
         let webhooks = vec![
@@ -128,15 +128,15 @@ mod tests {
         assert_eq!(dispatch_webhooks(&client, &webhooks, &event), 2);
     }
 
-    #[test]
-    fn test_dispatch_no_webhooks_is_noop() {
+    #[tokio::test]
+    async fn test_dispatch_no_webhooks_is_noop() {
         let client = reqwest::Client::new();
         let event = Event::from_pulpo_event(&session_pulpo_event("active"), "n").unwrap();
         assert_eq!(dispatch_webhooks(&client, &[], &event), 0);
     }
 
-    #[test]
-    fn test_dispatch_none_admit_is_noop() {
+    #[tokio::test]
+    async fn test_dispatch_none_admit_is_noop() {
         let client = reqwest::Client::new();
         let event = Event::from_pulpo_event(&session_pulpo_event("active"), "n").unwrap();
         let webhooks = vec![webhook_config(
@@ -160,8 +160,8 @@ mod tests {
         })
     }
 
-    #[test]
-    fn test_dispatch_usage_alert_routed_uniformly() {
+    #[tokio::test]
+    async fn test_dispatch_usage_alert_routed_uniformly() {
         let client = reqwest::Client::new();
         let event = Event::from_pulpo_event(&usage_alert_pulpo_event(), "n").unwrap();
         let webhooks = vec![
