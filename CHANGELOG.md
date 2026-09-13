@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.3.0](https://github.com/darioblanco/pulpo/compare/v0.2.0...v0.3.0) (2026-09-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* **web:** read-only configuration view; remove config editing API, PWA service worker, and dead code ([#117](https://github.com/darioblanco/pulpo/issues/117))
+* **usage:** exact metering and budget cap only; remove burn governor, projections, pool attribution, and output scraping ([#115](https://github.com/darioblanco/pulpo/issues/115))
+* **watchdog:** remove memory-pressure intervention and ready TTL cleanup ([#113](https://github.com/darioblanco/pulpo/issues/113))
+* **notifications:** one plain webhook channel; remove web push, Prometheus metrics, and the outbox ([#111](https://github.com/darioblanco/pulpo/issues/111))
+
+### Features
+
+* **notifications:** one plain webhook channel; remove web push, Prometheus metrics, and the outbox ([#111](https://github.com/darioblanco/pulpo/issues/111)) ([8f220be](https://github.com/darioblanco/pulpo/commit/8f220be11f36aed1d3be4eab92ab2e5ec7c04d43))
+* **usage:** exact metering and budget cap only; remove burn governor, projections, pool attribution, and output scraping ([#115](https://github.com/darioblanco/pulpo/issues/115)) ([5bc738e](https://github.com/darioblanco/pulpo/commit/5bc738ec829400a1b7b3c7029bb70608714b5556))
+* **watchdog:** remove memory-pressure intervention and ready TTL cleanup ([#113](https://github.com/darioblanco/pulpo/issues/113)) ([9e008ea](https://github.com/darioblanco/pulpo/commit/9e008ea5b33241c41055430b9e750cb245f13ab6))
+* **web:** read-only configuration view; remove config editing API, PWA service worker, and dead code ([#117](https://github.com/darioblanco/pulpo/issues/117)) ([ff7e128](https://github.com/darioblanco/pulpo/commit/ff7e12864283adf44159747ba428a60f4c67bdab))
+
+
+### Bug Fixes
+
+* **build:** drop the version pin on pulpo-e2e's path dependency ([#120](https://github.com/darioblanco/pulpo/issues/120)) ([758bb01](https://github.com/darioblanco/pulpo/commit/758bb01e6839b0d6f62bd0ae20e88fda718a3aa2))
+* exit code for hook-ended sessions, bounded webhook delivery, no URL in logs ([#118](https://github.com/darioblanco/pulpo/issues/118)) ([8079c42](https://github.com/darioblanco/pulpo/commit/8079c422841ec296952a6205f23829d9ec3c7821))
+
 ## [0.2.0](https://github.com/darioblanco/pulpo/compare/v0.1.1...v0.2.0) (2026-09-11)
 
 
