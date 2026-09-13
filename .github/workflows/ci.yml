@@ -142,7 +142,34 @@ jobs:
           name: web-build
           path: web/build/
       - run: sudo apt-get update && sudo apt-get install -y tmux
-      - run: cargo test --workspace
+      # pulpo-e2e (the end-to-end scenario suite) has its own job below — keep it
+      # out of this fast unit-test job.
+      - run: cargo test --workspace --exclude pulpo-e2e
+
+  e2e:
+    name: E2E scenarios
+    needs: [changes, web, web-build-only]
+    if: |
+      always() &&
+      needs.changes.outputs.rust == 'true' &&
+      (needs.web.result == 'success' || needs.web-build-only.result == 'success')
+    runs-on: ubuntu-latest
+    # Independent of the `coverage` job below (separate, parallel job) — the
+    # scenario suite (crates/pulpo-e2e) needs real pulpod/pulpo/fake-claude
+    # binaries and a real tmux server, and takes roughly a minute (one scenario
+    # waits for a real cron minute boundary), which would badly distort a
+    # coverage run's timing and instrumentation.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.1
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: web/build/
+      - run: sudo apt-get update && sudo apt-get install -y tmux
+      - run: cargo build -p pulpod -p pulpo-cli -p pulpo-e2e --bins
+      - run: cargo test -p pulpo-e2e -- --test-threads=1
 
   coverage:
     name: Coverage

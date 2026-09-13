@@ -29,7 +29,7 @@ see ROADMAP.md Phase B / M2. In priority order:
 - `SPEC.md` — architecture, session lifecycle, API design
 - `ROADMAP.md` — competitive landscape, sovereignty positioning, priority list
 
-Development: `make setup` | `make fmt` | `make lint` | `make test` | `make coverage-rust` | `make ci`
+Development: `make setup` | `make fmt` | `make lint` | `make test` | `make e2e` | `make coverage-rust` | `make ci`
 
 ## Security Rules
 
@@ -45,8 +45,8 @@ These are mandatory for all code changes:
 
 ## Engineering Standards
 
-- **TDD**: write failing test, implement, refactor, verify coverage.
-- **Coverage**: 98% line coverage enforced locally and in CI. Use `cfg(coverage)` only for genuinely untestable I/O.
+- **TDD**: write failing test, implement, refactor, verify coverage — for pure logic. Every documented user-facing behavior (session lifecycle, harness adapters, watchdog, schedules, worktrees) needs a scenario test in `crates/pulpo-e2e/tests/scenarios.rs` instead (real `pulpod` + real tmux + a fake harness — see `make e2e` and CLAUDE.md's "Testing" section); a `MockBackend`-driven flow test is not a substitute for new work.
+- **Coverage**: 98% line coverage enforced locally and in CI (a decay guard, not the primary correctness signal — see CLAUDE.md). Use `cfg(coverage)` only for genuinely untestable I/O. `crates/pulpo-e2e` is excluded from the coverage run.
 - **CI**: `--test-threads=1` for coverage runs (prevents sqlx-sqlite prepared statement cache races).
 - Rust logic in `lib.rs`; `main.rs` is a thin wrapper.
 - Use `tracing` for operational events.

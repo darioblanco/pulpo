@@ -49,19 +49,91 @@ make all
 - **Web**: `eslint` with TypeScript and React plugins (config in `web/eslint.config.js`), plus `tsc --noEmit` for type checking.
 - Run `make lint` to lint everything.
 
-### Testing — Test-Driven Development (TDD)
+### Testing — unit tests for logic, scenario tests for behavior
 
-This project follows **TDD**. Every feature and bug fix starts with a failing test:
+2,300+ unit tests at 98% coverage still missed four real user-facing bugs (idle
+threshold never read, hooks only reaching the default port, interventions deleting
+a *shared* worktree, a Ready session bouncing back on resume) — every one of them a
+gap *between* units (config → watchdog, harness → session manager, intervention →
+worktree cleanup), the kind a `MockBackend`-based "flow" test asserts past because
+the mock never disagrees with the code driving it. The fix isn't more unit tests;
+it's a second, different kind of test for a different job:
 
-1. **Write the test first** — define the expected behavior before writing implementation.
-2. **Run the test** — confirm it fails for the right reason.
-3. **Write the minimal implementation** to make the test pass.
-4. **Refactor** — clean up while keeping tests green.
-5. **Run the quality gates** — `make ci` must pass.
+- **Unit tests** — pure logic: parsing, cron math, rate tables, command-string
+  rewriting, state-transition functions, request validation. TDD still applies
+  here: write the test first, watch it fail, implement, refactor, keep it green.
+  Fast, deterministic, `#[cfg(test)] mod tests` alongside the code as always.
+- **Scenario tests** — every *documented user-facing behavior* (session lifecycle
+  transitions, harness adapters, the watchdog, schedules, worktrees), proven
+  against a **real `pulpod` daemon and a real (private) tmux server**, driven
+  through the real `pulpo` CLI and HTTP API, with only the *agent* faked (a small
+  binary imitating Claude Code's CLI/hook surface — see below). No mock backend,
+  no mock store, no mock harness adapter: the daemon, tmux, and the CLI are all the
+  real thing, so a scenario test can't pass just because a mock agreed with the
+  code under test.
+- **Mock-backend flow tests for new work are not accepted.** A PR adding or
+  changing user-facing session/watchdog/harness/schedule behavior needs a scenario
+  test (new or extended), not a `MockBackend`-driven integration test asserting the
+  same call sequence the code just made. Existing `MockBackend` unit tests for
+  pure branch coverage (a handler's error paths, a store query's edge cases) are
+  still fine — this rule is about *flow* tests standing in for the real stack.
+- Coverage stays as a **decay guard**, not the primary correctness signal: the 98%
+  floor (`make coverage-rust`) still catches an untested branch, but it never
+  catches a wrong *interaction* between two correctly-tested units — that's what
+  the scenario suite is for.
 
-- **Rust**: `cargo test --workspace`. Tests live alongside source code in `#[cfg(test)] mod tests` blocks.
+**The scenario suite** (`crates/pulpo-e2e/`): a dev-only workspace member, never
+part of a release build. `src/bin/fake-claude.rs` is a small binary that imitates
+Claude Code's CLI surface exactly as far as pulpo's adapter uses it
+(`--session-id`, `--settings`, `-p`, `--resume`, `--model`; unknown flags ignored)
+— scripted entirely by the `FAKE_AGENT_SCENARIO` env var (or a
+`pulpo-fake-scenario.txt` file in the session's workdir, read fresh by every
+process so a test can change behavior across a resume): `start`, `prompt`,
+`needs_input`, `wait` (blocks on stdin — `pulpo input` unblocks it),
+`stop`, `spend:<usd>` (writes a real Claude-shaped transcript file so the budget
+breaker has real data to read), `exit`/`exit:<code>`, `hang`. It reads its own
+`--settings` file and fires the same hook commands (`pulpo hook claude`, piped the
+same JSON shape Claude Code sends) that a real session would. `src/lib.rs` is the
+harness: boots an isolated `pulpod` (its own `HOME`, data dir, config, free port,
+private tmux server via `TMUX_TMPDIR`) and exposes `spawn`/`wait_status`/`session`/
+`stop`/`resume`/`input`/`restart_daemon`/`kill_tmux_server`/`cleanup`. Designed so
+adding `fake-codex`/`fake-pi` later is one more `src/bin/*.rs` file, not a new
+harness.
+
+**Scenarios** (`crates/pulpo-e2e/tests/scenarios.rs`, one `#[test]` each): S1 spawn
+reaches Active with harness metadata; S2 a permission prompt sets `needs_input` and
+`pulpo input` resolves it; S3 a clean exit resolves through Ready then Stopped and
+`pulpo resume` continues the same harness conversation (`--resume <id>`); S4 the
+tmux server dying marks the session Lost and resume reactivates it; S5 a daemon
+restart preserves a live session and auto-resumes one whose tmux died while the
+daemon was down, named after the session (not a stale `$N` id); S6 the budget
+breaker stops an over-budget session and delivers a webhook; S7 the idle-timeout
+kill intervention fires, and `--idle-threshold 0` disables the time-based
+transition for a generic command; S8 a due schedule fires a session; S9 two
+worktrees on one repo stay distinct, survive a plain stop, and are removed by
+`pulpo cleanup`; S10 hooks reach a non-default port (`PULPO_URL`); S11 a generic
+(harness-less) command uses the scrollback/exit-marker path and ends Stopped.
+
+**Running it**: `make e2e` (builds `pulpod`/`pulpo`/`fake-claude` first, then runs
+the suite serially — `cargo test -p pulpo-e2e -- --test-threads=1`; each test boots
+its own daemon and tmux server, and running several of those concurrently on a
+laptop is exactly the kind of flakiness this strategy moved away from). Needs
+`tmux`. Not part of `make ci`/the pre-commit hook — the full suite takes roughly a
+minute (S8 has to wait for a real cron minute boundary) — it has its own CI job
+(`e2e`, independent of `coverage`) and is meant to be run manually before a PR that
+touches session/watchdog/harness/schedule behavior.
+
+**Adding a scenario**: pick (or add) a `FAKE_AGENT_SCENARIO` step in
+`fake-claude.rs` if the existing vocabulary doesn't cover the behavior you're
+proving, add a `#[test]` in `scenarios.rs` using the `Daemon` harness in `src/lib.rs`,
+and assert on real daemon state (`daemon.session(name)`/`wait_status`/
+`wait_for`) — never on an internal function call sequence.
+
+- **Rust**: `cargo test --workspace --exclude pulpo-e2e` for unit tests (pulpo-e2e
+  needs pre-built binaries and a tmux server — see `make e2e` above). Tests live
+  alongside source code in `#[cfg(test)] mod tests` blocks.
 - **Web**: `vitest` with jsdom environment. Test files use `*.test.ts` or `*.spec.ts` naming.
-- Run `make test` to run all tests.
+- Run `make test` to run all unit tests (Rust + web); `make e2e` for the scenario suite.
 
 ### Coverage
 
@@ -72,6 +144,10 @@ This project follows **TDD**. Every feature and bug fix starts with a failing te
 - Every new function, branch, and error path must have a test. No exceptions.
 - `main.rs` files are excluded from coverage — they are thin `#[cfg(not(coverage))]` wrappers. All logic lives in `lib.rs`.
 - `embed.rs` is excluded from coverage — it contains only the `#[derive(Embed)]` macro for `rust-embed`, which generates uncoverable code.
+- `crates/pulpo-e2e` (the scenario suite) is excluded from the coverage run entirely
+  (`--exclude pulpo-e2e`) — it has no unit tests of its own, and instrumenting it
+  would need `pulpod`/`pulpo`/`fake-claude` pre-built and a real tmux server. See
+  "Testing" above for how it's run and gated instead.
 
 #### Coverage exclusion patterns
 
@@ -112,6 +188,12 @@ Git hooks live in `.githooks/` and are activated via `git config core.hooksPath 
 5. `make coverage-rust` (Rust coverage gate)
 
 **If the hook blocks your commit, fix the issue — do not bypass with `--no-verify`.**
+
+The pre-commit hook does **not** run `make e2e` — the scenario suite takes roughly a
+minute per full run (S8 waits for a real cron minute boundary) and boots a real
+tmux server per test, which is too slow for every commit. Run it manually before a
+PR that touches session/watchdog/harness/schedule behavior; CI runs it in its own
+`e2e` job, independent of `coverage`.
 
 ## Development Workflow
 
@@ -218,7 +300,8 @@ describe('api', () => {
 | `make fmt` | Format all code (Rust + web) |
 | `make fmt-check` | Check formatting without modifying |
 | `make lint` | Run all linters (clippy + eslint + tsc) |
-| `make test` | Run all tests (Rust + web) |
+| `make test` | Run all unit tests (Rust + web) |
+| `make e2e` | Run the end-to-end scenario suite (real daemon + tmux + fake harness) |
 | `make test-web-watch` | Run web tests in watch mode |
 | `make coverage` | Run coverage checks (Rust + web) |
 | `make coverage-rust` | Run the Rust coverage gate |
@@ -261,7 +344,7 @@ pulpo/
 │   └── examples/webhook-discord/ # Reference webhook consumer (see docs/reference/config.md)
 ├── docs/                         # VuePress docs site (getting-started/guides/reference/architecture/operations)
 ├── examples/                     # Runnable CLI/API/config examples
-├── scripts/                      # demo.sh, e2e.sh, install-pulpo.sh
+├── scripts/                      # demo.sh, install-pulpo.sh
 ├── .pulpo/config.toml.example    # `make dev` local-dev config template
 ├── crates/
 │   ├── pulpod/src/
@@ -343,13 +426,18 @@ pulpo/
 │   │   ├── hook.rs               # `pulpo hook <harness>` internal subcommand (lifecycle events → daemon)
 │   │   ├── format.rs             # Terminal output rendering (tables/reports)
 │   │   └── http.rs               # HTTP client helpers (auth, base-URL/token resolution)
-│   └── pulpo-common/src/
-│       ├── lib.rs
-│       ├── session.rs            # Session, SessionStatus, InterventionCode types
-│       ├── node.rs               # NodeInfo type
-│       ├── event.rs              # SessionEvent for SSE + notifications
-│       ├── auth.rs               # BindMode (local/tailscale/public)
-│       └── api.rs                # API request/response types
+│   ├── pulpo-common/src/
+│   │   ├── lib.rs
+│   │   ├── session.rs            # Session, SessionStatus, InterventionCode types
+│   │   ├── node.rs               # NodeInfo type
+│   │   ├── event.rs              # SessionEvent for SSE + notifications
+│   │   ├── auth.rs               # BindMode (local/tailscale/public)
+│   │   └── api.rs                # API request/response types
+│   └── pulpo-e2e/                # End-to-end scenario suite (dev-only, never released)
+│       ├── src/
+│       │   ├── bin/fake-claude.rs # Fake Claude Code CLI/hook surface (FAKE_AGENT_SCENARIO-driven)
+│       │   └── lib.rs            # Scenario harness: boots an isolated pulpod + private tmux server
+│       └── tests/scenarios.rs    # S1-S11: spawn, needs-input, resume, restart, budget, idle, schedule, worktrees, ...
 └── web/                          # React 19 + Vite + Tailwind v4 + shadcn/ui
     ├── src/
     │   ├── index.css             # Tailwind imports + dark theme CSS vars

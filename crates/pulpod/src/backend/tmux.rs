@@ -866,6 +866,9 @@ mod tests {
     #[cfg(not(coverage))]
     #[test]
     fn test_tmux_session_runs_simple_command() {
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
         // Use `sh -c` with sleep so the session stays alive long enough to capture
         let output =
             tmux_run_and_capture("pulpo-integ-simple", "sh -c 'echo PULPO_OK; sleep 5'", None);
@@ -878,6 +881,9 @@ mod tests {
     #[cfg(not(coverage))]
     #[test]
     fn test_tmux_session_inherits_user_path() {
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
         // Set a custom PATH and verify the session can see it
         let custom_path = format!(
             "/tmp/pulpo-test-fake-bin:{}",
@@ -897,6 +903,9 @@ mod tests {
     #[cfg(not(coverage))]
     #[test]
     fn test_tmux_session_runs_wrapped_command() {
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
         // Test the full wrap_command flow: create a wrapped command and run it
         // through tmux, just like pulpod does in production.
         let id = uuid::Uuid::new_v4();
@@ -919,6 +928,9 @@ mod tests {
     #[cfg(not(coverage))]
     #[test]
     fn test_tmux_session_wrapped_command_with_single_quotes() {
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
         // Single-quoted arguments (e.g. claude -p 'fix the bug') are the most
         // common source of quoting bugs. Verify they survive the wrapping.
         let id = uuid::Uuid::new_v4();
@@ -939,6 +951,9 @@ mod tests {
     #[cfg(not(coverage))]
     #[test]
     fn test_tmux_session_wrapped_command_writes_exit_code_marker() {
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
         // Proves the marker-writing half of the new wrap_command end-to-end against a
         // real tmux session — the `.code` marker must land on disk at the exact path
         // `wrap_command` computed, containing the wrapped command's exit code. This is
@@ -1005,6 +1020,10 @@ mod tests {
         use crate::backend::Backend;
         use std::time::Duration;
 
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
+
         let backend = TmuxBackend::new();
         let name = "pulpo-pipepane-integ";
         let _ = backend.kill_session(name); // best-effort leftover cleanup
@@ -1051,6 +1070,9 @@ mod tests {
     #[cfg(not(coverage))]
     #[test]
     fn test_check_tmux_version_succeeds_if_installed() {
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
         let backend = TmuxBackend::new();
         let result = check_tmux_version(&backend.tmux_path);
         assert!(result.is_ok(), "tmux should be installed: {result:?}");

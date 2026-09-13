@@ -1715,6 +1715,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulpo-e2e"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "pulpo-common",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
 name = "pulpod"
 version = "0.2.0"
 dependencies = [
@@ -1955,7 +1969,9 @@ dependencies = [
  "base64",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
+ "futures-util",
  "h2",
  "http",
  "http-body",

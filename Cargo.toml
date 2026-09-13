@@ -4,6 +4,7 @@ members = [
     "crates/pulpod",
     "crates/pulpo-cli",
     "crates/pulpo-common",
+    "crates/pulpo-e2e",
 ]
 
 [workspace.lints.rust]

@@ -69,10 +69,11 @@ Note: spawning a real session requires Claude Code or Codex installed and authen
 
 ```bash
 make check          # fast compile check (fastest feedback)
-make test           # run all tests (Rust + web)
-make test-rust      # Rust tests only
+make test           # run all unit tests (Rust + web)
+make test-rust      # Rust unit tests only (excludes crates/pulpo-e2e)
 make test-web       # web tests only
 make test-web-watch # web tests in watch mode
+make e2e            # end-to-end scenario suite (real daemon + tmux + fake harness; needs tmux)
 make lint           # clippy + eslint + tsc
 make all            # format + lint + test (same as pre-commit hook)
 make coverage       # coverage checks (Rust + web)
@@ -81,15 +82,19 @@ make ci             # canonical full quality gate
 make clean          # remove all build artifacts + dev data (.pulpo/)
 ```
 
-## Test-Driven Development
+## Testing
 
-This project follows **TDD**. Every change starts with a failing test:
+Two kinds of test, for two different jobs — see CLAUDE.md's "Testing" section for
+the full rationale:
 
-1. Write the test
-2. Confirm it fails
-3. Write the minimal implementation
-4. Refactor while keeping tests green
-5. Verify `make ci` passes
+- **Unit tests** for pure logic (parsing, cron math, state-transition functions, ...).
+  This project follows **TDD** for these: write the test, confirm it fails, write
+  the minimal implementation, refactor while keeping it green, verify `make ci`
+  passes.
+- **Scenario tests** (`crates/pulpo-e2e/`, run with `make e2e`) for every
+  user-facing session/watchdog/harness/schedule behavior, against a real `pulpod`
+  daemon and a real tmux server — not a `MockBackend`. If your change affects one
+  of those, add or extend a scenario, not a mock-backend flow test.
 
 See [CLAUDE.md](CLAUDE.md) for detailed conventions, project structure, and code standards.
 
@@ -98,7 +103,9 @@ See [CLAUDE.md](CLAUDE.md) for detailed conventions, project structure, and code
 1. Fork the repo and create a branch from `main`
 2. Make your changes following the existing code style
 3. Ensure `make ci` passes locally
-4. Open a pull request with a clear description of the change
+4. If your change touches session/watchdog/harness/schedule behavior, also run
+   `make e2e` locally (not part of `make ci` — see "Testing" above)
+5. Open a pull request with a clear description of the change
 
 ## Code Style
 

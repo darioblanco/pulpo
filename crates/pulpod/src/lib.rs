@@ -12,6 +12,8 @@ pub mod platform;
 pub mod scheduler;
 pub mod session;
 pub mod store;
+#[cfg(test)]
+mod test_serial;
 pub mod usage;
 pub mod watchdog;
 
@@ -293,6 +295,7 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
             sched_store,
             sched_event_tx,
             sched_shutdown_rx,
+            config.scheduler.tick_secs,
         ));
         shutdown_handle.add_sender(sched_shutdown_tx);
         info!("Scheduler enabled");

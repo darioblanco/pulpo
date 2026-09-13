@@ -88,14 +88,26 @@ lint-web:
 # Run all tests
 test: test-rust test-web
 
+# `pulpo-e2e` is excluded here: it's the end-to-end scenario suite (see `make e2e`
+# below), not unit tests — its tests need pulpod/pulpo/fake-claude already built at
+# fixed paths (see crates/pulpo-e2e/src/lib.rs::debug_bin) and boot real tmux
+# servers, which `cargo test --workspace` callers (this target, the pre-commit hook,
+# CI's fast `test`/`coverage` jobs) should never be surprised by.
 test-rust:
-	cargo test --workspace
+	cargo test --workspace --exclude pulpo-e2e
 
-# Isolated end-to-end smoke test: boots a real pulpod on a temp config/port, spawns a
-# trivial agent, verifies capture + usage, stops it. Manual (not part of `make ci`) —
-# needs tmux and builds debug binaries. Catches packaging/wiring breakage units can't.
+# End-to-end scenario suite: a real pulpod + a real (private) tmux server + a fake
+# harness standing in for Claude Code, driven through the real pulpo CLI and HTTP
+# API — no mocks. See crates/pulpo-e2e (the harness + fake-claude binary) and
+# crates/pulpo-e2e/tests/scenarios.rs (the scenarios) for what this covers, and
+# CLAUDE.md's testing section for the strategy. Not part of `make ci`/the pre-commit
+# hook (too slow — the full suite takes roughly a minute, dominated by a schedule
+# test that has to wait for a real minute boundary) — it runs in its own CI job and
+# is meant to be run manually before a PR that touches session/watchdog/harness
+# behavior. Needs tmux.
 e2e:
-	@bash scripts/e2e.sh
+	cargo build -p pulpod -p pulpo-cli -p pulpo-e2e --bins
+	cargo test -p pulpo-e2e -- --test-threads=1
 
 test-web:
 	cd web && PATH=/usr/local/bin:$$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor npx vitest run
@@ -114,8 +126,12 @@ build-web-if-missing:
 # Excludes main.rs files (thin cfg(coverage) wrappers that cargo test never invokes)
 coverage: coverage-rust coverage-web
 
+# --exclude pulpo-e2e: the e2e crate has no unit tests of its own (its harness code
+# is exercised by actually running the scenario suite, not by coverage), and
+# instrumenting/running it here would need pulpod/pulpo/fake-claude pre-built at
+# fixed paths and a real tmux server — see the `e2e`/`test-rust` targets above.
 coverage-rust: build-web-if-missing
-	cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$$" --fail-under-lines 98 -- --test-threads=1
+	cargo llvm-cov --workspace --exclude pulpo-e2e --ignore-filename-regex "(main|embed|build)\.rs$$" --fail-under-lines 98 -- --test-threads=1
 
 coverage-web:
 	cd web && PATH=/usr/local/bin:$$PATH NODE_OPTIONS=--experimental-require-module NODE_PATH=./vendor npx vitest run --coverage
@@ -126,7 +142,7 @@ coverage-html:
 		echo "web/build missing; building web assets for Rust coverage report..."; \
 		cd web && npm run build; \
 	fi
-	cargo llvm-cov --workspace --ignore-filename-regex "(main|embed|build)\.rs$$" --html
+	cargo llvm-cov --workspace --exclude pulpo-e2e --ignore-filename-regex "(main|embed|build)\.rs$$" --html
 	@echo "Coverage report: target/llvm-cov/html/index.html"
 
 # ─── Build ───────────────────────────────────────────────────────────────────

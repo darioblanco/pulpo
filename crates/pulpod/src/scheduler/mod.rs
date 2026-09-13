@@ -74,15 +74,17 @@ fn is_due_at(schedule: &Schedule, now: DateTime<Local>) -> bool {
         .is_some_and(|next| next <= now)
 }
 
-/// Run the scheduler loop. Ticks every 60 seconds and fires due schedules.
+/// Run the scheduler loop. Ticks every `tick_secs` seconds (config `[scheduler]
+/// tick_secs`, default 60) and fires due schedules.
 #[cfg(not(coverage))]
 pub async fn run_scheduler_loop(
     session_manager: SessionManager,
     store: Store,
     event_tx: Option<broadcast::Sender<PulpoEvent>>,
     mut shutdown_rx: watch::Receiver<bool>,
+    tick_secs: u64,
 ) {
-    let mut tick = tokio::time::interval(Duration::from_secs(60));
+    let mut tick = tokio::time::interval(Duration::from_secs(tick_secs.max(1)));
     tick.tick().await; // first tick completes immediately
 
     loop {
