@@ -4894,14 +4894,24 @@ mod tests {
 ///
 /// Each test runs against its own throwaway tmux server via `TmuxBackend::with_socket`
 /// (`tmux -L pulpo-test-<uuid>`) — never the developer's default tmux server — and
-/// tears its socket down with `kill-server` in cleanup. This makes the tests safe to
-/// run concurrently with each other and alongside a real tmux session on the machine.
+/// tears its socket down with `kill-server` in cleanup. That isolates them from each
+/// other's *tmux state*, but they still share the machine's tmux/login-shell startup
+/// cost and process table, which is enough to flake under a busy parallel `cargo
+/// test` — `crate::test_serial::lock()` (acquired first thing in every test below)
+/// serializes them.
 ///
 /// Gated `not(coverage)`, mirroring the other real-tmux/real-git integration tests in
-/// this crate (`test_enforce_budgets_kills_real_tmux_session_over_budget` in
-/// `watchdog/budget.rs`; `git_integration_tests` in `session/utils.rs`): they run in
-/// the CI `Test` job, which has tmux and git installed, and are excluded from the
-/// coverage build, which doesn't.
+/// this crate (`backend::tmux`'s own integration tests; `git_integration_tests` in
+/// `session/utils.rs`): they run in the CI `Test` job, which has tmux and git
+/// installed, and are excluded from the coverage build, which doesn't.
+///
+/// `crate::test_serial::lock()` returns a plain `std::sync::MutexGuard` held across
+/// `.await` in several tests below (clippy's `await_holding_lock` would otherwise
+/// flag every one) — safe here specifically because `cargo test` runs each test
+/// function on its own OS thread with its own single-threaded Tokio runtime: the
+/// guard only ever blocks *that* thread until the previous real-tmux test's thread
+/// releases it, never something the same runtime needs to make progress elsewhere.
+#[allow(clippy::await_holding_lock)]
 #[cfg(all(test, not(coverage)))]
 mod real_tmux_tests {
     use super::*;

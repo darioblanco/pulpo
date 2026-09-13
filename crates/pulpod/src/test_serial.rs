@@ -26,7 +26,7 @@ static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 /// the first line). Recovers from a poisoned lock (a previous real-tmux test
 /// panicked while holding it) rather than propagating the poison — one flaky test's
 /// panic must not cascade into every real-tmux test after it failing to even start.
-pub(crate) fn lock() -> MutexGuard<'static, ()> {
+pub fn lock() -> MutexGuard<'static, ()> {
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)

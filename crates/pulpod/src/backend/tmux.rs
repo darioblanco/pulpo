@@ -1017,11 +1017,12 @@ mod tests {
     #[cfg(not(coverage))]
     #[test]
     fn test_setup_logging_captures_session_output_to_file() {
+        use crate::backend::Backend;
+        use std::time::Duration;
+
         // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
         // so they never run concurrently under a parallel `cargo test`.
         let _guard = crate::test_serial::lock();
-        use crate::backend::Backend;
-        use std::time::Duration;
 
         let backend = TmuxBackend::new();
         let name = "pulpo-pipepane-integ";
