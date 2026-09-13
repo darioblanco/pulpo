@@ -116,65 +116,12 @@ async fn create_running_session(store: &Store, name: &str) -> Session {
     session
 }
 
-/// Poll `condition` until it returns `true`, sleeping briefly between checks,
-/// up to a generous deadline.
-///
-/// Some `run_watchdog_loop` tests need one or more ticks to elapse before
-/// signalling shutdown. A fixed `time::sleep` only works if we assume the
-/// loop's `tokio::select!` gets polled enough times within that wall-clock
-/// window — true in isolation, but not under the full parallel test suite
-/// (~1500+ concurrently scheduled OS threads contending for CPU).
-/// `#[tokio::test]` uses a single-threaded (current-thread) runtime, so a
-/// starved OS thread can resume long after both the interval-tick and the
-/// shutdown-signal branches of `select!` have become ready; `select!` then
-/// picks between them at random, and can pick shutdown before enough ticks
-/// were processed — flaking the test. Waiting for the actual side effect
-/// instead of a fixed sleep removes the race regardless of scheduling (see
-/// fix/watchdog-flaky-tests).
-async fn wait_for<F, Fut>(deadline_secs: u64, condition: F)
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = bool>,
-{
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(deadline_secs);
-    loop {
-        if condition().await {
-            return;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "condition not met within {deadline_secs}s"
-        );
-        time::sleep(Duration::from_millis(10)).await;
+fn make_config(interval: Duration, idle: IdleConfig) -> WatchdogRuntimeConfig {
+    WatchdogRuntimeConfig {
+        interval,
+        idle,
+        extra_waiting_patterns: Vec::new(),
     }
-}
-
-fn make_config(
-    interval: Duration,
-    idle: IdleConfig,
-) -> tokio::sync::watch::Receiver<WatchdogRuntimeConfig> {
-    let cfg = WatchdogRuntimeConfig {
-        interval,
-        idle,
-        extra_waiting_patterns: Vec::new(),
-    };
-    let (_, rx) = tokio::sync::watch::channel(cfg);
-    rx
-}
-
-fn make_config_with_tx(
-    interval: Duration,
-    idle: IdleConfig,
-) -> (
-    tokio::sync::watch::Sender<WatchdogRuntimeConfig>,
-    tokio::sync::watch::Receiver<WatchdogRuntimeConfig>,
-) {
-    let cfg = WatchdogRuntimeConfig {
-        interval,
-        idle,
-        extra_waiting_patterns: Vec::new(),
-    };
-    tokio::sync::watch::channel(cfg)
 }
 
 #[tokio::test]
@@ -1686,87 +1633,6 @@ async fn test_idle_kill_succeeds_but_session_disappears() {
 }
 
 #[tokio::test]
-async fn test_watchdog_live_config_reload_enables_idle() {
-    // Start with idle detection disabled and a slow tick — no transition
-    // should happen. Reloading the config to enable idle detection with a
-    // faster interval must take effect on the very next tick without
-    // restarting the loop (exercises `refresh_watchdog_ticker`'s
-    // interval-change branch alongside the dynamic idle-enable path).
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    let session = Session {
-        id: uuid::Uuid::new_v4(),
-        name: "reload-test".into(),
-        workdir: "/tmp/repo".into(),
-        command: "echo hello".into(),
-        status: SessionStatus::Active,
-        backend_session_id: Some("reload-test".into()),
-        output_snapshot: Some("test output".into()),
-        last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
-        ..Default::default()
-    };
-    store.insert_session(&session).await.unwrap();
-
-    let (config_tx, config_rx) = make_config_with_tx(
-        Duration::from_millis(50),
-        IdleConfig {
-            enabled: false,
-            ..IdleConfig::default()
-        },
-    );
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let handle = tokio::spawn(run_watchdog_loop(
-        backend.clone(),
-        store.clone(),
-        config_rx,
-        shutdown_rx,
-        test_ready_ctx(),
-    ));
-
-    // Idle detection disabled — status must stay Active.
-    time::sleep(Duration::from_millis(30)).await;
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Active);
-
-    // Enable idle detection with a faster interval.
-    config_tx
-        .send(WatchdogRuntimeConfig {
-            interval: Duration::from_millis(10),
-            idle: IdleConfig {
-                enabled: true,
-                timeout_secs: 600,
-                action: IdleAction::Alert,
-                threshold_secs: 1,
-            },
-            extra_waiting_patterns: Vec::new(),
-        })
-        .unwrap();
-
-    wait_for(2, || async {
-        store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .is_some_and(|s| s.status == SessionStatus::Idle)
-    })
-    .await;
-    shutdown_tx.send(true).unwrap();
-    handle.await.unwrap();
-
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Idle);
-}
-
-#[tokio::test]
 async fn test_watchdog_runtime_config_debug() {
     let cfg = WatchdogRuntimeConfig {
         interval: Duration::from_secs(10),
@@ -2121,6 +1987,113 @@ async fn test_ready_transition_via_exit_code_marker_nonzero_persists_value() {
         .unwrap();
     assert_eq!(fetched.status, SessionStatus::Ready);
     assert_eq!(fetched.exit_code, Some(127));
+}
+
+/// Build a `Ready` session with no `exit_code` recorded yet — the state a
+/// hook-driven `SessionEnded` event leaves a session in (see
+/// `session::manager::apply_harness_event`), which never reads the `.code`
+/// marker itself.
+fn ready_session_pending_exit_code(name: &str) -> Session {
+    Session {
+        id: uuid::Uuid::new_v4(),
+        name: name.into(),
+        workdir: "/tmp/repo".into(),
+        command: "echo hello".into(),
+        description: Some("test".into()),
+        status: SessionStatus::Ready,
+        backend_session_id: Some(name.to_owned()),
+        exit_code: None,
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn test_ready_session_exit_code_recorded_via_watchdog_sweep() {
+    // A hook-driven `SessionEnded` event moves a session straight to `Ready`
+    // without ever reading the `.code` exit marker — only the watchdog's own
+    // marker sweep does that (see `check_idle_sessions`). Use a backend whose
+    // `capture_output` always fails to prove the sweep is marker-only and never
+    // touches the backend for a `Ready` session, unlike the full Active/Idle
+    // `check_session_idle` path.
+    let backend = Arc::new(MockBackend::failing_capture());
+    let store = test_store().await;
+    let session = ready_session_pending_exit_code("hook-ended");
+    store.insert_session(&session).await.unwrap();
+
+    let marker_path =
+        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string());
+    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
+    std::fs::write(&marker_path, "0").unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+
+    let dyn_backend: Arc<dyn Backend> = backend;
+    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Ready);
+    assert_eq!(fetched.exit_code, Some(0));
+}
+
+#[tokio::test]
+async fn test_ready_session_without_marker_yet_stays_pending() {
+    // The marker hasn't been written yet (a race between the hook firing and
+    // `wrap_command` observing the agent process exit) — the sweep must do
+    // nothing and try again on the next tick, not error out or fake a code.
+    let backend = Arc::new(MockBackend::new());
+    let store = test_store().await;
+    let session = ready_session_pending_exit_code("hook-ended-no-marker-yet");
+    store.insert_session(&session).await.unwrap();
+
+    let idle_config = IdleConfig {
+        enabled: true,
+        timeout_secs: 600,
+        action: IdleAction::Alert,
+        threshold_secs: 60,
+    };
+
+    let dyn_backend: Arc<dyn Backend> = backend;
+    check_idle_sessions(&dyn_backend, &store, &idle_config, &test_ready_ctx(), &[]).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Ready);
+    assert!(fetched.exit_code.is_none());
+}
+
+#[tokio::test]
+async fn test_sweep_ready_exit_code_direct_unit() {
+    // Direct unit coverage of `sweep_ready_exit_code` itself, isolated from the
+    // `check_idle_sessions` loop above it.
+    let store = test_store().await;
+    let session = ready_session_pending_exit_code("direct-sweep");
+    store.insert_session(&session).await.unwrap();
+
+    let marker_path =
+        crate::session::utils::exit_code_marker_path(store.data_dir(), &session.id.to_string());
+    std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
+    std::fs::write(&marker_path, "42").unwrap();
+
+    sweep_ready_exit_code(&store, &session).await;
+
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.exit_code, Some(42));
 }
 
 #[tokio::test]

@@ -22,7 +22,7 @@ pub(super) async fn check_idle_sessions(
     let sessions = super::list_sessions_or_warn(store, "Idle check").await;
 
     let live: Vec<_> = sessions
-        .into_iter()
+        .iter()
         .filter(|session| {
             session.status == SessionStatus::Active || session.status == SessionStatus::Idle
         })
@@ -32,7 +32,7 @@ pub(super) async fn check_idle_sessions(
     let timeout =
         chrono::Duration::seconds(idle_config.timeout_secs.try_into().unwrap_or(i64::MAX));
 
-    for session in &live {
+    for session in live {
         check_session_idle(
             backend,
             store,
@@ -44,6 +44,43 @@ pub(super) async fn check_idle_sessions(
             extra_waiting_patterns,
         )
         .await;
+    }
+
+    // A hook-driven `SessionEnded` event (see `session::manager::apply_harness_event`)
+    // moves a session straight to `Ready` without going through `check_session_idle`
+    // above, so it never gets the `.code` marker read that records `exit_code` — the
+    // loop above only ever visits `Active`/`Idle` sessions. Sweep `Ready` sessions
+    // with no `exit_code` yet so the marker (once `wrap_command` writes it) still
+    // gets picked up, same as `docs/operations/session-lifecycle.md` documents.
+    for session in sessions
+        .iter()
+        .filter(|session| session.status == SessionStatus::Ready && session.exit_code.is_none())
+    {
+        sweep_ready_exit_code(store, session).await;
+    }
+}
+
+/// Marker-only counterpart to `check_session_idle`'s exit-code handling, for
+/// sessions already `Ready` with no recorded `exit_code`: read the `.code` marker
+/// and persist it if present, otherwise do nothing (try again next tick). Never
+/// touches the backend — a `Ready` session's terminal state doesn't need a fresh
+/// `capture_output` call, only the marker file `wrap_command` writes once the
+/// wrapped agent process exits.
+pub(super) async fn sweep_ready_exit_code(store: &Store, session: &Session) {
+    let Some(code) =
+        crate::session::utils::read_exit_code_marker(store.data_dir(), &session.id.to_string())
+    else {
+        return;
+    };
+    #[allow(unused_variables)]
+    if let Err(error) = store
+        .update_session_exit_code(&session.id.to_string(), code)
+        .await
+    {
+        coverage_warn!(
+            session_name = %session.name,
+            "Idle check: failed to record exit code for ready session: {error}"
+        );
     }
 }
 

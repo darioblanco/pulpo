@@ -128,6 +128,14 @@ reason (`permission`, `question`, `idle`, ...), rendered as `needs input (<reaso
 `SessionStatus` enum itself is unchanged. Full event mapping, per-harness spawn/resume
 rewrites, and the watchdog-bypass mechanism: [Harness Adapters](/architecture/harness-adapters).
 
+A hook-driven `SessionEnded` moves the session to `Ready`/`Stopped` immediately, ahead of
+any `.code` exit-marker read — the marker is written by the wrapper only once the agent
+process actually terminates, which can lag slightly behind the harness's own "I'm done"
+hook. `exit_code` still ends up recorded the same as the scrollback path: the hook handler
+tries the marker itself, best-effort, the moment `SessionEnded` arrives, and the watchdog's
+own marker sweep (which also revisits `Ready` sessions with no `exit_code` yet, not just
+Active/Idle ones) picks it up on a later tick if the marker wasn't there yet.
+
 ## Waiting Patterns (Idle Detection)
 
 The watchdog inspects the last 5 lines of terminal output for these patterns (case-insensitive). The built-in patterns cover major coding agents and common CLI prompts:

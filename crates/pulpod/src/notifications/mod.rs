@@ -1,31 +1,58 @@
 pub mod webhook;
 
+use std::sync::Arc;
+
 use pulpo_common::event::{Event, PulpoEvent};
+use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use crate::config::WebhookEndpointConfig;
 
+/// Maximum number of webhook deliveries in flight at once, across every
+/// endpoint. Each event can spawn one delivery task per admitting endpoint —
+/// with no cap, a burst of events (or many configured endpoints) could spawn
+/// unboundedly many concurrent outbound requests. Beyond this cap, a delivery
+/// is dropped (and logged) rather than queued, matching the existing
+/// "in-memory queue, best-effort, no durable outbox" contract `deliver`
+/// already documents: a dropped delivery here is no worse than one that
+/// exhausts its retries.
+pub(crate) const MAX_CONCURRENT_DELIVERIES: usize = 16;
+
 /// Spawn a detached, best-effort delivery task for every webhook endpoint
-/// whose filter admits `event`. Delivery (including retries) happens
+/// whose filter admits `event`, bounded by `semaphore` (see
+/// [`MAX_CONCURRENT_DELIVERIES`]). Delivery (including retries) happens
 /// concurrently with the caller — this is the "in-memory queue": nothing is
 /// persisted, so a delivery that's still retrying when the daemon exits is
-/// simply lost. Returns the number of deliveries spawned.
+/// simply lost. Returns the number of deliveries actually spawned (an
+/// admitting endpoint dropped for lack of a permit is not counted).
 fn dispatch_webhooks(
     client: &reqwest::Client,
     webhooks: &[WebhookEndpointConfig],
     event: &Event,
+    semaphore: &Arc<Semaphore>,
 ) -> usize {
     let mut spawned = 0;
     for w in webhooks {
-        if webhook::webhook_wants(w, event) {
-            let client = client.clone();
-            let config = w.clone();
-            let event = event.clone();
-            tokio::spawn(async move {
-                webhook::deliver(&client, &config, &event).await;
-            });
-            spawned += 1;
+        if !webhook::webhook_wants(w, event) {
+            continue;
         }
+        let Ok(permit) = Arc::clone(semaphore).try_acquire_owned() else {
+            warn!(
+                webhook = %w.name,
+                event = %format!("{}.{}", event.event_type, event.subtype),
+                max_concurrent = MAX_CONCURRENT_DELIVERIES,
+                "Dropping webhook delivery: max concurrent deliveries reached"
+            );
+            continue;
+        };
+        let client = client.clone();
+        let config = w.clone();
+        let event = event.clone();
+        tokio::spawn(async move {
+            webhook::deliver(&client, &config, &event).await;
+            drop(permit);
+        });
+        spawned += 1;
     }
     spawned
 }
@@ -43,7 +70,8 @@ pub async fn run_dispatcher_loop(
     mut rx: tokio::sync::broadcast::Receiver<PulpoEvent>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
-    let client = reqwest::Client::new();
+    let client = webhook::build_client();
+    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DELIVERIES));
     loop {
         tokio::select! {
             result = rx.recv() => {
@@ -52,7 +80,7 @@ pub async fn run_dispatcher_loop(
                         let Some(event) = Event::from_pulpo_event(&pulpo_event, &node_name) else {
                             continue;
                         };
-                        dispatch_webhooks(&client, &webhooks, &event);
+                        dispatch_webhooks(&client, &webhooks, &event, &semaphore);
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                         warn!(missed = n, "Event dispatcher lagged, skipping events");
@@ -97,6 +125,12 @@ mod tests {
         }
     }
 
+    /// A freshly-full semaphore at the production cap, for tests that don't care
+    /// about the concurrency limit itself.
+    fn test_semaphore() -> Arc<Semaphore> {
+        Arc::new(Semaphore::new(MAX_CONCURRENT_DELIVERIES))
+    }
+
     // --- dispatch_webhooks ---
 
     #[tokio::test]
@@ -112,7 +146,7 @@ mod tests {
             ), // filtered out
         ];
 
-        let n = dispatch_webhooks(&client, &webhooks, &event);
+        let n = dispatch_webhooks(&client, &webhooks, &event, &test_semaphore());
         assert_eq!(n, 1);
     }
 
@@ -125,14 +159,20 @@ mod tests {
             webhook_config("b", "http://127.0.0.1:1/b", vec![]),
         ];
 
-        assert_eq!(dispatch_webhooks(&client, &webhooks, &event), 2);
+        assert_eq!(
+            dispatch_webhooks(&client, &webhooks, &event, &test_semaphore()),
+            2
+        );
     }
 
     #[tokio::test]
     async fn test_dispatch_no_webhooks_is_noop() {
         let client = reqwest::Client::new();
         let event = Event::from_pulpo_event(&session_pulpo_event("active"), "n").unwrap();
-        assert_eq!(dispatch_webhooks(&client, &[], &event), 0);
+        assert_eq!(
+            dispatch_webhooks(&client, &[], &event, &test_semaphore()),
+            0
+        );
     }
 
     #[tokio::test]
@@ -144,7 +184,58 @@ mod tests {
             "http://127.0.0.1:1/a",
             vec!["stopped".into()],
         )];
-        assert_eq!(dispatch_webhooks(&client, &webhooks, &event), 0);
+        assert_eq!(
+            dispatch_webhooks(&client, &webhooks, &event, &test_semaphore()),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_drops_when_no_permits_available() {
+        // Simulate every concurrency slot already being in use (e.g. a flood of
+        // prior events still delivering to slow endpoints): a saturated semaphore
+        // must make `dispatch_webhooks` drop the delivery — not spawn it anyway,
+        // and not block waiting for a permit to free up.
+        let client = reqwest::Client::new();
+        let event = Event::from_pulpo_event(&session_pulpo_event("active"), "n").unwrap();
+        let webhooks = vec![
+            webhook_config("a", "http://127.0.0.1:1/a", vec![]),
+            webhook_config("b", "http://127.0.0.1:1/b", vec![]),
+        ];
+
+        let semaphore = Arc::new(Semaphore::new(1));
+        // Hold the single permit ourselves so the semaphore is fully saturated.
+        let held = Arc::clone(&semaphore).try_acquire_owned().unwrap();
+        assert_eq!(semaphore.available_permits(), 0);
+
+        let spawned = dispatch_webhooks(&client, &webhooks, &event, &semaphore);
+        assert_eq!(spawned, 0, "no permits available -> nothing spawned");
+        assert_eq!(
+            semaphore.available_permits(),
+            0,
+            "a dropped delivery must not touch the semaphore"
+        );
+
+        drop(held);
+        assert_eq!(semaphore.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_dispatch_flood_never_exceeds_concurrency_cap() {
+        // A burst of far more admitting endpoints than the cap allows must still
+        // spawn no more than `MAX_CONCURRENT_DELIVERIES` deliveries at once —
+        // regardless of how many endpoints admit the event.
+        let client = reqwest::Client::new();
+        let event = Event::from_pulpo_event(&session_pulpo_event("active"), "n").unwrap();
+        let webhooks: Vec<_> = (0..MAX_CONCURRENT_DELIVERIES * 4)
+            .map(|i| webhook_config(&format!("hook-{i}"), "http://127.0.0.1:1/hook", vec![]))
+            .collect();
+
+        let semaphore = test_semaphore();
+        let spawned = dispatch_webhooks(&client, &webhooks, &event, &semaphore);
+
+        assert_eq!(spawned, MAX_CONCURRENT_DELIVERIES);
+        assert_eq!(semaphore.available_permits(), 0);
     }
 
     fn usage_alert_pulpo_event() -> PulpoEvent {
@@ -176,7 +267,10 @@ mod tests {
                 vec!["lifecycle.*".into()],
             ),
         ];
-        assert_eq!(dispatch_webhooks(&client, &webhooks, &event), 1);
+        assert_eq!(
+            dispatch_webhooks(&client, &webhooks, &event, &test_semaphore()),
+            1
+        );
     }
 
     // --- dispatcher loop ---

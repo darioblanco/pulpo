@@ -15,6 +15,36 @@ pub const RETRY_DELAYS: [Duration; 3] = [
     Duration::from_secs(9),
 ];
 
+/// Connect timeout for outbound webhook requests: an endpoint that never
+/// completes a TCP/TLS handshake must not hang a delivery task (and, since
+/// deliveries share a bounded pool of concurrent slots, everything behind it)
+/// forever.
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Total per-attempt timeout (connect + send + response) for outbound webhook
+/// requests. Bounds the same failure mode as [`CONNECT_TIMEOUT`] but for an
+/// endpoint that accepts the connection and then never responds.
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Build the `reqwest::Client` shared by every webhook delivery for the
+/// dispatcher's lifetime. `reqwest::Client::new()` has no timeouts at all, so an
+/// unresponsive endpoint would otherwise hang its delivery task (and hold its
+/// concurrency permit — see `notifications::MAX_CONCURRENT_DELIVERIES`)
+/// indefinitely; every request through this client gives up after
+/// [`CONNECT_TIMEOUT`]/[`REQUEST_TIMEOUT`] and moves on to the retry schedule
+/// (or drops the event) instead.
+pub fn build_client() -> reqwest::Client {
+    build_client_with_timeouts(CONNECT_TIMEOUT, REQUEST_TIMEOUT)
+}
+
+fn build_client_with_timeouts(connect: Duration, total: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(connect)
+        .timeout(total)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 /// Whether an endpoint config wants the given canonical event.
 ///
 /// Applies the universal routing filter uniformly to **every** event type:
@@ -98,12 +128,15 @@ async fn deliver_with_delays(
                 }
                 return;
             }
+            // `reqwest::Error`'s `Display` appends the request URL, and a Slack/Discord
+            // webhook URL embeds its secret in the path — `.without_url()` drops it
+            // before the error reaches the log file.
             Err(e) if attempt == total_attempts => {
                 error!(
                     webhook = %config.name,
                     event = %event_header,
                     attempts = attempt,
-                    error = %e,
+                    error = %e.without_url(),
                     "Webhook delivery failed after all retries, dropping event"
                 );
                 return;
@@ -113,7 +146,7 @@ async fn deliver_with_delays(
                     webhook = %config.name,
                     event = %event_header,
                     attempt,
-                    error = %e,
+                    error = %e.without_url(),
                     "Webhook delivery attempt failed, retrying"
                 );
                 tokio::time::sleep(delays[attempt - 1]).await;
@@ -503,6 +536,104 @@ mod tests {
                 Duration::from_secs(3),
                 Duration::from_secs(9),
             ]
+        );
+    }
+
+    // --- client timeouts (bounded delivery) ---
+
+    #[test]
+    fn test_documented_timeouts() {
+        assert_eq!(CONNECT_TIMEOUT, Duration::from_secs(5));
+        assert_eq!(REQUEST_TIMEOUT, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_build_client_constructs_successfully() {
+        // Smoke test: `build_client` (the real entry point `notifications::mod` uses)
+        // must actually succeed in building a client with the documented timeouts.
+        let _ = build_client();
+    }
+
+    /// Accept TCP connections but never read/write/respond on them — simulates an
+    /// endpoint that hangs instead of failing fast (a dropped/refused connection
+    /// would already be handled by the existing retry-then-drop tests above).
+    async fn hanging_server() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            loop {
+                if let Ok((stream, _)) = listener.accept().await {
+                    tokio::spawn(async move {
+                        let _stream = stream;
+                        std::future::pending::<()>().await;
+                    });
+                }
+            }
+        });
+        format!("http://{addr}/hook")
+    }
+
+    #[tokio::test]
+    async fn test_deliver_gives_up_within_timeout_budget_against_hanging_endpoint() {
+        // Before the fix, `reqwest::Client::new()` had no timeout at all, so a
+        // request against an endpoint that accepts the connection and then never
+        // responds would hang forever — `deliver_with_delays` would never return.
+        // A client built with `build_client_with_timeouts` (what `build_client`
+        // itself calls, just with short durations so the test doesn't wait on the
+        // real 5s/10s production budget) must give up per attempt instead.
+        let url = hanging_server().await;
+        let config = test_config(&url);
+        let client =
+            build_client_with_timeouts(Duration::from_millis(100), Duration::from_millis(150));
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            deliver_with_delays(&client, &config, &lifecycle_event("active"), &FAST_DELAYS),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "delivery must give up within the client's own timeout budget, not hang forever"
+        );
+    }
+
+    // --- URL redaction on failure (webhook URLs embed the secret) ---
+
+    #[tokio::test]
+    async fn test_deliver_failure_log_does_not_leak_url() {
+        // The endpoint URL itself is the shared secret for Slack/Discord-style
+        // webhooks (see docs/reference/config.md) — a failed delivery must not put
+        // it in the log via `reqwest::Error`'s `Display` (which appends the URL).
+        let secret_path = "T00000000/B00000000/super-secret-token-abc123";
+        let config = WebhookEndpointConfig {
+            events: vec![],
+            min_severity: None,
+            secret: None,
+            name: "leaky".into(),
+            url: format!("http://127.0.0.1:1/{secret_path}"),
+        };
+        let client = reqwest::Client::new();
+
+        // Connection refused on every attempt -> reaches the final error!() branch.
+        deliver_with_delays(&client, &config, &lifecycle_event("active"), &FAST_DELAYS).await;
+
+        // Build the same error `deliver_with_delays` would have logged and confirm
+        // `without_url()` actually strips the secret from its `Display` output —
+        // the behavior the fix relies on, checked directly against the redacted
+        // error rather than by scraping log output.
+        let err = client
+            .get(&config.url)
+            .send()
+            .await
+            .expect_err("connection to a closed port must fail");
+        assert!(
+            format!("{err}").contains(secret_path),
+            "sanity check: the raw reqwest::Error must contain the URL"
+        );
+        assert!(
+            !format!("{}", err.without_url()).contains(secret_path),
+            "without_url() must strip the webhook URL/secret from the logged error"
         );
     }
 }

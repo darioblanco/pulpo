@@ -62,6 +62,18 @@ detection stops applying once a session's events start flowing — see
 [Harness Adapters](/architecture/harness-adapters). See
 [Session Lifecycle](/operations/session-lifecycle) for the full state-transition picture.
 
+## Scheduler
+
+Tuning for the built-in cron scheduler (`pulpo schedule add`):
+
+```toml
+[scheduler]
+tick_secs = 60   # How often to check for due schedules, in seconds (default: 60, min: 1)
+```
+
+There's normally no reason to lower this — it exists mainly so the end-to-end test suite
+doesn't have to wait a full minute per schedule check.
+
 ## Cost Rates
 
 `[rates.<model>]` prices a model for exact cost accounting (`pulpo usage`). A cap on what a

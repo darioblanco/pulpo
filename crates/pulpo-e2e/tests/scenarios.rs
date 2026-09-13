@@ -143,19 +143,25 @@ fn s3_clean_exit_then_resume_recreates_with_resume_flag() {
 
     // The harness's own SessionEnded event (fired by the "exit" step, before the
     // fake process actually exits) resolves the session to Ready first — the
-    // backend (fallback shell) is still alive, so this doesn't yet know an exit
-    // code (that only lives in the `.code` marker the wrapper writes once the
-    // fake process actually terminates, which the harness-event path doesn't
-    // consult — only the exit-marker sweep below does).
+    // backend (fallback shell) is still alive, so this doesn't necessarily know an
+    // exit code straight away (`apply_harness_event` tries the `.code` marker
+    // best-effort on the same hook, but the wrapper may not have written it yet).
+    // The watchdog's own marker sweep (`watchdog::idle::check_idle_sessions`
+    // revisiting `Ready` sessions with no `exit_code` yet) is the durable path, so
+    // poll for it here rather than asserting it's already set the instant the
+    // session reaches Ready.
     let session = daemon.wait_status("s3-clean-exit", SessionStatus::Ready, SHORT);
     let harness_session_id = session
         .harness_session_id
         .clone()
         .expect("harness session id should be known before exit");
+    let session = daemon.wait_for("s3-clean-exit", SHORT, |s| s.exit_code == Some(0));
+    assert_eq!(session.status, SessionStatus::Ready);
+    assert_eq!(session.exit_code, Some(0));
 
-    // The user exits the lingering fallback shell: the backend dies, and with the
-    // `.code` marker present the session resolves the rest of the way to Stopped
-    // — backfilling the exit code from that marker in the same step.
+    // The user exits the lingering fallback shell: the backend dies and the
+    // session resolves the rest of the way to Stopped, keeping the exit code
+    // already recorded while it was Ready.
     daemon.input("s3-clean-exit", Some("exit"));
     let session = daemon.wait_status("s3-clean-exit", SessionStatus::Stopped, SHORT);
     assert_eq!(session.exit_code, Some(0));

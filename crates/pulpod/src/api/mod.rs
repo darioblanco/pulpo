@@ -27,7 +27,6 @@ use tokio::sync::{RwLock, broadcast};
 use crate::config::Config;
 use crate::session::manager::SessionManager;
 use crate::store::Store;
-use crate::watchdog::WatchdogRuntimeConfig;
 
 const EVENT_CHANNEL_CAPACITY: usize = 256;
 
@@ -37,8 +36,6 @@ pub struct AppState {
     pub session_manager: SessionManager,
     pub store: Store,
     pub event_tx: broadcast::Sender<PulpoEvent>,
-    /// Watch channel sender for pushing watchdog config changes to the running loop.
-    pub watchdog_config_tx: Option<tokio::sync::watch::Sender<WatchdogRuntimeConfig>>,
 }
 
 impl AppState {
@@ -48,7 +45,6 @@ impl AppState {
         config_path: PathBuf,
         session_manager: SessionManager,
         event_tx: broadcast::Sender<PulpoEvent>,
-        watchdog_config_tx: Option<tokio::sync::watch::Sender<WatchdogRuntimeConfig>>,
         store: Store,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -57,24 +53,16 @@ impl AppState {
             session_manager,
             store,
             event_tx,
-            watchdog_config_tx,
         })
     }
 
-    /// Minimal constructor (tests): empty config path, own event channel, no watchdog channel.
+    /// Minimal constructor (tests): empty config path, own event channel.
     pub fn new(config: Config, session_manager: SessionManager, store: Store) -> Arc<Self> {
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
-        Self::build(
-            config,
-            PathBuf::new(),
-            session_manager,
-            event_tx,
-            None,
-            store,
-        )
+        Self::build(config, PathBuf::new(), session_manager, event_tx, store)
     }
 
-    /// [`AppState::with_all`] without a watchdog config channel.
+    /// Full constructor with an explicit config path and event channel.
     pub fn with_event_tx(
         config: Config,
         config_path: PathBuf,
@@ -82,26 +70,7 @@ impl AppState {
         event_tx: broadcast::Sender<PulpoEvent>,
         store: Store,
     ) -> Arc<Self> {
-        Self::with_all(config, config_path, session_manager, event_tx, None, store)
-    }
-
-    /// Full constructor with all optional fields (watchdog).
-    pub fn with_all(
-        config: Config,
-        config_path: PathBuf,
-        session_manager: SessionManager,
-        event_tx: broadcast::Sender<PulpoEvent>,
-        watchdog_config_tx: Option<tokio::sync::watch::Sender<WatchdogRuntimeConfig>>,
-        store: Store,
-    ) -> Arc<Self> {
-        Self::build(
-            config,
-            config_path,
-            session_manager,
-            event_tx,
-            watchdog_config_tx,
-            store,
-        )
+        Self::build(config, config_path, session_manager, event_tx, store)
     }
 }
 
@@ -130,42 +99,6 @@ mod tests {
         let state = AppState::with_event_tx(config, config_path.clone(), manager, event_tx, store);
         assert_eq!(state.config.read().await.node.name, "test-node");
         assert_eq!(state.config_path, config_path);
-    }
-
-    #[tokio::test]
-    async fn test_app_state_with_all_watchdog_tx() {
-        let (config, manager, store) = test_support::test_parts().await;
-        let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        let initial = crate::watchdog::WatchdogRuntimeConfig {
-            interval: std::time::Duration::from_secs(10),
-            idle: crate::watchdog::IdleConfig::default(),
-            extra_waiting_patterns: Vec::new(),
-        };
-        let (config_tx, _config_rx) = tokio::sync::watch::channel(initial);
-        let state = AppState::with_all(
-            config,
-            std::path::PathBuf::from("/nonexistent/config.toml"),
-            manager,
-            event_tx,
-            Some(config_tx),
-            store,
-        );
-        assert!(state.watchdog_config_tx.is_some());
-    }
-
-    #[tokio::test]
-    async fn test_app_state_with_all_watchdog_tx_none() {
-        let (config, manager, store) = test_support::test_parts().await;
-        let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        let state = AppState::with_all(
-            config,
-            std::path::PathBuf::from("/nonexistent/config.toml"),
-            manager,
-            event_tx,
-            None,
-            store,
-        );
-        assert!(state.watchdog_config_tx.is_none());
     }
 
     #[tokio::test]

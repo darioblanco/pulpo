@@ -1259,6 +1259,24 @@ impl SessionManager {
             );
         }
 
+        // Best-effort: a `SessionEnded` hook fires the moment the harness reports
+        // its own conversation as done, which can race `wrap_command` writing the
+        // `.code` exit marker once the wrapped process actually terminates. When
+        // the marker is already there, record `exit_code` now instead of waiting
+        // for the watchdog's own marker sweep
+        // (`watchdog::idle::check_idle_sessions`/`sweep_ready_exit_code`) to catch
+        // it on a later tick — that sweep remains the durable path for the common
+        // case where the marker isn't written yet.
+        if matches!(event, harness::HarnessEvent::SessionEnded { .. })
+            && session.exit_code.is_none()
+            && let Some(code) = read_exit_code_marker(self.store.data_dir(), &session_id_str)
+        {
+            self.store
+                .update_session_exit_code(&session_id_str, code)
+                .await?;
+            session.exit_code = Some(code);
+        }
+
         session.updated_at = Utc::now();
         self.emit_event(&session, Some(previous_status));
 
@@ -4798,6 +4816,60 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(fetched.status, SessionStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_session_ended_records_exit_code_from_marker() {
+        // Best-effort: when the `.code` marker is already on disk by the time the
+        // `SessionEnded` hook fires, `apply_harness_event` records `exit_code`
+        // itself instead of waiting for the watchdog's marker sweep.
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new().with_alive(true)).await;
+        let session = harness_session(&mgr).await;
+        let data_dir = mgr.store().data_dir().to_owned();
+        let code_path = exit_code_marker_path(&data_dir, &session.id.to_string());
+        std::fs::create_dir_all(code_path.parent().unwrap()).unwrap();
+        std::fs::write(&code_path, "0").unwrap();
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "SessionEnd"}),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Ready);
+        assert_eq!(fetched.exit_code, Some(0));
+    }
+
+    #[tokio::test]
+    async fn test_apply_harness_event_session_ended_without_marker_leaves_exit_code_unset() {
+        // No marker on disk yet (the common race): `apply_harness_event` must not
+        // error or fabricate a code — the watchdog's marker sweep picks it up once
+        // `wrap_command` actually writes it.
+        let (mgr, _backend, _pool) = test_manager(MockBackend::new().with_alive(true)).await;
+        let session = harness_session(&mgr).await;
+
+        mgr.apply_harness_event(
+            &session.id.to_string(),
+            "claude",
+            &serde_json::json!({"hook_event_name": "SessionEnd"}),
+        )
+        .await
+        .unwrap();
+
+        let fetched = mgr
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.status, SessionStatus::Ready);
+        assert!(fetched.exit_code.is_none());
     }
 
     #[tokio::test]

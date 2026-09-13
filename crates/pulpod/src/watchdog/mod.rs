@@ -11,7 +11,10 @@ use std::time::Duration;
 use crate::harness::{HarnessRegistry, HarnessSignals};
 use idle::check_idle_sessions;
 #[cfg(test)]
-use idle::{check_session_idle, handle_active_session, handle_idle_session, handle_session_ready};
+use idle::{
+    check_session_idle, handle_active_session, handle_idle_session, handle_session_ready,
+    sweep_ready_exit_code,
+};
 use metadata::{build_session_event, detect_and_store_output_metadata};
 pub use output_patterns::detect_waiting_for_input;
 use pulpo_common::event::PulpoEvent;
@@ -114,7 +117,7 @@ impl Default for IdleConfig {
     }
 }
 
-/// Runtime configuration for the watchdog loop, updated via watch channel.
+/// Runtime configuration for the watchdog loop, read once at startup.
 #[derive(Debug, Clone)]
 pub struct WatchdogRuntimeConfig {
     pub interval: Duration,
@@ -130,31 +133,18 @@ pub struct ReadyContext {
     pub node_name: String,
 }
 
-async fn refresh_watchdog_ticker(
-    tick: &mut tokio::time::Interval,
-    current_interval: &mut Duration,
-    next_interval: Duration,
-) {
-    if next_interval != *current_interval {
-        info!(
-            old_interval_secs = current_interval.as_secs(),
-            new_interval_secs = next_interval.as_secs(),
-            "Watchdog interval changed, resetting ticker"
-        );
-        *current_interval = next_interval;
-        *tick = tokio::time::interval(next_interval);
-        tick.tick().await;
-    }
-}
-
 async fn run_watchdog_tick(
     backend: &Arc<dyn Backend>,
     store: &Store,
     cfg: &WatchdogRuntimeConfig,
     ready_ctx: &ReadyContext,
 ) {
-    budget::enforce_budgets(backend, store, ready_ctx).await;
-
+    // `check_idle_sessions` runs first: it's what refreshes each session's
+    // `session_cost_usd` metadata for this tick (via `detect_and_store_output_metadata`
+    // reading the agent's own transcript). Enforcing budgets before that would judge
+    // every session against last tick's cost — a real cost breach would only ever be
+    // caught one tick late. Running idle detection first means the budget check below
+    // always sees this tick's own fresh numbers.
     if cfg.idle.enabled {
         check_idle_sessions(
             backend,
@@ -166,30 +156,31 @@ async fn run_watchdog_tick(
         .await;
     }
 
+    budget::enforce_budgets(backend, store, ready_ctx).await;
+
     update_git_info(store).await;
 }
 
-/// Runs the watchdog loop that checks per-session breakers (idle, budget, burn) on a
+/// Runs the watchdog loop that checks per-session breakers (idle, budget) on a
 /// fixed tick and intervenes when one trips.
 ///
-/// The loop dynamically picks up config changes sent via the `config_rx` watch channel.
+/// `cfg` is read once at startup — there is no live config-reload path (the
+/// `PUT /api/v1/watchdog` hot-reload endpoint was removed along with the rest of
+/// the config-editing API; see `docs/reference/config.md`). Changing `[watchdog]`
+/// in the config file takes effect on the next `pulpod` restart.
 pub async fn run_watchdog_loop(
     backend: Arc<dyn Backend>,
     store: Store,
-    config_rx: tokio::sync::watch::Receiver<WatchdogRuntimeConfig>,
+    cfg: WatchdogRuntimeConfig,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ready_ctx: ReadyContext,
 ) {
-    let initial = config_rx.borrow().clone();
-    let mut current_interval = initial.interval;
-    let mut tick = tokio::time::interval(current_interval);
+    let mut tick = tokio::time::interval(cfg.interval);
     tick.tick().await; // first tick completes immediately
 
     loop {
         tokio::select! {
             _ = tick.tick() => {
-                let cfg = config_rx.borrow().clone();
-                refresh_watchdog_ticker(&mut tick, &mut current_interval, cfg.interval).await;
                 run_watchdog_tick(&backend, &store, &cfg, &ready_ctx).await;
             }
             _ = shutdown_rx.changed() => {
