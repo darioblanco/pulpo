@@ -20,12 +20,9 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
         auth: AuthConfigResponse {},
         watchdog: WatchdogConfigResponse {
             enabled: config.watchdog.enabled,
-            memory_threshold: config.watchdog.memory_threshold,
             check_interval_secs: config.watchdog.check_interval_secs,
-            breach_count: config.watchdog.breach_count,
             idle_timeout_secs: config.watchdog.idle_timeout_secs,
             idle_action: config.watchdog.idle_action.clone(),
-            ready_ttl_secs: config.watchdog.ready_ttl_secs,
             idle_threshold_secs: config.watchdog.idle_threshold_secs,
             extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
         },
@@ -79,14 +76,8 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
     if let Some(enabled) = req.watchdog_enabled {
         config.watchdog.enabled = enabled;
     }
-    if let Some(threshold) = req.watchdog_memory_threshold {
-        config.watchdog.memory_threshold = threshold;
-    }
     if let Some(interval) = req.watchdog_check_interval_secs {
         config.watchdog.check_interval_secs = interval;
-    }
-    if let Some(count) = req.watchdog_breach_count {
-        config.watchdog.breach_count = count;
     }
     if let Some(timeout) = req.watchdog_idle_timeout_secs {
         config.watchdog.idle_timeout_secs = timeout;
@@ -408,18 +399,14 @@ mod tests {
         let state = test_state().await;
         let req = UpdateConfigRequest {
             watchdog_enabled: Some(false),
-            watchdog_memory_threshold: Some(90),
             watchdog_check_interval_secs: Some(120),
-            watchdog_breach_count: Some(5),
             watchdog_idle_timeout_secs: Some(600),
             watchdog_idle_action: Some("kill".into()),
             ..Default::default()
         };
         let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
         assert!(!resp.config.watchdog.enabled);
-        assert_eq!(resp.config.watchdog.memory_threshold, 90);
         assert_eq!(resp.config.watchdog.check_interval_secs, 120);
-        assert_eq!(resp.config.watchdog.breach_count, 5);
         assert_eq!(resp.config.watchdog.idle_timeout_secs, 600);
         assert_eq!(resp.config.watchdog.idle_action, "kill");
         assert!(!resp.restart_required);
@@ -436,12 +423,12 @@ mod tests {
             },
             watchdog: crate::config::WatchdogConfig {
                 enabled: true,
-                memory_threshold: 85,
+                memory_threshold: None,
                 check_interval_secs: 30,
-                breach_count: 3,
+                breach_count: None,
                 idle_timeout_secs: 300,
                 idle_action: "pause".into(),
-                ready_ttl_secs: 0,
+                ready_ttl_secs: None,
                 adopt_tmux: None,
                 idle_threshold_secs: 60,
                 waiting_patterns: Vec::new(),
@@ -464,9 +451,7 @@ mod tests {
         let resp = config_to_response(&config);
         // Watchdog
         assert!(resp.watchdog.enabled);
-        assert_eq!(resp.watchdog.memory_threshold, 85);
         assert_eq!(resp.watchdog.check_interval_secs, 30);
-        assert_eq!(resp.watchdog.breach_count, 3);
         assert_eq!(resp.watchdog.idle_timeout_secs, 300);
         assert_eq!(resp.watchdog.idle_action, "pause");
         // Notifications

@@ -65,12 +65,9 @@ describe('types', () => {
       },
       watchdog: {
         enabled: true,
-        memory_threshold: 85,
         check_interval_secs: 30,
-        breach_count: 3,
         idle_timeout_secs: 300,
         idle_action: 'pause',
-        ready_ttl_secs: 0,
       },
       notifications: { webhooks: [] },
     };

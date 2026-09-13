@@ -137,11 +137,8 @@ mod tests {
         let (config, manager, store) = test_support::test_parts().await;
         let (event_tx, _) = tokio::sync::broadcast::channel(16);
         let initial = crate::watchdog::WatchdogRuntimeConfig {
-            threshold: 90,
             interval: std::time::Duration::from_secs(10),
-            breach_count: 3,
             idle: crate::watchdog::IdleConfig::default(),
-            ready_ttl_secs: 0,
             extra_waiting_patterns: Vec::new(),
             burn: crate::watchdog::BurnConfig::default(),
         };

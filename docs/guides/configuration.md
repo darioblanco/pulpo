@@ -38,7 +38,7 @@ Bind modes:
 
 ## Watchdog
 
-The watchdog monitors sessions for memory pressure, idle detection, and ready session cleanup:
+The watchdog monitors sessions for idle detection and the budget/burn breakers:
 
 ```toml
 [watchdog]
@@ -47,9 +47,6 @@ check_interval_secs = 10      # How often to check (default: 10)
 idle_timeout_secs = 600        # Seconds idle before action (default: 600)
 idle_action = "alert"          # "alert" (mark idle) or "kill" (default: "alert")
 idle_threshold_secs = 60       # Seconds of unchanged output before Active→Idle (default: 60)
-ready_ttl_secs = 0             # Seconds after Ready before stop (0 = disabled)
-memory_threshold = 90          # Memory % to trigger intervention (default: 90)
-breach_count = 3               # Consecutive breaches before stop (default: 3)
 waiting_patterns = ["custom prompt>"]  # Extra waiting-for-input patterns (default: [])
 burn_ceiling_usd_per_hour = 20.0       # Alert (or stop) if lifetime-average $/hr exceeds this (default: unset)
 burn_action = "alert"                  # "alert" (default) or "stop" when a burn ceiling is crossed

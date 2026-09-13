@@ -144,7 +144,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 │CREATING│──────▶│  ACTIVE  │───────▶│  READY   │
 └────────┘       └──────────┘        └──────────┘
                    ▲      │                │
-            output │      │ waiting        │ TTL / user
+            output │      │ waiting        │ user / exit
            changed │      │ for input      ▼
                    │      ▼          ┌──────────┐
                    │ ┌──────────┐    │ STOPPED  │
@@ -164,7 +164,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 - **ACTIVE**: agent is working — terminal output is changing
 - **IDLE**: agent needs attention — waiting for user input or at its prompt
 - **READY**: agent process exited — task is done. Detected by `[pulpo] Agent exited` marker
-- **STOPPED**: session was terminated by user, watchdog (memory/idle), ready TTL cleanup, or the session's shell exited cleanly (exit markers present)
+- **STOPPED**: session was terminated by user, a watchdog intervention (idle/budget/burn), or the session's shell exited cleanly (exit markers present)
 - **LOST**: tmux process disappeared with no exit markers (crash, reboot, external kill mid-run). A session whose shell exited normally (exit markers present) resolves to STOPPED instead — exiting a session is a clean end, not a loss.
 
 ### State Quick Reference
@@ -175,7 +175,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 | `active`   | Agent is working                | Session started / output changed  | `logs`, `attach`, `stop`        |
 | `idle`     | Agent waiting for input         | Watchdog detected waiting pattern | `attach` to interact, or `stop` |
 | `ready`    | Agent exited                    | `[pulpo] Agent exited` detected   | `resume`                        |
-| `stopped`  | Session terminated              | User, watchdog, TTL cleanup, or a clean shell exit | `resume` or `spawn` new |
+| `stopped`  | Session terminated              | User, watchdog intervention, or a clean shell exit | `resume` or `spawn` new |
 | `lost`     | tmux process disappeared, no exit marker | Daemon restart / reboot / crash | `resume` (auto-attaches)      |
 
 Key distinctions:
@@ -215,18 +215,18 @@ current terminal content and stores it in the DB. This means:
 
 ### Interventions
 
-An **intervention** is any time pulpo forcibly acts on a session — stopping it due to resource pressure, idle timeout, or another watchdog-detected condition. Every intervention is recorded in the `intervention_events` table with:
+An **intervention** is any time pulpo forcibly acts on a session — stopping it due to an idle timeout, a budget/burn-rate breach, or another watchdog-detected condition. Every intervention is recorded in the `intervention_events` table with:
 
 - **session_id** — which session was affected
-- **reason** — human-readable cause (e.g. "Memory 95% exceeded threshold 90%", "Idle for 600s")
+- **reason** — human-readable cause (e.g. "Idle for 600s", "Cost $10.00 reached budget $10.00")
 - **created_at** — when the intervention happened
 
 The session itself also stores the most recent intervention in `intervention_reason` and `intervention_at` fields, so you can see at a glance whether a session was intervened on.
 
 **What triggers an intervention:**
 
-- **Memory pressure** — the watchdog checks system memory usage every `check_interval_secs`. If usage exceeds `memory_threshold` for `breach_count` consecutive checks, the highest-memory session is stopped.
 - **Idle timeout** — if a session produces no output for `idle_timeout_secs`, the watchdog acts based on `idle_action`: `"alert"` logs a warning, `"kill"` terminates the session.
+- **Budget / burn-rate** — a session's cost budget is exceeded, or its lifetime-average cost/token rate crosses the configured burn ceiling (see `docs/reference/config.md`).
 
 **How to inspect interventions:**
 
@@ -267,9 +267,7 @@ Watchdog detects issue → stops session → records intervention → session is
 
 | Key                   | Default   | Description                                     |
 | --------------------- | --------- | ----------------------------------------------- |
-| `memory_threshold`    | `90`      | Stop when system memory usage exceeds this %    |
-| `check_interval_secs` | `10`      | How often to check (seconds)                    |
-| `breach_count`        | `3`       | Consecutive breaches before acting              |
+| `check_interval_secs` | `10`      | How often the watchdog tick runs (seconds)      |
 | `idle_timeout_secs`   | `600`     | Seconds of no output before idle action         |
 | `idle_action`         | `"alert"` | `"alert"` (log warning) or `"kill"` (terminate) |
 
@@ -281,7 +279,7 @@ Watchdog detects issue → stops session → records intervention → session is
 | Session is `lost` after reboot            | Backend session is gone, no exit marker | `pulpo resume <name>`                              |
 | Session is `stopped`, wasn't manual       | Watchdog intervention, or the session's shell exited cleanly | Check `pulpo interventions <name>`; `resume` or `spawn` new |
 | `resume` fails with "cannot be resumed"   | Session is still active/idle/creating | Use `pulpo spawn` or wait for the running session |
-| Watchdog keeps stopping sessions          | Memory threshold too low        | Raise `memory_threshold` or reduce concurrent sessions    |
+| Watchdog keeps stopping sessions          | Idle timeout or budget/burn ceiling too low | Raise `idle_timeout_secs` or the relevant budget/burn setting |
 | No output in `pulpo logs`                 | Session just started            | Wait, or use `--follow` to stream: `pulpo logs -f <name>` |
 
 ---
@@ -434,7 +432,7 @@ GET    /events                SSE event stream
 `/events` emits tagged SSE events:
 - `event: session` — session lifecycle updates (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`)
 - `event: session_deleted` — a session was removed (`stop --purge`, `pulpo cleanup`)
-- `event: intervention` — a watchdog forced stop (memory/idle/budget/burn)
+- `event: intervention` — a watchdog forced stop (idle/budget/burn)
 - `event: usage_alert` — a budget or burn-rate ceiling was crossed
 
 ### Quick Reference
@@ -712,9 +710,7 @@ bind = "local"          # "local", "tailscale", or "public"
 
 [watchdog]
 enabled = true
-memory_threshold = 90
 check_interval_secs = 10
-breach_count = 3
 idle_timeout_secs = 600
 idle_action = "alert"       # "alert" or "kill"
 

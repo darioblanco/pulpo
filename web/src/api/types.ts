@@ -80,12 +80,9 @@ export interface NodeConfigResponse {
 
 export interface WatchdogConfigResponse {
   enabled: boolean;
-  memory_threshold: number;
   check_interval_secs: number;
-  breach_count: number;
   idle_timeout_secs: number;
   idle_action: string;
-  ready_ttl_secs: number;
 }
 
 export interface WebhookEndpointConfigResponse {
@@ -116,9 +113,7 @@ export interface UpdateConfigRequest {
   data_dir?: string;
   bind?: string;
   watchdog_enabled?: boolean;
-  watchdog_memory_threshold?: number;
   watchdog_check_interval_secs?: number;
-  watchdog_breach_count?: number;
   watchdog_idle_timeout_secs?: number;
   watchdog_idle_action?: string;
   webhooks?: WebhookEndpointUpdateRequest[];

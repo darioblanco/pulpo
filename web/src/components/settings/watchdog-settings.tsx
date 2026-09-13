@@ -8,12 +8,8 @@ import { FormField } from './form-field';
 interface WatchdogSettingsProps {
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
-  memoryThreshold: number;
-  onMemoryThresholdChange: (val: number) => void;
   checkIntervalSecs: number;
   onCheckIntervalSecsChange: (val: number) => void;
-  breachCount: number;
-  onBreachCountChange: (val: number) => void;
   idleTimeoutSecs: number;
   onIdleTimeoutSecsChange: (val: number) => void;
   idleAction: string;
@@ -25,12 +21,8 @@ const idleActions = ['pause', 'kill'] as const;
 export function WatchdogSettings({
   enabled,
   onEnabledChange,
-  memoryThreshold,
-  onMemoryThresholdChange,
   checkIntervalSecs,
   onCheckIntervalSecsChange,
-  breachCount,
-  onBreachCountChange,
   idleTimeoutSecs,
   onIdleTimeoutSecsChange,
   idleAction,
@@ -41,7 +33,7 @@ export function WatchdogSettings({
       <CardHeader>
         <CardTitle>Watchdog</CardTitle>
         <CardDescription>
-          Monitors memory pressure and idle sessions. Automatically pauses or kills runaway agents.
+          Monitors idle sessions. Automatically pauses or kills unattended agents.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-6">
@@ -56,48 +48,20 @@ export function WatchdogSettings({
             <Label htmlFor="watchdog-enabled">{enabled ? 'Enabled' : 'Disabled'}</Label>
           </div>
           <p className="text-xs text-muted-foreground">
-            When enabled, the watchdog periodically checks memory and session activity.
+            When enabled, the watchdog periodically checks session activity.
           </p>
         </div>
         <div className="grid items-start gap-6 sm:grid-cols-2">
           <FormField
-            label="Memory threshold (%)"
-            htmlFor="watchdog-memory-threshold"
-            description="Sessions are paused/killed when system memory exceeds this."
-          >
-            <Input
-              id="watchdog-memory-threshold"
-              type="number"
-              min={1}
-              max={100}
-              value={memoryThreshold}
-              onChange={(e) => onMemoryThresholdChange(parseInt(e.target.value, 10) || 0)}
-            />
-          </FormField>
-          <FormField
             label="Check interval (seconds)"
             htmlFor="watchdog-check-interval"
-            description="How often the watchdog checks resource usage."
+            description="How often the watchdog checks session activity."
           >
             <Input
               id="watchdog-check-interval"
               type="number"
               value={checkIntervalSecs}
               onChange={(e) => onCheckIntervalSecsChange(parseInt(e.target.value, 10) || 0)}
-            />
-          </FormField>
-        </div>
-        <div className="grid items-start gap-6 sm:grid-cols-2">
-          <FormField
-            label="Breach count"
-            htmlFor="watchdog-breach-count"
-            description="Consecutive threshold breaches before action is taken."
-          >
-            <Input
-              id="watchdog-breach-count"
-              type="number"
-              value={breachCount}
-              onChange={(e) => onBreachCountChange(parseInt(e.target.value, 10) || 0)}
             />
           </FormField>
           <FormField

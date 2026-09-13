@@ -20,7 +20,7 @@ Claude Code Remote Control), and hosted agent clouds.
 
 - **Exact usage metering** — structured readers for Claude Code, Codex, and pi; cross-account/cross-agent rollups; `[rates.<model>]` for new or repriced models
 - **Cost control** — per-session/schedule budget caps (alert 80%, stop 100%) plus a burn-velocity governor
-- **Hook-driven supervision** — Claude Code, Codex, and pi report real lifecycle events (`needs input (<reason>)`, real resume) instead of scrollback guessing; any other command falls back to watchdog heuristics (idle, memory, error, completion)
+- **Hook-driven supervision** — Claude Code, Codex, and pi report real lifecycle events (`needs input (<reason>)`, real resume) instead of scrollback guessing; any other command falls back to watchdog heuristics (idle, error, completion)
 - **Monitoring backbone** — events forwarded to any number of `[[webhooks]]` (plain POST, fixed retry schedule, in-memory)
 - **Command-agnostic** — runs Claude Code, Codex, Gemini CLI, Aider, shell scripts, anything
 - **4 control surfaces** — CLI, web UI (installable PWA), REST API, SSE
@@ -73,7 +73,7 @@ Most scripts use these environment variables:
 | Example | Description |
 |---------|-------------|
 | `config/minimal.toml` | Zero-config local setup |
-| `config/watchdog.toml` | Watchdog tuning (idle, memory, patterns) |
+| `config/watchdog.toml` | Watchdog tuning (idle, waiting-for-input patterns) |
 | `config/public-with-auth.toml` | Expose pulpod on the network with a bearer token |
 
 For more workflows (worktrees, handoff, private-infra credentials, webhooks), see the

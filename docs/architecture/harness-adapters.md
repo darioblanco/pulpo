@@ -446,9 +446,9 @@ signals overrides it: **Codex has no error/rate-limit hook**, so
 `detect_error` keep running from scrollback for Codex sessions even while its
 lifecycle events (`SessionStart`/`Stop`/`PermissionRequest`/...) are flowing.
 
-Everything else keeps running unconditionally regardless of ownership — memory
-intervention, git telemetry, PR/branch detection, and `idle_timeout` (alert/kill after
-N seconds idle) all still apply to harness-managed sessions exactly as they do to any
+Everything else keeps running unconditionally regardless of ownership — git telemetry,
+PR/branch detection, the budget/burn breakers, and `idle_timeout` (alert/kill after N
+seconds idle) all still apply to harness-managed sessions exactly as they do to any
 other. Sessions without events (a generic/unrecognized command, or a harness whose
 hook installation silently failed) keep today's heuristics unchanged for every signal,
 since `harness_last_event_at` never gets set for them —

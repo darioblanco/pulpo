@@ -11,12 +11,9 @@ pub async fn get_watchdog(
     let config = state.config.read().await;
     let resp = WatchdogConfigResponse {
         enabled: config.watchdog.enabled,
-        memory_threshold: config.watchdog.memory_threshold,
         check_interval_secs: config.watchdog.check_interval_secs,
-        breach_count: config.watchdog.breach_count,
         idle_timeout_secs: config.watchdog.idle_timeout_secs,
         idle_action: config.watchdog.idle_action.clone(),
-        ready_ttl_secs: config.watchdog.ready_ttl_secs,
         idle_threshold_secs: config.watchdog.idle_threshold_secs,
         extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
     };
@@ -33,23 +30,14 @@ pub async fn update_watchdog(
     if let Some(enabled) = req.enabled {
         config.watchdog.enabled = enabled;
     }
-    if let Some(threshold) = req.memory_threshold {
-        config.watchdog.memory_threshold = threshold;
-    }
     if let Some(interval) = req.check_interval_secs {
         config.watchdog.check_interval_secs = interval;
-    }
-    if let Some(count) = req.breach_count {
-        config.watchdog.breach_count = count;
     }
     if let Some(timeout) = req.idle_timeout_secs {
         config.watchdog.idle_timeout_secs = timeout;
     }
     if let Some(action) = req.idle_action {
         config.watchdog.idle_action = action;
-    }
-    if let Some(ttl) = req.ready_ttl_secs {
-        config.watchdog.ready_ttl_secs = ttl;
     }
     if let Some(threshold) = req.idle_threshold_secs {
         config.watchdog.idle_threshold_secs = threshold;
@@ -73,9 +61,7 @@ pub async fn update_watchdog(
     // Push updated config to the running watchdog loop
     if let Some(tx) = &state.watchdog_config_tx {
         let runtime_cfg = crate::watchdog::WatchdogRuntimeConfig {
-            threshold: config.watchdog.memory_threshold,
             interval: std::time::Duration::from_secs(config.watchdog.check_interval_secs),
-            breach_count: config.watchdog.breach_count,
             idle: crate::watchdog::IdleConfig {
                 enabled: config.watchdog.idle_timeout_secs > 0,
                 timeout_secs: config.watchdog.idle_timeout_secs,
@@ -86,7 +72,6 @@ pub async fn update_watchdog(
                 },
                 threshold_secs: config.watchdog.idle_threshold_secs,
             },
-            ready_ttl_secs: config.watchdog.ready_ttl_secs,
             extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
             burn: crate::watchdog::BurnConfig::from_watchdog_config(&config.watchdog),
         };
@@ -96,12 +81,9 @@ pub async fn update_watchdog(
 
     let resp = WatchdogConfigResponse {
         enabled: config.watchdog.enabled,
-        memory_threshold: config.watchdog.memory_threshold,
         check_interval_secs: config.watchdog.check_interval_secs,
-        breach_count: config.watchdog.breach_count,
         idle_timeout_secs: config.watchdog.idle_timeout_secs,
         idle_action: config.watchdog.idle_action.clone(),
-        ready_ttl_secs: config.watchdog.ready_ttl_secs,
         idle_threshold_secs: config.watchdog.idle_threshold_secs,
         extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
     };
@@ -122,9 +104,7 @@ mod tests {
         let state = test_state().await;
         let Json(resp) = get_watchdog(State(state)).await.unwrap();
         assert!(resp.enabled);
-        assert_eq!(resp.memory_threshold, 90);
         assert_eq!(resp.check_interval_secs, 10);
-        assert_eq!(resp.breach_count, 3);
         assert_eq!(resp.idle_timeout_secs, 600);
         assert_eq!(resp.idle_action, "alert");
     }
@@ -134,12 +114,9 @@ mod tests {
         let state = test_state().await;
         let req = UpdateWatchdogRequest {
             enabled: Some(false),
-            memory_threshold: Some(80),
             check_interval_secs: Some(30),
-            breach_count: Some(5),
             idle_timeout_secs: Some(300),
             idle_action: Some("kill".into()),
-            ready_ttl_secs: None,
             idle_threshold_secs: None,
             extra_waiting_patterns: None,
         };
@@ -147,16 +124,14 @@ mod tests {
             .await
             .unwrap();
         assert!(!resp.enabled);
-        assert_eq!(resp.memory_threshold, 80);
         assert_eq!(resp.check_interval_secs, 30);
-        assert_eq!(resp.breach_count, 5);
         assert_eq!(resp.idle_timeout_secs, 300);
         assert_eq!(resp.idle_action, "kill");
 
         // Verify persisted in memory
         let Json(current) = get_watchdog(State(state)).await.unwrap();
         assert!(!current.enabled);
-        assert_eq!(current.memory_threshold, 80);
+        assert_eq!(current.check_interval_secs, 30);
     }
 
     #[tokio::test]
@@ -169,21 +144,7 @@ mod tests {
         let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
         assert!(!resp.enabled);
         // Others unchanged from defaults
-        assert_eq!(resp.memory_threshold, 90);
         assert_eq!(resp.check_interval_secs, 10);
-    }
-
-    #[tokio::test]
-    async fn test_update_watchdog_invalid_threshold() {
-        let state = test_state().await;
-        let req = UpdateWatchdogRequest {
-            memory_threshold: Some(0),
-            ..Default::default()
-        };
-        let result = update_watchdog(State(state), Json(req)).await;
-        assert!(result.is_err());
-        let (status, _) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -191,19 +152,6 @@ mod tests {
         let state = test_state().await;
         let req = UpdateWatchdogRequest {
             check_interval_secs: Some(0),
-            ..Default::default()
-        };
-        let result = update_watchdog(State(state), Json(req)).await;
-        assert!(result.is_err());
-        let (status, _) = result.unwrap_err();
-        assert_eq!(status, StatusCode::BAD_REQUEST);
-    }
-
-    #[tokio::test]
-    async fn test_update_watchdog_invalid_breach_count() {
-        let state = test_state().await;
-        let req = UpdateWatchdogRequest {
-            breach_count: Some(0),
             ..Default::default()
         };
         let result = update_watchdog(State(state), Json(req)).await;
@@ -231,7 +179,7 @@ mod tests {
         let state = test_state_with_config_path().await;
         let req = UpdateWatchdogRequest {
             enabled: Some(false),
-            memory_threshold: Some(75),
+            check_interval_secs: Some(75),
             ..Default::default()
         };
         let _ = update_watchdog(State(state.clone()), Json(req))
@@ -239,7 +187,7 @@ mod tests {
             .unwrap();
         let loaded = crate::config::load(state.config_path.to_str().unwrap()).unwrap();
         assert!(!loaded.watchdog.enabled);
-        assert_eq!(loaded.watchdog.memory_threshold, 75);
+        assert_eq!(loaded.watchdog.check_interval_secs, 75);
     }
 
     #[tokio::test]
@@ -249,18 +197,15 @@ mod tests {
         let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
         // No changes, all defaults
         assert!(resp.enabled);
-        assert_eq!(resp.memory_threshold, 90);
+        assert_eq!(resp.check_interval_secs, 10);
     }
 
     #[tokio::test]
     async fn test_update_watchdog_pushes_config_to_channel() {
         let (config, manager, store) = test_support::test_parts().await;
         let initial = crate::watchdog::WatchdogRuntimeConfig {
-            threshold: 90,
             interval: std::time::Duration::from_secs(10),
-            breach_count: 3,
             idle: crate::watchdog::IdleConfig::default(),
-            ready_ttl_secs: 0,
             extra_waiting_patterns: Vec::new(),
             burn: crate::watchdog::BurnConfig::default(),
         };
@@ -275,19 +220,17 @@ mod tests {
             store,
         );
 
-        // Update threshold via API
+        // Update check interval via API
         let req = UpdateWatchdogRequest {
-            memory_threshold: Some(75),
             check_interval_secs: Some(30),
             idle_action: Some("kill".into()),
             ..Default::default()
         };
         let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.memory_threshold, 75);
+        assert_eq!(resp.check_interval_secs, 30);
 
         // Verify the watch channel received the update
         let received = config_rx.borrow().clone();
-        assert_eq!(received.threshold, 75);
         assert_eq!(received.interval, std::time::Duration::from_secs(30));
         assert_eq!(received.idle.action, crate::watchdog::IdleAction::Kill);
     }
@@ -298,25 +241,23 @@ mod tests {
         let state = test_state().await;
         assert!(state.watchdog_config_tx.is_none());
         let req = UpdateWatchdogRequest {
-            memory_threshold: Some(80),
+            check_interval_secs: Some(80),
             ..Default::default()
         };
         let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.memory_threshold, 80);
+        assert_eq!(resp.check_interval_secs, 80);
     }
 
     #[tokio::test]
     async fn test_update_watchdog_remaining_fields() {
         let state = test_state().await;
         let req = UpdateWatchdogRequest {
-            ready_ttl_secs: Some(600),
             idle_threshold_secs: Some(120),
             idle_action: Some("alert".into()),
             extra_waiting_patterns: Some(vec!["custom>".into()]),
             ..Default::default()
         };
         let Json(resp) = update_watchdog(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.ready_ttl_secs, 600);
         assert_eq!(resp.idle_threshold_secs, 120);
         assert_eq!(resp.idle_action, "alert");
         assert_eq!(resp.extra_waiting_patterns, vec!["custom>"]);

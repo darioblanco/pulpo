@@ -33,12 +33,9 @@ const testConfig: ConfigResponse = {
   },
   watchdog: {
     enabled: true,
-    memory_threshold: 85,
     check_interval_secs: 30,
-    breach_count: 3,
     idle_timeout_secs: 300,
     idle_action: 'pause',
-    ready_ttl_secs: 0,
   },
   notifications: {
     webhooks: [],
@@ -134,7 +131,7 @@ describe('SettingsPage', () => {
     clickTab('settings-tab-watchdog');
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Memory threshold (%)')).toHaveValue(85);
+      expect(screen.getByLabelText('Check interval (seconds)')).toHaveValue(30);
     });
   });
 
@@ -197,7 +194,7 @@ describe('SettingsPage', () => {
           data_dir: '~/.pulpo/data',
           bind: 'local',
           watchdog_enabled: true,
-          watchdog_memory_threshold: 85,
+          watchdog_check_interval_secs: 30,
         }),
       );
     });

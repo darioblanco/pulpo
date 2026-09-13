@@ -43,9 +43,6 @@ Not needed for `local` or `tailscale` modes. Pulpo still auto-generates one on f
 | `check_interval_secs` | u64 | `10` | Check interval in seconds |
 | `idle_timeout_secs` | u64 | `600` | Seconds idle before action triggers |
 | `idle_action` | string | `"alert"` | `"alert"` (mark idle) or `"kill"` |
-| `ready_ttl_secs` | u64 | `0` | Seconds after Ready before stop (0 = disabled) |
-| `memory_threshold` | u8 | `90` | Memory usage % to trigger intervention |
-| `breach_count` | u32 | `3` | Consecutive breaches before stop |
 | `idle_threshold_secs` | u64 | `60` | Seconds of unchanged output before Active→Idle |
 | `waiting_patterns` | string[] | `[]` | Extra patterns for waiting-for-input detection (appended to the built-in patterns) |
 | `burn_ceiling_usd_per_hour` | float | — | Alert when a session's lifetime-average cost rate (USD/hour) exceeds this. Unset disables the check. |
@@ -59,8 +56,8 @@ Active→Idle transition (`idle_threshold_secs`), and — for a harness whose ad
 own it (Codex has no error/rate-limit hook) — error/rate-limit scraping. The harness's own
 events drive those transitions instead. Everything else still applies unconditionally,
 including to harness-managed sessions: `idle_timeout_secs`/`idle_action` (alert/kill after
-a session has sat idle too long), `memory_threshold`, `ready_ttl_secs`, and the budget/burn
-fields. See [Harness Adapters](/architecture/harness-adapters).
+a session has sat idle too long) and the budget/burn fields. See
+[Harness Adapters](/architecture/harness-adapters).
 
 ## `[plans.<name>]`
 
@@ -179,3 +176,6 @@ silently). Do not set any of these in a new config — they have no effect.
 | `node.discovery_interval_secs` | Tailscale peer-discovery scan frequency; peer discovery removed (September 2026) | No replacement needed — `bind = "tailscale"` requires no discovery |
 | `node.tag` | Reserved for a Tailscale-ACL-based peer scoping that was never built; its only reader was the removed peer discovery | No replacement needed |
 | `watchdog.adopt_tmux` | Auto-adoption of external tmux sessions removed (September 2026) | Start sessions that matter with `pulpo spawn`, which gets harness hooks, a preset session id, and real resume |
+| `watchdog.memory_threshold` | Memory-pressure intervention removed (September 2026) — it never fired for the unattended agent loop the watchdog targets | No replacement needed — idle, budget, and burn breakers cover a runaway session |
+| `watchdog.breach_count` | Memory-pressure intervention removed (September 2026) | No replacement needed |
+| `watchdog.ready_ttl_secs` | Ready-session TTL auto-purge removed (September 2026) | No replacement needed — Ready sessions stay listed until `pulpo cleanup`/purge |

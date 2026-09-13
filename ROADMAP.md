@@ -93,7 +93,7 @@ unchanged — see git history of this file for the full sovereignty section.)
 |-----------|----------|
 | tmux backend | Universal process substrate: run, observe, kill, attribute |
 | Session lifecycle + SQLite persistence | Attribution unit; survives reboots |
-| Watchdog | The enforcement engine (budgets, idle, memory, thrash) |
+| Watchdog | The enforcement engine (budgets, idle) |
 | Scheduler | Quota-aware dispatch |
 | Worktree spawning (`--worktree`) + cleanup | Isolation primitive: scheduled/parallel sessions on one repo can't trample each other, agent-agnostically; watchdog sweeps litter |
 | Event-forwarding backbone (`[[webhooks]]`) | **The cross-node story**: forward events to your own collector; aggregate in Grafana/Datadog/SIEM. Replaces the removed bespoke controller for fleet visibility |
@@ -264,8 +264,8 @@ relay). Decisions locked:
 
 - **Canonical event envelope + taxonomy/severity.** One header (`event_id` idempotency key,
   `schema_version`, `type`, `severity`, `occurred_at`, `node`, `session_id?`, `payload`).
-  Types: `lifecycle` (ready/stopped/lost/error/rate-limited), `intervention` (memory/idle/
-  budget stop), `usage_alert` (budget/burn/quota/rate-limit), `fleet` (node/peer health).
+  Types: `lifecycle` (ready/stopped/lost/error/rate-limited), `intervention` (idle/budget/
+  burn stop), `usage_alert` (budget/burn/quota/rate-limit), `fleet` (node/peer health).
   `severity` (info/warn/critical) is the universal filter knob.
 - **`EventSink` trait + one shared dispatcher** (owns bus subscription, filtering,
   serialization, retries) replacing the per-notifier loops.
@@ -322,7 +322,7 @@ POST <endpoint-url>
 Event catalogue (`type.subtype` → severity):
 - `lifecycle.{creating,active,idle,ready,stopped,error,rate_limited}` (info/warn),
   `lifecycle.lost` (critical)
-- `intervention.{memory_pressure,idle_timeout,budget_exceeded,user_stop}` (warn/critical),
+- `intervention.{idle_timeout,budget_exceeded,burn_rate,user_stop}` (warn/critical),
   `payload.intervention_reason`
 - `usage_alert.{budget_threshold,burn_ceiling,quota_threshold,rate_limit}` (warn/critical),
   `payload.{cost_usd,budget_usd,quota_used_percent}`
@@ -441,8 +441,7 @@ Core infrastructure:
   resume via each harness's own resume/session-id mechanism, and surface a
   `needs input (<reason>)` status label distinct from plain idle. See
   `docs/architecture/harness-adapters.md`.
-- Watchdog: memory pressure intervention, idle detection, ready TTL cleanup,
-  error/failure detection
+- Watchdog: idle detection, error/failure detection, budget and burn-velocity breakers
 - Command-agnostic sessions (any CLI tool, any command)
 - Inks: reusable session blueprints (command, description, secrets, runtime defaults) —
   shipped, then removed in July 2026; command/budget now set directly per session/schedule
@@ -499,6 +498,20 @@ Newest first. Every September 2026 entry landed the same week as harness adapter
   toast/desktop-notification path. Removing `web-push` also dropped the vendored
   `openssl`/`p256`/`hmac`/`sha2`/`hex` dependencies from the tree (`cargo tree -i
   openssl` confirmed nothing else pulled it in).
+- ~~Watchdog memory-pressure intervention + Ready-session TTL auto-purge~~ (September
+  2026) — `watchdog/memory.rs` (`sysctl`/`vm_stat`/`/proc/meminfo` probing), the
+  `MemoryPressure` intervention kind's only emitter (`watchdog::intervention::intervene`),
+  and the `memory_threshold`/`breach_count`/`ready_ttl_secs` config keys. Memory pressure
+  never actually fired for the unattended agent loop the watchdog targets — idle, budget,
+  and burn already cover a runaway session; Ready sessions now stay listed until `pulpo
+  cleanup`/purge instead of auto-purging after a TTL. `InterventionCode::MemoryPressure`
+  is kept on the wire (never emitted by new code) since historical
+  `sessions.intervention_code`/`intervention_events.code` rows may still carry it — same
+  treatment as the retired `Runtime::Docker` variant. The three retired config keys are
+  tolerated in old configs (parsed, ignored, dropped on next save), same as
+  `watchdog.adopt_tmux`. `NodeInfo.memory_mb` (total system RAM, shown in the node info bar
+  alongside hostname/OS/arch/CPU count) is unrelated general system info and was kept —
+  its reader moved from `watchdog::memory` to `platform::total_memory_mb`.
 - ~~Windows build target~~ (September 2026, PR #99) — `x86_64-pc-windows-msvc` dropped
   from `dist-workspace.toml` and every Windows-only code path deleted
   (`WindowsStubBackend`, the CLI's Windows attach/open-command branches, the `windows` arm

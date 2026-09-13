@@ -25,7 +25,7 @@ features:
   - title: 3. Monitor — to your own stack
     details: "Canonical events (lifecycle changes, interventions, usage/cost alerts) delivered as a plain POST to any number of webhooks, in-memory queue with a fixed retry schedule. Pulpo is the event plane; your Grafana/Datadog/SIEM is the dashboard."
   - title: 4. Run — durable & unattended
-    details: "Each agent runs in a `tmux` session with an explicit lifecycle that survives reboots, a watchdog for idle/memory/error/completion, and per-session git worktrees so parallel agents never collide. Command-agnostic."
+    details: "Each agent runs in a `tmux` session with an explicit lifecycle that survives reboots, a watchdog for idle/error/completion, and per-session git worktrees so parallel agents never collide. Command-agnostic."
 ---
 
 ## What Pulpo Is

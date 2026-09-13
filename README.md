@@ -133,7 +133,7 @@ through your own webhook receiver — see the
 
 **Run — durable and unattended.** Each agent runs in a `tmux` session with explicit lifecycle
 states that survive reboots (drop into the live terminal anytime with `pulpo attach`), a
-watchdog for idle / memory / error / completion detection, and per-session git worktrees so
+watchdog for idle / error / completion detection, and per-session git worktrees so
 parallel agents on one repo never collide. For Claude Code, Codex, and pi — harnesses with
 their own lifecycle hooks — Pulpo wires those hooks at spawn time so status comes from the
 harness itself: a real `needs input (<reason>)` label instead of a scrollback guess, and
@@ -185,7 +185,7 @@ single point of failure and integrates with your existing observability.
 - **Cost control**: per-session / per-schedule budget caps (alert 80%, stop 100%) and a burn-velocity ($/hr) governor — alert-first, opt-in stop.
 - **Monitoring backbone**: canonical events delivered as a plain POST to multiple webhooks (in-memory queue, fixed retry schedule); SSE stream.
 - **Durable sessions**: explicit lifecycle (`creating`, `active`, `idle`, `ready`, `stopped`, `lost`) with resume and stored output; survives reboots.
-- **Watchdog supervision**: idle detection, memory-pressure intervention, ready cleanup, error/completion patterns, git telemetry (branch, diff; PR URL detected from output).
+- **Watchdog supervision**: idle detection, error/completion patterns, git telemetry (branch, diff; PR URL detected from output).
 - **Harness adapters**: hook-driven lifecycle for Claude Code, Codex, and pi — a `needs input (<reason>)` status label and real resume of the harness's own conversation, once events are flowing; scrollback heuristics remain the fallback for every other command.
 - **Execution isolation**: per-session git worktrees for parallel work on one repo.
 - **Scheduled runs**: cron-based schedules (`pulpo schedule`) with the same budgets and worktree support.
