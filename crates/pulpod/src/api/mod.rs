@@ -140,7 +140,6 @@ mod tests {
             interval: std::time::Duration::from_secs(10),
             idle: crate::watchdog::IdleConfig::default(),
             extra_waiting_patterns: Vec::new(),
-            burn: crate::watchdog::BurnConfig::default(),
         };
         let (config_tx, _config_rx) = tokio::sync::watch::channel(initial);
         let state = AppState::with_all(

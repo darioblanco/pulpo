@@ -2,8 +2,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 #[cfg_attr(coverage, allow(unused_imports))]
 use pulpo_common::api::{
-    CleanupResponse, CreateSessionResponse, InterventionEventResponse, UsageProjectionResponse,
-    UsageScanResponse,
+    CleanupResponse, CreateSessionResponse, InterventionEventResponse, UsageScanResponse,
+    UsageSessionsResponse,
 };
 use pulpo_common::session::{Session, SessionStatus};
 
@@ -14,7 +14,7 @@ mod http;
 #[cfg_attr(coverage, allow(unused_imports))]
 use format::{
     format_cleanup_message, format_interventions, format_schedules, format_sessions,
-    format_usage_projection, format_usage_scan, format_worktree_sessions,
+    format_usage_scan, format_usage_sessions, format_worktree_sessions,
 };
 #[cfg_attr(coverage, allow(unused_imports))]
 use http::{
@@ -189,7 +189,7 @@ pub enum Commands {
         name: String,
     },
 
-    /// Show token/cost burn rate, time-to-cap, and quota for sessions on this node
+    /// Show exact token/cost usage for sessions on this node
     Usage {
         /// Scan ALL local agent history (Claude + Codex + pi) instead of pulpo-managed
         /// sessions — total spend by agent, model, and repo, no sessions routed through pulpo.
@@ -1291,17 +1291,17 @@ pub async fn execute(cli: &Cli) -> Result<String> {
                     Ok(format_usage_scan(&report))
                 }
             } else {
-                let projection: UsageProjectionResponse = get_json(
+                let report: UsageSessionsResponse = get_json(
                     &client,
-                    format!("{url}/api/v1/usage/projection"),
+                    format!("{url}/api/v1/usage/sessions"),
                     token.as_deref(),
                     node,
                 )
                 .await?;
                 if *json {
-                    Ok(serde_json::to_string_pretty(&projection)?)
+                    Ok(serde_json::to_string_pretty(&report)?)
                 } else {
-                    Ok(format_usage_projection(&projection))
+                    Ok(format_usage_sessions(&report))
                 }
             }
         }
@@ -2811,7 +2811,7 @@ mod tests {
 
     #[test]
     fn test_cli_parse_usage_json_without_scan() {
-        // --json is allowed on the plain (projection) usage command too.
+        // --json is allowed on the plain (pulpo-managed sessions) usage command too.
         let cli = Cli::try_parse_from(["pulpo", "usage", "--json"]).unwrap();
         assert!(matches!(
             &cli.command,

@@ -55,8 +55,6 @@ pub enum InterventionCode {
     UserStop,
     /// Stopped because the session exceeded its configured cost budget.
     BudgetExceeded,
-    /// Stopped because the session's spend rate exceeded the configured burn ceiling.
-    BurnRate,
 }
 
 impl fmt::Display for InterventionCode {
@@ -66,7 +64,6 @@ impl fmt::Display for InterventionCode {
             Self::IdleTimeout => write!(f, "idle_timeout"),
             Self::UserStop => write!(f, "user_stop"),
             Self::BudgetExceeded => write!(f, "budget_exceeded"),
-            Self::BurnRate => write!(f, "burn_rate"),
         }
     }
 }
@@ -80,7 +77,6 @@ impl FromStr for InterventionCode {
             "idle_timeout" => Ok(Self::IdleTimeout),
             "user_stop" | "user_kill" => Ok(Self::UserStop),
             "budget_exceeded" => Ok(Self::BudgetExceeded),
-            "burn_rate" => Ok(Self::BurnRate),
             other => Err(format!("unknown intervention code: {other}")),
         }
     }
@@ -247,10 +243,6 @@ pub mod meta {
     pub const ERROR_STATUS_AT: &str = "error_status_at";
     pub const RATE_LIMIT: &str = "rate_limit";
     pub const RATE_LIMIT_AT: &str = "rate_limit_at";
-    // Auth info
-    pub const AUTH_PROVIDER: &str = "auth_provider";
-    pub const AUTH_PLAN: &str = "auth_plan";
-    pub const AUTH_EMAIL: &str = "auth_email";
     // Structured usage tracking (read from the agent's own session files).
     // Absent USAGE_SOURCE means token/cost values were scraped from terminal output.
     pub const USAGE_SOURCE: &str = "usage_source";
@@ -266,9 +258,6 @@ pub mod meta {
     // Cost budget (resolved at spawn: explicit spawn/schedule flag). Watchdog alerts at 80%, stops at 100%.
     pub const BUDGET_COST_USD: &str = "budget_cost_usd";
     pub const BUDGET_ALERTED_AT: &str = "budget_alerted_at";
-    // Burn-velocity governor: one-shot timestamp recorded when the lifetime-average spend
-    // rate first crosses the configured ceiling, so the alert fires only once per session.
-    pub const BURN_ALERTED_AT: &str = "burn_alerted_at";
     // Harness adapter events (see `pulpod::harness`).
     // Set on a `NeedsInput` event; distinguishes "blocked on me" from plain idle.
     // Cleared on `SessionStarted`/`Working`.
@@ -534,10 +523,6 @@ mod tests {
             serde_json::to_string(&InterventionCode::BudgetExceeded).unwrap(),
             "\"budget_exceeded\""
         );
-        assert_eq!(
-            serde_json::to_string(&InterventionCode::BurnRate).unwrap(),
-            "\"burn_rate\""
-        );
     }
 
     #[test]
@@ -553,10 +538,6 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<InterventionCode>("\"user_stop\"").unwrap(),
             InterventionCode::UserStop
-        );
-        assert_eq!(
-            serde_json::from_str::<InterventionCode>("\"burn_rate\"").unwrap(),
-            InterventionCode::BurnRate
         );
     }
 
@@ -577,7 +558,6 @@ mod tests {
             InterventionCode::BudgetExceeded.to_string(),
             "budget_exceeded"
         );
-        assert_eq!(InterventionCode::BurnRate.to_string(), "burn_rate");
     }
 
     #[test]
@@ -598,10 +578,15 @@ mod tests {
             "budget_exceeded".parse::<InterventionCode>().unwrap(),
             InterventionCode::BudgetExceeded
         );
-        assert_eq!(
-            "burn_rate".parse::<InterventionCode>().unwrap(),
-            InterventionCode::BurnRate
-        );
+    }
+
+    #[test]
+    fn test_intervention_code_from_str_retired_burn_rate_is_unknown() {
+        // The burn-velocity governor (and its `BurnRate` intervention code) was
+        // removed; the string is no longer recognized. Historical DB rows storing
+        // this text are tolerated at the store layer (see `store::rows`), not here.
+        let err = "burn_rate".parse::<InterventionCode>().unwrap_err();
+        assert!(err.contains("unknown intervention code"));
     }
 
     #[test]

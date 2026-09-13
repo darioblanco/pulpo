@@ -1677,6 +1677,9 @@ async fn test_intervention_code_none_roundtrip() {
 
 #[tokio::test]
 async fn test_row_to_session_invalid_intervention_code() {
+    // An unrecognized intervention_code (garbage, or a retired code like the removed
+    // burn-velocity governor's "burn_rate") must not fail the whole session read — it
+    // degrades to `None` so the rest of the session stays readable (see `store::rows`).
     let store = test_store().await;
     sqlx::query(
         "INSERT INTO sessions (id, name, workdir, provider, prompt, status, mode,
@@ -1688,8 +1691,8 @@ async fn test_row_to_session_invalid_intervention_code() {
     .execute(store.pool())
     .await
     .unwrap();
-    let result = store.get_session(TEST_UUID).await;
-    assert!(result.is_err());
+    let session = store.get_session(TEST_UUID).await.unwrap().unwrap();
+    assert_eq!(session.intervention_code, None);
 }
 
 #[tokio::test]

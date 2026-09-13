@@ -10,14 +10,14 @@
 //!
 //! Sessions are mapped to files by working directory and spawn time. The mapping is
 //! a heuristic: a second agent started manually in the same directory during the
-//! session window would be counted too. The keyword-proximity output scraper in
-//! `watchdog::output_patterns` remains the fallback for agents without a reader.
+//! session window would be counted too. There is no output-scraping fallback —
+//! a session run with a harness that has no structured reader here (anything but
+//! Claude Code, Codex, or pi) simply shows no usage.
 
 pub mod claude;
 pub mod codex;
 pub mod pi;
-pub mod pool;
-pub mod projection;
+pub mod rollup;
 pub mod scan;
 
 use std::path::{Path, PathBuf};

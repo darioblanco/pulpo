@@ -277,7 +277,7 @@ mod tests {
         ));
         assert!(webhook_wants(
             &config,
-            &event_with("usage_alert", "burn_ceiling", "critical")
+            &event_with("usage_alert", "budget_threshold", "critical")
         ));
         assert!(!webhook_wants(
             &config,

@@ -30,7 +30,7 @@ pub(super) fn emit_intervention(
 }
 
 /// Stop a session via the standard intervention path shared by every breaker
-/// (budget, burn ceiling, idle timeout):
+/// (budget, idle timeout):
 ///
 /// 1. capture a final output snapshot (best-effort, warn on failure),
 /// 2. kill the backend session (warn + return `false` on failure so the caller
@@ -102,7 +102,7 @@ pub(super) async fn stop_and_record(
     if let Some(ref wt_path) = session.worktree_path {
         // Mirror `session::manager`'s own guard on the normal stop/purge/cleanup
         // paths: a worktree `pulpo handoff` made two sessions share must survive a
-        // forced intervention (budget/burn/idle stop) on just one of them —
+        // forced intervention (budget/idle stop) on just one of them —
         // it's only reclaimed once every referencing session is dead.
         let in_use = store
             .worktree_in_use_elsewhere(wt_path, &session.id.to_string())
@@ -204,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn test_stop_and_record_preserves_worktree_shared_with_another_live_session() {
         // Two sessions (as `pulpo handoff` produces) sharing one worktree path — an
-        // intervention (budget/burn/idle stop) on one must not delete the
+        // intervention (budget/idle stop) on one must not delete the
         // worktree (or its branch) out from under the other, still-live session.
         let store = crate::store::test_store().await;
         let tmp = tempfile::tempdir().unwrap();

@@ -17,13 +17,12 @@ pub(super) fn row_to_session(row: &SqliteRow) -> Result<Session> {
         .map(|s| serde_json::from_str::<std::collections::HashMap<String, String>>(&s))
         .transpose()?;
 
+    // Unknown/retired codes (e.g. historical `burn_rate` rows from the removed
+    // burn-velocity governor) degrade to `None` rather than failing the whole row —
+    // same tolerance as `runtime` below. A single stale value must never make a
+    // session (or the whole `list_sessions()` call) unreadable.
     let intervention_code_str: Option<String> = row.get("intervention_code");
-    let intervention_code = intervention_code_str
-        .map(|s| {
-            s.parse::<InterventionCode>()
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .transpose()?;
+    let intervention_code = intervention_code_str.and_then(|s| s.parse::<InterventionCode>().ok());
 
     let intervention_at_str: Option<String> = row.get("intervention_at");
     let intervention_at = intervention_at_str
@@ -122,13 +121,10 @@ pub(super) fn row_to_schedule(row: &SqliteRow) -> Result<pulpo_common::api::Sche
 
 pub(super) fn row_to_intervention_event(row: &SqliteRow) -> Result<InterventionEvent> {
     let created_str: String = row.get("created_at");
+    // Same tolerance as `row_to_session`'s `intervention_code` — a retired code
+    // (e.g. historical `burn_rate` rows) degrades to `None`, not a hard error.
     let code_str: Option<String> = row.get("code");
-    let code = code_str
-        .map(|s| {
-            s.parse::<InterventionCode>()
-                .map_err(|e| anyhow::anyhow!(e))
-        })
-        .transpose()?;
+    let code = code_str.and_then(|s| s.parse::<InterventionCode>().ok());
     Ok(InterventionEvent {
         id: row.get("id"),
         session_id: row.get("session_id"),
@@ -194,7 +190,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_row_to_session_invalid_intervention_code_returns_error() {
+    async fn test_row_to_session_invalid_intervention_code_defaults_to_none() {
+        // An unrecognized intervention_code (garbage data, or a retired code like the
+        // removed burn-velocity governor's "burn_rate") must not fail the whole row —
+        // it degrades to `None` so the rest of the session stays readable.
         let pool = memory_pool().await;
         let row = sqlx::query(
             r"
@@ -234,8 +233,57 @@ mod tests {
         .await
         .unwrap();
 
-        let err = row_to_session(&row).unwrap_err().to_string();
-        assert!(err.contains("bogus"));
+        let session = row_to_session(&row).unwrap();
+        assert_eq!(session.intervention_code, None);
+    }
+
+    #[tokio::test]
+    async fn test_row_to_session_tolerates_retired_burn_rate_intervention_code() {
+        // A session stopped by the (now-removed) burn-velocity governor before its
+        // removal still has `intervention_code = 'burn_rate'` in the DB. It must
+        // remain readable — just with no reconstructable code.
+        let pool = memory_pool().await;
+        let row = sqlx::query(
+            r"
+            SELECT
+                ? AS id,
+                'sess' AS name,
+                '/tmp/repo' AS workdir,
+                'echo hi' AS command,
+                NULL AS description,
+                'stopped' AS status,
+                NULL AS exit_code,
+                'backend-1' AS backend_session_id,
+                NULL AS output_snapshot,
+                '{}' AS metadata,
+                NULL AS ink,
+                'burn_rate' AS intervention_code,
+                'Cost $5.00/hr exceeded ceiling $2.00/hr' AS intervention_reason,
+                NULL AS intervention_at,
+                NULL AS last_output_at,
+                NULL AS idle_since,
+                30 AS idle_threshold_secs,
+                NULL AS worktree_path,
+                NULL AS worktree_branch,
+                NULL AS git_branch,
+                NULL AS git_commit,
+                1 AS git_files_changed,
+                2 AS git_insertions,
+                3 AS git_deletions,
+                4 AS git_ahead,
+                'tmux' AS runtime,
+                '2024-01-01T00:00:00Z' AS created_at,
+                '2024-01-01T00:00:00Z' AS updated_at
+            ",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let session = row_to_session(&row).unwrap();
+        assert_eq!(session.intervention_code, None);
+        assert!(session.intervention_reason.is_some());
     }
 
     #[tokio::test]
@@ -415,5 +463,72 @@ mod tests {
         let schedule = row_to_schedule(&row).unwrap();
         assert_eq!(schedule.id, "sched-1");
         assert_eq!(schedule.worktree, Some(true));
+    }
+
+    #[tokio::test]
+    async fn test_row_to_intervention_event_parses_known_code() {
+        let pool = memory_pool().await;
+        let row = sqlx::query(
+            r"
+            SELECT
+                1 AS id,
+                'sess-1' AS session_id,
+                'budget_exceeded' AS code,
+                'Cost $2.00 reached budget $2.00' AS reason,
+                '2024-01-01T00:00:00Z' AS created_at
+            ",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let event = row_to_intervention_event(&row).unwrap();
+        assert_eq!(event.session_id, "sess-1");
+        assert_eq!(event.code, Some(InterventionCode::BudgetExceeded));
+    }
+
+    #[tokio::test]
+    async fn test_row_to_intervention_event_tolerates_retired_code() {
+        // A retired code (e.g. historical "burn_rate" rows from the removed
+        // burn-velocity governor) degrades to `None` instead of erroring the row.
+        let pool = memory_pool().await;
+        let row = sqlx::query(
+            r"
+            SELECT
+                2 AS id,
+                'sess-2' AS session_id,
+                'burn_rate' AS code,
+                'Burn rate exceeded ceiling' AS reason,
+                '2024-01-01T00:00:00Z' AS created_at
+            ",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let event = row_to_intervention_event(&row).unwrap();
+        assert_eq!(event.session_id, "sess-2");
+        assert_eq!(event.code, None);
+    }
+
+    #[tokio::test]
+    async fn test_row_to_intervention_event_null_code() {
+        let pool = memory_pool().await;
+        let row = sqlx::query(
+            r"
+            SELECT
+                3 AS id,
+                'sess-3' AS session_id,
+                NULL AS code,
+                'Manual stop' AS reason,
+                '2024-01-01T00:00:00Z' AS created_at
+            ",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        let event = row_to_intervention_event(&row).unwrap();
+        assert_eq!(event.code, None);
     }
 }

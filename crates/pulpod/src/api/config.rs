@@ -434,7 +434,7 @@ mod tests {
                 waiting_patterns: Vec::new(),
                 burn_ceiling_usd_per_hour: None,
                 burn_ceiling_tokens_per_hour: None,
-                burn_action: "alert".into(),
+                burn_action: None,
             },
             notifications: crate::config::NotificationsConfig {
                 webhooks: vec![crate::config::WebhookEndpointConfig {

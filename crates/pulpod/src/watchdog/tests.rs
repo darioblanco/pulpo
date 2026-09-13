@@ -157,7 +157,6 @@ fn make_config(
         interval,
         idle,
         extra_waiting_patterns: Vec::new(),
-        burn: BurnConfig::default(),
     };
     let (_, rx) = tokio::sync::watch::channel(cfg);
     rx
@@ -174,7 +173,6 @@ fn make_config_with_tx(
         interval,
         idle,
         extra_waiting_patterns: Vec::new(),
-        burn: BurnConfig::default(),
     };
     tokio::sync::watch::channel(cfg)
 }
@@ -1746,7 +1744,6 @@ async fn test_watchdog_live_config_reload_enables_idle() {
                 threshold_secs: 1,
             },
             extra_waiting_patterns: Vec::new(),
-            burn: BurnConfig::default(),
         })
         .unwrap();
 
@@ -1775,7 +1772,6 @@ async fn test_watchdog_runtime_config_debug() {
         interval: Duration::from_secs(10),
         idle: IdleConfig::default(),
         extra_waiting_patterns: Vec::new(),
-        burn: BurnConfig::default(),
     };
     let debug = format!("{cfg:?}");
     assert!(debug.contains("interval"));
@@ -1792,7 +1788,6 @@ async fn test_watchdog_runtime_config_clone() {
             threshold_secs: 60,
         },
         extra_waiting_patterns: Vec::new(),
-        burn: BurnConfig::default(),
     };
     #[allow(clippy::redundant_clone)]
     let cloned = cfg.clone();

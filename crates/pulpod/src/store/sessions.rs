@@ -287,7 +287,7 @@ impl Store {
     /// True when another (non-dead) session still references `worktree_path`.
     /// Shared guard used before *any* worktree reclamation — `pulpo handoff`-shared
     /// worktrees must survive both the normal stop/purge/cleanup paths
-    /// (`session::manager`) and a forced watchdog intervention (budget/burn/idle
+    /// (`session::manager`) and a forced watchdog intervention (budget/idle
     /// stop, `watchdog::intervention::stop_and_record`) on just one of the
     /// sessions sharing it.
     pub async fn worktree_in_use_elsewhere(
