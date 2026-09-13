@@ -62,6 +62,15 @@ a session has sat idle too long) and the budget-cost fields (set per session/sch
 here — see `pulpo spawn --budget-cost` and `pulpo schedule add --budget-cost`). See
 [Harness Adapters](/architecture/harness-adapters).
 
+## `[scheduler]`
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tick_secs` | u64 | `60` | How often the built-in cron scheduler checks for due schedules, in seconds. Clamped to a minimum of 1. |
+
+The production default (60) matches cron's own minute granularity. There's normally no
+reason to change it — see `pulpo schedule add` for defining schedules themselves.
+
 ## `[rates.<model>]`
 
 Per-model cost rates in **USD per million tokens**, used to turn exact token counts into
