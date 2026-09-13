@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { ConnectionProvider } from '@/hooks/use-connection';
@@ -9,7 +9,6 @@ import type { ConfigResponse } from '@/api/types';
 
 vi.mock('@/api/client', () => ({
   getConfig: vi.fn(),
-  updateConfig: vi.fn(),
   resolveBaseUrl: vi.fn().mockReturnValue(''),
   authHeaders: vi.fn().mockReturnValue({}),
   setApiConfig: vi.fn(),
@@ -22,7 +21,6 @@ vi.stubGlobal('localStorage', {
 });
 
 const mockGetConfig = vi.mocked(api.getConfig);
-const mockUpdateConfig = vi.mocked(api.updateConfig);
 
 const testConfig: ConfigResponse = {
   node: {
@@ -36,6 +34,8 @@ const testConfig: ConfigResponse = {
     check_interval_secs: 30,
     idle_timeout_secs: 300,
     idle_action: 'pause',
+    idle_threshold_secs: 60,
+    extra_waiting_patterns: [],
   },
   notifications: {
     webhooks: [],
@@ -44,7 +44,6 @@ const testConfig: ConfigResponse = {
 
 beforeEach(() => {
   mockGetConfig.mockReset();
-  mockUpdateConfig.mockReset();
 });
 
 function renderSettings() {
@@ -59,15 +58,6 @@ function renderSettings() {
   );
 }
 
-function clickTab(testId: string) {
-  const tab = screen.getByTestId(testId);
-  fireEvent.pointerDown(tab, { button: 0, pointerType: 'mouse' });
-  fireEvent.pointerUp(tab, { button: 0, pointerType: 'mouse' });
-  fireEvent.mouseDown(tab, { button: 0 });
-  fireEvent.mouseUp(tab, { button: 0 });
-  fireEvent.click(tab);
-}
-
 describe('SettingsPage', () => {
   it('shows loading skeleton initially', () => {
     mockGetConfig.mockResolvedValue(testConfig);
@@ -75,68 +65,59 @@ describe('SettingsPage', () => {
     expect(screen.getByTestId('loading-skeleton')).toBeInTheDocument();
   });
 
-  it('loads and displays config', async () => {
+  it('loads and displays the effective config read-only', async () => {
     mockGetConfig.mockResolvedValue(testConfig);
     renderSettings();
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Name')).toHaveValue('mac-studio');
-      expect(screen.getByLabelText('Port')).toHaveValue(7433);
-      expect(screen.getByTestId('save-btn')).toBeInTheDocument();
+      expect(screen.getByTestId('section-node')).toBeInTheDocument();
     });
+
+    expect(screen.getByText('mac-studio')).toBeInTheDocument();
+    expect(screen.getByText('7433')).toBeInTheDocument();
+    expect(screen.getByText('~/.pulpo/data')).toBeInTheDocument();
+    expect(screen.getByText('local')).toBeInTheDocument();
+
+    // No editable inputs or save button — this is a read-only view.
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument();
   });
 
-  it('loads all settings tabs', async () => {
+  it('shows the watchdog section', async () => {
     mockGetConfig.mockResolvedValue(testConfig);
     renderSettings();
 
     await waitFor(() => {
-      expect(screen.getByTestId('settings-tabs')).toBeInTheDocument();
-      expect(screen.getByTestId('settings-tab-node')).toBeInTheDocument();
-      expect(screen.getByTestId('settings-tab-watchdog')).toBeInTheDocument();
-      expect(screen.getByTestId('settings-tab-notifications')).toBeInTheDocument();
+      expect(screen.getByTestId('section-watchdog')).toBeInTheDocument();
     });
 
-    // Node tab is default — node-settings should be visible
-    expect(screen.getByTestId('node-settings')).toBeInTheDocument();
+    expect(screen.getByText('pause')).toBeInTheDocument();
+    expect(screen.getByText('300')).toBeInTheDocument();
   });
 
-  it('shows settings for each tab when clicked', async () => {
+  it('shows extra waiting patterns when present', async () => {
+    mockGetConfig.mockResolvedValue({
+      ...testConfig,
+      watchdog: { ...testConfig.watchdog, extra_waiting_patterns: ['custom>'] },
+    });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByText('custom>')).toBeInTheDocument();
+    });
+  });
+
+  it('shows a message when no webhooks are configured', async () => {
     mockGetConfig.mockResolvedValue(testConfig);
     renderSettings();
 
     await waitFor(() => {
-      expect(screen.getByTestId('node-settings')).toBeInTheDocument();
-    });
-
-    clickTab('settings-tab-watchdog');
-    await waitFor(() => {
-      expect(screen.getByTestId('watchdog-settings')).toBeInTheDocument();
-    });
-
-    clickTab('settings-tab-notifications');
-    await waitFor(() => {
-      expect(screen.getByTestId('notifications-settings')).toBeInTheDocument();
+      expect(screen.getByTestId('no-webhooks')).toBeInTheDocument();
     });
   });
 
-  it('loads watchdog settings', async () => {
-    mockGetConfig.mockResolvedValue(testConfig);
-    renderSettings();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('settings-tab-watchdog')).toBeInTheDocument();
-    });
-
-    clickTab('settings-tab-watchdog');
-
-    await waitFor(() => {
-      expect(screen.getByLabelText('Check interval (seconds)')).toHaveValue(30);
-    });
-  });
-
-  it('loads webhook notifications when present', async () => {
-    const configWithWebhook: ConfigResponse = {
+  it('lists configured webhooks when present', async () => {
+    mockGetConfig.mockResolvedValue({
       ...testConfig,
       notifications: {
         webhooks: [
@@ -147,20 +128,59 @@ describe('SettingsPage', () => {
           },
         ],
       },
-    };
-    mockGetConfig.mockResolvedValue(configWithWebhook);
+    });
     renderSettings();
 
     await waitFor(() => {
-      expect(screen.getByTestId('settings-tab-notifications')).toBeInTheDocument();
+      const section = screen.getByTestId('webhook-ci-hook');
+      expect(section).toBeInTheDocument();
+      expect(section).toHaveTextContent('https://example.com/hook');
+      expect(section).toHaveTextContent('session.created, session.ready');
     });
+  });
 
-    clickTab('settings-tab-notifications');
+  it('shows "all" for a webhook with no event filter', async () => {
+    mockGetConfig.mockResolvedValue({
+      ...testConfig,
+      notifications: {
+        webhooks: [{ name: 'logs-hook', url: 'https://logs.example.com', events: [] }],
+      },
+    });
+    renderSettings();
 
     await waitFor(() => {
-      const webhookSection = screen.getByTestId('webhook-0');
-      expect(within(webhookSection).getByLabelText('Name')).toHaveValue('ci-hook');
-      expect(within(webhookSection).getByLabelText('URL')).toHaveValue('https://example.com/hook');
+      const section = screen.getByTestId('webhook-logs-hook');
+      expect(section).toHaveTextContent('all');
+    });
+  });
+
+  it('shows min severity when set', async () => {
+    mockGetConfig.mockResolvedValue({
+      ...testConfig,
+      notifications: {
+        webhooks: [
+          {
+            name: 'crit-hook',
+            url: 'https://example.com/crit',
+            events: [],
+            min_severity: 'critical',
+          },
+        ],
+      },
+    });
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('webhook-crit-hook')).toHaveTextContent('critical');
+    });
+  });
+
+  it('shows the edit-the-file hint', async () => {
+    mockGetConfig.mockResolvedValue(testConfig);
+    renderSettings();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('config-hint')).toHaveTextContent('config.toml');
     });
   });
 
@@ -169,106 +189,6 @@ describe('SettingsPage', () => {
     renderSettings();
     await waitFor(() => {
       expect(screen.getByText('Failed to load config')).toBeInTheDocument();
-    });
-  });
-
-  it('saves config successfully', async () => {
-    mockGetConfig.mockResolvedValue(testConfig);
-    mockUpdateConfig.mockResolvedValue({
-      config: testConfig,
-      restart_required: false,
-    });
-    renderSettings();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('save-btn')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByTestId('save-btn'));
-
-    await waitFor(() => {
-      expect(mockUpdateConfig).toHaveBeenCalledWith(
-        expect.objectContaining({
-          node_name: 'mac-studio',
-          port: 7433,
-          data_dir: '~/.pulpo/data',
-          bind: 'local',
-          watchdog_enabled: true,
-          watchdog_check_interval_secs: 30,
-        }),
-      );
-    });
-  });
-
-  it('shows restart message when port changes', async () => {
-    mockGetConfig.mockResolvedValue(testConfig);
-    mockUpdateConfig.mockResolvedValue({
-      config: testConfig,
-      restart_required: true,
-    });
-    renderSettings();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('save-btn')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByTestId('save-btn'));
-
-    await waitFor(() => {
-      expect(mockUpdateConfig).toHaveBeenCalled();
-    });
-  });
-
-  it('shows error on save failure', async () => {
-    mockGetConfig.mockResolvedValue(testConfig);
-    mockUpdateConfig.mockRejectedValue(new Error('Save failed'));
-    renderSettings();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('save-btn')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByTestId('save-btn'));
-
-    await waitFor(() => {
-      expect(screen.getByText('Failed to save config')).toBeInTheDocument();
-    });
-  });
-
-  it('sends webhooks when set', async () => {
-    const configWithWebhook: ConfigResponse = {
-      ...testConfig,
-      notifications: {
-        webhooks: [
-          {
-            name: 'ci-hook',
-            url: 'https://example.com/hook',
-            events: ['session.created'],
-          },
-        ],
-      },
-    };
-    mockGetConfig.mockResolvedValue(configWithWebhook);
-    mockUpdateConfig.mockResolvedValue({
-      config: configWithWebhook,
-      restart_required: false,
-    });
-    renderSettings();
-
-    await waitFor(() => {
-      expect(screen.getByTestId('save-btn')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByTestId('save-btn'));
-
-    await waitFor(() => {
-      expect(mockUpdateConfig).toHaveBeenCalledWith(
-        expect.objectContaining({
-          webhooks: [
-            { name: 'ci-hook', url: 'https://example.com/hook', events: ['session.created'] },
-          ],
-        }),
-      );
     });
   });
 });

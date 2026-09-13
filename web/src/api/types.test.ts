@@ -68,6 +68,8 @@ describe('types', () => {
         check_interval_secs: 30,
         idle_timeout_secs: 300,
         idle_action: 'pause',
+        idle_threshold_secs: 60,
+        extra_waiting_patterns: [],
       },
       notifications: { webhooks: [] },
     };

@@ -83,45 +83,27 @@ export interface WatchdogConfigResponse {
   check_interval_secs: number;
   idle_timeout_secs: number;
   idle_action: string;
+  idle_threshold_secs: number;
+  extra_waiting_patterns: string[];
 }
 
 export interface WebhookEndpointConfigResponse {
   name: string;
   url: string;
   events: string[];
-}
-
-export interface WebhookEndpointUpdateRequest {
-  name: string;
-  url: string;
-  events: string[];
+  min_severity?: string | null;
 }
 
 export interface NotificationsConfigResponse {
   webhooks: WebhookEndpointConfigResponse[];
 }
 
+/** Read-only view of pulpod's effective configuration — see `pulpo_common::api::ConfigResponse`.
+ * The config file (`~/.pulpo/config.toml`) is the source of truth; the web UI only reads it. */
 export interface ConfigResponse {
   node: NodeConfigResponse;
   watchdog: WatchdogConfigResponse;
   notifications: NotificationsConfigResponse;
-}
-
-export interface UpdateConfigRequest {
-  node_name?: string;
-  port?: number;
-  data_dir?: string;
-  bind?: string;
-  watchdog_enabled?: boolean;
-  watchdog_check_interval_secs?: number;
-  watchdog_idle_timeout_secs?: number;
-  watchdog_idle_action?: string;
-  webhooks?: WebhookEndpointUpdateRequest[];
-}
-
-export interface UpdateConfigResponse {
-  config: ConfigResponse;
-  restart_required: boolean;
 }
 
 export interface CreateSessionRequest {
