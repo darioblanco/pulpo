@@ -78,7 +78,7 @@ It:
 - checks output for waiting-for-input patterns
 - tracks idle thresholds
 - detects exit markers
-- enforces per-session budget caps and the burn-velocity ceiling
+- enforces per-session/per-schedule budget caps (80% alert, 100% stop)
 
 For harnesses with their own lifecycle hooks (Claude Code, Codex, pi), a **harness
 adapter** reports real events — turn finished, blocked on a permission prompt, session

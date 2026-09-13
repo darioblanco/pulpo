@@ -4,7 +4,7 @@ Instructions for coding agents (Codex, Claude, and compatible tools).
 
 ## Product Focus
 
-Pulpo is a **self-hosted meter and breaker box for coding agents** — agent-agnostic infrastructure you own. It runs any CLI agent (Claude Code, Codex, Aider, Goose, etc.) on your machines with exact usage metering, a flat budget-cost cap (alert 80%, stop 100%), durable session lifecycle, hook-driven watchdog supervision, and scheduling. Each machine's `pulpod` is standalone (no controller/fleet control plane); reach any of them directly over Tailscale.
+Pulpo is a **self-hosted meter and breaker box for coding agents** — agent-agnostic infrastructure you own. It runs any CLI agent (Claude Code, Codex, pi, Aider, Gemini CLI, etc.) as a durable session on your machines, with a flat budget-cost cap (alert 80%, stop 100%), durable session lifecycle, hook-driven watchdog supervision, and scheduling. Claude Code, Codex, and pi additionally get **exact usage metering** (tokens/cost read from each agent's own session files, no scraping) and hook-driven state instead of a scrollback guess; any other command still runs, but shows no usage. Each machine's `pulpod` is standalone (no controller/fleet control plane); reach any of them directly over Tailscale.
 
 **Positioning:** infrastructure layer, not an agent. Sovereign by architecture — code never leaves your infrastructure. Key differentiators: scheduling, cost control, direct multi-machine access over Tailscale, EU sovereignty compliance.
 
@@ -37,7 +37,7 @@ Development: `make setup` | `make fmt` | `make lint` | `make test` | `make e2e` 
 
 These are mandatory for all code changes:
 
-- **Session names are validated** via `validate_session_name()` in `session/manager.rs` — kebab-case only (`[a-z0-9-]`). Any new code path that creates sessions MUST go through this validation. Session names are interpolated into shell commands; invalid names enable shell injection.
+- **Session names are validated** via `validate_session_name()` in `session/utils.rs` — kebab-case only (`[a-z0-9-]`). Any new code path that creates sessions MUST go through this validation. Session names are interpolated into shell commands; invalid names enable shell injection.
 - **Schedule names** are validated with the same rules in `api/schedules.rs`.
 - **Auth tokens** are compared using constant-time comparison (`constant_time_eq` in `auth.rs`). Do not use `==` for token comparison.
 - **ConnectInfo** absence is treated as remote (fail-closed). Do not change this to fail-open.
@@ -47,9 +47,14 @@ These are mandatory for all code changes:
 
 ## Engineering Standards
 
-- **TDD**: write failing test, implement, refactor, verify coverage — for pure logic. Every documented user-facing behavior (session lifecycle, harness adapters, watchdog, schedules, worktrees) needs a scenario test in `crates/pulpo-e2e/tests/scenarios.rs` instead (real `pulpod` + real tmux + a fake harness — see `make e2e` and CLAUDE.md's "Testing" section); a `MockBackend`-driven flow test is not a substitute for new work.
-- **Coverage**: 98% line coverage enforced locally and in CI (a decay guard, not the primary correctness signal — see CLAUDE.md). Use `cfg(coverage)` only for genuinely untestable I/O. `crates/pulpo-e2e` is excluded from the coverage run.
-- **CI**: `--test-threads=1` for coverage runs (prevents sqlx-sqlite prepared statement cache races).
+- **TDD**: write failing test, implement, refactor, verify coverage — for pure logic. Every documented user-facing behavior (session lifecycle, harness adapters, watchdog, schedules, worktrees) needs a scenario test in `crates/pulpo-e2e/tests/scenarios.rs` instead (12 tests today, `s1`-`s11`, against a real `pulpod` + real tmux server + `fake-claude` — a binary scripted by `FAKE_AGENT_SCENARIO` that plays Claude Code's CLI/hook surface; run with `make e2e` — see CLAUDE.md's "Testing" section); a `MockBackend`-driven flow test is not a substitute for new work.
+- **Coverage**: 98% line coverage enforced locally and in CI (a decay guard, not the primary correctness signal — see CLAUDE.md). Use `cfg(coverage)` only for genuinely untestable I/O. `crates/pulpo-e2e` is excluded from the coverage run, and from release builds/artifacts — it's dev-only, never shipped.
+- **CI**: `--test-threads=1` for coverage runs (prevents sqlx-sqlite prepared statement cache races); `pulpo-e2e` runs in its own dedicated `e2e` job, separate from `coverage`. A few real-tmux unit tests (`backend::tmux`, `session::manager`) take a process-wide lock (`crate::test_serial::lock()`) so they never run concurrently with each other.
+- **Build cache**: give each worktree/branch its own `CARGO_TARGET_DIR`
+  (`$HOME/.cache/pulpo-target/<branch-or-worktree-name>`) when building/testing
+  more than one checkout at once — sharing one across concurrent builds corrupts
+  cargo's fingerprints. Relevant whenever you're running as one of several
+  parallel agent sessions.
 - Rust logic in `lib.rs`; `main.rs` is a thin wrapper.
 - Use `tracing` for operational events.
 - If a pre-commit/CI check fails, fix it — do not bypass hooks.

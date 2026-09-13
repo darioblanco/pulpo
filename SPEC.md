@@ -2,13 +2,13 @@
 
 > _Eight arms, one brain — see and control what every agent costs, on infrastructure you own._
 >
-> Last verified against code: 2026-09-11
+> Last verified against code: 2026-09-13
 
-Pulpo is a lightweight daemon that runs coding-agent sessions as durable background
-workers, **measures exactly what each one costs** (across agents, accounts, and
-machines), **enforces budgets**, and **forwards alerts and events to your own
-observability stack**. It abstracts `tmux` behind a clean API and ships a
-mobile-friendly web UI. Sovereign by architecture: usage data is read from local
+Pulpo is a lightweight daemon that runs any coding agent as a durable background
+session on a machine you own, **measures exactly what each one costs** (across every
+agent and account on that machine), **enforces budgets**, and **forwards alerts and
+events to your own observability stack**. It abstracts `tmux` behind a clean API and
+ships a mobile-friendly web UI. Single node, sovereign: usage data is read from local
 files and never relayed to a vendor.
 
 It is **not** an agent framework, a prompt tool, or a terminal-orchestration UX —
@@ -453,10 +453,9 @@ GET    /events                SSE event stream
 | `POST`   | `/sessions/cleanup`             | Remove all stopped and lost sessions |
 | `WS`     | `/sessions/:id/stream`          | Stream terminal output         |
 | `GET`    | `/node`                         | Node info                      |
-| `GET`    | `/config`                       | Get daemon config              |
-| `PUT`    | `/config`                       | Update daemon config           |
-| `GET`/`PUT` | `/watchdog`                  | Get/update watchdog config     |
-| `GET`/`PUT` | `/notifications`             | Get/update notification config |
+| `GET`    | `/config`                       | Get effective daemon config (read-only) |
+| `GET`    | `/watchdog`                     | Get effective watchdog config (read-only) |
+| `GET`    | `/notifications`                | Get effective notification config (read-only) |
 | `GET`    | `/usage/sessions`               | Exact per-session usage + per-repo rollups (pulpo-managed sessions) |
 | `GET`    | `/usage/scan`                   | Scan all local agent history (Claude + Codex + pi) |
 | `GET`/`POST` | `/schedules`                 | List/create cron schedules     |
@@ -598,7 +597,8 @@ Ship the smallest useful thing first.
 - [x] WebSocket streaming + live terminal
 - [x] Multi-node peer discovery
 - [x] Session resume after reboot
-- [x] In-app + desktop notifications (Notification API)
+- [x] In-app toast notifications (a desktop-notification path was added and then removed
+      September 2026: its permission was never requested anywhere, so it never fired)
 - [x] Installable mobile app (~~PWA~~/~~Web Push~~ removed September 2026, see Phase 6; native Tauri builds retired June 2026) — the mobile surface is now the plain embedded web UI, bookmarked rather than installed
 
 ---
@@ -653,7 +653,8 @@ Ship the smallest useful thing first.
 - ✅ Session output download endpoint (`GET /api/v1/sessions/{id}/output/download`)
 - ✅ Session history view with search/filter bar
 - ✅ Chat view (Messages/Messagebar) with Terminal toggle
-- ✅ In-app toast + desktop Notification API for session status changes
+- ✅ In-app toast for session status changes (a dead desktop-notification code path,
+  never wired to a permission request, was removed September 2026)
 - ~~Peer add/remove API (`POST /api/v1/peers`, `DELETE /api/v1/peers/{name}`)~~ — removed
   September 2026
 - ~~Peer management in settings view (list, add, remove with status indicators)~~ — removed
@@ -735,8 +736,11 @@ in [Config Reference](docs/reference/config.md). Config keys retired by earlier 
 (`[docker]`, `[controller]`, `[inks]`, `[peers]`, `[plans]`, `[metrics]`,
 `[notifications.vapid]`, `watchdog.adopt_tmux`,
 `watchdog.burn_ceiling_usd_per_hour`/`burn_ceiling_tokens_per_hour`/`burn_action`,
-`node.discovery_interval_secs`) still parse from an old config file (ignored, dropped on
-next save) — see that same reference's "Retired keys" section.
+`node.discovery_interval_secs`) still parse from an old config file, ignored with a
+startup warning. `pulpod` only ever rewrites the file once on its own — the very first
+time it runs with no auth token yet — so a retired key otherwise stays in the file,
+still ignored, until you edit it out by hand. See that same reference's "Retired keys"
+section.
 
 ---
 

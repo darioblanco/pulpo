@@ -90,11 +90,28 @@ the full rationale:
 - **Unit tests** for pure logic (parsing, cron math, state-transition functions, ...).
   This project follows **TDD** for these: write the test, confirm it fails, write
   the minimal implementation, refactor while keeping it green, verify `make ci`
-  passes.
+  passes. A handful of unit tests still talk to a real tmux server
+  (`backend::tmux`, `session::manager`) instead of `MockBackend`; they take a
+  process-wide lock (`crate::test_serial::lock()`) so they never run concurrently
+  with each other.
 - **Scenario tests** (`crates/pulpo-e2e/`, run with `make e2e`) for every
   user-facing session/watchdog/harness/schedule behavior, against a real `pulpod`
   daemon and a real tmux server — not a `MockBackend`. If your change affects one
-  of those, add or extend a scenario, not a mock-backend flow test.
+  of those, add or extend a scenario (there are 12 today, `s1_*`–`s11_*` in
+  `crates/pulpo-e2e/tests/scenarios.rs`, e.g. `s6_budget_breaker_stops_session_and_delivers_webhook`
+  and `s9_worktrees_distinct_survive_stop_and_removed_by_cleanup`), not a
+  mock-backend flow test. Scenarios drive a real `pulpod` against `fake-claude`
+  (`crates/pulpo-e2e/src/bin/fake-claude.rs`), a small binary that plays Claude
+  Code's part — reading the same `--session-id`/`--settings`/`--resume` flags and
+  firing the same hook commands a real session would, scripted by the
+  `FAKE_AGENT_SCENARIO` env var. `pulpo-e2e` runs in its own CI job (`e2e`,
+  separate from `coverage`) and is excluded from both coverage instrumentation
+  and release builds/artifacts — it's dev-only tooling, never shipped.
+- **Build cache**: if you're running tests from more than one worktree/branch at
+  once (e.g. parallel agent sessions), give each its own `CARGO_TARGET_DIR`
+  (`$HOME/.cache/pulpo-target/<branch-or-worktree-name>`) — sharing one across
+  concurrent builds corrupts cargo's fingerprints. See CLAUDE.md's "Linting"
+  section.
 
 See [CLAUDE.md](CLAUDE.md) for detailed conventions, project structure, and code standards.
 

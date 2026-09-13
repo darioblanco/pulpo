@@ -100,7 +100,9 @@ private tmux server via `TMUX_TMPDIR`) and exposes `spawn`/`wait_status`/`sessio
 adding `fake-codex`/`fake-pi` later is one more `src/bin/*.rs` file, not a new
 harness.
 
-**Scenarios** (`crates/pulpo-e2e/tests/scenarios.rs`, one `#[test]` each): S1 spawn
+**Scenarios** (`crates/pulpo-e2e/tests/scenarios.rs`, 12 `#[test]` functions across
+11 numbered scenarios — S7 covers two: an idle-timeout kill and a
+`--idle-threshold 0` override): S1 spawn
 reaches Active with harness metadata; S2 a permission prompt sets `needs_input` and
 `pulpo input` resolves it; S3 a clean exit resolves through Ready then Stopped and
 `pulpo resume` continues the same harness conversation (`--resume <id>`); S4 the
@@ -132,6 +134,14 @@ and assert on real daemon state (`daemon.session(name)`/`wait_status`/
 - **Rust**: `cargo test --workspace --exclude pulpo-e2e` for unit tests (pulpo-e2e
   needs pre-built binaries and a tmux server — see `make e2e` above). Tests live
   alongside source code in `#[cfg(test)] mod tests` blocks.
+- **Real-tmux unit tests are serialized**: a handful of unit tests still talk to
+  tmux directly (`backend::tmux`, `session::manager`'s `real_tmux_tests`) instead
+  of going through `MockBackend`. `crate::test_serial::lock()`
+  (`crates/pulpod/src/test_serial.rs`) is a process-wide `Mutex<()>` these tests
+  acquire and hold for their whole duration, so they never run concurrently
+  against each other under a parallel `cargo test` (session-name collisions and
+  tmux-server-startup races were a real source of flakiness before this existed).
+  It has no effect on the other thousands of `MockBackend`-based tests.
 - **Web**: `vitest` with jsdom environment. Test files use `*.test.ts` or `*.spec.ts` naming.
 - Run `make test` to run all unit tests (Rust + web); `make e2e` for the scenario suite.
 
@@ -354,6 +364,7 @@ pulpo/
 │   │   ├── platform.rs           # OS detection (macOS/Linux/WSL2)
 │   │   ├── auth_info.rs          # Agent-name detection for command -> usage-reader dispatch
 │   │   ├── coverage_macros.rs    # coverage_warn!/coverage_info! (keep rare log-only branches out of coverage)
+│   │   ├── test_serial.rs        # Process-wide mutex serializing the real-tmux unit tests
 │   │   ├── api/                  # Axum REST API
 │   │   │   ├── mod.rs            # AppState, router setup
 │   │   │   ├── routes.rs         # Route definitions + auth middleware
