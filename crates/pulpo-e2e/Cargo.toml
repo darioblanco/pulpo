@@ -14,19 +14,18 @@ path = "src/lib.rs"
 
 # Fake harness binaries imitating a coding agent CLI's surface (Claude Code today;
 # designed so a fake-codex/fake-pi is one more file). Dev-only tooling for the
-# scenario suite below — never part of a release build (no `[package.metadata.dist]`
-# entry, and this whole crate is excluded from `dist-workspace.toml`).
+# scenario suite below — never part of a release build (no
+# `[package.metadata.dist]` entry, and `publish = false` above keeps it out of
+# any published/release artifact).
 [[bin]]
 name = "fake-claude"
 path = "src/bin/fake-claude.rs"
 
 [dependencies]
 pulpo-common = { path = "../pulpo-common", version = "0.2.0" }
-serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
-anyhow.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }
 tempfile = "3"
 

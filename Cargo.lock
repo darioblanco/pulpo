@@ -1718,11 +1718,9 @@ dependencies = [
 name = "pulpo-e2e"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "chrono",
  "pulpo-common",
  "reqwest",
- "serde",
  "serde_json",
  "tempfile",
  "uuid",

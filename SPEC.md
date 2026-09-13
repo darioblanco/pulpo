@@ -163,7 +163,7 @@ Embedded in the `pulpod` binary (static assets compiled in). Mobile-first design
 - **ACTIVE**: agent is working — terminal output is changing
 - **IDLE**: agent needs attention — waiting for user input or at its prompt
 - **READY**: agent process exited — task is done. Detected by `[pulpo] Agent exited` marker
-- **STOPPED**: session was terminated by user, a watchdog intervention (idle/budget/burn), or the session's shell exited cleanly (exit markers present)
+- **STOPPED**: session was terminated by user, a watchdog intervention (idle/budget), or the session's shell exited cleanly (exit markers present)
 - **LOST**: tmux process disappeared with no exit markers (crash, reboot, external kill mid-run). A session whose shell exited normally (exit markers present) resolves to STOPPED instead — exiting a session is a clean end, not a loss.
 
 ### State Quick Reference
@@ -214,7 +214,7 @@ current terminal content and stores it in the DB. This means:
 
 ### Interventions
 
-An **intervention** is any time pulpo forcibly acts on a session — stopping it due to an idle timeout, a budget/burn-rate breach, or another watchdog-detected condition. Every intervention is recorded in the `intervention_events` table with:
+An **intervention** is any time pulpo forcibly acts on a session — stopping it due to an idle timeout, a budget breach, or another watchdog-detected condition. Every intervention is recorded in the `intervention_events` table with:
 
 - **session_id** — which session was affected
 - **reason** — human-readable cause (e.g. "Idle for 600s", "Cost $10.00 reached budget $10.00")
@@ -225,7 +225,7 @@ The session itself also stores the most recent intervention in `intervention_rea
 **What triggers an intervention:**
 
 - **Idle timeout** — if a session produces no output for `idle_timeout_secs`, the watchdog acts based on `idle_action`: `"alert"` logs a warning, `"kill"` terminates the session.
-- **Budget / burn-rate** — a session's cost budget is exceeded, or its lifetime-average cost/token rate crosses the configured burn ceiling (see `docs/reference/config.md`).
+- **Budget** — a session's cost budget is exceeded (see `--budget-cost` in `docs/reference/config.md`). The earlier burn-rate/time-to-cap projection breaker was removed (September 2026; see `docs/reference/config.md` "Retired keys").
 
 **How to inspect interventions:**
 
@@ -278,7 +278,7 @@ Watchdog detects issue → stops session → records intervention → session is
 | Session is `lost` after reboot            | Backend session is gone, no exit marker | `pulpo resume <name>`                              |
 | Session is `stopped`, wasn't manual       | Watchdog intervention, or the session's shell exited cleanly | Check `pulpo interventions <name>`; `resume` or `spawn` new |
 | `resume` fails with "cannot be resumed"   | Session is still active/idle/creating | Use `pulpo spawn` or wait for the running session |
-| Watchdog keeps stopping sessions          | Idle timeout or budget/burn ceiling too low | Raise `idle_timeout_secs` or the relevant budget/burn setting |
+| Watchdog keeps stopping sessions          | Idle timeout or budget too low  | Raise `idle_timeout_secs` or `--budget-cost`               |
 | No output in `pulpo logs`                 | Session just started            | Wait, or use `--follow` to stream: `pulpo logs -f <name>` |
 
 ---
