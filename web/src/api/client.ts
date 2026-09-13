@@ -5,8 +5,6 @@ import type {
   ListSessionsParams,
   InterventionEvent,
   ConfigResponse,
-  UpdateConfigRequest,
-  UpdateConfigResponse,
   CreateSessionRequest,
   CreateSessionResponse,
   CleanupSessionsResponse,
@@ -158,18 +156,10 @@ export async function downloadSessionOutput(id: string): Promise<Blob> {
   return res.blob();
 }
 
+/** Read-only effective config — the web UI never writes it back. Edit
+ * `~/.pulpo/config.toml` and restart pulpod to change anything. */
 export async function getConfig(): Promise<ConfigResponse> {
   const res = await authFetch(`${resolveBaseUrl()}/config`);
-  return res.json();
-}
-
-export async function updateConfig(data: UpdateConfigRequest): Promise<UpdateConfigResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/config`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw await apiError(res, 'Failed to update config');
   return res.json();
 }
 

@@ -3,11 +3,10 @@ use std::sync::Arc;
 use axum::{Json, extract::State};
 use pulpo_common::api::{
     AuthConfigResponse, ConfigResponse, NodeConfigResponse, NotificationsConfigResponse,
-    UpdateConfigRequest, UpdateConfigResponse, WatchdogConfigResponse,
-    WebhookEndpointConfigResponse,
+    WatchdogConfigResponse, WebhookEndpointConfigResponse,
 };
 
-use crate::api::error::{ApiError, internal_error};
+use crate::api::error::ApiError;
 
 fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
     ConfigResponse {
@@ -43,6 +42,9 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
     }
 }
 
+/// Read-only view of pulpod's effective configuration. The config file
+/// (`~/.pulpo/config.toml`) is the source of truth — the web UI and API only read
+/// it; editing happens by hand-editing the file and restarting pulpod.
 pub async fn get_config(
     State(state): State<Arc<super::AppState>>,
 ) -> Result<Json<ConfigResponse>, ApiError> {
@@ -50,84 +52,6 @@ pub async fn get_config(
     let response = config_to_response(&config);
     drop(config);
     Ok(Json(response))
-}
-
-/// Apply an update request to the config, returning whether a restart is required.
-#[allow(clippy::too_many_lines)]
-fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) -> bool {
-    let original_port = config.node.port;
-    let original_bind = config.node.bind;
-
-    // Node settings
-    if let Some(name) = &req.node_name {
-        config.node.name.clone_from(name);
-    }
-    if let Some(port) = req.port {
-        config.node.port = port;
-    }
-    if let Some(data_dir) = &req.data_dir {
-        config.node.data_dir.clone_from(data_dir);
-    }
-    if let Some(bind) = req.bind {
-        config.node.bind = bind;
-    }
-
-    // Watchdog
-    if let Some(enabled) = req.watchdog_enabled {
-        config.watchdog.enabled = enabled;
-    }
-    if let Some(interval) = req.watchdog_check_interval_secs {
-        config.watchdog.check_interval_secs = interval;
-    }
-    if let Some(timeout) = req.watchdog_idle_timeout_secs {
-        config.watchdog.idle_timeout_secs = timeout;
-    }
-    if let Some(action) = req.watchdog_idle_action {
-        config.watchdog.idle_action = action;
-    }
-
-    // Generic webhooks (full replace when provided).
-    //
-    // The API manages the canonical top-level `[[webhooks]]` list. A full replace
-    // also clears the deprecated `[notifications.webhooks]` form so the edited set
-    // is authoritative (and the response union does not show stale duplicates).
-    if let Some(webhooks) = req.webhooks {
-        config.webhooks = webhooks
-            .into_iter()
-            .map(|w| crate::config::WebhookEndpointConfig {
-                name: w.name,
-                url: w.url,
-                events: w.events,
-                min_severity: w.min_severity,
-                secret: None,
-            })
-            .collect();
-        config.notifications.webhooks.clear();
-    }
-
-    // Restart required for port or bind changes (affects network setup, e.g. tailscale serve)
-    config.node.port != original_port || config.node.bind != original_bind
-}
-
-pub async fn update_config(
-    State(state): State<Arc<super::AppState>>,
-    Json(req): Json<UpdateConfigRequest>,
-) -> Result<Json<UpdateConfigResponse>, ApiError> {
-    let mut config = state.config.write().await;
-    let restart_required = apply_update(&mut config, req);
-
-    // Save to disk if config_path is set
-    if !state.config_path.as_os_str().is_empty() {
-        crate::config::save(&config, &state.config_path)
-            .map_err(|e| internal_error(&e.to_string()))?;
-    }
-
-    let response = config_to_response(&config);
-    drop(config);
-    Ok(Json(UpdateConfigResponse {
-        config: response,
-        restart_required,
-    }))
 }
 
 #[cfg(test)]
@@ -140,7 +64,6 @@ mod tests {
     use crate::session::manager::SessionManager;
     use crate::store::Store;
     use axum::extract::State;
-    use axum::http::StatusCode;
 
     async fn test_state() -> Arc<AppState> {
         let tmpdir = tempfile::tempdir().unwrap();
@@ -164,173 +87,12 @@ mod tests {
         )
     }
 
-    async fn test_state_with_config_path() -> Arc<AppState> {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
-        let config_path = tmpdir.path().join("config.toml");
-        let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        AppState::with_event_tx(
-            Config {
-                node: NodeConfig {
-                    name: "test-node".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                ..Default::default()
-            },
-            config_path,
-            manager,
-            event_tx,
-            store,
-        )
-    }
-
     #[tokio::test]
     async fn test_get_config_returns_current() {
         let state = test_state().await;
         let Json(resp) = get_config(State(state)).await.unwrap();
         assert_eq!(resp.node.name, "test-node");
         assert_eq!(resp.node.port, 7433);
-    }
-
-    #[tokio::test]
-    async fn test_update_config_node_name() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            node_name: Some("new-name".into()),
-            port: None,
-            data_dir: None,
-            bind: None,
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        assert_eq!(resp.config.node.name, "new-name");
-        assert!(!resp.restart_required);
-
-        // Verify persisted
-        let Json(current) = get_config(State(state)).await.unwrap();
-        assert_eq!(current.node.name, "new-name");
-    }
-
-    #[tokio::test]
-    async fn test_update_config_port_requires_restart() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            node_name: None,
-            port: Some(9999),
-            data_dir: None,
-            bind: None,
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.node.port, 9999);
-        assert!(resp.restart_required);
-    }
-
-    #[tokio::test]
-    async fn test_update_config_same_port_no_restart() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            node_name: None,
-            port: Some(7433),
-            data_dir: None,
-            bind: None,
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert!(!resp.restart_required);
-    }
-
-    #[tokio::test]
-    async fn test_update_config_data_dir() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            node_name: None,
-            port: None,
-            data_dir: Some("/new/data/dir".into()),
-            bind: None,
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.node.data_dir, "/new/data/dir");
-    }
-
-    #[tokio::test]
-    async fn test_update_config_multiple_fields() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            node_name: Some("multi".into()),
-            port: Some(8888),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.node.name, "multi");
-        assert_eq!(resp.config.node.port, 8888);
-        assert!(resp.restart_required);
-    }
-
-    #[tokio::test]
-    async fn test_update_config_saves_to_disk() {
-        let state = test_state_with_config_path().await;
-        let req = UpdateConfigRequest {
-            node_name: Some("saved-node".into()),
-            port: None,
-            data_dir: None,
-            bind: None,
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        assert_eq!(resp.config.node.name, "saved-node");
-
-        // Verify file was written
-        let content = std::fs::read_to_string(&state.config_path).unwrap();
-        assert!(content.contains("saved-node"));
-    }
-
-    #[tokio::test]
-    async fn test_update_config_save_roundtrip() {
-        let state = test_state_with_config_path().await;
-        let req = UpdateConfigRequest {
-            node_name: Some("roundtrip".into()),
-            port: Some(9000),
-            data_dir: None,
-            bind: None,
-            ..Default::default()
-        };
-        let _ = update_config(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-
-        // Load back from disk
-        let loaded = crate::config::load(state.config_path.to_str().unwrap()).unwrap();
-        assert_eq!(loaded.node.name, "roundtrip");
-        assert_eq!(loaded.node.port, 9000);
-    }
-
-    #[tokio::test]
-    async fn test_update_config_empty_request() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            node_name: None,
-            port: None,
-            data_dir: None,
-            bind: None,
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        // Nothing changed
-        assert_eq!(resp.config.node.name, "test-node");
-        assert_eq!(resp.config.node.port, 7433);
-        assert!(!resp.restart_required);
     }
 
     #[test]
@@ -351,35 +113,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_config_bind_requires_restart() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            node_name: None,
-            port: None,
-            data_dir: None,
-            bind: Some(pulpo_common::auth::BindMode::Public),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.node.bind, pulpo_common::auth::BindMode::Public);
-        assert!(resp.restart_required);
-    }
-
-    #[tokio::test]
-    async fn test_update_config_same_bind_no_restart() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            node_name: None,
-            port: None,
-            data_dir: None,
-            bind: Some(pulpo_common::auth::BindMode::Local),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert!(!resp.restart_required);
-    }
-
-    #[tokio::test]
     async fn test_get_config_returns_bind() {
         let state = test_state().await;
         let Json(resp) = get_config(State(state)).await.unwrap();
@@ -392,24 +125,6 @@ mod tests {
         let Json(resp) = get_config(State(state)).await.unwrap();
         let debug = format!("{resp:?}");
         assert!(debug.contains("test-node"));
-    }
-
-    #[tokio::test]
-    async fn test_update_config_watchdog() {
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            watchdog_enabled: Some(false),
-            watchdog_check_interval_secs: Some(120),
-            watchdog_idle_timeout_secs: Some(600),
-            watchdog_idle_action: Some("kill".into()),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert!(!resp.config.watchdog.enabled);
-        assert_eq!(resp.config.watchdog.check_interval_secs, 120);
-        assert_eq!(resp.config.watchdog.idle_timeout_secs, 600);
-        assert_eq!(resp.config.watchdog.idle_action, "kill");
-        assert!(!resp.restart_required);
     }
 
     #[test]
@@ -500,133 +215,5 @@ mod tests {
         let w1 = &resp.notifications.webhooks[1];
         assert_eq!(w1.name, "logs-hook");
         assert!(w1.events.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_update_config_webhooks() {
-        use pulpo_common::api::WebhookEndpointUpdateRequest;
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            webhooks: Some(vec![WebhookEndpointUpdateRequest {
-                name: "my-hook".into(),
-                url: "https://example.com/webhook".into(),
-                events: vec!["active".into()],
-                min_severity: None,
-            }]),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.notifications.webhooks.len(), 1);
-        assert_eq!(resp.config.notifications.webhooks[0].name, "my-hook");
-        assert_eq!(
-            resp.config.notifications.webhooks[0].url,
-            "https://example.com/webhook"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_update_config_webhooks_replaces_all() {
-        use pulpo_common::api::WebhookEndpointUpdateRequest;
-        let state = test_state().await;
-        // Set initial webhooks
-        let req = UpdateConfigRequest {
-            webhooks: Some(vec![
-                WebhookEndpointUpdateRequest {
-                    name: "hook-1".into(),
-                    url: "https://a.com".into(),
-                    events: vec![],
-                    min_severity: None,
-                },
-                WebhookEndpointUpdateRequest {
-                    name: "hook-2".into(),
-                    url: "https://b.com".into(),
-                    events: vec![],
-                    min_severity: None,
-                },
-            ]),
-            ..Default::default()
-        };
-        let _ = update_config(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        // Replace with single webhook
-        let req = UpdateConfigRequest {
-            webhooks: Some(vec![WebhookEndpointUpdateRequest {
-                name: "hook-3".into(),
-                url: "https://c.com".into(),
-                events: vec!["killed".into()],
-                min_severity: None,
-            }]),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert_eq!(resp.config.notifications.webhooks.len(), 1);
-        assert_eq!(resp.config.notifications.webhooks[0].name, "hook-3");
-    }
-
-    #[tokio::test]
-    async fn test_update_config_webhooks_empty_clears() {
-        use pulpo_common::api::WebhookEndpointUpdateRequest;
-        let state = test_state().await;
-        let req = UpdateConfigRequest {
-            webhooks: Some(vec![WebhookEndpointUpdateRequest {
-                name: "hook".into(),
-                url: "https://a.com".into(),
-                events: vec![],
-                min_severity: None,
-            }]),
-            ..Default::default()
-        };
-        let _ = update_config(State(state.clone()), Json(req))
-            .await
-            .unwrap();
-        // Clear
-        let req = UpdateConfigRequest {
-            webhooks: Some(vec![]),
-            ..Default::default()
-        };
-        let Json(resp) = update_config(State(state), Json(req)).await.unwrap();
-        assert!(resp.config.notifications.webhooks.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_update_config_save_error() {
-        // Use an invalid path that can't be written
-        let tmpdir = tempfile::tempdir().unwrap();
-        let tmpdir = Box::leak(Box::new(tmpdir));
-        let store = Store::new(tmpdir.path().to_str().unwrap()).await.unwrap();
-        store.migrate().await.unwrap();
-        let backend = Arc::new(StubBackend);
-        let manager = SessionManager::new(backend, store.clone(), None).with_no_stale_grace();
-
-        // Use /dev/null/impossible as config path (can't create dirs under /dev/null)
-        let (event_tx, _) = tokio::sync::broadcast::channel(16);
-        let state = AppState::with_event_tx(
-            Config {
-                node: NodeConfig {
-                    name: "test".into(),
-                    port: 7433,
-                    data_dir: tmpdir.path().to_str().unwrap().into(),
-                    ..NodeConfig::default()
-                },
-                ..Default::default()
-            },
-            std::path::PathBuf::from("/dev/null/impossible/config.toml"),
-            manager,
-            event_tx,
-            store,
-        );
-
-        let req = UpdateConfigRequest {
-            node_name: Some("fail".into()),
-            port: None,
-            data_dir: None,
-            bind: None,
-            ..Default::default()
-        };
-        let result = update_config(State(state), Json(req)).await;
-        assert!(result.is_err());
-        let (status, _) = result.unwrap_err();
-        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

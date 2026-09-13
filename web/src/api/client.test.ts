@@ -12,7 +12,6 @@ import {
   resumeSession,
   getInterventionEvents,
   getConfig,
-  updateConfig,
   resolveWsUrl,
   resolveBaseUrl,
   authHeaders,
@@ -417,64 +416,6 @@ describe('getConfig', () => {
 
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/config', { headers: {} });
     expect(result).toEqual(config);
-  });
-});
-
-describe('updateConfig', () => {
-  it('sends PUT to /api/v1/config with partial update', async () => {
-    const response = {
-      config: {
-        node: { name: 'new-name', port: 7433, data_dir: '~/.pulpo' },
-        guards: { preset: 'standard' },
-      },
-      restart_required: false,
-    };
-    mockFetch.mockResolvedValue(jsonResponse(response));
-
-    const result = await updateConfig({ node_name: 'new-name' });
-
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ node_name: 'new-name' }),
-    });
-    expect(result).toEqual(response);
-    expect(result.restart_required).toBe(false);
-  });
-
-  it('reports restart_required when port changes', async () => {
-    const response = {
-      config: {
-        node: { name: 'mac-mini', port: 9000, data_dir: '~/.pulpo' },
-        guards: { preset: 'standard' },
-      },
-      restart_required: true,
-    };
-    mockFetch.mockResolvedValue(jsonResponse(response));
-
-    const result = await updateConfig({ port: 9000 });
-
-    expect(result.restart_required).toBe(true);
-  });
-
-  it('throws on error response', async () => {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      text: () => Promise.resolve(JSON.stringify({ error: 'invalid config' })),
-      json: () => Promise.resolve({ error: 'invalid config' }),
-    });
-
-    await expect(updateConfig({ port: 9000 })).rejects.toThrow('invalid config');
-  });
-
-  it('throws generic message when no error field', async () => {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      text: () => Promise.resolve(JSON.stringify({})),
-      json: () => Promise.resolve({}),
-    });
-
-    await expect(updateConfig({ port: 9000 })).rejects.toThrow('Failed to update config');
   });
 });
 

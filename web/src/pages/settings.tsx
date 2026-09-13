@@ -1,52 +1,35 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AppHeader } from '@/components/layout/app-header';
-import { NodeSettings } from '@/components/settings/node-settings';
-import { WatchdogSettings } from '@/components/settings/watchdog-settings';
-import { NotificationsSettings } from '@/components/settings/notifications-settings';
-import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { getConfig, updateConfig } from '@/api/client';
-import { toast } from 'sonner';
-import type { UpdateConfigRequest } from '@/api/types';
-import type { WebhookFormData } from '@/components/settings/notifications-settings';
+import { getConfig } from '@/api/client';
+import type { ConfigResponse } from '@/api/types';
 
+/** One label/value row in the read-only configuration list. */
+function ConfigRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 border-b border-border py-2 text-sm last:border-0">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="max-w-[60%] break-all text-right font-mono text-xs">{value}</span>
+    </div>
+  );
+}
+
+/**
+ * Read-only view of pulpod's effective configuration.
+ *
+ * The config file (`~/.pulpo/config.toml`) is the source of truth — the web UI only
+ * reads it. To change anything, edit the file and restart pulpod.
+ */
 export function SettingsPage() {
+  const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Node
-  const [nodeName, setNodeName] = useState('');
-  const [port, setPort] = useState(7433);
-  const [dataDir, setDataDir] = useState('');
-  const [bind, setBind] = useState('local');
-
-  // Watchdog
-  const [watchdogEnabled, setWatchdogEnabled] = useState(true);
-  const [watchdogCheckInterval, setWatchdogCheckInterval] = useState(30);
-  const [watchdogIdleTimeout, setWatchdogIdleTimeout] = useState(300);
-  const [watchdogIdleAction, setWatchdogIdleAction] = useState('pause');
-
-  // Notifications
-  const [webhooks, setWebhooks] = useState<WebhookFormData[]>([]);
 
   const loadConfig = useCallback(async () => {
     try {
       setLoading(true);
-      const config = await getConfig();
-      setNodeName(config.node.name);
-      setPort(config.node.port);
-      setDataDir(config.node.data_dir);
-      setBind(config.node.bind);
-
-      setWatchdogEnabled(config.watchdog.enabled);
-      setWatchdogCheckInterval(config.watchdog.check_interval_secs);
-      setWatchdogIdleTimeout(config.watchdog.idle_timeout_secs);
-      setWatchdogIdleAction(config.watchdog.idle_action);
-
-      setWebhooks(config.notifications.webhooks ?? []);
-
+      setConfig(await getConfig());
       setError(null);
     } catch {
       setError('Failed to load config');
@@ -56,122 +39,108 @@ export function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    loadConfig();
+    void loadConfig();
   }, [loadConfig]);
 
-  async function handleSave() {
-    setSaving(true);
-    try {
-      const req: UpdateConfigRequest = {
-        node_name: nodeName,
-        port,
-        data_dir: dataDir,
-        bind,
-        watchdog_enabled: watchdogEnabled,
-        watchdog_check_interval_secs: watchdogCheckInterval,
-        watchdog_idle_timeout_secs: watchdogIdleTimeout,
-        watchdog_idle_action: watchdogIdleAction,
-        webhooks: webhooks
-          .filter((w) => w.name.trim() && w.url.trim())
-          .map((w) => ({
-            name: w.name,
-            url: w.url,
-            events: w.events,
-          })),
-      };
-
-      const result = await updateConfig(req);
-      if (result.restart_required) {
-        toast('Saved. Restart pulpod for network changes to take effect.');
-      } else {
-        toast('Settings saved.');
-      }
-      setError(null);
-    } catch {
-      setError('Failed to save config');
-    } finally {
-      setSaving(false);
-    }
-  }
+  const node = config?.node;
+  const watchdog = config?.watchdog;
+  const webhooks = config?.notifications?.webhooks ?? [];
+  const waitingPatterns = watchdog?.extra_waiting_patterns ?? [];
 
   return (
     <div data-testid="settings-page">
-      <AppHeader title="Settings" />
-      <div className="mx-auto max-w-2xl p-4 pb-12 sm:p-6">
+      <AppHeader title="Configuration" />
+      <div className="mx-auto max-w-2xl space-y-4 p-4 pb-12 sm:p-6">
+        <p className="text-sm text-muted-foreground" data-testid="config-hint">
+          This is a read-only view of pulpod&rsquo;s effective configuration. To change it, edit{' '}
+          <code className="rounded bg-muted px-1 py-0.5">~/.pulpo/config.toml</code> and restart
+          pulpod.
+        </p>
+
         {loading ? (
           <div data-testid="loading-skeleton" className="space-y-4">
             <Skeleton className="h-48 w-full rounded-xl" />
             <Skeleton className="h-32 w-full rounded-xl" />
             <Skeleton className="h-32 w-full rounded-xl" />
           </div>
-        ) : error && !nodeName ? (
+        ) : error ? (
           <p className="text-center text-destructive">{error}</p>
         ) : (
           <>
-            {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
+            <Card data-testid="section-node">
+              <CardHeader>
+                <CardTitle>Node</CardTitle>
+                <CardDescription>Identity and network settings for this node.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ConfigRow label="Name" value={node?.name ?? '—'} />
+                <ConfigRow label="Port" value={node?.port ?? '—'} />
+                <ConfigRow label="Data directory" value={node?.data_dir ?? '—'} />
+                <ConfigRow label="Bind mode" value={node?.bind ?? '—'} />
+              </CardContent>
+            </Card>
 
-            <div className="sticky top-0 z-10 -mx-4 mb-6 border-b border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/60 sm:-mx-6 sm:px-6">
-              <Button
-                data-testid="save-btn"
-                className="w-full"
-                size="lg"
-                onClick={handleSave}
-                disabled={saving}
-              >
-                {saving ? 'Saving...' : 'Save settings'}
-              </Button>
-            </div>
+            <Card data-testid="section-watchdog">
+              <CardHeader>
+                <CardTitle>Watchdog</CardTitle>
+                <CardDescription>
+                  Monitors idle sessions. Automatically pauses or kills unattended agents.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ConfigRow label="Enabled" value={watchdog?.enabled ? 'Yes' : 'No'} />
+                <ConfigRow
+                  label="Check interval (seconds)"
+                  value={watchdog?.check_interval_secs ?? '—'}
+                />
+                <ConfigRow
+                  label="Idle timeout (seconds)"
+                  value={watchdog?.idle_timeout_secs ?? '—'}
+                />
+                <ConfigRow label="Idle action" value={watchdog?.idle_action ?? '—'} />
+                <ConfigRow
+                  label="Idle threshold (seconds)"
+                  value={watchdog?.idle_threshold_secs ?? '—'}
+                />
+                {waitingPatterns.length > 0 && (
+                  <ConfigRow label="Extra waiting patterns" value={waitingPatterns.join(', ')} />
+                )}
+              </CardContent>
+            </Card>
 
-            <Tabs defaultValue="node" data-testid="settings-tabs">
-              <TabsList
-                variant="line"
-                className="h-auto min-h-10 w-auto max-w-full justify-start overflow-x-auto"
-              >
-                <TabsTrigger value="node" data-testid="settings-tab-node">
-                  Node
-                </TabsTrigger>
-                <TabsTrigger value="watchdog" data-testid="settings-tab-watchdog">
-                  Watchdog
-                </TabsTrigger>
-                <TabsTrigger value="notifications" data-testid="settings-tab-notifications">
-                  Notifications
-                </TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="node">
-                <section data-testid="section-node">
-                  <NodeSettings
-                    name={nodeName}
-                    onNameChange={setNodeName}
-                    port={port}
-                    onPortChange={setPort}
-                    dataDir={dataDir}
-                    onDataDirChange={setDataDir}
-                    bind={bind}
-                    onBindChange={setBind}
-                  />
-                </section>
-              </TabsContent>
-
-              <TabsContent value="watchdog">
-                <section data-testid="section-global">
-                  <WatchdogSettings
-                    enabled={watchdogEnabled}
-                    onEnabledChange={setWatchdogEnabled}
-                    checkIntervalSecs={watchdogCheckInterval}
-                    onCheckIntervalSecsChange={setWatchdogCheckInterval}
-                    idleTimeoutSecs={watchdogIdleTimeout}
-                    onIdleTimeoutSecsChange={setWatchdogIdleTimeout}
-                    idleAction={watchdogIdleAction}
-                    onIdleActionChange={setWatchdogIdleAction}
-                  />
-                </section>
-              </TabsContent>
-
-              <TabsContent value="notifications">
-                <NotificationsSettings webhooks={webhooks} onWebhooksChange={setWebhooks} />
-              </TabsContent>
-            </Tabs>
+            <Card data-testid="section-notifications">
+              <CardHeader>
+                <CardTitle>Notifications</CardTitle>
+                <CardDescription>Webhooks that receive session events.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {webhooks.length === 0 ? (
+                  <p className="text-sm text-muted-foreground" data-testid="no-webhooks">
+                    No webhooks configured.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {webhooks.map((w) => (
+                      <div
+                        key={w.name}
+                        className="rounded-lg border border-border p-3"
+                        data-testid={`webhook-${w.name}`}
+                      >
+                        <ConfigRow label="Name" value={w.name} />
+                        <ConfigRow label="URL" value={w.url} />
+                        <ConfigRow
+                          label="Events"
+                          value={w.events.length > 0 ? w.events.join(', ') : 'all'}
+                        />
+                        {w.min_severity && (
+                          <ConfigRow label="Min severity" value={w.min_severity} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </>
         )}
       </div>

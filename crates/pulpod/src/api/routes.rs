@@ -54,17 +54,11 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/usage/scan", get(usage::scan))
         .route("/api/v1/auth/token", get(auth::get_token))
         .route("/api/v1/node", get(node::get_info))
-        .route(
-            "/api/v1/config",
-            get(config::get_config).put(config::update_config),
-        )
-        .route(
-            "/api/v1/watchdog",
-            get(watchdog::get_watchdog).put(watchdog::update_watchdog),
-        )
+        .route("/api/v1/config", get(config::get_config))
+        .route("/api/v1/watchdog", get(watchdog::get_watchdog))
         .route(
             "/api/v1/notifications",
-            get(notifications::get_notifications).put(notifications::update_notifications),
+            get(notifications::get_notifications),
         )
         .route(
             "/api/v1/sessions",
@@ -611,7 +605,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_put_config() {
+    async fn test_put_config_not_allowed() {
+        // The config file is the source of truth — the API is read-only.
         let server = test_server().await;
         let resp = server
             .put("/api/v1/config")
@@ -619,25 +614,7 @@ mod tests {
                 "node_name": "updated"
             }))
             .await;
-        resp.assert_status_ok();
-        let body = resp.text();
-        assert!(body.contains("updated"));
-        assert!(body.contains("\"restart_required\":false"));
-    }
-
-    #[tokio::test]
-    async fn test_put_config_port_change() {
-        let server = test_server().await;
-        let resp = server
-            .put("/api/v1/config")
-            .json(&serde_json::json!({
-                "port": 9999
-            }))
-            .await;
-        resp.assert_status_ok();
-        let body = resp.text();
-        assert!(body.contains("9999"));
-        assert!(body.contains("\"restart_required\":true"));
+        resp.assert_status(StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]
@@ -1331,33 +1308,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_put_watchdog() {
+    async fn test_put_watchdog_not_allowed() {
+        // The config file is the source of truth — the API is read-only.
         let server = test_server().await;
         let resp = server
             .put("/api/v1/watchdog")
             .json(&serde_json::json!({
-                "enabled": false,
-                "check_interval_secs": 75,
-                "idle_action": "kill"
+                "enabled": false
             }))
             .await;
-        resp.assert_status_ok();
-        let body: serde_json::Value = resp.json();
-        assert_eq!(body["enabled"], false);
-        assert_eq!(body["check_interval_secs"], 75);
-        assert_eq!(body["idle_action"], "kill");
-    }
-
-    #[tokio::test]
-    async fn test_put_watchdog_validation_error() {
-        let server = test_server().await;
-        let resp = server
-            .put("/api/v1/watchdog")
-            .json(&serde_json::json!({
-                "check_interval_secs": 0
-            }))
-            .await;
-        resp.assert_status(StatusCode::BAD_REQUEST);
+        resp.assert_status(StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]
@@ -1370,24 +1330,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_put_notifications() {
+    async fn test_put_notifications_not_allowed() {
+        // The config file is the source of truth — the API is read-only.
         let server = test_server().await;
         let resp = server
             .put("/api/v1/notifications")
             .json(&serde_json::json!({
-                "webhooks": [{
-                    "name": "ci-hook",
-                    "url": "https://example.com/hook",
-                    "events": ["active"],
-                    "secret": null
-                }]
+                "webhooks": []
             }))
             .await;
-        resp.assert_status_ok();
-        let body: serde_json::Value = resp.json();
-        assert_eq!(body["webhooks"][0]["name"], "ci-hook");
-        assert_eq!(body["webhooks"][0]["url"], "https://example.com/hook");
-        assert_eq!(body["webhooks"][0]["events"], serde_json::json!(["active"]));
+        resp.assert_status(StatusCode::METHOD_NOT_ALLOWED);
     }
 
     #[tokio::test]

@@ -599,7 +599,7 @@ Ship the smallest useful thing first.
 - [x] Multi-node peer discovery
 - [x] Session resume after reboot
 - [x] In-app + desktop notifications (Notification API)
-- [x] Installable mobile app (PWA; ~~Web Push~~ removed September 2026, see Phase 6; native Tauri builds retired June 2026)
+- [x] Installable mobile app (~~PWA~~/~~Web Push~~ removed September 2026, see Phase 6; native Tauri builds retired June 2026) — the mobile surface is now the plain embedded web UI, bookmarked rather than installed
 
 ---
 
@@ -635,15 +635,20 @@ Ship the smallest useful thing first.
 ### Phase 5: Web UI ✅
 
 - ✅ React 19 + Vite + Tailwind CSS v4 + shadcn/ui
-- ✅ Responsive dashboard, history, settings pages
+- ✅ Responsive dashboard, history, configuration pages
 - ✅ Static SPA embedded in `pulpod` binary via `rust-embed`
 
 ### Phase 5b: Desktop App UX Features ✅
 
 **Deliverables:**
 
-- ✅ Config API (`GET/PUT /api/v1/config`) with hot-reload and restart detection
-- ✅ Settings view with tabbar navigation (Node, Watchdog, Notifications)
+- ~~Config API (`GET/PUT /api/v1/config`) with hot-reload and restart detection~~ — the
+  `PUT` routes and their hot-reload/restart-detection logic were removed September 2026:
+  the config file is the source of truth, `GET /api/v1/config` (and `/watchdog`,
+  `/notifications`) remain as read-only views
+- ~~Settings view with tabbar navigation (Node, Watchdog, Notifications)~~ — replaced
+  September 2026 with a single read-only Configuration view; edit
+  `~/.pulpo/config.toml` and restart `pulpod` to change anything
 - ✅ Session list filtering (`status`, `search`, `sort`, `order` query params)
 - ✅ Session output download endpoint (`GET /api/v1/sessions/{id}/output/download`)
 - ✅ Session history view with search/filter bar
@@ -656,13 +661,14 @@ Ship the smallest useful thing first.
 
 ### Phase 6: Mobile + Notifications
 
-**Stack:** PWA (installable web app + service worker)
+**Stack:** plain responsive web app (~~PWA/service worker~~ removed September 2026)
 
-The mobile surface is the embedded web UI, installable as a PWA on iOS and
-Android. Native Tauri builds and the voice-command experiments (formerly
-Phase 7) were retired in June 2026: the PWA covers remote monitoring without
-app-store distribution overhead, and the phone remains the primary
-management surface.
+The mobile surface is the embedded web UI, reached by bookmarking it in the phone's
+browser. Native Tauri builds and the voice-command experiments (formerly Phase 7) were
+retired in June 2026; the installable-PWA path (service worker, web manifest) followed
+in September 2026 — an installable icon wasn't worth the added surface once the settings
+UI it was bundled with went read-only. The phone remains the primary remote-monitoring
+surface either way.
 
 **Deliverables:**
 
@@ -671,7 +677,10 @@ management surface.
   own token entry, or `pulpo --url <host:port>` for the CLI
 - ~~Tailscale auto-discovery~~ — removed September 2026; `bind = "tailscale"` (HTTPS via
   `tailscale serve`) stays
-- ✅ PWA install
+- ~~PWA install~~ — removed September 2026: the service worker, web manifest, and
+  `vite-plugin-pwa`/workbox plumbing are gone; the SW only ever precached the app shell,
+  and an installable icon wasn't worth keeping once settings-editing (its main reason to
+  feel "app-like") was removed. The UI is still a normal responsive web page.
 - ~~Web Push notifications (VAPID, push subscriptions, "Stop session" action token)~~ —
   removed September 2026: `[[webhooks]]` is the only notification channel; a phone can
   still receive alerts by pointing a webhook at a push-capable relay you run

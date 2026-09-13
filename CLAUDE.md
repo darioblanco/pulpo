@@ -358,16 +358,16 @@ pulpo/
 │   │   │   ├── mod.rs            # AppState, router setup
 │   │   │   ├── routes.rs         # Route definitions + auth middleware
 │   │   │   ├── auth.rs           # Bearer-token middleware + GET /auth/token endpoint
-│   │   │   ├── config.rs         # Config API endpoint
+│   │   │   ├── config.rs         # Read-only effective-config endpoint (GET only)
 │   │   │   ├── health.rs         # Health check endpoint
 │   │   │   ├── sessions.rs       # Session CRUD + input/stop/resume/handoff/harness-events handlers
 │   │   │   ├── sessions_tests.rs # Session handler tests (split out of sessions.rs)
 │   │   │   ├── test_support.rs   # Shared API test fixtures/helpers
 │   │   │   ├── node.rs           # Node info endpoint
 │   │   │   ├── schedules.rs      # Schedule CRUD + run-history handlers
-│   │   │   ├── notifications.rs  # Notification config endpoint
+│   │   │   ├── notifications.rs  # Read-only notification config endpoint (GET only)
 │   │   │   ├── usage.rs          # Exact per-session usage + scan endpoints
-│   │   │   ├── watchdog.rs       # Watchdog config endpoint
+│   │   │   ├── watchdog.rs       # Read-only watchdog config endpoint (GET only)
 │   │   │   ├── ws.rs             # WebSocket terminal streaming
 │   │   │   ├── events.rs         # SSE event stream endpoint
 │   │   │   ├── error.rs          # Shared API handler error type
@@ -441,7 +441,6 @@ pulpo/
     │   ├── index.css             # Tailwind imports + dark theme CSS vars
     │   ├── main.tsx              # Entry point
     │   ├── App.tsx                # React Router setup
-    │   ├── sw.ts                  # Service worker (offline asset precaching + SPA fallback)
     │   ├── api/
     │   │   ├── types.ts          # Shared TypeScript interfaces
     │   │   ├── client.ts         # API fetch functions
@@ -462,14 +461,13 @@ pulpo/
     │   │   ├── session/          # Output view, terminal view (ghostty-web)
     │   │   ├── schedules/        # Schedule dialog, run-history panel, schedule row
     │   │   ├── history/          # Session filter (reused by dashboard)
-    │   │   ├── settings/         # Node, watchdog, notifications settings
     │   │   └── connect/          # Connect form, saved connections
     │   └── pages/
     │       ├── dashboard.tsx     # Sessions list (the landing page)
     │       ├── session-detail.tsx # Single-session detail view
     │       ├── schedules.tsx     # Schedule management
     │       ├── usage.tsx         # Usage/cost gauge
-    │       ├── settings.tsx      # Node, watchdog, notifications config
+    │       ├── settings.tsx      # Read-only effective-config view (edit config.toml + restart to change)
     │       └── connect.tsx       # Connection screen (standalone)
     ├── eslint.config.js
     ├── .prettierrc

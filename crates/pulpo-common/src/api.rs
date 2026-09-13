@@ -155,57 +155,6 @@ pub struct NotificationsConfigResponse {
     pub webhooks: Vec<WebhookEndpointConfigResponse>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct WebhookEndpointUpdateRequest {
-    pub name: String,
-    pub url: String,
-    /// `<type>.<subtype>` glob filter (e.g. `lifecycle.*`). Empty ⇒ all events.
-    #[serde(default)]
-    pub events: Vec<String>,
-    /// Minimum severity floor (`info` < `warn` < `critical`). Absent ⇒ no floor.
-    #[serde(default)]
-    pub min_severity: Option<String>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct UpdateConfigRequest {
-    // Node settings
-    pub node_name: Option<String>,
-    pub port: Option<u16>,
-    pub data_dir: Option<String>,
-    pub bind: Option<BindMode>,
-    // Watchdog
-    pub watchdog_enabled: Option<bool>,
-    pub watchdog_check_interval_secs: Option<u64>,
-    pub watchdog_idle_timeout_secs: Option<u64>,
-    pub watchdog_idle_action: Option<String>,
-    // Notifications — Generic webhooks (full replace when provided)
-    pub webhooks: Option<Vec<WebhookEndpointUpdateRequest>>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct UpdateConfigResponse {
-    pub config: ConfigResponse,
-    pub restart_required: bool,
-}
-
-/// Update request for watchdog settings. All fields optional — only provided fields change.
-#[derive(Debug, Default, Deserialize)]
-pub struct UpdateWatchdogRequest {
-    pub enabled: Option<bool>,
-    pub check_interval_secs: Option<u64>,
-    pub idle_timeout_secs: Option<u64>,
-    pub idle_action: Option<String>,
-    pub idle_threshold_secs: Option<u64>,
-    pub extra_waiting_patterns: Option<Vec<String>>,
-}
-
-/// Update request for notification settings.
-#[derive(Debug, Default, Deserialize)]
-pub struct UpdateNotificationsRequest {
-    pub webhooks: Option<Vec<WebhookEndpointUpdateRequest>>,
-}
-
 use crate::session::InterventionCode;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -438,64 +387,6 @@ mod tests {
         };
         let debug = format!("{resp:?}");
         assert!(debug.contains("test"));
-    }
-
-    #[test]
-    fn test_update_config_request_deserialize() {
-        let json = r#"{"node_name":"new","port":9999}"#;
-        let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.node_name, Some("new".into()));
-        assert_eq!(req.port, Some(9999));
-        assert!(req.data_dir.is_none());
-        assert!(req.bind.is_none());
-    }
-
-    #[test]
-    fn test_update_config_request_empty() {
-        let json = "{}";
-        let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
-        assert!(req.node_name.is_none());
-        assert!(req.port.is_none());
-    }
-
-    #[test]
-    fn test_update_config_request_debug() {
-        let req = UpdateConfigRequest {
-            node_name: Some("test".into()),
-            ..Default::default()
-        };
-        let debug = format!("{req:?}");
-        assert!(debug.contains("test"));
-    }
-
-    #[test]
-    fn test_update_config_response_serialize() {
-        let resp = UpdateConfigResponse {
-            config: test_config_response(),
-            restart_required: true,
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("\"restart_required\":true"));
-    }
-
-    #[test]
-    fn test_update_config_response_debug() {
-        let resp = UpdateConfigResponse {
-            config: test_config_response(),
-            restart_required: false,
-        };
-        let debug = format!("{resp:?}");
-        assert!(debug.contains("restart_required"));
-    }
-
-    #[test]
-    fn test_update_config_request_with_all_fields() {
-        let json = r#"{"node_name":"new","port":9999,"data_dir":"/d","bind":"public"}"#;
-        let req: UpdateConfigRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.node_name, Some("new".into()));
-        assert_eq!(req.port, Some(9999));
-        assert_eq!(req.data_dir, Some("/d".into()));
-        assert_eq!(req.bind, Some(BindMode::Public));
     }
 
     #[test]
@@ -995,47 +886,6 @@ mod tests {
         let resp = CreateSessionResponse { session };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"name\":\"test\""));
-    }
-
-    #[test]
-    fn test_update_watchdog_request_default() {
-        let req = UpdateWatchdogRequest::default();
-        assert!(req.enabled.is_none());
-        assert!(req.check_interval_secs.is_none());
-    }
-
-    #[test]
-    fn test_update_watchdog_request_deserialize() {
-        let json = r#"{"enabled":false,"check_interval_secs":30}"#;
-        let req: UpdateWatchdogRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.enabled, Some(false));
-        assert_eq!(req.check_interval_secs, Some(30));
-    }
-
-    #[test]
-    fn test_update_notifications_request_default() {
-        let req = UpdateNotificationsRequest::default();
-        assert!(req.webhooks.is_none());
-    }
-
-    #[test]
-    fn test_update_notifications_request_deserialize() {
-        let json = r#"{"webhooks":[{"name":"hook","url":"http://hook","events":["killed"]}]}"#;
-        let req: UpdateNotificationsRequest = serde_json::from_str(json).unwrap();
-        let webhooks = req.webhooks.unwrap();
-        assert_eq!(webhooks.len(), 1);
-        assert_eq!(webhooks[0].name, "hook");
-        assert_eq!(webhooks[0].url, "http://hook");
-        assert_eq!(webhooks[0].events, vec!["killed"]);
-    }
-
-    #[test]
-    fn test_webhook_endpoint_update_request() {
-        let json = r#"{"name":"test","url":"http://hook","events":["killed"]}"#;
-        let req: WebhookEndpointUpdateRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.name, "test");
-        assert_eq!(req.url, "http://hook");
-        assert_eq!(req.events, vec!["killed"]);
     }
 
     #[test]

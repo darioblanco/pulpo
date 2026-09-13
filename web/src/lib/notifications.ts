@@ -47,56 +47,6 @@ export function detectStatusChanges(previous: Session[], current: Session[]): St
   return changes;
 }
 
-/** Format a status change into a human-readable toast label. */
-export function formatStatusLabel(change: StatusChange): string {
-  const label = change.to === 'ready' ? 'ready' : change.to === 'stopped' ? 'stopped' : 'resumed';
-  const parts = [change.sessionName, label];
-
-  if (change.errorStatus) {
-    parts.push(`(${change.errorStatus})`);
-  } else if (change.gitBranch) {
-    const ins = change.gitInsertions ?? 0;
-    const del = change.gitDeletions ?? 0;
-    if (ins > 0 || del > 0) {
-      const files = change.gitFilesChanged ?? 0;
-      parts.push(`(+${ins}/-${del}, ${files} files on ${change.gitBranch})`);
-    } else {
-      parts.push(`on ${change.gitBranch}`);
-    }
-  }
-
-  return parts.join(' ');
-}
-
-/**
- * Check for session status changes and trigger notifications.
- * Returns updated previousSessions array for the next check.
- */
-export function processSessionChanges(
-  previousSessions: Session[],
-  currentSessions: Session[],
-  toast: (msg: string) => void,
-  notify: (change: StatusChange) => void,
-): Session[] {
-  if (previousSessions.length > 0) {
-    const changes = detectStatusChanges(previousSessions, currentSessions);
-    for (const change of changes) {
-      toast(formatStatusLabel(change));
-      notify(change);
-    }
-  }
-  return [...currentSessions];
-}
-
-/** Request browser notification permission. Returns true if granted. */
-export async function requestNotificationPermission(): Promise<boolean> {
-  if (typeof Notification === 'undefined') return false;
-  if (Notification.permission === 'granted') return true;
-
-  const result = await Notification.requestPermission();
-  return result === 'granted';
-}
-
 /** Build a concise enrichment suffix for notification body text. */
 function enrichmentSuffix(change: StatusChange): string {
   const parts: string[] = [];

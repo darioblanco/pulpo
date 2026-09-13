@@ -523,50 +523,44 @@ pub fn load(path: &str) -> Result<Config> {
         if config.watchdog.memory_threshold.is_some() {
             warn!(
                 "config: watchdog.memory_threshold is retired (memory-pressure intervention \
-                 was removed) — ignoring it; it will be dropped from the config file the \
-                 next time it is saved"
+                 was removed) — ignoring it"
             );
         }
         if config.watchdog.breach_count.is_some() {
             warn!(
                 "config: watchdog.breach_count is retired (memory-pressure intervention was \
-                 removed) — ignoring it; it will be dropped from the config file the next \
-                 time it is saved"
+                 removed) — ignoring it"
             );
         }
         if config.watchdog.ready_ttl_secs.is_some() {
             warn!(
                 "config: watchdog.ready_ttl_secs is retired (Ready sessions no longer \
-                 auto-purge — they stay listed until `pulpo cleanup`/purge) — ignoring it; \
-                 it will be dropped from the config file the next time it is saved"
+                 auto-purge — they stay listed until `pulpo cleanup`/purge) — ignoring it"
             );
         }
         if config.watchdog.adopt_tmux.is_some() {
             warn!(
                 "config: watchdog.adopt_tmux is retired (auto-adoption of external tmux \
-                 sessions was removed) — ignoring it; it will be dropped from the config \
-                 file the next time it is saved"
+                 sessions was removed) — ignoring it"
             );
         }
         if config.node.tag.is_some() {
             warn!(
                 "config: node.tag is retired (Tailscale peer discovery, its only reader, was \
-                 removed) — ignoring it; it will be dropped from the config file the next \
-                 time it is saved"
+                 removed) — ignoring it"
             );
         }
         if config.metrics.is_some() {
             warn!(
                 "config: [metrics] is retired (the Prometheus /api/v1/metrics endpoint was \
                  removed in favor of a single plain-webhook notification channel) — ignoring \
-                 it; it will be dropped from the config file the next time it is saved"
+                 it"
             );
         }
         if config.notifications.vapid.is_some() {
             warn!(
                 "config: [notifications.vapid] is retired (Web Push was removed — webhooks \
-                 are now the only notification channel) — ignoring it; it will be dropped \
-                 from the config file the next time it is saved"
+                 are now the only notification channel) — ignoring it"
             );
         }
         if config
@@ -576,15 +570,14 @@ pub fn load(path: &str) -> Result<Config> {
         {
             warn!(
                 "config: webhook `secret` is retired (HMAC request signing was removed along \
-                 with the durable outbox) — ignoring it; it will be dropped from the config \
-                 file the next time it is saved"
+                 with the durable outbox) — ignoring it"
             );
         }
         if config.plans.is_some() {
             warn!(
                 "config: [plans] is retired (the burn-rate/time-to-cap projection it fed was \
                  removed — Pulpo now ships exact metering and a flat budget cap only) — \
-                 ignoring it; it will be dropped from the config file the next time it is saved"
+                 ignoring it"
             );
         }
         if config.watchdog.burn_ceiling_usd_per_hour.is_some()
@@ -594,8 +587,7 @@ pub fn load(path: &str) -> Result<Config> {
             warn!(
                 "config: watchdog.burn_ceiling_usd_per_hour / burn_ceiling_tokens_per_hour / \
                  burn_action are retired (the burn-velocity governor was removed — use \
-                 --budget-cost for a flat spend cap instead) — ignoring them; they will be \
-                 dropped from the config file the next time it is saved"
+                 --budget-cost for a flat spend cap instead) — ignoring them"
             );
         }
         Ok(config)
