@@ -1326,7 +1326,7 @@ mod tests {
         resp.assert_status_ok();
         let body: serde_json::Value = resp.json();
         assert_eq!(body["enabled"], true);
-        assert_eq!(body["memory_threshold"], 90);
+        assert_eq!(body["check_interval_secs"], 10);
         assert_eq!(body["idle_action"], "alert");
     }
 
@@ -1337,14 +1337,14 @@ mod tests {
             .put("/api/v1/watchdog")
             .json(&serde_json::json!({
                 "enabled": false,
-                "memory_threshold": 75,
+                "check_interval_secs": 75,
                 "idle_action": "kill"
             }))
             .await;
         resp.assert_status_ok();
         let body: serde_json::Value = resp.json();
         assert_eq!(body["enabled"], false);
-        assert_eq!(body["memory_threshold"], 75);
+        assert_eq!(body["check_interval_secs"], 75);
         assert_eq!(body["idle_action"], "kill");
     }
 
@@ -1354,7 +1354,7 @@ mod tests {
         let resp = server
             .put("/api/v1/watchdog")
             .json(&serde_json::json!({
-                "memory_threshold": 0
+                "check_interval_secs": 0
             }))
             .await;
         resp.assert_status(StatusCode::BAD_REQUEST);

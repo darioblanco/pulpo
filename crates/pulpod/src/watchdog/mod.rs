@@ -3,7 +3,6 @@ mod burn;
 mod git;
 mod idle;
 mod intervention;
-pub mod memory;
 mod metadata;
 pub mod output_patterns;
 
@@ -11,24 +10,20 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::harness::{HarnessRegistry, HarnessSignals};
-use idle::{check_idle_sessions, cleanup_ready_sessions};
+use idle::check_idle_sessions;
 #[cfg(test)]
 use idle::{check_session_idle, handle_active_session, handle_idle_session, handle_session_ready};
-use memory::MemoryReader;
-#[cfg(test)]
-use memory::MemorySnapshot;
 use metadata::{build_session_event, detect_and_store_output_metadata};
 pub use output_patterns::detect_waiting_for_input;
 use pulpo_common::event::PulpoEvent;
 use tokio::sync::broadcast;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 use pulpo_common::session::Session;
 
 use crate::backend::Backend;
 use crate::store::Store;
 use git::update_git_info;
-use intervention::intervene;
 
 /// The marker emitted by the agent wrapper when the agent process exits.
 const AGENT_EXIT_MARKER: &str = "[pulpo] Agent exited";
@@ -47,8 +42,8 @@ fn resolve_backend_id(session: &Session, backend: &dyn Backend) -> String {
 }
 
 /// True when a harness adapter owns this session's state — its `harness_last_event_at`
-/// is set, meaning lifecycle hook events are flowing for it. Memory intervention, git
-/// telemetry, PR detection, and `idle_timeout` still apply regardless (see
+/// is set, meaning lifecycle hook events are flowing for it. The budget/burn breakers,
+/// git telemetry, PR detection, and `idle_timeout` still apply regardless (see
 /// `watchdog::idle::handle_idle_session`, which runs unconditionally for every
 /// session). Sessions without events (generic harness, or a harness whose hooks
 /// failed to install) keep today's heuristics unchanged, since `harness_last_event_at`
@@ -173,12 +168,8 @@ impl Default for IdleConfig {
 /// Runtime configuration for the watchdog loop, updated via watch channel.
 #[derive(Debug, Clone)]
 pub struct WatchdogRuntimeConfig {
-    pub threshold: u8,
     pub interval: Duration,
-    pub breach_count: u32,
     pub idle: IdleConfig,
-    /// Seconds after Ready before tmux shell is killed (0 = disabled).
-    pub ready_ttl_secs: u64,
     /// Extra user-configured patterns for waiting-for-input detection.
     pub extra_waiting_patterns: Vec<String>,
     /// Burn-velocity governor settings (cost/token rate ceilings + action).
@@ -209,74 +200,12 @@ async fn refresh_watchdog_ticker(
     }
 }
 
-fn update_breach_counter(usage: u8, threshold: u8, consecutive_breaches: &mut u32) -> bool {
-    if usage >= threshold {
-        *consecutive_breaches += 1;
-        true
-    } else {
-        if *consecutive_breaches > 0 {
-            info!(
-                usage,
-                threshold, "Memory pressure subsided, resetting breach counter"
-            );
-        }
-        *consecutive_breaches = 0;
-        false
-    }
-}
-
-async fn run_memory_check(
-    backend: &Arc<dyn Backend>,
-    store: &Store,
-    reader: &dyn MemoryReader,
-    cfg: &WatchdogRuntimeConfig,
-    consecutive_breaches: &mut u32,
-    ready_ctx: &ReadyContext,
-) {
-    match reader.read_memory() {
-        Ok(snapshot) => {
-            let usage = snapshot.usage_percent();
-            debug!(
-                usage,
-                threshold = cfg.threshold,
-                consecutive_breaches,
-                "Memory check"
-            );
-
-            if update_breach_counter(usage, cfg.threshold, consecutive_breaches) {
-                warn!(
-                    usage,
-                    threshold = cfg.threshold,
-                    consecutive_breaches,
-                    breach_count = cfg.breach_count,
-                    available_mb = snapshot.available_mb,
-                    total_mb = snapshot.total_mb,
-                    "Memory pressure detected"
-                );
-
-                if *consecutive_breaches >= cfg.breach_count {
-                    intervene(backend, store, &snapshot, ready_ctx).await;
-                    *consecutive_breaches = 0;
-                }
-            }
-        }
-        #[allow(unused_variables)]
-        Err(error) => {
-            coverage_warn!("Failed to read memory: {error}");
-        }
-    }
-}
-
 async fn run_watchdog_tick(
     backend: &Arc<dyn Backend>,
     store: &Store,
-    reader: &dyn MemoryReader,
     cfg: &WatchdogRuntimeConfig,
     ready_ctx: &ReadyContext,
-    consecutive_breaches: &mut u32,
 ) {
-    run_memory_check(backend, store, reader, cfg, consecutive_breaches, ready_ctx).await;
-
     budget::enforce_budgets(backend, store, ready_ctx).await;
 
     burn::enforce_burn_ceiling(backend, store, ready_ctx, &cfg.burn).await;
@@ -292,21 +221,16 @@ async fn run_watchdog_tick(
         .await;
     }
 
-    if cfg.ready_ttl_secs > 0 {
-        cleanup_ready_sessions(backend, store, cfg.ready_ttl_secs).await;
-    }
-
     update_git_info(store).await;
 }
 
-/// Runs the watchdog loop that monitors system memory and intervenes when sustained pressure
-/// is detected. Kills running sessions after `breach_count` consecutive checks above `threshold`.
+/// Runs the watchdog loop that checks per-session breakers (idle, budget, burn) on a
+/// fixed tick and intervenes when one trips.
 ///
 /// The loop dynamically picks up config changes sent via the `config_rx` watch channel.
 pub async fn run_watchdog_loop(
     backend: Arc<dyn Backend>,
     store: Store,
-    reader: Box<dyn MemoryReader>,
     config_rx: tokio::sync::watch::Receiver<WatchdogRuntimeConfig>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ready_ctx: ReadyContext,
@@ -315,22 +239,13 @@ pub async fn run_watchdog_loop(
     let mut current_interval = initial.interval;
     let mut tick = tokio::time::interval(current_interval);
     tick.tick().await; // first tick completes immediately
-    let mut consecutive_breaches: u32 = 0;
 
     loop {
         tokio::select! {
             _ = tick.tick() => {
                 let cfg = config_rx.borrow().clone();
                 refresh_watchdog_ticker(&mut tick, &mut current_interval, cfg.interval).await;
-                run_watchdog_tick(
-                    &backend,
-                    &store,
-                    reader.as_ref(),
-                    &cfg,
-                    &ready_ctx,
-                    &mut consecutive_breaches,
-                )
-                .await;
+                run_watchdog_tick(&backend, &store, &cfg, &ready_ctx).await;
             }
             _ = shutdown_rx.changed() => {
                 info!("Watchdog shutting down");

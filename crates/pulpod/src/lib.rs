@@ -301,11 +301,8 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
     #[cfg(not(coverage))]
     let watchdog_config_tx = {
         if config.watchdog.enabled {
-            let reader = watchdog::memory::SystemMemoryReader;
             let wd_runtime = watchdog::WatchdogRuntimeConfig {
-                threshold: config.watchdog.memory_threshold,
                 interval: std::time::Duration::from_secs(config.watchdog.check_interval_secs),
-                breach_count: config.watchdog.breach_count,
                 idle: watchdog::IdleConfig {
                     enabled: config.watchdog.idle_timeout_secs > 0,
                     timeout_secs: config.watchdog.idle_timeout_secs,
@@ -316,17 +313,14 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
                     },
                     threshold_secs: config.watchdog.idle_threshold_secs,
                 },
-                ready_ttl_secs: config.watchdog.ready_ttl_secs,
                 extra_waiting_patterns: config.watchdog.waiting_patterns.clone(),
                 burn: watchdog::BurnConfig::from_watchdog_config(&config.watchdog),
             };
             let (wd_config_tx, wd_config_rx) = watch::channel(wd_runtime.clone());
             let (wd_shutdown_tx, wd_shutdown_rx) = watch::channel(false);
             info!(
-                threshold = wd_runtime.threshold,
                 interval_secs = wd_runtime.interval.as_secs(),
-                breach_count = wd_runtime.breach_count,
-                "Starting memory watchdog"
+                "Starting watchdog"
             );
             let ready_ctx = watchdog::ReadyContext {
                 event_tx: Some(event_tx.clone()),
@@ -335,7 +329,6 @@ pub async fn build_app(cli: &Cli) -> Result<(axum::Router, String, ShutdownHandl
             tokio::spawn(watchdog::run_watchdog_loop(
                 watchdog_backend,
                 watchdog_store,
-                Box::new(reader),
                 wd_config_rx,
                 wd_shutdown_rx,
                 ready_ctx,

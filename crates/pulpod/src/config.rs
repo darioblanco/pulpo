@@ -249,19 +249,34 @@ pub fn ensure_auth_token(config: &mut Config) -> bool {
 pub struct WatchdogConfig {
     #[serde(default = "default_watchdog_enabled")]
     pub enabled: bool,
-    #[serde(default = "default_memory_threshold")]
-    pub memory_threshold: u8,
+    /// Retired `watchdog.memory_threshold` setting.
+    /// Memory-pressure intervention was removed (it never fired for the unattended
+    /// agent loop the watchdog targets) — the watchdog no longer probes system
+    /// memory at all. This field only exists so configs written before the removal
+    /// still load (`deny_unknown_fields` would otherwise reject them); `load()` logs
+    /// a startup warning when it's present, and it is dropped on the next save.
+    #[serde(default, skip_serializing)]
+    pub memory_threshold: Option<u8>,
     #[serde(default = "default_check_interval_secs")]
     pub check_interval_secs: u64,
-    #[serde(default = "default_breach_count")]
-    pub breach_count: u32,
+    /// Retired `watchdog.breach_count` setting.
+    /// Only used by the removed memory-pressure intervention (consecutive breaches
+    /// over `memory_threshold` before stopping a session). This field only exists so
+    /// configs written before the removal still load; `load()` logs a startup
+    /// warning when it's present, and it is dropped on the next save.
+    #[serde(default, skip_serializing)]
+    pub breach_count: Option<u32>,
     #[serde(default = "default_idle_timeout_secs")]
     pub idle_timeout_secs: u64,
     #[serde(default = "default_idle_action")]
     pub idle_action: String,
-    /// Seconds after Ready before tmux shell is killed (0 = disabled).
-    #[serde(default)]
-    pub ready_ttl_secs: u64,
+    /// Retired `watchdog.ready_ttl_secs` setting.
+    /// Auto-purging Ready sessions after a TTL was removed — sessions now stay
+    /// listed until `pulpo cleanup`/purge. This field only exists so configs
+    /// written before the removal still load; `load()` logs a startup warning
+    /// when it's present, and it is dropped on the next save.
+    #[serde(default, skip_serializing)]
+    pub ready_ttl_secs: Option<u64>,
     /// Retired `watchdog.adopt_tmux` setting.
     /// Auto-adoption of external tmux sessions into pulpo management was removed —
     /// a session pulpo didn't spawn never got harness hooks, a preset session id, or
@@ -295,17 +310,8 @@ pub struct WatchdogConfig {
 
 impl WatchdogConfig {
     pub fn validate(&self) -> Result<()> {
-        if self.memory_threshold == 0 || self.memory_threshold > 100 {
-            anyhow::bail!(
-                "watchdog.memory_threshold must be 1-100, got {}",
-                self.memory_threshold
-            );
-        }
         if self.check_interval_secs == 0 {
             anyhow::bail!("watchdog.check_interval_secs must be >= 1");
-        }
-        if self.breach_count == 0 {
-            anyhow::bail!("watchdog.breach_count must be >= 1");
         }
         if self.idle_threshold_secs == 0 {
             anyhow::bail!("watchdog.idle_threshold_secs must be >= 1");
@@ -330,12 +336,12 @@ impl Default for WatchdogConfig {
     fn default() -> Self {
         Self {
             enabled: default_watchdog_enabled(),
-            memory_threshold: default_memory_threshold(),
+            memory_threshold: None,
             check_interval_secs: default_check_interval_secs(),
-            breach_count: default_breach_count(),
+            breach_count: None,
             idle_timeout_secs: default_idle_timeout_secs(),
             idle_action: default_idle_action(),
-            ready_ttl_secs: 0,
+            ready_ttl_secs: None,
             adopt_tmux: None,
             idle_threshold_secs: default_idle_threshold_secs(),
             waiting_patterns: Vec::new(),
@@ -354,16 +360,8 @@ const fn default_watchdog_enabled() -> bool {
     true
 }
 
-const fn default_memory_threshold() -> u8 {
-    90
-}
-
 const fn default_check_interval_secs() -> u64 {
     10
-}
-
-const fn default_breach_count() -> u32 {
-    3
 }
 
 const fn default_idle_timeout_secs() -> u64 {
@@ -515,6 +513,27 @@ pub fn load(path: &str) -> Result<Config> {
             .with_context(|| format!("Failed to read config from {}", path.display()))?;
         let config: Config = toml::from_str(&content).context("Failed to parse config")?;
         config.watchdog.validate()?;
+        if config.watchdog.memory_threshold.is_some() {
+            warn!(
+                "config: watchdog.memory_threshold is retired (memory-pressure intervention \
+                 was removed) — ignoring it; it will be dropped from the config file the \
+                 next time it is saved"
+            );
+        }
+        if config.watchdog.breach_count.is_some() {
+            warn!(
+                "config: watchdog.breach_count is retired (memory-pressure intervention was \
+                 removed) — ignoring it; it will be dropped from the config file the next \
+                 time it is saved"
+            );
+        }
+        if config.watchdog.ready_ttl_secs.is_some() {
+            warn!(
+                "config: watchdog.ready_ttl_secs is retired (Ready sessions no longer \
+                 auto-purge — they stay listed until `pulpo cleanup`/purge) — ignoring it; \
+                 it will be dropped from the config file the next time it is saved"
+            );
+        }
         if config.watchdog.adopt_tmux.is_some() {
             warn!(
                 "config: watchdog.adopt_tmux is retired (auto-adoption of external tmux \
@@ -1162,9 +1181,9 @@ token = "my-secret-token"
     fn test_watchdog_config_default() {
         let wc = WatchdogConfig::default();
         assert!(wc.enabled);
-        assert_eq!(wc.memory_threshold, 90);
+        assert!(wc.memory_threshold.is_none());
         assert_eq!(wc.check_interval_secs, 10);
-        assert_eq!(wc.breach_count, 3);
+        assert!(wc.breach_count.is_none());
         assert_eq!(wc.idle_timeout_secs, 600);
         assert_eq!(wc.idle_action, "alert");
     }
@@ -1174,7 +1193,7 @@ token = "my-secret-token"
         let wc = WatchdogConfig::default();
         let debug = format!("{wc:?}");
         assert!(debug.contains("enabled"));
-        assert!(debug.contains("90"));
+        assert!(debug.contains("600"));
     }
 
     #[test]
@@ -1183,7 +1202,7 @@ token = "my-secret-token"
         #[allow(clippy::redundant_clone)]
         let cloned = wc.clone();
         assert!(cloned.enabled);
-        assert_eq!(cloned.memory_threshold, 90);
+        assert_eq!(cloned.check_interval_secs, 10);
     }
 
     #[test]
@@ -1202,9 +1221,7 @@ port = 7433
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
         assert_eq!(config.node.name, "no-watchdog");
         assert!(config.watchdog.enabled);
-        assert_eq!(config.watchdog.memory_threshold, 90);
         assert_eq!(config.watchdog.check_interval_secs, 10);
-        assert_eq!(config.watchdog.breach_count, 3);
     }
 
     #[test]
@@ -1218,18 +1235,14 @@ name = "custom-wd"
 
 [watchdog]
 enabled = false
-memory_threshold = 80
 check_interval_secs = 5
-breach_count = 5
 "#
         )
         .unwrap();
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
         assert!(!config.watchdog.enabled);
-        assert_eq!(config.watchdog.memory_threshold, 80);
         assert_eq!(config.watchdog.check_interval_secs, 5);
-        assert_eq!(config.watchdog.breach_count, 5);
     }
 
     #[test]
@@ -1245,12 +1258,12 @@ breach_count = 5
             },
             watchdog: WatchdogConfig {
                 enabled: false,
-                memory_threshold: 75,
+                memory_threshold: None,
                 check_interval_secs: 30,
-                breach_count: 5,
+                breach_count: None,
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
-                ready_ttl_secs: 0,
+                ready_ttl_secs: None,
                 adopt_tmux: None,
                 idle_threshold_secs: 60,
                 waiting_patterns: Vec::new(),
@@ -1263,16 +1276,14 @@ breach_count = 5
         save(&config, &path).unwrap();
         let loaded = load(path.to_str().unwrap()).unwrap();
         assert!(!loaded.watchdog.enabled);
-        assert_eq!(loaded.watchdog.memory_threshold, 75);
         assert_eq!(loaded.watchdog.check_interval_secs, 30);
-        assert_eq!(loaded.watchdog.breach_count, 5);
     }
 
     #[test]
     fn test_missing_config_has_default_watchdog() {
         let config = load("/nonexistent/watchdog/config.toml").unwrap();
         assert!(config.watchdog.enabled);
-        assert_eq!(config.watchdog.memory_threshold, 90);
+        assert_eq!(config.watchdog.check_interval_secs, 10);
     }
 
     #[test]
@@ -1292,25 +1303,13 @@ enabled = false
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
         assert!(!config.watchdog.enabled);
-        assert_eq!(config.watchdog.memory_threshold, 90); // default
         assert_eq!(config.watchdog.check_interval_secs, 10); // default
-        assert_eq!(config.watchdog.breach_count, 3); // default
     }
 
     #[test]
     fn test_watchdog_validate_defaults_pass() {
         let wd = WatchdogConfig::default();
         assert!(wd.validate().is_ok());
-    }
-
-    #[test]
-    fn test_watchdog_validate_threshold_zero() {
-        let wd = WatchdogConfig {
-            memory_threshold: 0,
-            ..WatchdogConfig::default()
-        };
-        let err = wd.validate().unwrap_err();
-        assert!(err.to_string().contains("memory_threshold"));
     }
 
     #[test]
@@ -1324,50 +1323,156 @@ enabled = false
     }
 
     #[test]
-    fn test_watchdog_validate_breach_count_zero() {
-        let wd = WatchdogConfig {
-            breach_count: 0,
-            ..WatchdogConfig::default()
-        };
-        let err = wd.validate().unwrap_err();
-        assert!(err.to_string().contains("breach_count"));
-    }
-
-    #[test]
-    fn test_watchdog_validate_threshold_boundary() {
-        // threshold=1 should pass
-        let wd = WatchdogConfig {
-            memory_threshold: 1,
-            ..WatchdogConfig::default()
-        };
-        assert!(wd.validate().is_ok());
-
-        // threshold=100 should pass
-        let wd = WatchdogConfig {
-            memory_threshold: 100,
-            ..WatchdogConfig::default()
-        };
-        assert!(wd.validate().is_ok());
-    }
-
-    #[test]
-    fn test_load_config_rejects_invalid_watchdog() {
+    fn test_load_tolerates_legacy_watchdog_memory_threshold_key() {
+        // Configs written before memory-pressure intervention was removed still
+        // load: `watchdog.memory_threshold` is retired but not rejected.
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
             r#"
 [node]
-name = "bad-wd"
+name = "test-node"
 
 [watchdog]
-memory_threshold = 0
+memory_threshold = 80
 "#
         )
         .unwrap();
 
-        let result = load(tmpfile.path().to_str().unwrap());
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("memory_threshold"));
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.watchdog.memory_threshold, Some(80));
+    }
+
+    #[test]
+    fn test_save_drops_legacy_watchdog_memory_threshold_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[watchdog]
+memory_threshold = 80
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(config.watchdog.memory_threshold, Some(80));
+        save(&config, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("memory_threshold"),
+            "retired watchdog.memory_threshold key is dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.watchdog.memory_threshold.is_none());
+    }
+
+    #[test]
+    fn test_load_tolerates_legacy_watchdog_breach_count_key() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "test-node"
+
+[watchdog]
+breach_count = 5
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.watchdog.breach_count, Some(5));
+    }
+
+    #[test]
+    fn test_save_drops_legacy_watchdog_breach_count_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[watchdog]
+breach_count = 5
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(config.watchdog.breach_count, Some(5));
+        save(&config, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("breach_count"),
+            "retired watchdog.breach_count key is dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.watchdog.breach_count.is_none());
+    }
+
+    #[test]
+    fn test_load_tolerates_legacy_watchdog_ready_ttl_secs_key() {
+        // Configs written before ready-TTL cleanup was removed still load:
+        // `watchdog.ready_ttl_secs` is retired but not rejected.
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "test-node"
+
+[watchdog]
+ready_ttl_secs = 3600
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert_eq!(config.watchdog.ready_ttl_secs, Some(3600));
+    }
+
+    #[test]
+    fn test_save_drops_legacy_watchdog_ready_ttl_secs_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[node]
+name = "test"
+port = 7433
+
+[watchdog]
+ready_ttl_secs = 3600
+"#,
+        )
+        .unwrap();
+        let config = load(path.to_str().unwrap()).unwrap();
+        assert_eq!(config.watchdog.ready_ttl_secs, Some(3600));
+        save(&config, &path).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("ready_ttl_secs"),
+            "retired watchdog.ready_ttl_secs key is dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.watchdog.ready_ttl_secs.is_none());
+    }
+
+    #[test]
+    fn test_load_without_legacy_watchdog_keys_defaults_to_none() {
+        let config: Config = toml::from_str("[node]\nname = \"test\"\n").unwrap();
+        assert!(config.watchdog.memory_threshold.is_none());
+        assert!(config.watchdog.breach_count.is_none());
+        assert!(config.watchdog.ready_ttl_secs.is_none());
     }
 
     #[test]

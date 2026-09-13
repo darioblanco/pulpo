@@ -820,7 +820,8 @@ impl SessionManager {
     /// a session whose agent already exited (marker written, fallback shell
     /// lingering) is still watched here, otherwise a `Ready` session whose tmux
     /// backend later dies would never be reclassified and would stay `Ready`
-    /// forever whenever `ready_ttl_secs` is disabled (the default).
+    /// forever (there is no TTL-based auto-purge — Ready sessions stay listed
+    /// until `pulpo cleanup`/purge).
     ///
     /// When the backend is dead, the exit markers written by `wrap_command`
     /// (`{data_dir}/exit/{id}.code` and `{id}.clean`) decide the terminal state:
@@ -1753,9 +1754,10 @@ mod tests {
     //
     // Before this fix, `check_and_mark_stale` only swept Active/Idle sessions, so a
     // Ready session (agent exited, fallback shell lingering) whose tmux backend later
-    // died was never reclassified — it stayed `Ready` forever (with the default
-    // `ready_ttl_secs = 0`, nothing else would ever touch it). The fix runs Ready
-    // sessions through the exact same marker-based resolution as Active/Idle.
+    // died was never reclassified — it stayed `Ready` forever (nothing else would
+    // ever touch it, since Ready sessions have no TTL-based auto-purge). The fix
+    // runs Ready sessions through the exact same marker-based resolution as
+    // Active/Idle.
 
     #[tokio::test]
     async fn test_get_session_ready_with_dead_backend_and_marker_transitions_to_stopped() {

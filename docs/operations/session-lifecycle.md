@@ -5,21 +5,28 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 ## State Machine
 
 ```
-  spawn           agent working        agent exits / watchdog detects
-    │                   │                         │
-    ▼                   ▼                         ▼
-┌────────┐       ┌──────────┐              ┌──────────┐
-│CREATING│──────▶│  ACTIVE  │─────────────▶│  READY   │
-└────────┘       └──────────┘              └──────────┘
-                   ▲      │                      │
-            output │      │ waiting for          │ TTL expired
-           changed │      │ input / idle         ▼
-                   │      ▼                ┌──────────┐
-                   │ ┌──────────┐          │ STOPPED  │
-                   └─│   IDLE   │          └──────────┘
-                     └──────────┘                ▲
-                                                 │
-                                  watchdog / user / dead backend + exit marker
+  spawn           agent working        agent exits
+    │                   │                    │
+    ▼                   ▼                    ▼
+┌────────┐       ┌──────────┐         ┌──────────┐
+│CREATING│──────▶│  ACTIVE  │────────▶│  READY   │
+└────────┘       └──────────┘         └──────────┘
+                   ▲      │                  │
+            output │      │ waiting for      │
+           changed │      │ input / idle     │
+                   │      ▼                  │
+                   │ ┌──────────┐            │
+                   └─│   IDLE   │            │
+                     └──────────┘            │
+                        │                    │
+                        └─────────┬──────────┘
+                                  │
+                   watchdog / user / dead backend + exit marker
+                                  ▼
+                           ┌──────────┐
+                           │ STOPPED  │
+                           └──────────┘
+
                    ┌──────────┐
                    │   LOST   │◀── dead backend, no exit marker
                    └──────────┘         (from Active, Idle, or Ready)
@@ -33,7 +40,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 | **Active** | Agent is working — terminal output is changing | No |
 | **Idle** | Agent needs attention — waiting for input or at its prompt | No |
 | **Ready** | Agent process exited — task is done (exit code recorded); fallback shell still alive | Yes (resumable) |
-| **Stopped** | Session ended intentionally: `pulpo stop`, watchdog intervention, TTL cleanup, or the user exited the session's shell (exit markers present) | Yes (resumable) |
+| **Stopped** | Session ended intentionally: `pulpo stop`, watchdog intervention, or the user exited the session's shell (exit markers present) | Yes (resumable) |
 | **Lost** | tmux process disappeared with no exit markers — crash, reboot, or external kill mid-run | Yes (resumable) |
 
 ## Transitions
@@ -62,7 +69,7 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
 - **Side effects**: SSE event emitted.
 
 ### Active/Idle/Ready → Stopped
-- **Trigger**: User runs `pulpo stop`, a watchdog intervention (memory/budget/burn/idle
+- **Trigger**: User runs `pulpo stop`, a watchdog intervention (budget/burn/idle
   kill) — or the session's shell exits normally (the user typed `exit`, or closed tmux
   after the agent finished). This applies to **Active**, **Idle**, and **Ready**
   sessions alike: a `Ready` session's fallback shell dying counts the same as an
@@ -84,11 +91,9 @@ Complete reference for Pulpo session states, transitions, and detection mechanis
   practice irrelevant for `Ready`, since a session can only reach `Ready` well after
   its grace window has passed).
 
-### Ready → Stopped (TTL)
-- **Trigger**: `ready_ttl_secs` expires (if configured > 0).
-- **Detection**: Watchdog checks `updated_at` of Ready sessions against the TTL on each tick. After expiry, stops the tmux shell and marks Stopped.
-- This is independent of, and runs alongside, the dead-backend sweep above — whichever
-  condition is met first (TTL expiry vs. tmux dying on its own) resolves the session.
+Sessions stay listed once they reach `Ready` — there is no TTL-based auto-purge. The
+tmux shell (and the session record) is only reclaimed by an explicit `pulpo stop
+[--purge]` or `pulpo cleanup`.
 
 ## Resume Semantics
 
@@ -148,9 +153,6 @@ check_interval_secs = 10     # How often to check
 idle_timeout_secs = 600       # Seconds before idle action triggers
 idle_action = "alert"         # "alert" (mark idle_since) or "kill"
 idle_threshold_secs = 60      # Seconds of unchanged output before Active→Idle (default: 60)
-ready_ttl_secs = 0            # Seconds after Ready before tmux is stopped (0 = disabled)
-memory_threshold = 90         # Memory % to trigger intervention
-breach_count = 3              # Consecutive breaches before stop
 waiting_patterns = []         # Extra patterns for waiting-for-input detection
 ```
 
@@ -211,14 +213,9 @@ cleanup`.
   whose agent already finished); it only ever resolves to `Stopped` or `Lost`. The user
   can resume a resolved session with `pulpo resume` (which auto-attaches).
 
-- **Ready + TTL → Stopped**: When `ready_ttl_secs > 0`, ready sessions are automatically
-  cleaned up after the grace period. This prevents tmux shell accumulation. The status
-  changes from Ready to Stopped (still resumable via `pulpo resume`, like any other
-  Stopped session — this only stops the lingering tmux shell, not the session record).
-  This path records no intervention (`pulpo interventions` won't show it — unlike the
-  memory/idle/budget/burn interventions above). With `ready_ttl_secs` at its
-  default of `0` (disabled), a `Ready` session whose tmux process later dies is still
-  reclassified — it goes through the same exit-marker sweep as `Active`/`Idle` sessions
-  (`Stopped` with a marker present, `Lost` without one), so it never gets stuck as
-  `Ready` forever. (Previously this classification only covered `Active`/`Idle`, so a
-  dead `Ready` session with `ready_ttl_secs = 0` stayed `Ready` indefinitely — fixed.)
+- **Ready sessions never auto-purge**: A `Ready` session (and its lingering fallback
+  tmux shell) stays listed indefinitely — there is no TTL that stops it automatically.
+  It only leaves `Ready` via an explicit `pulpo stop [--purge]`/`pulpo cleanup`, or by
+  going through the same exit-marker sweep as `Active`/`Idle` sessions if its tmux
+  backend dies on its own (`Stopped` with a marker present, `Lost` without one) — so it
+  never gets stuck as `Ready` forever even without a TTL.

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use pulpo_common::event::{PulpoEvent, SessionInterventionEvent};
-use pulpo_common::session::{InterventionCode, Session, SessionStatus};
+use pulpo_common::session::{InterventionCode, Session};
 
-use super::{ReadyContext, memory::MemorySnapshot, resolve_backend_id};
+use super::{ReadyContext, resolve_backend_id};
 use crate::backend::Backend;
 use crate::store::Store;
 
@@ -30,7 +30,7 @@ pub(super) fn emit_intervention(
 }
 
 /// Stop a session via the standard intervention path shared by every breaker
-/// (memory pressure, budget, burn ceiling, idle timeout):
+/// (budget, burn ceiling, idle timeout):
 ///
 /// 1. capture a final output snapshot (best-effort, warn on failure),
 /// 2. kill the backend session (warn + return `false` on failure so the caller
@@ -102,7 +102,7 @@ pub(super) async fn stop_and_record(
     if let Some(ref wt_path) = session.worktree_path {
         // Mirror `session::manager`'s own guard on the normal stop/purge/cleanup
         // paths: a worktree `pulpo handoff` made two sessions share must survive a
-        // forced intervention (budget/burn/idle/memory stop) on just one of them —
+        // forced intervention (budget/burn/idle stop) on just one of them —
         // it's only reclaimed once every referencing session is dead.
         let in_use = store
             .worktree_in_use_elsewhere(wt_path, &session.id.to_string())
@@ -129,64 +129,11 @@ pub(super) async fn stop_and_record(
     true
 }
 
-pub(super) async fn intervene(
-    backend: &Arc<dyn Backend>,
-    store: &Store,
-    snapshot: &MemorySnapshot,
-    ready_ctx: &ReadyContext,
-) {
-    let sessions = super::list_sessions_or_warn(store, "Watchdog").await;
-
-    let running: Vec<_> = sessions
-        .into_iter()
-        .filter(|s| s.status == SessionStatus::Active)
-        .collect();
-
-    if running.is_empty() {
-        let _usage = snapshot.usage_percent();
-        coverage_warn!(
-            _usage,
-            "Memory pressure but no running sessions to intervene on"
-        );
-        return;
-    }
-
-    for session in &running {
-        let reason = format!(
-            "Memory usage {}% ({}/{}MB available)",
-            snapshot.usage_percent(),
-            snapshot.available_mb,
-            snapshot.total_mb
-        );
-        if !stop_and_record(
-            backend,
-            store,
-            session,
-            InterventionCode::MemoryPressure,
-            &reason,
-            ready_ctx,
-            "Failed to kill session during intervention (session still alive)",
-            "Failed to record intervention",
-        )
-        .await
-        {
-            continue;
-        }
-        let _usage = snapshot.usage_percent();
-        coverage_warn!(
-            session_id = %session.id,
-            session_name = %session.name,
-            _usage,
-            available_mb = snapshot.available_mb,
-            total_mb = snapshot.total_mb,
-            "Watchdog intervention: stopped session due to memory pressure"
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
+    use pulpo_common::session::SessionStatus;
     use tokio::sync::broadcast;
 
     #[test]
@@ -257,7 +204,7 @@ mod tests {
     #[tokio::test]
     async fn test_stop_and_record_preserves_worktree_shared_with_another_live_session() {
         // Two sessions (as `pulpo handoff` produces) sharing one worktree path — an
-        // intervention (budget/burn/idle/memory stop) on one must not delete the
+        // intervention (budget/burn/idle stop) on one must not delete the
         // worktree (or its branch) out from under the other, still-live session.
         let store = crate::store::test_store().await;
         let tmp = tempfile::tempdir().unwrap();
@@ -316,6 +263,144 @@ mod tests {
         assert!(
             !std::path::Path::new(&wt_path).exists(),
             "an unshared worktree should still be cleaned up on intervention"
+        );
+    }
+
+    // -- stop_and_record: capture/record failures degrade gracefully --
+
+    fn plain_session(name: &str) -> Session {
+        Session {
+            id: uuid::Uuid::new_v4(),
+            name: name.into(),
+            workdir: "/tmp/repo".into(),
+            command: "claude".into(),
+            status: SessionStatus::Active,
+            backend_session_id: Some(name.into()),
+            ..Default::default()
+        }
+    }
+
+    /// Backend whose `capture_output` always fails but whose `kill_session`
+    /// succeeds — exercises `stop_and_record`'s "best-effort" snapshot path.
+    struct FailingCaptureBackend;
+
+    impl Backend for FailingCaptureBackend {
+        fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn kill_session(&self, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn is_alive(&self, _: &str) -> Result<bool> {
+            Ok(true)
+        }
+        fn capture_output(&self, _: &str, _: usize) -> Result<String> {
+            anyhow::bail!("capture failed")
+        }
+        fn send_input(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+        fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stop_and_record_kills_despite_capture_failure() {
+        let store = crate::store::test_store().await;
+        let session = plain_session("cap-fail");
+        store.insert_session(&session).await.unwrap();
+
+        let backend: Arc<dyn Backend> = Arc::new(FailingCaptureBackend);
+        let stopped = stop_and_record(
+            &backend,
+            &store,
+            &session,
+            InterventionCode::IdleTimeout,
+            "idle for too long",
+            &ready_ctx(),
+            "kill failed",
+            "record failed",
+        )
+        .await;
+
+        assert!(stopped, "kill must still succeed despite capture failure");
+        let fetched = store
+            .get_session(&session.id.to_string())
+            .await
+            .unwrap()
+            .unwrap();
+        // No snapshot saved since capture failed, but the intervention still lands.
+        assert!(fetched.output_snapshot.is_none());
+        assert!(fetched.intervention_reason.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_stop_and_record_kills_despite_snapshot_save_failure() {
+        let store = crate::store::test_store().await;
+        let session = plain_session("snap-fail");
+        store.insert_session(&session).await.unwrap();
+
+        // Break `update_session_output_snapshot`'s UPDATE query by renaming the
+        // column it writes. `StubBackend::capture_output` still succeeds, so this
+        // exercises the "capture ok, but snapshot save fails" branch specifically
+        // (distinct from `check_session_idle`'s own — earlier, unrelated — call to
+        // the same store method).
+        sqlx::query("ALTER TABLE sessions RENAME COLUMN output_snapshot TO output_snapshot_old")
+            .execute(store.pool())
+            .await
+            .unwrap();
+
+        let backend: Arc<dyn Backend> = Arc::new(crate::backend::StubBackend);
+        let stopped = stop_and_record(
+            &backend,
+            &store,
+            &session,
+            InterventionCode::IdleTimeout,
+            "idle for too long",
+            &ready_ctx(),
+            "kill failed",
+            "record failed",
+        )
+        .await;
+
+        assert!(
+            stopped,
+            "kill must still succeed despite output snapshot save failure"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stop_and_record_kills_despite_intervention_record_failure() {
+        let store = crate::store::test_store().await;
+        let session = plain_session("record-fail");
+        store.insert_session(&session).await.unwrap();
+
+        // Break `update_session_intervention`'s UPDATE query by renaming the
+        // column it writes.
+        sqlx::query(
+            "ALTER TABLE sessions RENAME COLUMN intervention_reason TO intervention_reason_old",
+        )
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+        let backend: Arc<dyn Backend> = Arc::new(crate::backend::StubBackend);
+        let stopped = stop_and_record(
+            &backend,
+            &store,
+            &session,
+            InterventionCode::IdleTimeout,
+            "idle for too long",
+            &ready_ctx(),
+            "kill failed",
+            "record failed",
+        )
+        .await;
+
+        assert!(
+            stopped,
+            "kill must still succeed despite intervention record failure"
         );
     }
 }

@@ -131,13 +131,9 @@ pub struct NodeConfigResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WatchdogConfigResponse {
     pub enabled: bool,
-    pub memory_threshold: u8,
     pub check_interval_secs: u64,
-    pub breach_count: u32,
     pub idle_timeout_secs: u64,
     pub idle_action: String,
-    #[serde(default)]
-    pub ready_ttl_secs: u64,
     pub idle_threshold_secs: u64,
     #[serde(default)]
     pub extra_waiting_patterns: Vec<String>,
@@ -180,9 +176,7 @@ pub struct UpdateConfigRequest {
     pub bind: Option<BindMode>,
     // Watchdog
     pub watchdog_enabled: Option<bool>,
-    pub watchdog_memory_threshold: Option<u8>,
     pub watchdog_check_interval_secs: Option<u64>,
-    pub watchdog_breach_count: Option<u32>,
     pub watchdog_idle_timeout_secs: Option<u64>,
     pub watchdog_idle_action: Option<String>,
     // Notifications — Generic webhooks (full replace when provided)
@@ -199,12 +193,9 @@ pub struct UpdateConfigResponse {
 #[derive(Debug, Default, Deserialize)]
 pub struct UpdateWatchdogRequest {
     pub enabled: Option<bool>,
-    pub memory_threshold: Option<u8>,
     pub check_interval_secs: Option<u64>,
-    pub breach_count: Option<u32>,
     pub idle_timeout_secs: Option<u64>,
     pub idle_action: Option<String>,
-    pub ready_ttl_secs: Option<u64>,
     pub idle_threshold_secs: Option<u64>,
     pub extra_waiting_patterns: Option<Vec<String>>,
 }
@@ -438,12 +429,9 @@ mod tests {
             auth: AuthConfigResponse {},
             watchdog: WatchdogConfigResponse {
                 enabled: true,
-                memory_threshold: 90,
                 check_interval_secs: 10,
-                breach_count: 3,
                 idle_timeout_secs: 600,
                 idle_action: "alert".into(),
-                ready_ttl_secs: 0,
                 idle_threshold_secs: 60,
                 extra_waiting_patterns: vec![],
             },
@@ -461,7 +449,7 @@ mod tests {
 
     #[test]
     fn test_config_response_deserialize() {
-        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local"},"auth":{},"watchdog":{"enabled":true,"memory_threshold":90,"check_interval_secs":10,"breach_count":3,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"webhooks":[]}}"#;
+        let json = r#"{"node":{"name":"n","port":1234,"data_dir":"/d","bind":"local"},"auth":{},"watchdog":{"enabled":true,"check_interval_secs":10,"idle_timeout_secs":600,"idle_action":"alert","idle_threshold_secs":60},"notifications":{"webhooks":[]}}"#;
         let resp: ConfigResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.node.name, "n");
         assert_eq!(resp.node.port, 1234);
@@ -1050,15 +1038,15 @@ mod tests {
     fn test_update_watchdog_request_default() {
         let req = UpdateWatchdogRequest::default();
         assert!(req.enabled.is_none());
-        assert!(req.memory_threshold.is_none());
+        assert!(req.check_interval_secs.is_none());
     }
 
     #[test]
     fn test_update_watchdog_request_deserialize() {
-        let json = r#"{"enabled":false,"memory_threshold":80}"#;
+        let json = r#"{"enabled":false,"check_interval_secs":30}"#;
         let req: UpdateWatchdogRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.enabled, Some(false));
-        assert_eq!(req.memory_threshold, Some(80));
+        assert_eq!(req.check_interval_secs, Some(30));
     }
 
     #[test]

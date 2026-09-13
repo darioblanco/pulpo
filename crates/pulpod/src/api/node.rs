@@ -3,8 +3,6 @@ use std::sync::Arc;
 use axum::{Json, extract::State};
 use pulpo_common::node::NodeInfo;
 
-use crate::watchdog::memory::{MemoryReader, SystemMemoryReader};
-
 pub fn get_hostname() -> String {
     let fallback = String::from("unknown");
     hostname::get().map_or(fallback, |h| h.to_string_lossy().into_owned())
@@ -12,10 +10,7 @@ pub fn get_hostname() -> String {
 
 pub async fn get_info(State(state): State<Arc<super::AppState>>) -> Json<NodeInfo> {
     let config = state.config.read().await;
-    let memory_mb = SystemMemoryReader
-        .read_memory()
-        .map(|s| s.total_mb)
-        .unwrap_or(0);
+    let memory_mb = crate::platform::total_memory_mb();
     Json(NodeInfo {
         name: config.node.name.clone(),
         hostname: get_hostname(),

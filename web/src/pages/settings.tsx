@@ -24,9 +24,7 @@ export function SettingsPage() {
 
   // Watchdog
   const [watchdogEnabled, setWatchdogEnabled] = useState(true);
-  const [watchdogMemoryThreshold, setWatchdogMemoryThreshold] = useState(85);
   const [watchdogCheckInterval, setWatchdogCheckInterval] = useState(30);
-  const [watchdogBreachCount, setWatchdogBreachCount] = useState(3);
   const [watchdogIdleTimeout, setWatchdogIdleTimeout] = useState(300);
   const [watchdogIdleAction, setWatchdogIdleAction] = useState('pause');
 
@@ -43,9 +41,7 @@ export function SettingsPage() {
       setBind(config.node.bind);
 
       setWatchdogEnabled(config.watchdog.enabled);
-      setWatchdogMemoryThreshold(config.watchdog.memory_threshold);
       setWatchdogCheckInterval(config.watchdog.check_interval_secs);
-      setWatchdogBreachCount(config.watchdog.breach_count);
       setWatchdogIdleTimeout(config.watchdog.idle_timeout_secs);
       setWatchdogIdleAction(config.watchdog.idle_action);
 
@@ -72,9 +68,7 @@ export function SettingsPage() {
         data_dir: dataDir,
         bind,
         watchdog_enabled: watchdogEnabled,
-        watchdog_memory_threshold: watchdogMemoryThreshold,
         watchdog_check_interval_secs: watchdogCheckInterval,
-        watchdog_breach_count: watchdogBreachCount,
         watchdog_idle_timeout_secs: watchdogIdleTimeout,
         watchdog_idle_action: watchdogIdleAction,
         webhooks: webhooks
@@ -164,12 +158,8 @@ export function SettingsPage() {
                   <WatchdogSettings
                     enabled={watchdogEnabled}
                     onEnabledChange={setWatchdogEnabled}
-                    memoryThreshold={watchdogMemoryThreshold}
-                    onMemoryThresholdChange={setWatchdogMemoryThreshold}
                     checkIntervalSecs={watchdogCheckInterval}
                     onCheckIntervalSecsChange={setWatchdogCheckInterval}
-                    breachCount={watchdogBreachCount}
-                    onBreachCountChange={setWatchdogBreachCount}
                     idleTimeoutSecs={watchdogIdleTimeout}
                     onIdleTimeoutSecsChange={setWatchdogIdleTimeout}
                     idleAction={watchdogIdleAction}

@@ -5,7 +5,7 @@
 #   Active/Idle/Creating → still running, nothing to resume
 #   Ready                → agent exited normally, can resume to re-run
 #   Lost                 → tmux disappeared (crash/reboot), can resume
-#   Stopped              → terminated by user/watchdog/TTL, or exited cleanly — can resume
+#   Stopped              → terminated by user/watchdog, or exited cleanly — can resume
 set -euo pipefail
 
 URL="${URL:-localhost:7433}"
@@ -23,7 +23,7 @@ pulpo --url "${URL}" list
 
 # 4. Check intervention history (why was it stopped?)
 # pulpo --url "${URL}" interventions my-api
-# Shows: memory_pressure, idle_timeout, budget_exceeded, burn_rate
+# Shows: idle_timeout, budget_exceeded, burn_rate
 # (a plain `pulpo stop` is not an intervention and never shows up here)
 
 # 5. After daemon restart, pulpod auto-resumes active sessions.

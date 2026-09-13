@@ -6,41 +6,6 @@ use pulpo_common::session::{Session, SessionStatus};
 use std::sync::Mutex;
 use tokio::time;
 
-struct MockMemoryReader {
-    snapshots: Mutex<Vec<MemorySnapshot>>,
-}
-
-impl MockMemoryReader {
-    fn new(snapshots: Vec<MemorySnapshot>) -> Self {
-        Self {
-            snapshots: Mutex::new(snapshots),
-        }
-    }
-}
-
-impl MemoryReader for MockMemoryReader {
-    fn read_memory(&self) -> Result<MemorySnapshot> {
-        let mut snapshots = self.snapshots.lock().unwrap();
-        if snapshots.is_empty() {
-            // Default: low usage
-            Ok(MemorySnapshot {
-                available_mb: 4096,
-                total_mb: 8192,
-            })
-        } else {
-            Ok(snapshots.remove(0))
-        }
-    }
-}
-
-struct ErrorMemoryReader;
-
-impl MemoryReader for ErrorMemoryReader {
-    fn read_memory(&self) -> Result<MemorySnapshot> {
-        anyhow::bail!("sensor failure")
-    }
-}
-
 struct MockBackend {
     kill_calls: Mutex<Vec<String>>,
     capture_calls: Mutex<Vec<String>>,
@@ -154,18 +119,18 @@ async fn create_running_session(store: &Store, name: &str) -> Session {
 /// Poll `condition` until it returns `true`, sleeping briefly between checks,
 /// up to a generous deadline.
 ///
-/// Several `run_watchdog_loop` tests need `breach_count` consecutive ticks to
-/// elapse before signalling shutdown. A fixed `time::sleep` only works if we
-/// assume the loop's `tokio::select!` gets polled enough times within that
-/// wall-clock window — true in isolation, but not under the full parallel
-/// test suite (~1500+ concurrently scheduled OS threads contending for CPU).
+/// Some `run_watchdog_loop` tests need one or more ticks to elapse before
+/// signalling shutdown. A fixed `time::sleep` only works if we assume the
+/// loop's `tokio::select!` gets polled enough times within that wall-clock
+/// window — true in isolation, but not under the full parallel test suite
+/// (~1500+ concurrently scheduled OS threads contending for CPU).
 /// `#[tokio::test]` uses a single-threaded (current-thread) runtime, so a
 /// starved OS thread can resume long after both the interval-tick and the
 /// shutdown-signal branches of `select!` have become ready; `select!` then
 /// picks between them at random, and can pick shutdown before enough ticks
-/// were processed to reach `breach_count` — flaking the test. Waiting for the
-/// actual side effect instead of a fixed sleep removes the race regardless of
-/// scheduling (see fix/watchdog-flaky-tests).
+/// were processed — flaking the test. Waiting for the actual side effect
+/// instead of a fixed sleep removes the race regardless of scheduling (see
+/// fix/watchdog-flaky-tests).
 async fn wait_for<F, Fut>(deadline_secs: u64, condition: F)
 where
     F: Fn() -> Fut,
@@ -185,17 +150,12 @@ where
 }
 
 fn make_config(
-    threshold: u8,
     interval: Duration,
-    breach_count: u32,
     idle: IdleConfig,
 ) -> tokio::sync::watch::Receiver<WatchdogRuntimeConfig> {
     let cfg = WatchdogRuntimeConfig {
-        threshold,
         interval,
-        breach_count,
         idle,
-        ready_ttl_secs: 0,
         extra_waiting_patterns: Vec::new(),
         burn: BurnConfig::default(),
     };
@@ -204,20 +164,15 @@ fn make_config(
 }
 
 fn make_config_with_tx(
-    threshold: u8,
     interval: Duration,
-    breach_count: u32,
     idle: IdleConfig,
 ) -> (
     tokio::sync::watch::Sender<WatchdogRuntimeConfig>,
     tokio::sync::watch::Receiver<WatchdogRuntimeConfig>,
 ) {
     let cfg = WatchdogRuntimeConfig {
-        threshold,
         interval,
-        breach_count,
         idle,
-        ready_ttl_secs: 0,
         extra_waiting_patterns: Vec::new(),
         burn: BurnConfig::default(),
     };
@@ -228,17 +183,13 @@ fn make_config_with_tx(
 async fn test_watchdog_shutdown() {
     let backend = Arc::new(MockBackend::new());
     let store = test_store().await;
-    let reader = MockMemoryReader::new(vec![]);
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     let handle = tokio::spawn(run_watchdog_loop(
         backend,
         store,
-        Box::new(reader),
         make_config(
-            90,
             Duration::from_millis(10),
-            3,
             IdleConfig {
                 enabled: false,
                 ..IdleConfig::default()
@@ -252,629 +203,6 @@ async fn test_watchdog_shutdown() {
     time::sleep(Duration::from_millis(50)).await;
     shutdown_tx.send(true).unwrap();
     handle.await.unwrap();
-}
-
-#[tokio::test]
-async fn test_watchdog_below_threshold_no_intervention() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    create_running_session(&store, "safe-session").await;
-
-    // All readings below threshold
-    let reader = MockMemoryReader::new(vec![
-        MemorySnapshot {
-            available_mb: 2048,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 2048,
-            total_mb: 8192,
-        },
-    ]);
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let backend_clone = backend.clone();
-
-    let handle = tokio::spawn(run_watchdog_loop(
-        backend_clone,
-        store,
-        Box::new(reader),
-        make_config(
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-        ),
-        shutdown_rx,
-        test_ready_ctx(),
-    ));
-
-    time::sleep(Duration::from_millis(50)).await;
-    shutdown_tx.send(true).unwrap();
-    handle.await.unwrap();
-
-    // No kills should have happened
-    assert!(backend.kill_calls.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn test_watchdog_breach_count_not_reached() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    create_running_session(&store, "spike-session").await;
-
-    // 2 high readings then subsides (breach_count=3, so no intervention)
-    let reader = MockMemoryReader::new(vec![
-        MemorySnapshot {
-            available_mb: 200,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 200,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 4096,
-            total_mb: 8192,
-        }, // subsides
-    ]);
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let backend_clone = backend.clone();
-
-    let handle = tokio::spawn(run_watchdog_loop(
-        backend_clone,
-        store,
-        Box::new(reader),
-        make_config(
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-        ),
-        shutdown_rx,
-        test_ready_ctx(),
-    ));
-
-    time::sleep(Duration::from_millis(80)).await;
-    shutdown_tx.send(true).unwrap();
-    handle.await.unwrap();
-
-    assert!(backend.kill_calls.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn test_watchdog_intervention_after_breach_count() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    let session = create_running_session(&store, "oom-session").await;
-
-    // 3 consecutive high readings → intervention
-    let reader = MockMemoryReader::new(vec![
-        MemorySnapshot {
-            available_mb: 200,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 200,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 200,
-            total_mb: 8192,
-        },
-    ]);
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let backend_clone = backend.clone();
-    let store_clone = store.clone();
-
-    let handle = tokio::spawn(run_watchdog_loop(
-        backend_clone,
-        store_clone,
-        Box::new(reader),
-        make_config(
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-        ),
-        shutdown_rx,
-        test_ready_ctx(),
-    ));
-
-    wait_for(2, || async {
-        store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .is_some_and(|s| s.status == SessionStatus::Stopped)
-    })
-    .await;
-    shutdown_tx.send(true).unwrap();
-    handle.await.unwrap();
-
-    // Session should have been stopped
-    assert!(
-        backend
-            .kill_calls
-            .lock()
-            .unwrap()
-            .contains(&"oom-session".to_owned())
-    );
-
-    // Session should be dead with intervention reason
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Stopped);
-    assert!(fetched.intervention_reason.is_some());
-    assert!(fetched.intervention_at.is_some());
-    assert!(fetched.output_snapshot.is_some());
-}
-
-#[tokio::test]
-async fn test_watchdog_no_running_sessions() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    // No sessions at all
-
-    let reader = MockMemoryReader::new(vec![
-        MemorySnapshot {
-            available_mb: 200,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 200,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 200,
-            total_mb: 8192,
-        },
-    ]);
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let backend_clone = backend.clone();
-
-    let handle = tokio::spawn(run_watchdog_loop(
-        backend_clone,
-        store,
-        Box::new(reader),
-        make_config(
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-        ),
-        shutdown_rx,
-        test_ready_ctx(),
-    ));
-
-    time::sleep(Duration::from_millis(80)).await;
-    shutdown_tx.send(true).unwrap();
-    handle.await.unwrap();
-
-    assert!(backend.kill_calls.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn test_watchdog_error_reading_memory() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    let reader = ErrorMemoryReader;
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let handle = tokio::spawn(run_watchdog_loop(
-        backend,
-        store,
-        Box::new(reader),
-        make_config(
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-        ),
-        shutdown_rx,
-        test_ready_ctx(),
-    ));
-
-    time::sleep(Duration::from_millis(50)).await;
-    shutdown_tx.send(true).unwrap();
-    handle.await.unwrap();
-    // Should not panic, just logs warnings
-}
-
-#[tokio::test]
-async fn test_watchdog_capture_failure_still_kills() {
-    let backend = Arc::new(MockBackend::failing_capture());
-    let store = test_store().await;
-    let session = create_running_session(&store, "cap-fail").await;
-
-    let reader = MockMemoryReader::new(vec![
-        MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        },
-    ]);
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let backend_clone = backend.clone();
-    let store_clone = store.clone();
-
-    let handle = tokio::spawn(run_watchdog_loop(
-        backend_clone,
-        store_clone,
-        Box::new(reader),
-        make_config(
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-        ),
-        shutdown_rx,
-        test_ready_ctx(),
-    ));
-
-    wait_for(2, || async {
-        store
-            .get_session(&session.id.to_string())
-            .await
-            .unwrap()
-            .is_some_and(|s| s.status == SessionStatus::Stopped)
-    })
-    .await;
-    shutdown_tx.send(true).unwrap();
-    handle.await.unwrap();
-
-    // Kill should still be called despite capture failure
-    assert!(
-        backend
-            .kill_calls
-            .lock()
-            .unwrap()
-            .contains(&"cap-fail".to_owned())
-    );
-
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Stopped);
-    assert!(fetched.intervention_reason.is_some());
-    // No snapshot since capture failed
-    assert!(fetched.output_snapshot.is_none());
-}
-
-#[tokio::test]
-async fn test_watchdog_kill_failure_skips_intervention_record() {
-    let backend = Arc::new(MockBackend::failing_kill());
-    let store = test_store().await;
-    let session = create_running_session(&store, "kill-fail").await;
-
-    let reader = MockMemoryReader::new(vec![
-        MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        },
-    ]);
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let backend_clone = backend.clone();
-    let store_clone = store.clone();
-
-    let handle = tokio::spawn(run_watchdog_loop(
-        backend_clone,
-        store_clone,
-        Box::new(reader),
-        make_config(
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-        ),
-        shutdown_rx,
-        test_ready_ctx(),
-    ));
-
-    time::sleep(Duration::from_millis(80)).await;
-    shutdown_tx.send(true).unwrap();
-    handle.await.unwrap();
-
-    // Session should remain Running — kill failed so no status change
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Active);
-    assert!(fetched.intervention_reason.is_none());
-}
-
-#[tokio::test]
-async fn test_watchdog_session_without_backend_session_id() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-
-    // Create session without explicit backend_session_id
-    let session = Session {
-        id: uuid::Uuid::new_v4(),
-        name: "no-tmux".into(),
-        workdir: "/tmp/repo".into(),
-        command: "echo hello".into(),
-        description: Some("test".into()),
-        status: SessionStatus::Active,
-        ..Default::default()
-    };
-    store.insert_session(&session).await.unwrap();
-
-    let reader = MockMemoryReader::new(vec![
-        MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        },
-    ]);
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let backend_clone = backend.clone();
-
-    let handle = tokio::spawn(run_watchdog_loop(
-        backend_clone,
-        store,
-        Box::new(reader),
-        make_config(
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-        ),
-        shutdown_rx,
-        test_ready_ctx(),
-    ));
-
-    wait_for(2, || async {
-        backend
-            .kill_calls
-            .lock()
-            .unwrap()
-            .contains(&"no-tmux".to_owned())
-    })
-    .await;
-    shutdown_tx.send(true).unwrap();
-    handle.await.unwrap();
-
-    // Should use the session name (backend handles the mapping internally)
-    assert!(
-        backend
-            .kill_calls
-            .lock()
-            .unwrap()
-            .contains(&"no-tmux".to_owned())
-    );
-}
-
-#[tokio::test]
-async fn test_watchdog_breach_counter_resets() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    create_running_session(&store, "reset-test").await;
-
-    // 2 high, 1 low (resets), 2 high → no intervention (breach_count=3)
-    let reader = MockMemoryReader::new(vec![
-        MemorySnapshot {
-            available_mb: 200,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 200,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 4096,
-            total_mb: 8192,
-        }, // reset
-        MemorySnapshot {
-            available_mb: 200,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 200,
-            total_mb: 8192,
-        },
-    ]);
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let backend_clone = backend.clone();
-
-    let handle = tokio::spawn(run_watchdog_loop(
-        backend_clone,
-        store,
-        Box::new(reader),
-        make_config(
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-        ),
-        shutdown_rx,
-        test_ready_ctx(),
-    ));
-
-    time::sleep(Duration::from_millis(100)).await;
-    shutdown_tx.send(true).unwrap();
-    handle.await.unwrap();
-
-    assert!(backend.kill_calls.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn test_watchdog_store_list_failure() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-
-    // Drop the sessions table so list_sessions fails during intervention
-    sqlx::query("DROP TABLE sessions")
-        .execute(store.pool())
-        .await
-        .unwrap();
-
-    let reader = MockMemoryReader::new(vec![
-        MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 100,
-            total_mb: 8192,
-        },
-    ]);
-
-    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let handle = tokio::spawn(run_watchdog_loop(
-        backend,
-        store,
-        Box::new(reader),
-        make_config(
-            90,
-            Duration::from_millis(10),
-            3,
-            IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
-            },
-        ),
-        shutdown_rx,
-        test_ready_ctx(),
-    ));
-
-    time::sleep(Duration::from_millis(80)).await;
-    shutdown_tx.send(true).unwrap();
-    handle.await.unwrap();
-    // Should not panic — logs warning about list failure
-}
-
-#[tokio::test]
-async fn test_intervene_snapshot_save_failure() {
-    // Test that snapshot save failure is handled gracefully.
-    // We do this by creating a session, then corrupting the store
-    // so update_session_output_snapshot fails but the session can still be listed.
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    create_running_session(&store, "snap-err").await;
-
-    // Rename the snapshot column to break the UPDATE query
-    sqlx::query("ALTER TABLE sessions RENAME COLUMN output_snapshot TO output_snapshot_old")
-        .execute(store.pool())
-        .await
-        .unwrap();
-
-    let snapshot = MemorySnapshot {
-        available_mb: 100,
-        total_mb: 8192,
-    };
-    let dyn_backend: Arc<dyn Backend> = backend.clone();
-    intervene(&dyn_backend, &store, &snapshot, &test_ready_ctx()).await;
-
-    // Kill should still have been called despite snapshot save failure
-    assert!(
-        backend
-            .kill_calls
-            .lock()
-            .unwrap()
-            .contains(&"snap-err".to_owned())
-    );
-}
-
-#[tokio::test]
-async fn test_intervene_record_failure() {
-    // Test that intervention recording failure is handled gracefully.
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    create_running_session(&store, "rec-err").await;
-
-    // Rename intervention_reason column to break the UPDATE query
-    sqlx::query(
-        "ALTER TABLE sessions RENAME COLUMN intervention_reason TO intervention_reason_old",
-    )
-    .execute(store.pool())
-    .await
-    .unwrap();
-
-    let snapshot = MemorySnapshot {
-        available_mb: 100,
-        total_mb: 8192,
-    };
-    let dyn_backend: Arc<dyn Backend> = backend.clone();
-    intervene(&dyn_backend, &store, &snapshot, &test_ready_ctx()).await;
-
-    // Kill should still have been called
-    assert!(
-        backend
-            .kill_calls
-            .lock()
-            .unwrap()
-            .contains(&"rec-err".to_owned())
-    );
 }
 
 #[test]
@@ -1599,11 +927,6 @@ async fn test_idle_detection_in_watchdog_loop() {
     };
     store.insert_session(&session).await.unwrap();
 
-    let reader = MockMemoryReader::new(vec![MemorySnapshot {
-        available_mb: 4096,
-        total_mb: 8192,
-    }]);
-
     let idle_config = IdleConfig {
         enabled: true,
         timeout_secs: 600,
@@ -1618,8 +941,7 @@ async fn test_idle_detection_in_watchdog_loop() {
     let handle = tokio::spawn(run_watchdog_loop(
         backend_clone,
         store_clone,
-        Box::new(reader),
-        make_config(90, Duration::from_millis(10), 3, idle_config),
+        make_config(Duration::from_millis(10), idle_config),
         shutdown_rx,
         test_ready_ctx(),
     ));
@@ -2319,131 +1641,6 @@ async fn test_check_session_idle_without_harness_events_keeps_scraping() {
 // Stale / dead edge-case tests
 // ───────────────────────────────────────────────────────────
 
-/// Backend that fails kill only for specific session names.
-struct SelectiveKillBackend {
-    fail_names: Vec<String>,
-    kill_calls: Mutex<Vec<String>>,
-}
-
-impl SelectiveKillBackend {
-    fn new(fail_names: Vec<&str>) -> Self {
-        Self {
-            fail_names: fail_names.into_iter().map(Into::into).collect(),
-            kill_calls: Mutex::new(Vec::new()),
-        }
-    }
-}
-
-impl Backend for SelectiveKillBackend {
-    fn create_session(&self, _: &str, _: &str, _: &str) -> Result<()> {
-        Ok(())
-    }
-    fn kill_session(&self, name: &str) -> Result<()> {
-        self.kill_calls.lock().unwrap().push(name.into());
-        if self.fail_names.iter().any(|n| n == name) {
-            anyhow::bail!("selective kill failed for {name}");
-        }
-        Ok(())
-    }
-    fn is_alive(&self, _: &str) -> Result<bool> {
-        Ok(true)
-    }
-    fn capture_output(&self, _: &str, _: usize) -> Result<String> {
-        Ok("output".into())
-    }
-    fn send_input(&self, _: &str, _: &str) -> Result<()> {
-        Ok(())
-    }
-    fn setup_logging(&self, _: &str, _: &str) -> Result<()> {
-        Ok(())
-    }
-}
-
-#[tokio::test]
-async fn test_intervene_partial_kill_failure() {
-    // When multiple sessions are running and one kill fails, the other
-    // should still be stopped and recorded as an intervention.
-    let backend = Arc::new(SelectiveKillBackend::new(vec!["fail-session"]));
-    let store = test_store().await;
-
-    create_running_session(&store, "success-session").await;
-    create_running_session(&store, "fail-session").await;
-
-    let snapshot = MemorySnapshot {
-        available_mb: 100,
-        total_mb: 8192,
-    };
-
-    intervene(
-        &(backend.clone() as Arc<dyn Backend>),
-        &store,
-        &snapshot,
-        &test_ready_ctx(),
-    )
-    .await;
-
-    // Both sessions should have been attempted
-    let call_count = backend.kill_calls.lock().unwrap().len();
-    assert_eq!(call_count, 2);
-
-    // success-session should be Dead with intervention reason
-    let success = store.get_session("success-session").await.unwrap().unwrap();
-    assert_eq!(success.status, SessionStatus::Stopped);
-    assert!(success.intervention_reason.is_some());
-
-    // fail-session should remain Running (kill failed)
-    let fail = store.get_session("fail-session").await.unwrap().unwrap();
-    assert_eq!(fail.status, SessionStatus::Active);
-    assert!(fail.intervention_reason.is_none());
-}
-
-#[tokio::test]
-async fn test_intervene_skips_non_running_sessions() {
-    // intervene() should only kill Running sessions, ignoring Dead/Stale/Completed.
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-
-    let running = create_running_session(&store, "running-one").await;
-    let stale = create_running_session(&store, "stale-one").await;
-    store
-        .update_session_status(&stale.id.to_string(), SessionStatus::Lost)
-        .await
-        .unwrap();
-
-    let snapshot = MemorySnapshot {
-        available_mb: 100,
-        total_mb: 8192,
-    };
-
-    intervene(
-        &(backend.clone() as Arc<dyn Backend>),
-        &store,
-        &snapshot,
-        &test_ready_ctx(),
-    )
-    .await;
-
-    // Only running-one should be stopped
-    let kills: Vec<String> = backend.kill_calls.lock().unwrap().clone();
-    assert_eq!(kills.len(), 1);
-    assert_eq!(kills[0], "running-one");
-
-    // Verify statuses
-    let r = store
-        .get_session(&running.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(r.status, SessionStatus::Stopped);
-
-    let s = store
-        .get_session(&stale.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(s.status, SessionStatus::Lost);
-}
-
 #[tokio::test]
 async fn test_idle_kill_succeeds_but_session_disappears() {
     // Edge case: backend kill succeeds, but the session was deleted from
@@ -2491,35 +1688,29 @@ async fn test_idle_kill_succeeds_but_session_disappears() {
 }
 
 #[tokio::test]
-async fn test_watchdog_live_config_reload_threshold() {
-    // Start with high threshold (95) — no intervention should happen
+async fn test_watchdog_live_config_reload_enables_idle() {
+    // Start with idle detection disabled and a slow tick — no transition
+    // should happen. Reloading the config to enable idle detection with a
+    // faster interval must take effect on the very next tick without
+    // restarting the loop (exercises `refresh_watchdog_ticker`'s
+    // interval-change branch alongside the dynamic idle-enable path).
     let backend = Arc::new(MockBackend::new());
     let store = test_store().await;
-    let session = create_running_session(&store, "reload-test").await;
-    // 90% usage — below 95 threshold initially
-    let reader = MockMemoryReader::new(vec![
-        MemorySnapshot {
-            available_mb: 820,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 820,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 820,
-            total_mb: 8192,
-        },
-        MemorySnapshot {
-            available_mb: 820,
-            total_mb: 8192,
-        },
-    ]);
+    let session = Session {
+        id: uuid::Uuid::new_v4(),
+        name: "reload-test".into(),
+        workdir: "/tmp/repo".into(),
+        command: "echo hello".into(),
+        status: SessionStatus::Active,
+        backend_session_id: Some("reload-test".into()),
+        output_snapshot: Some("test output".into()),
+        last_output_at: Some(chrono::Utc::now() - chrono::Duration::seconds(700)),
+        ..Default::default()
+    };
+    store.insert_session(&session).await.unwrap();
 
     let (config_tx, config_rx) = make_config_with_tx(
-        95,
-        Duration::from_millis(10),
-        1,
+        Duration::from_millis(50),
         IdleConfig {
             enabled: false,
             ..IdleConfig::default()
@@ -2530,27 +1721,30 @@ async fn test_watchdog_live_config_reload_threshold() {
     let handle = tokio::spawn(run_watchdog_loop(
         backend.clone(),
         store.clone(),
-        Box::new(reader),
         config_rx,
         shutdown_rx,
         test_ready_ctx(),
     ));
 
-    // Let it run a tick with high threshold — no intervention
+    // Idle detection disabled — status must stay Active.
     time::sleep(Duration::from_millis(30)).await;
-    assert!(backend.kill_calls.lock().unwrap().is_empty());
+    let fetched = store
+        .get_session(&session.id.to_string())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fetched.status, SessionStatus::Active);
 
-    // Lower threshold to 80 — now 90% usage should trigger intervention
+    // Enable idle detection with a faster interval.
     config_tx
         .send(WatchdogRuntimeConfig {
-            threshold: 80,
             interval: Duration::from_millis(10),
-            breach_count: 1,
             idle: IdleConfig {
-                enabled: false,
-                ..IdleConfig::default()
+                enabled: true,
+                timeout_secs: 600,
+                action: IdleAction::Alert,
+                threshold_secs: 1,
             },
-            ready_ttl_secs: 0,
             extra_waiting_patterns: Vec::new(),
             burn: BurnConfig::default(),
         })
@@ -2561,62 +1755,48 @@ async fn test_watchdog_live_config_reload_threshold() {
             .get_session(&session.id.to_string())
             .await
             .unwrap()
-            .is_some_and(|s| s.status == SessionStatus::Stopped)
+            .is_some_and(|s| s.status == SessionStatus::Idle)
     })
     .await;
     shutdown_tx.send(true).unwrap();
     handle.await.unwrap();
 
-    // Now a kill should have happened because threshold was lowered
-    assert!(
-        !backend.kill_calls.lock().unwrap().is_empty(),
-        "Expected kill after threshold lowered"
-    );
     let fetched = store
         .get_session(&session.id.to_string())
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Stopped);
+    assert_eq!(fetched.status, SessionStatus::Idle);
 }
 
 #[tokio::test]
 async fn test_watchdog_runtime_config_debug() {
     let cfg = WatchdogRuntimeConfig {
-        threshold: 90,
         interval: Duration::from_secs(10),
-        breach_count: 3,
         idle: IdleConfig::default(),
-        ready_ttl_secs: 0,
         extra_waiting_patterns: Vec::new(),
         burn: BurnConfig::default(),
     };
     let debug = format!("{cfg:?}");
-    assert!(debug.contains("90"));
-    assert!(debug.contains("breach_count"));
+    assert!(debug.contains("interval"));
 }
 
 #[tokio::test]
 async fn test_watchdog_runtime_config_clone() {
     let cfg = WatchdogRuntimeConfig {
-        threshold: 80,
         interval: Duration::from_secs(5),
-        breach_count: 2,
         idle: IdleConfig {
             enabled: true,
             timeout_secs: 300,
             action: IdleAction::Kill,
             threshold_secs: 60,
         },
-        ready_ttl_secs: 0,
         extra_waiting_patterns: Vec::new(),
         burn: BurnConfig::default(),
     };
     #[allow(clippy::redundant_clone)]
     let cloned = cfg.clone();
-    assert_eq!(cloned.threshold, 80);
     assert_eq!(cloned.interval, Duration::from_secs(5));
-    assert_eq!(cloned.breach_count, 2);
     assert!(cloned.idle.enabled);
     assert_eq!(cloned.idle.timeout_secs, 300);
     assert_eq!(cloned.idle.action, IdleAction::Kill);
@@ -3141,141 +2321,6 @@ async fn test_ready_from_idle_state() {
     }
 }
 
-// --- S4: Ready TTL cleanup tests ---
-
-#[tokio::test]
-async fn test_cleanup_ready_sessions_kills_expired() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    let session = create_running_session(&store, "expired").await;
-
-    // Mark as Ready with old updated_at
-    store
-        .update_session_status(&session.id.to_string(), SessionStatus::Ready)
-        .await
-        .unwrap();
-    // Manually set updated_at to 2 hours ago
-    sqlx::query("UPDATE sessions SET updated_at = ? WHERE id = ?")
-        .bind((chrono::Utc::now() - chrono::Duration::seconds(7200)).to_rfc3339())
-        .bind(session.id.to_string())
-        .execute(store.pool())
-        .await
-        .unwrap();
-
-    let dyn_backend: Arc<dyn Backend> = backend.clone();
-    cleanup_ready_sessions(&dyn_backend, &store, 3600).await; // TTL = 1 hour
-
-    // Should be Stopped now
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Stopped);
-    // Backend kill should have been called
-    assert!(
-        backend
-            .kill_calls
-            .lock()
-            .unwrap()
-            .contains(&"expired".to_string())
-    );
-}
-
-#[tokio::test]
-async fn test_cleanup_ready_sessions_skips_recent() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    let session = create_running_session(&store, "recent").await;
-
-    // Mark as Ready (just now, so within TTL)
-    store
-        .update_session_status(&session.id.to_string(), SessionStatus::Ready)
-        .await
-        .unwrap();
-
-    let dyn_backend: Arc<dyn Backend> = backend.clone();
-    cleanup_ready_sessions(&dyn_backend, &store, 3600).await; // TTL = 1 hour
-
-    // Should still be Ready
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Ready);
-    assert!(backend.kill_calls.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn test_cleanup_ready_sessions_ignores_active() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-    let _session = create_running_session(&store, "active-one").await;
-
-    let dyn_backend: Arc<dyn Backend> = backend.clone();
-    cleanup_ready_sessions(&dyn_backend, &store, 1).await; // TTL = 1 sec
-
-    // Should still be Active (cleanup only targets Ready)
-    assert!(backend.kill_calls.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn test_cleanup_ready_sessions_uses_name_when_backend_id_missing() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-
-    let session = Session {
-        id: uuid::Uuid::new_v4(),
-        name: "ready-fallback".into(),
-        workdir: "/tmp/repo".into(),
-        command: "echo hello".into(),
-        description: Some("test".into()),
-        status: SessionStatus::Ready,
-        backend_session_id: None,
-        updated_at: chrono::Utc::now() - chrono::Duration::seconds(7200),
-        ..Default::default()
-    };
-    store.insert_session(&session).await.unwrap();
-
-    let dyn_backend: Arc<dyn Backend> = backend.clone();
-    cleanup_ready_sessions(&dyn_backend, &store, 3600).await;
-
-    let kills = backend.kill_calls.lock().unwrap().clone();
-    assert_eq!(kills, vec!["ready-fallback".to_owned()]);
-}
-
-#[tokio::test]
-async fn test_cleanup_ready_kill_failure_still_marks_stopped() {
-    // Even if backend.kill_session fails (tmux already gone), status should update
-    let backend = Arc::new(MockBackend::failing_kill());
-    let store = test_store().await;
-    let session = create_running_session(&store, "gone").await;
-
-    store
-        .update_session_status(&session.id.to_string(), SessionStatus::Ready)
-        .await
-        .unwrap();
-    // Set updated_at to 2 hours ago
-    sqlx::query("UPDATE sessions SET updated_at = ? WHERE id = ?")
-        .bind((chrono::Utc::now() - chrono::Duration::seconds(7200)).to_rfc3339())
-        .bind(session.id.to_string())
-        .execute(store.pool())
-        .await
-        .unwrap();
-
-    let dyn_backend: Arc<dyn Backend> = backend;
-    cleanup_ready_sessions(&dyn_backend, &store, 3600).await;
-
-    // Should still be marked as Stopped even though backend.kill failed
-    let fetched = store
-        .get_session(&session.id.to_string())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(fetched.status, SessionStatus::Stopped);
-}
-
 #[test]
 fn test_agent_exit_marker_constant() {
     assert_eq!(AGENT_EXIT_MARKER, "[pulpo] Agent exited");
@@ -3298,18 +2343,6 @@ async fn test_ready_transitions_to_ready() {
         .unwrap()
         .unwrap();
     assert_eq!(fetched.status, SessionStatus::Ready);
-}
-
-#[tokio::test]
-async fn test_cleanup_ready_no_ready_sessions() {
-    let backend = Arc::new(MockBackend::new());
-    let store = test_store().await;
-
-    // No sessions at all
-    let dyn_backend: Arc<dyn Backend> = backend.clone();
-    cleanup_ready_sessions(&dyn_backend, &store, 3600).await;
-
-    assert!(backend.kill_calls.lock().unwrap().is_empty());
 }
 
 // -- detect_and_store_output_metadata tests --

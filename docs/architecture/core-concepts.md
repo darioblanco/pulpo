@@ -78,8 +78,7 @@ It:
 - checks output for waiting-for-input patterns
 - tracks idle thresholds
 - detects exit markers
-- enforces memory-pressure interventions
-- applies ready TTL cleanup
+- enforces per-session budget caps and the burn-velocity ceiling
 
 For harnesses with their own lifecycle hooks (Claude Code, Codex, pi), a **harness
 adapter** reports real events — turn finished, blocked on a permission prompt, session
