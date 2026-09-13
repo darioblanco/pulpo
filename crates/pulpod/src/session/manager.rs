@@ -5027,6 +5027,9 @@ mod real_tmux_tests {
 
     #[tokio::test]
     async fn test_cell3_short_agent_exit_then_shell_exit_classifies_stopped_with_exit_code() {
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
         let socket = unique_socket();
         let (mgr, _tmp) = real_manager(&socket).await;
         let script_dir = tempfile::tempdir().unwrap();
@@ -5083,6 +5086,9 @@ mod real_tmux_tests {
     // Stopped-with-exit-code outcome the wrapper cannot actually produce.
     #[tokio::test]
     async fn test_cell4_ctrl_c_kills_whole_pane_classifies_lost() {
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
         let socket = unique_socket();
         let (mgr, _tmp) = real_manager(&socket).await;
 
@@ -5125,6 +5131,9 @@ mod real_tmux_tests {
 
     #[tokio::test]
     async fn test_cell5_kill_session_mid_run_classifies_lost() {
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
         let socket = unique_socket();
         let (mgr, _tmp) = real_manager(&socket).await;
 
@@ -5169,6 +5178,9 @@ mod real_tmux_tests {
 
     #[tokio::test]
     async fn test_cell6_kill_server_mid_run_classifies_lost() {
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
         let socket = unique_socket();
         let (mgr, _tmp) = real_manager(&socket).await;
 
@@ -5205,93 +5217,13 @@ mod real_tmux_tests {
         // The server (and its socket) is already gone — nothing left to tear down.
     }
 
-    // -- Cell 9: worktree reclaim end-to-end ---------------------------------------
-    //
-    // A session spawned with `worktree: true` gets a real git worktree; once the
-    // session is dead (short agent exit + shell exit -> Stopped, per Cell 3), a
-    // `cleanup_dead_sessions` pass must remove the worktree directory from disk and
-    // the exit markers end to end — not just flip DB bookkeeping.
-
-    fn git(repo: &std::path::Path, args: &[&str]) -> std::process::Output {
-        StdCommand::new("git")
-            .args(args)
-            .current_dir(repo)
-            .output()
-            .expect("git should run")
-    }
-
-    fn init_repo(repo: &std::path::Path) {
-        std::fs::create_dir_all(repo).unwrap();
-        git(repo, &["init", "-q"]);
-        git(repo, &["config", "user.email", "qa@pulpo.test"]);
-        git(repo, &["config", "user.name", "pulpo-qa"]);
-        std::fs::write(repo.join("README.md"), "seed").unwrap();
-        git(repo, &["add", "."]);
-        git(repo, &["commit", "-q", "-m", "init"]);
-    }
-
-    #[tokio::test]
-    async fn test_cell9_worktree_reclaimed_end_to_end_after_session_dies() {
-        let socket = unique_socket();
-        let (mgr, _tmp) = real_manager(&socket).await;
-
-        let repo_tmp = tempfile::tempdir().unwrap();
-        let repo = repo_tmp.path().join("repo");
-        init_repo(&repo);
-
-        let script_dir = tempfile::tempdir().unwrap();
-        let command = short_agent_script(script_dir.path(), 0);
-
-        let session = mgr
-            .create_session(make_req(
-                "cell9-worktree-reclaim",
-                repo.to_str().unwrap(),
-                &command,
-                true,
-            ))
-            .await
-            .unwrap();
-        let id = session.id.to_string();
-        let backend_id = session
-            .backend_session_id
-            .clone()
-            .expect("backend session id should resolve on create");
-        let worktree_path = session
-            .worktree_path
-            .clone()
-            .expect("worktree should have been created");
-        assert!(
-            std::path::Path::new(&worktree_path).exists(),
-            "worktree directory should exist right after spawn"
-        );
-
-        assert!(
-            wait_for_exit_marker(&mgr, &id, 20).await,
-            "short agent should exit and write the .code marker"
-        );
-
-        raw_tmux(&socket, &["send-keys", "-t", &backend_id, "exit", "Enter"]);
-
-        assert!(
-            wait_for_status(&mgr, &id, SessionStatus::Stopped, 20).await,
-            "session should be Stopped before cleanup runs"
-        );
-
-        let cleanup = mgr.cleanup_dead_sessions().await.unwrap();
-        assert_eq!(cleanup.sessions_deleted, 1);
-        assert_eq!(cleanup.worktrees_cleaned, 1);
-        assert!(
-            !std::path::Path::new(&worktree_path).exists(),
-            "worktree directory should be removed from disk after cleanup"
-        );
-        let data_dir = mgr.store().data_dir().to_owned();
-        assert!(
-            !crate::session::utils::has_exit_marker(&data_dir, &id),
-            "exit markers should be removed after cleanup"
-        );
-
-        kill_test_server(&socket);
-    }
+    // Cell 9 (worktree reclaim end-to-end: a `worktree: true` session's directory
+    // and exit markers are removed from disk by `cleanup_dead_sessions` after the
+    // session dies) was migrated to the end-to-end scenario suite's S9
+    // (`crates/pulpo-e2e/tests/scenarios.rs::s9_worktrees_distinct_survive_stop_and_removed_by_cleanup`)
+    // and deleted here — S9 covers the same reclaim path plus two *distinct*
+    // worktrees on one repo and a stop-without-purge survival check this test
+    // never had.
 
     // -- Part 2 proof: a Ready session's tmux dying resolves to Stopped -----------
     //
@@ -5305,6 +5237,9 @@ mod real_tmux_tests {
 
     #[tokio::test]
     async fn test_ready_death_fix_real_tmux_kill_session_classifies_stopped() {
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
         let socket = unique_socket();
         let (mgr, _tmp) = real_manager(&socket).await;
         let script_dir = tempfile::tempdir().unwrap();
@@ -5369,6 +5304,9 @@ mod real_tmux_tests {
     // consecutive ticks.
     #[tokio::test]
     async fn test_cell10_no_client_session_stable_across_repeated_checks() {
+        // Real-tmux tests share a process-wide lock (see `crate::test_serial`)
+        // so they never run concurrently under a parallel `cargo test`.
+        let _guard = crate::test_serial::lock();
         let socket = unique_socket();
         let (mgr, _tmp) = real_manager(&socket).await;
 
