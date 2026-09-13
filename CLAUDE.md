@@ -44,7 +44,8 @@ make all
 
 ### Linting
 
-- **Rust**: `clippy` with strict settings — `deny(warnings)`, `warn(pedantic, nursery)`, `forbid(unsafe_code)`. Configured in workspace `Cargo.toml` under `[workspace.lints]`.
+- **Rust**: `clippy` with `deny(clippy::all)` and `forbid(unsafe_code)`, configured in workspace `Cargo.toml` under `[workspace.lints]`. `pedantic`/`nursery` were dropped in September 2026 (style churn, no bugs caught); do not re-add them or add per-file `#[allow]`s for lints that are no longer enabled.
+- **Build cache for agent worktrees**: every checkout (including `.claude/worktrees/*`) should share one target dir to avoid multi-GB rebuilds: `export CARGO_TARGET_DIR=$HOME/.cache/pulpo-target` before any cargo command. The Makefile and CI do not depend on it.
 - **Web**: `eslint` with TypeScript and React plugins (config in `web/eslint.config.js`), plus `tsc --noEmit` for type checking.
 - Run `make lint` to lint everything.
 
