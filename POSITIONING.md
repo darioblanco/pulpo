@@ -1,6 +1,6 @@
 # Pulpo Positioning Memo
 
-Last updated: 2026-09-11
+Last updated: 2026-09-13
 
 ## Category
 
@@ -17,13 +17,13 @@ Code ships native worktrees and Remote Control; Codex ships a desktop command ce
 Wrapping tmux/worktrees/guardrails is a losing race.
 
 What nobody ships — and what first parties are structurally unable to ship — is
-cross-account, cross-machine, cross-agent cost telemetry and the enforcement that goes
-with it. A vendor's `/usage` is one account, one machine, checked after the fact; no
-vendor will aggregate spend across *your* accounts, since that helps you arbitrage their
-own rate limits. Only the thing actually running a session can stop a runaway before the
-wall — that's the gap Pulpo fills. The rest of the gap: SSH-plus-tmux as ad hoc
-infrastructure, no clear signal for "working," "blocked on me," "finished," or "dead," and
-nothing watching the meter closely enough to pull the plug before it's expensive.
+cross-account, cross-agent cost telemetry, exactly measured, and the enforcement that goes
+with it. A vendor's `/usage` is one account, one vendor, checked after the fact; no vendor
+will aggregate spend across *your* accounts, since that helps you arbitrage their own rate
+limits. Only the thing actually running a session can stop a runaway before the wall —
+that's the gap Pulpo fills. The rest of the gap: SSH-plus-tmux as ad hoc infrastructure, no
+clear signal for "working," "blocked on me," "finished," or "dead," and nothing watching
+the meter closely enough to pull the plug before it's expensive.
 
 ## Target Users
 
@@ -33,9 +33,9 @@ Linux box) — and want to know what all of that costs before the invoice or the
 quota resets. They care about self-hosting, sovereignty, and vendor independence.
 
 **Secondary:** operators running repeated agent work — nightly reviews, scheduled scans —
-who need a budget that actually intervenes, alerts that reach a phone before a runaway
-gets expensive, and signals forwarded into infrastructure they already run (Grafana,
-Datadog, a SIEM).
+who need a budget that actually intervenes, a webhook they can route to their phone
+before a runaway gets expensive, and events forwarded into infrastructure they already
+run (Grafana, Datadog, a SIEM).
 
 ## Positioning Statement
 
@@ -69,9 +69,10 @@ there's no cross-node orchestration, by design. Not "tmux, but prettier."
 
 ## Messaging Guidance
 
-**Lead with:** what every coding agent costs, across every machine and account; a budget
-that actually pulls the plug, not a post-hoc invoice; self-hosted and sovereign — your
-code and usage data never leave your infrastructure; run any agent, on your machines.
+**Lead with:** what every coding agent costs, across every account on the machine it runs
+on; a budget that actually pulls the plug, not a post-hoc invoice; self-hosted and
+sovereign — your code and usage data never leave your infrastructure; run any agent, on
+your own machine.
 
 **Avoid leading with:** tmux abstraction or implementation details; "control plane" or
 "orchestrator" as the primary frame (that race is lost); multi-node fleet management
@@ -81,15 +82,16 @@ code and usage data never leave your infrastructure; run any agent, on your mach
 
 `pulpo usage --scan` shows real spend across Claude Code, Codex, and pi with zero setup. A
 budget cap stops a runaway session and records why. An agent blocked on a permission
-prompt shows `needs input (<reason>)` and pings a phone. A session survives a reboot and
-resumes the same conversation, not a fresh one. Every alert reaches a webhook or a phone,
-not just a dashboard nobody's watching.
+prompt shows `needs input (<reason>)` and fires a webhook you can route to your phone. A
+session survives a reboot and resumes the same conversation, not a fresh one. Every
+lifecycle change, intervention, and budget alert reaches a webhook, not just a dashboard
+nobody's watching.
 
 ## Competitive Framing
 
 - **Cost readers** (ccusage, vendor `/usage`) win on a read-only report, one machine,
   right now. Pulpo also runs the session — a cap can stop something — and aggregates
-  across machines and accounts.
+  exactly across every account and agent on that machine.
 - **Native multi-agent UX tools** (Conductor, Claude Code Remote Control, Codex desktop)
   win on the nicest interactive experience on one Mac. Pulpo is self-hostable and
   headless, command-agnostic, and meters/enforces in the daemon, not the terminal app —
@@ -103,9 +105,9 @@ sourced version.
 ## Recommended One-Liners
 
 - The self-hosted meter and breaker box for coding agents.
-- See — and control — what every coding agent costs, across all your machines and accounts.
-- Run any coding agent on your machines. Know exactly what it costs. Pull the plug before
-  the wall.
+- Run any coding agent as a durable session on your own machine. Know exactly what it
+  costs. Pull the plug before the wall.
+- Single node, sovereign: your code and usage data never leave the machine you run it on.
 
 ## Documentation & Roadmap Implications
 
