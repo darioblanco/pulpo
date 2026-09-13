@@ -75,8 +75,15 @@ Canonical runtime concepts:
   endpoint were removed, September 2026) — each endpoint filters the universal event stream
   by an `events` glob (`<type>.<subtype>`) and `min_severity`, and delivery is a plain POST
   (no signing) with a fixed retry schedule (~1s/3s/9s) from an in-memory queue; an event that
-  exhausts its retries is logged and dropped rather than persisted. See
+  exhausts its retries is logged and dropped rather than persisted. Delivery is bounded (5s
+  connect / 10s total per-attempt timeout, max 16 concurrent deliveries across every
+  endpoint) and a failed delivery's log line never includes the URL itself. See
   /docs/reference/config.md#webhooks.
+- Every watchdog tick runs idle detection (which refreshes each session's cost from its
+  transcript) before budget enforcement, so a budget breach is caught the same tick it
+  happens rather than one tick late. A hook-ended session (`SessionEnded`) gets its exit
+  code recorded the same as the scrollback path. There is no watchdog config hot-reload —
+  `[watchdog]` changes take effect on the next `pulpod` restart.
 - There is no burn-velocity governor, usage projection ($/hr, time-to-cap), or billing-pool
   attribution (subscription vs headless) — all removed September 2026 in favor of exact
   metering plus a flat per-session/per-schedule budget cap only (`--budget-cost`: alert at
