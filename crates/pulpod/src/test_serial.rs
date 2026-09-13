@@ -26,6 +26,11 @@ static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 /// the first line). Recovers from a poisoned lock (a previous real-tmux test
 /// panicked while holding it) rather than propagating the poison — one flaky test's
 /// panic must not cascade into every real-tmux test after it failing to even start.
+// Every caller is a `#[cfg(not(coverage))]` real-tmux test (see `session::manager::
+// real_tmux_tests` and `backend::tmux`'s own integration tests), so this has no
+// callers left at all under a coverage build — same "dead code under coverage"
+// pattern documented in CLAUDE.md's coverage-exclusion section.
+#[cfg_attr(coverage, allow(dead_code))]
 pub fn lock() -> MutexGuard<'static, ()> {
     LOCK.get_or_init(|| Mutex::new(()))
         .lock()
