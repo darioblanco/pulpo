@@ -4,34 +4,39 @@ Strategic direction for Pulpo: the self-hosted meter and breaker box for coding 
 
 ## Mission
 
-Pulpo runs coding agents as background workers on your machines, **measures exactly what
-every session costs** — across all your agents, accounts, and machines — **monitors and
-alerts** on cost/quota/waste, and **optimizes the things it controls on the node it runs
-on** (kills waste via a flat budget-cost auto-stop, right-sizes defaults) so you get the
-maximum out of your subscriptions without ever blowing a limit. Routing work to whichever
-node or account has the most headroom — quota-aware placement across a fleet — is a
-parked future direction (see Phase C), not something Pulpo does today: each `pulpod` is
-single-node, standalone infrastructure you reach directly.
+Pulpo runs any coding agent — Claude Code, Codex, pi, or any other terminal command — as
+a durable session on a machine you own. It learns a session's real state from the
+harness's own hooks (Claude Code, Codex, pi) instead of scraping terminal output, meters
+exactly what it costs from the agent's own session files, rolls that up per repo, caps
+spend per session or schedule and stops at the cap, and tells you what happened over a
+webhook. Sessions survive reboots and resume the same conversation; scheduled runs and
+per-session git worktrees let you run agents unattended and in parallel without babysitting
+them.
+
+Each `pulpod` is single-node, standalone infrastructure: it governs the sessions on the
+machine it runs on and nothing else. There is no control plane joining machines together
+and no cross-node placement — that was tried (Phase C) and removed (see "Removed"). For a
+view across machines, point every node's webhooks at a collector you already run.
 
 Scope boundary: Pulpo optimizes the *operation* of agents on the node you run it on
 (whether a session runs, what it launches with, when to stop it) — never the *inference
 path* (no prompt caching, per-request routing, or context trimming; that's the agent's
-job, not ours) and, today, never cross-node placement. It can't make a unit of work
-cheaper; it makes sure you don't pay for waste and that you use capacity you've already
-bought.
+job, not ours). It can't make a unit of work cheaper; it makes sure you don't pay for
+waste and that you use capacity you've already bought.
 
-It works with any command-line agent: Claude Code, Codex, Aider, Goose, OpenCode, or
-anything that runs in a terminal. It is not an agent framework, not a prompt tool, and
-not a terminal-orchestration UX — agents now handle their own interactive worktree UX,
-sandboxing, and guardrails better than any wrapper can. (Spawn-time worktree *isolation*
-for unattended sessions stays — that's infrastructure, not UX.) Pulpo is the layer those
-agents don't have:
-usage telemetry, cost control, and fleet-wide supervision on infrastructure you own.
+It is not an agent framework, not a prompt tool, and not a terminal-orchestration UX —
+agents now handle their own interactive worktree UX, sandboxing, and guardrails better
+than any wrapper can. (Spawn-time worktree *isolation* for unattended sessions stays —
+that's infrastructure, not UX.) Pulpo is the layer those agents don't have: usage
+telemetry, cost control, and durable unattended operation on infrastructure you own.
 
 tmux is plumbing, not product: it is the universal way to run any agent as an
 observable, killable, attributable process without modifying it.
 
 ## The Bet (June 2026)
+
+The founding strategic thesis, kept as history — see "Removed" and the sections below for
+what it actually shipped as, and the top of this file for what Pulpo claims today.
 
 The early-2026 shakeout settled the orchestration question: Terragon dead, Vibe Kanban
 dead at 27k stars, Crystal deprecated, Omnara pivoted. First parties absorbed the value —
@@ -41,13 +46,14 @@ tmux/worktrees/guardrails is a losing race.
 
 What nobody ships — and what first parties are **incentive-blocked** from ever shipping:
 
-1. **Cross-machine, cross-account, cross-agent cost telemetry.** `/usage` is one account,
-   one machine, one vendor, and you have to go look at it. ccusage (~16k stars, proving
-   the demand) is explicitly single-machine. No vendor will ever aggregate across your
-   accounts, because that means helping you arbitrage their own rate limits.
-2. **Enforcement.** Budget caps that auto-stop, pause-on-rate-limit-thrash, alerts before
-   the wall. Vendors tell you that you overspent; only the thing running the session can
-   prevent it.
+1. **Cross-account, cross-agent cost telemetry, exactly measured.** `/usage` is one
+   account, one machine, one vendor, and you have to go look at it. ccusage (~16k stars,
+   proving the demand) is explicitly single-machine. No vendor will ever aggregate across
+   your accounts, because that means helping you arbitrage their own rate limits.
+2. **Enforcement.** A budget cap that auto-stops before the wall, not a post-hoc invoice.
+   Vendors tell you that you overspent; only the thing running the session can prevent it.
+   (Shipped as the flat per-session/per-schedule cap below — richer enforcement such as
+   rate-limit-thrash pausing stayed parked, see "Parked".)
 3. **Quota-aware placement** — "spawn this on whichever node/account has the most
    headroom; defer the nightly run until the window resets." This needs a cross-node
    control plane, which Pulpo built and then deliberately removed (Phase C, June/July
@@ -83,8 +89,13 @@ this file for the full sovereignty section.)
    happened. (Per-account/pool rollups were tried and removed — see "Removed": the
    billing-pool split needed reading agent credential files to attribute sessions to an
    account, which a metering tool has no business doing.)
-2. **Fleet gauge** — all accounts, machines, and agents on one phone screen.
-3. **Placement** — spawn where there's headroom.
+2. **A gauge you can reach from your phone** — a node's dashboard over Tailscale
+   (`bind = "tailscale"`), with cross-machine visibility by pointing every node's
+   webhooks at a collector you already run. There is no built-in fleet gauge that
+   aggregates multiple nodes itself — see "Multi-machine" — because that needs a
+   control plane, which was tried and removed (Phase C).
+3. ~~Placement~~ — "spawn where there's headroom" needed the same removed control
+   plane. Parked, not planned (see Phase C, "Parked").
 4. **Enforcement** — stop anything that exceeds its budget; recorded as interventions.
 
 ## Scope: Keep / Cut
@@ -96,7 +107,7 @@ this file for the full sovereignty section.)
 | tmux backend | Universal process substrate: run, observe, kill, attribute |
 | Session lifecycle + SQLite persistence | Attribution unit; survives reboots |
 | Watchdog | The enforcement engine (budgets, idle) |
-| Scheduler | Quota-aware dispatch |
+| Scheduler | Cron-based dispatch (`[scheduler] tick_secs`, default 60s) — not quota-aware; quota-aware placement was scoped for the removed cross-node control plane and never rebuilt standalone (see Phase C) |
 | Worktree spawning (`--worktree`) + cleanup | Isolation primitive: scheduled/parallel sessions on one repo can't trample each other, agent-agnostically; watchdog sweeps litter |
 | Event-forwarding backbone (`[[webhooks]]`) | **The cross-node story**: forward events to your own collector; aggregate in Grafana/Datadog/SIEM. Replaces the removed bespoke controller for fleet visibility |
 | Tailscale transport (`bind = "tailscale"`) | Secure zero-setup remote access to a node's UI/API over the tailnet; standalone, no fleet required |
@@ -104,7 +115,7 @@ this file for the full sovereignty section.)
 | Peer registry, peer health probing, Tailscale peer discovery, `--node` CLI routing | **REMOVED (September 2026)** — a read-only list of other nodes' sessions with no way to act on them; `bind = "tailscale"` and `tailscale serve` stay as the remote-access transport, reached with `pulpo --url <host:port>` |
 | Inks (`[inks.<name>]` preset registry) | **REMOVED (July 2026)** — command set directly per session/schedule; budget moved onto schedules (`--budget-cost`); a shared blueprint added indirection without a corresponding need |
 | Secrets store | **REMOVED (2026-09)** — every supported agent reads its own credentials from its own config; an env var a session needs is exported in the shell or wrapped into the command |
-| PWA web UI | The gauge; mobile-first; single-node-first with an optional event-fed fleet pane |
+| Web UI | The gauge; a plain responsive page (the PWA install path and service worker were removed, September 2026), single-node-first — bookmark a node's dashboard, no install step |
 | CLI, webhook notifications | Supporting surface |
 
 **Cut — orchestration we're losing at, plus dead weight (Track R):**
@@ -115,7 +126,9 @@ this file for the full sovereignty section.)
 - Docker runtime backend — agents ship their own sandboxing, and containerized agents
   hide their session files from the structured usage readers (Phase A), undermining the
   exact-metering vision.
-- Tauri native iOS/Android builds — PWA + web push covers mobile (confirmed 2026-06-12)
+- Tauri native iOS/Android builds — a bookmarked web page over Tailscale covers mobile
+  (confirmed 2026-06-12; the PWA install path and web push it originally leaned on were
+  themselves removed later, September 2026 — see "Removed")
 - Voice / Siri Shortcuts (confirmed 2026-06-12)
 - MCP server — REST is the integration surface
 - Discord bot — archive to its own repo
@@ -139,7 +152,9 @@ Replace terminal-scraping with structured readers of the agents' own session fil
    `session_meta.cwd`, read `token_count` events **including `rate_limits`**
    (`used_percent`, `window_minutes`, `resets_at`, `plan_type`) — exact quota for free.
 3. Wire into the watchdog tick (detect → store → API → UI). New `usage_samples`
-   migration. Keep keyword-proximity scraping as fallback for unknown agents.
+   migration. Keep keyword-proximity scraping as fallback for unknown agents (this
+   fallback was itself removed later, September 2026 — see "Removed"; an unsupported
+   harness now shows no usage instead of a scraped guess).
 4. **Account identity** per machine (`~/.claude.json` oauth email, `~/.codex/auth.json`),
    attached to sessions. Local-only; rollup metadata goes only to your own collector.
 5. Cost = tokens × per-model rates. **Shipped:** a built-in rate table (Opus/Sonnet/Haiku;
@@ -273,7 +288,18 @@ Everything here is alert-first and non-destructive by default; any auto-action
 in-app toast; emitted on the budget 80% crossing (deduped). External-channel delivery is
 folded into the event-forwarding backbone below.
 
-### Event-forwarding backbone (the monitoring system) — finalized 2026-06-13
+### Event-forwarding backbone (the monitoring system) — finalized 2026-06-13, simplified September 2026
+
+> **Current state (September 2026, #111):** the durable SQLite outbox, HMAC request
+> signing, the Discord-specific notifier, and the Prometheus `/api/v1/metrics` endpoint
+> described below were all removed. What ships today is one plain webhook channel:
+> `[[webhooks]]` (name/url/`events` glob/`min_severity`) delivered as an unsigned POST
+> with 3 retries (~1s/3s/9s) from an in-memory queue — a failed delivery after the last
+> retry is logged and dropped, not persisted. Delivery is bounded (connect/total
+> timeouts, max 16 concurrent in-flight deliveries) and webhook URLs are redacted from
+> logs (#118). The canonical event envelope and the SSE `/api/v1/events` stream are
+> unchanged. See "Removed" for the full rationale; the rest of this section is kept as
+> historical design context for *why* the envelope and filter model look the way they do.
 
 Pulpo becomes a universal event plane (not a control plane — one-way forwarding, no
 remote commands): it forwards **alerts and important events** to wherever you run
@@ -362,9 +388,11 @@ machinery at the time (historical — described the controller mode later remove
 controller re-broadcast them onto its bus (`event_push.rs`), and the step-1 dispatcher
 fanned them out to the controller's `[[webhooks]]` (durable outbox) and its SSE feed.
 
-**Backbone status: COMPLETE.** Today, aggregation is direct — point every node's
-`[[webhooks]]` at the same collector; there is no controller to fan out through. Optional
-additive polish, parked (not core; build on demand): a *persistent/queryable* event log
+**Backbone status: this design shipped, then was deliberately simplified (#111 — see the
+callout above and "Removed").** Aggregation across nodes is still direct — point every
+node's `[[webhooks]]` at the same collector; there is no controller to fan out through,
+and no durable outbox, HMAC signing, or `/metrics` endpoint anymore. Optional additive
+polish, parked (not core; build on demand): a *persistent/queryable* event log
 (`GET /events?since=` history vs the live SSE per node).
 
 **M2 — Burn-velocity governor — SHIPPED, then REMOVED (September 2026).** A configurable
@@ -469,7 +497,9 @@ Core infrastructure:
   resume via each harness's own resume/session-id mechanism, and surface a
   `needs input (<reason>)` status label distinct from plain idle. See
   `docs/architecture/harness-adapters.md`.
-- Watchdog: idle detection, error/failure detection, budget and burn-velocity breakers
+- Watchdog: idle detection (runs before budget enforcement each tick, #118), error/
+  failure detection, a flat per-session/per-schedule budget breaker (alert 80%, stop
+  100%) — a separate burn-velocity breaker was shipped and then removed (see "Removed")
 - Command-agnostic sessions (any CLI tool, any command)
 - Inks: reusable session blueprints (command, description, secrets, runtime defaults) —
   shipped, then removed in July 2026; command/budget now set directly per session/schedule
@@ -479,11 +509,14 @@ Core infrastructure:
   shipped, then were removed — the controller in July 2026 (see Phase C status above), the
   peer registry and Tailscale peer discovery in September 2026 (see Phase C update above).
   Every `pulpod` is standalone, reached directly with `pulpo --url <host:port>`.
-- SSE event stream, webhook notifications, Web Push, PWA
+- SSE event stream, one plain webhook notification channel (`[[webhooks]]`, bounded
+  delivery, URLs redacted from logs, #118) — Web Push and the PWA install path were
+  shipped, then removed (see "Removed")
 - Secret store: plaintext-in-SQLite env vars injected into sessions — shipped, then removed
   in 2026-09 (see Roadmap "Removed")
 - Per-session idle threshold, configurable waiting patterns (extends the built-in set)
-- Scheduling: DB-backed cron schedules (local timezone), CRUD API + CLI, 60s scheduler
+- Scheduling: DB-backed cron schedules (local timezone), CRUD API + CLI, configurable
+  scheduler tick (`[scheduler] tick_secs`, default 60s, #114)
 - Observability: PR/branch detection, git branch/commit/diff tracking, rate-limit
   detection, enriched notifications. Output-scraped token/cost extraction (the
   keyword-proximity fallback for agents without a structured reader) was superseded by
@@ -506,8 +539,8 @@ Revisit only on real demand:
 - Multi-user auth, Kubernetes backend, cloud VM backend
 - Agent-to-agent communication — orchestration frameworks' job, never Pulpo's
 - **Decoupled dashboard as a reference webhook consumer.** Feasible and on-brand: the
-  canonical event envelope + universal `[[webhooks]]` + REST/SSE/`/metrics` are exactly
-  the substrate a standalone dashboard would consume — it is just a richer version of
+  canonical event envelope + universal `[[webhooks]]` + REST/SSE are exactly the
+  substrate a standalone dashboard would consume — it is just a richer version of
   `contrib/examples/webhook-discord`. Ship it as a separate example project that ingests
   Pulpo events and renders a fleet view, so others can fork it for their own collectors.
   **Keep the embedded single-binary UI** as the zero-setup default — the decoupled one is
@@ -516,10 +549,27 @@ Revisit only on real demand:
 ## Removed
 
 Newest first. Every September 2026 entry landed the same week as harness adapters (PR
-#97) and is independent of it, except `adopt_tmux` (see below) and the burn/projection/
-pool/scraping removal and the Web Push/metrics/outbox removal entries below, which
-landed later the same month, independently of each other.
+#97) and is independent of it, except `adopt_tmux` (see below) and the six entries below
+dated by PR number (#111-#118), which landed later the same month, independently of
+each other.
 
+- ~~Watchdog config hot-reload channel~~ (September 2026, PR #118) — `PUT
+  /api/v1/watchdog` was the only sender on the watchdog's runtime-config `watch`
+  channel; once the config-editing API was removed (#117) the channel had no writer
+  left. Removed the `AppState.watchdog_config_tx` field, `run_watchdog_loop`'s
+  `config_rx` parameter, and `refresh_watchdog_ticker`. The watchdog now reads
+  `WatchdogRuntimeConfig` once at startup; changing `[watchdog]` takes effect on the
+  next `pulpod` restart, same as every other config section. The same PR swapped the
+  per-tick order so `check_idle_sessions` (idle detection, which also refreshes a
+  session's cost from its transcript) runs before `budget::enforce_budgets` — a session
+  that crosses its budget mid-tick is now caught that tick instead of one tick late —
+  and gave hook-ended sessions (a `SessionEnded` harness event moving a session straight
+  to `Ready`) their recorded exit code, which previously only `Active`/`Idle` sessions
+  got from the watchdog's `.code` marker sweep. Also bounded webhook delivery: the
+  shared HTTP client now has connect/total timeouts, concurrent deliveries are capped at
+  16 in-flight via a semaphore (an over-cap delivery is dropped with a warning instead of
+  spawned unboundedly), and a delivery failure is logged with the request URL stripped
+  (`reqwest::Error::without_url()`) since a webhook URL embeds its own secret.
 - ~~Config-editing API (`PUT /api/v1/config`/`/watchdog`/`/notifications`), the settings
   tabbar UI, and the PWA service worker~~ (September 2026) — the config file
   (`~/.pulpo/config.toml`) is now the sole source of truth; the web UI reads it but does
@@ -576,41 +626,63 @@ landed later the same month, independently of each other.
     value) now degrades to `None` when read instead of failing the whole session/
     intervention-event query — the same tolerance the `runtime` column already had for
     historical `docker` rows — so no migration was needed for the enum change.
-- ~~Web Push, `/api/v1/metrics`, and the durable webhook outbox~~ (September 2026) — one
-  notification channel now: `[[webhooks]]` delivered as a plain POST (no HMAC signing,
-  no `X-Pulpo-Signature`) with a fixed retry schedule (~1s/3s/9s) from an in-memory
-  queue, best-effort with no persistence across restarts. Removed: the VAPID keys and
-  push-subscription flow, the "Stop session" push action token, the `/api/v1/push/*`
-  endpoints, the Prometheus `/api/v1/metrics` endpoint and `[metrics]` config, the
-  SQLite `webhook_outbox` table, and the per-endpoint `secret` config key. Kept: the
-  canonical event envelope, the SSE `/api/v1/events` stream, and the in-app
-  toast/desktop-notification path. Removing `web-push` also dropped the vendored
-  `openssl`/`p256`/`hmac`/`sha2`/`hex` dependencies from the tree (`cargo tree -i
-  openssl` confirmed nothing else pulled it in).
 - ~~Watchdog memory-pressure intervention + Ready-session TTL auto-purge~~ (September
-  2026) — `watchdog/memory.rs` (`sysctl`/`vm_stat`/`/proc/meminfo` probing), the
+  2026, PR #113) — `watchdog/memory.rs` (`sysctl`/`vm_stat`/`/proc/meminfo` probing), the
   `MemoryPressure` intervention kind's only emitter (`watchdog::intervention::intervene`),
   and the `memory_threshold`/`breach_count`/`ready_ttl_secs` config keys. Memory pressure
   never actually fired for the unattended agent loop the watchdog targets — idle, budget,
-  and burn already cover a runaway session; Ready sessions now stay listed until `pulpo
-  cleanup`/purge instead of auto-purging after a TTL. `InterventionCode::MemoryPressure`
-  is kept on the wire (never emitted by new code) since historical
-  `sessions.intervention_code`/`intervention_events.code` rows may still carry it — same
-  treatment as the retired `Runtime::Docker` variant. The three retired config keys are
-  tolerated in old configs (parsed and ignored), same as
+  and burn already cover a runaway session (burn was itself removed two PRs later, #115);
+  Ready sessions now stay listed until `pulpo cleanup`/purge instead of auto-purging after
+  a TTL. `InterventionCode::MemoryPressure` is kept on the wire (never emitted by new
+  code) since historical `sessions.intervention_code`/`intervention_events.code` rows may
+  still carry it — same treatment as the retired `Runtime::Docker` variant. The three
+  retired config keys are tolerated in old configs (parsed and ignored), same as
   `watchdog.adopt_tmux`. `NodeInfo.memory_mb` (total system RAM, shown in the node info bar
   alongside hostname/OS/arch/CPU count) is unrelated general system info and was kept —
   its reader moved from `watchdog::memory` to `platform::total_memory_mb`.
-- ~~Windows build target~~ (September 2026, PR #99) — `x86_64-pc-windows-msvc` dropped
-  from `dist-workspace.toml` and every Windows-only code path deleted
-  (`WindowsStubBackend`, the CLI's Windows attach/open-command branches, the `windows` arm
-  of `platform::os_name()`). Sessions run in `tmux`, which native Windows doesn't have —
-  the Docker session runtime that once made a Windows binary useful was itself removed in
-  v0.1.0 (PR #53). WSL2 users already run the Linux binary and are unaffected. PR #99 also
-  dropped the vendored `openssl` dependency, believing it was Windows-only cruft — it
-  wasn't (`web-push`/`isahc` pull in OpenSSL on every platform, so release binaries would
-  have linked it dynamically instead of self-contained); PR #105 restored
-  `openssl = { features = ["vendored"] }` the same week.
+- ~~Web Push, `/api/v1/metrics`, and the durable webhook outbox~~ (September 2026, PR
+  #111) — one notification channel now: `[[webhooks]]` delivered as a plain POST (no HMAC
+  signing, no `X-Pulpo-Signature`) with a fixed retry schedule (~1s/3s/9s) from an
+  in-memory queue, best-effort with no persistence across restarts (delivery was further
+  bounded — timeouts + a 16-concurrent cap — in PR #118 above). Removed: the VAPID keys
+  and push-subscription flow, the "Stop session" push action token, the `/api/v1/push/*`
+  endpoints, the Prometheus `/api/v1/metrics` endpoint and `[metrics]` config, the
+  SQLite `webhook_outbox` table, and the per-endpoint `secret` config key. Kept: the
+  canonical event envelope, the SSE `/api/v1/events` stream, and the in-app toast
+  notification path (the dead desktop-notification code path alongside it — whose
+  permission was never requested anywhere, so it could never fire — was removed
+  separately in this same docs pass). Removing `web-push` also dropped the vendored
+  `openssl`/`p256`/`hmac`/`sha2`/`hex` dependencies from the tree (`cargo tree -i
+  openssl` confirmed nothing else pulled it in).
+- ~~Peer registry, peer health probing, Tailscale peer discovery, `--node` CLI routing~~
+  (September 2026, PR #104) — `[peers]` config, `PeerRegistry` + on-demand health prober,
+  `discovery::tailscale`, `GET/POST/DELETE /api/v1/peers`, `pulpo nodes`, `format_nodes`, the
+  web peer settings tab and fleet/peer widgets. Only ever produced a read-only list of other
+  nodes' sessions with no way to act on them — the cross-node story is the event-forwarding
+  backbone (`[[webhooks]]`), which this removal doesn't touch. The CLI's
+  connection flag was renamed `--node` → `--url` (still `host:port`/URL, no more resolving a
+  bare peer name against the registry). `node.discovery_interval_secs` and a top-level
+  `[peers]` section are tolerated in old configs (parsed, ignored, dropped on next save) —
+  same treatment as the retired `[docker]`/`[controller]`/`[inks]` sections. **Kept:**
+  `bind = "tailscale"` and the `tailscale serve` HTTPS transport — that's how the owner
+  reaches the daemon from a phone; it was never peer discovery.
+- ~~Secrets store~~ (September 2026, PR #103) — `pulpo secret` CLI, `GET/PUT/DELETE
+  /api/v1/secrets`, the `secrets` SQLite table, `--secret` on `pulpo spawn`/`pulpo
+  handoff`/`pulpo schedule add`, the web settings secrets tab, and the temp-file injection
+  on every session spawn. Every supported agent (Claude Code, Codex, pi, Gemini) reads its
+  own credentials from its own config, and the owner's database had zero secrets stored
+  after five months in production. An env var a session needs is exported in the shell
+  `pulpod` runs under, or prefixed onto the spawned command (`-- env KEY=value ...`).
+- ~~Watchdog auto-adoption of external tmux sessions (`adopt_tmux`)~~ (September 2026, PR
+  #102) — the watchdog used to discover tmux sessions pulpo didn't spawn and bring them
+  under management via a scrollback-only classification (`watchdog/adopt.rs`). Since
+  harness adapters (PR #97) a session spawned through `pulpo spawn` gets real hooks, a
+  preset session id, and resume; an adopted session got none of that, and adoption's
+  interaction with the tmux `$N` id space was implicated in the zombie `$4`–`$8` sessions
+  seen after a reboot. Sessions that matter should be started with `pulpo spawn`. A
+  leftover `watchdog.adopt_tmux` key from a config written before the removal is
+  tolerated: it still parses, logs a startup warning, and is dropped the next time the
+  config is saved.
 - ~~Containerized `pulpod` deployment~~ (September 2026, PR #101) — `docker/` (the
   `pulpo-base`/`pulpo-agents` Docker Hub images, compose files, entrypoints), the
   `.github/workflows/docker-images.yml` publish job, and `BindMode::Container` (`bind =
@@ -622,35 +694,16 @@ landed later the same month, independently of each other.
   (`runtime = "docker"` DB rows, the retired `[docker]` config section) are untouched by
   this one. Loading `bind = "container"` now fails at config load, naming the remaining
   modes (`local`/`tailscale`/`public`).
-- ~~Watchdog auto-adoption of external tmux sessions (`adopt_tmux`)~~ (September 2026, PR
-  #102) — the watchdog used to discover tmux sessions pulpo didn't spawn and bring them
-  under management via a scrollback-only classification (`watchdog/adopt.rs`). Since
-  harness adapters (PR #97) a session spawned through `pulpo spawn` gets real hooks, a
-  preset session id, and resume; an adopted session got none of that, and adoption's
-  interaction with the tmux `$N` id space was implicated in the zombie `$4`–`$8` sessions
-  seen after a reboot. Sessions that matter should be started with `pulpo spawn`. A
-  leftover `watchdog.adopt_tmux` key from a config written before the removal is
-  tolerated: it still parses, logs a startup warning, and is dropped the next time the
-  config is saved.
-- ~~Secrets store~~ (September 2026, PR #103) — `pulpo secret` CLI, `GET/PUT/DELETE
-  /api/v1/secrets`, the `secrets` SQLite table, `--secret` on `pulpo spawn`/`pulpo
-  handoff`/`pulpo schedule add`, the web settings secrets tab, and the temp-file injection
-  on every session spawn. Every supported agent (Claude Code, Codex, pi, Gemini) reads its
-  own credentials from its own config, and the owner's database had zero secrets stored
-  after five months in production. An env var a session needs is exported in the shell
-  `pulpod` runs under, or prefixed onto the spawned command (`-- env KEY=value ...`).
-- ~~Peer registry, peer health probing, Tailscale peer discovery, `--node` CLI routing~~
-  (September 2026, PR #104) — `[peers]` config, `PeerRegistry` + on-demand health prober,
-  `discovery::tailscale`, `GET/POST/DELETE /api/v1/peers`, `pulpo nodes`, `format_nodes`, the
-  web peer settings tab and fleet/peer widgets. Only ever produced a read-only list of other
-  nodes' sessions with no way to act on them — the cross-node story is the event-forwarding
-  backbone (`[[webhooks]]` + `/metrics`), which this removal doesn't touch. The CLI's
-  connection flag was renamed `--node` → `--url` (still `host:port`/URL, no more resolving a
-  bare peer name against the registry). `node.discovery_interval_secs` and a top-level
-  `[peers]` section are tolerated in old configs (parsed, ignored, dropped on next save) —
-  same treatment as the retired `[docker]`/`[controller]`/`[inks]` sections. **Kept:**
-  `bind = "tailscale"` and the `tailscale serve` HTTPS transport — that's how the owner
-  reaches the daemon from a phone; it was never peer discovery.
+- ~~Windows build target~~ (September 2026, PR #99) — `x86_64-pc-windows-msvc` dropped
+  from `dist-workspace.toml` and every Windows-only code path deleted
+  (`WindowsStubBackend`, the CLI's Windows attach/open-command branches, the `windows` arm
+  of `platform::os_name()`). Sessions run in `tmux`, which native Windows doesn't have —
+  the Docker session runtime that once made a Windows binary useful was itself removed in
+  v0.1.0 (PR #53). WSL2 users already run the Linux binary and are unaffected. PR #99 also
+  dropped the vendored `openssl` dependency, believing it was Windows-only cruft — it
+  wasn't (`web-push`/`isahc` pull in OpenSSL on every platform, so release binaries would
+  have linked it dynamically instead of self-contained); PR #105 restored
+  `openssl = { features = ["vendored"] }` the same week.
 - ~~Ocean gamification UI~~ (September 2026) — the canvas-based octopus/session visualization
   (`web/src/components/ocean/**`, `web/src/pages/ocean.tsx`) was frozen since 2026-06-12
   and is now extracted to a separate `pulpo-ocean` repo, with its git history intact.
@@ -677,12 +730,14 @@ landed later the same month, independently of each other.
 
 Pulpo is succeeding if:
 
-- You know exactly what every agent session cost — before you check any vendor dashboard
-- You see one gauge for all machines, accounts, and agents, from your phone
-- The watchdog stops a runaway session before it burns your weekly quota
-- A scheduled overnight run alerts you before it burns through a budget or the weekly
-  quota, instead of a surprise on the invoice
-- An agent blocked on a permission prompt pings your phone within seconds
+- You know exactly what every agent session cost, per session and rolled up per repo —
+  before you check any vendor dashboard
+- You can reach any node's dashboard from your phone over Tailscale, with zero setup
+- The watchdog stops a runaway session at its budget cap before it burns your weekly quota
+- A scheduled overnight run alerts you at 80% of its budget and stops at 100%, instead of
+  a surprise on the invoice
+- An agent blocked on a permission prompt shows `needs input (<reason>)` and fires a
+  webhook you can route to your phone
 - Sessions survive reboots; you wake up to PRs and an exact cost number, not crashed
   terminals
 - Your code and your usage data never leave your infrastructure
@@ -691,11 +746,13 @@ Pulpo is succeeding if:
 
 - Meter and breaker box, not orchestrator: measure, budget, enforce — don't wrap agent UX
   or chase cross-node placement (parked, see Phase C)
-- Command-agnostic: runs any agent; structured usage readers where available
-  (Claude, Codex), output-scraping fallback everywhere else
+- Command-agnostic: runs any agent; exact usage from structured readers where available
+  (Claude Code, Codex, pi) — no output-scraping fallback, an unsupported agent just shows
+  no usage (see "Removed")
 - Sovereign by architecture: self-hosted, no vendor relay, local-only account data
 - Single-node excellence first; multi-machine reach is direct (`pulpo --url <host:port>` over
   Tailscale) plus shared webhooks for visibility, not a control plane
-- Mobile-first PWA: the phone is the primary gauge
+- Mobile-reachable, not mobile-native: a bookmarked responsive web page over Tailscale is
+  the primary gauge, no install step (the PWA path was tried and removed, see "Removed")
 - Explicit failure semantics: every intervention is observable and auditable
 - Zero-config local start, progressive operational depth

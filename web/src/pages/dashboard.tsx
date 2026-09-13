@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Trash2, CheckSquare } from 'lucide-react';
 import { useSSE } from '@/hooks/use-sse';
 import { useConnection } from '@/hooks/use-connection';
-import { detectStatusChanges, showDesktopNotification } from '@/lib/notifications';
+import { detectStatusChanges } from '@/lib/notifications';
 
 import { toast } from 'sonner';
 import type { NodeInfo, Session } from '@/api/types';
@@ -78,7 +78,6 @@ export function DashboardPage() {
         const label =
           change.to === 'ready' ? 'ready' : change.to === 'stopped' ? 'stopped' : 'resumed';
         toast(`${change.sessionName} ${label}`);
-        showDesktopNotification(change);
       }
     }
     previousSessionsRef.current = sessions;

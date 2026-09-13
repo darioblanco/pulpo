@@ -43,7 +43,9 @@ Bind modes:
 
 ## Watchdog
 
-The watchdog monitors sessions for idle detection and the budget/burn breakers:
+The watchdog monitors sessions for idle detection and enforces the budget breaker (there is
+no separate burn-rate ceiling — a burn-velocity governor was built and then removed; see
+[Config Reference](/reference/config) "Retired keys"):
 
 ```toml
 [watchdog]
@@ -117,9 +119,12 @@ For `local` and `tailscale` modes, auth is skipped.
 There is no `[controller]` section — controller/node relay mode was removed. Every `pulpod`
 is standalone. There is also no `[peers]` section — manual peer configuration and Tailscale
 peer discovery were removed for the same reason. A leftover `[controller]`, `[peers]`, or
-`discovery_interval_secs` key from an older config still loads (it's parsed but ignored) and
-is dropped the next time the config is saved — the same treatment already given the retired
-`[docker]` runtime section.
+`discovery_interval_secs` key from an older config still loads (it's parsed and silently
+ignored, with no startup warning) — the same silent treatment already given the retired
+`[docker]` runtime section. Remove it by hand when you're ready; `pulpod` only rewrites the
+file on its own once, the very first time it runs with no auth token yet, so a retired key
+otherwise stays in the file until you edit it out (see [Config Reference](/reference/config)
+"Retired keys").
 
 To reach another machine, point the CLI or web UI at it directly (`pulpo --url <host:port>`,
 a saved web UI connection, or SSH + `pulpo attach`) — see

@@ -95,9 +95,11 @@ This is the most important behavior in the system. See [Session Lifecycle](/oper
 
 The watchdog is the supervision loop. It is responsible for:
 
-- detecting waiting-for-input and idle sessions
+- detecting waiting-for-input and idle sessions (checked first on every tick, since it's
+  what refreshes each session's cost metadata from the agent's own transcript)
 - detecting exit markers
-- enforcing per-session budget caps and the burn-velocity ceiling
+- enforcing per-session/per-schedule budget caps (80% alert, 100% stop), checked right
+  after idle detection so it always judges this tick's own fresh cost numbers
 - recording interventions
 
 For a harness with its own lifecycle hooks (Claude Code, Codex, pi), a **harness

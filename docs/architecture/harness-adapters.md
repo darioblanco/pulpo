@@ -447,7 +447,7 @@ signals overrides it: **Codex has no error/rate-limit hook**, so
 lifecycle events (`SessionStart`/`Stop`/`PermissionRequest`/...) are flowing.
 
 Everything else keeps running unconditionally regardless of ownership — git telemetry,
-PR/branch detection, the budget/burn breakers, and `idle_timeout` (alert/kill after N
+PR/branch detection, the budget breaker, and `idle_timeout` (alert/kill after N
 seconds idle) all still apply to harness-managed sessions exactly as they do to any
 other. Sessions without events (a generic/unrecognized command, or a harness whose
 hook installation silently failed) keep today's heuristics unchanged for every signal,

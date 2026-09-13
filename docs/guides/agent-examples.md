@@ -158,7 +158,7 @@ output = 0.0
 ```
 
 For any agent Pulpo already reads exact usage for, this makes local-model sessions show an
-honest `$0.00` in `pulpo usage`, sitting next to whatever your paid-pool sessions actually
+honest `$0.00` in `pulpo usage`, sitting next to whatever your other paid sessions actually
 cost — instead of a blank "cost withheld" gap.
 
 ## Common Patterns

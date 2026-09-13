@@ -74,7 +74,7 @@ run "printf '%s\n' '[[webhooks]]' 'name = \"ops\"' 'url = \"https://collector.ex
 pause
 
 bold $'\n5) The gauge on your phone'
-dim "single binary serves an installable PWA; reach it over your tailnet with bind = tailscale"
+dim "single binary serves the web dashboard; reach it over your tailnet with bind = tailscale"
 run "pulpo ui"
 pause
 

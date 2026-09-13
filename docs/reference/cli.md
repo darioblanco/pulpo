@@ -23,8 +23,9 @@ pulpo usage --scan --by-worktree          Like --scan, but keep each git worktre
 pulpo usage --scan --since <DAYS>         Like --scan, but limited to the last N days
 pulpo usage [--scan] --json               Output raw JSON instead of the formatted report
 pulpo schedule <SUBCOMMAND>               Manage scheduled sessions (alias: sched;
-                                          cron-expression syntax, run by pulpod's own 60s
-                                          scheduler loop — not crontab)
+                                          cron-expression syntax, run by pulpod's own
+                                          scheduler loop — not crontab; tick interval is
+                                          `[scheduler] tick_secs`, default 60s)
 pulpo worktree list                       List worktree sessions (alias: wt ls)
 pulpo ui                                  Open web UI in browser
 pulpo <PATH>                              Quick spawn: spawns a session in that directory
@@ -111,7 +112,7 @@ There is no per-schedule node flag — a schedule always fires on the node that 
 create it on another machine, use the global `--url` flag before the subcommand (see
 [Global Options](#global-options)): `pulpo --url gpu-box schedule add ...`.
 
-**Scheduler behavior:** Schedules run in the daemon's machine timezone. The scheduler loop ticks every 60 seconds, so cron expressions more granular than 1 minute won't fire more often. Each schedule fire creates a fresh session with a timestamped name (`<schedule>-YYYYMMDD-HHMM`).
+**Scheduler behavior:** Schedules run in the daemon's machine timezone. The scheduler loop ticks every `[scheduler] tick_secs` seconds (default 60, minimum 1 — see [Config Reference](/reference/config)), so cron expressions more granular than the tick interval won't fire more often. Each schedule fire creates a fresh session with a timestamped name (`<schedule>-YYYYMMDD-HHMM`).
 
 **Worktree schedules:** When `--worktree` is set, each scheduled run creates a fresh git worktree, giving the agent an isolated copy of the repository. A plain `pulpo stop` on that run's session leaves the worktree on disk; it's reclaimed on the next `pulpo stop --purge`, `pulpo cleanup`, or watchdog intervention. See [Worktrees](/guides/worktrees) for the full cleanup model.
 

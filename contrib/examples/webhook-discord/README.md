@@ -5,9 +5,9 @@ universal webhook. It receives Pulpo's canonical event envelope, de-duplicates r
 filters by severity, and posts a message to a Discord webhook.
 
 Pulpo deliberately has no built-in Discord notifier — instead it forwards every event
-(session lifecycle, interventions, usage/cost alerts, fleet health) to any HTTP endpoint
-you configure. This example is the pattern for consuming that: swap the Discord-posting bit
-for Slack, PagerDuty, ntfy, an internal collector, or whatever you run.
+(session lifecycle, interventions, usage/cost alerts) to any HTTP endpoint you configure.
+This example is the pattern for consuming that: swap the Discord-posting bit for Slack,
+PagerDuty, ntfy, an internal collector, or whatever you run.
 
 ## The message Pulpo sends
 
@@ -21,7 +21,9 @@ POST <your endpoint>
 {
   "schema_version": 1,
   "event_id": "<uuid>",
-  "type": "lifecycle",          // lifecycle | intervention | usage_alert | fleet
+  "type": "lifecycle",          // lifecycle | intervention | usage_alert
+                                 // ("fleet" is reserved from an earlier multi-node
+                                 // design; nothing emits it today)
   "subtype": "idle",
   "severity": "warn",           // info | warn | critical
   "occurred_at": "2026-06-13T12:00:00Z",
@@ -31,7 +33,8 @@ POST <your endpoint>
     "git_branch": "...", "pr_url": null,
     "cost_usd": 2.5, "total_tokens": 1234000
   },
-  "payload": { }                // type-specific extras (budget_usd, quota_used_percent, ...)
+  "payload": { }                // type-specific extras: usage_alert carries cost_usd/budget_usd
+                                 // when known; intervention carries intervention_reason
 }
 ```
 

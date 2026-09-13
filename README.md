@@ -5,9 +5,11 @@
 
 <p align="center">
   <strong>The self-hosted meter and breaker box for coding agents.</strong><br />
-  See — and control — what every coding agent costs, across all your machines and accounts.
-  Run Claude Code, Codex, Gemini CLI, Aider, or any terminal agent on infrastructure you own,
-  with exact usage metering, budget enforcement, and monitoring that forwards to your own stack.
+  Run Claude Code, Codex, pi, or any other terminal agent as a durable, resumable session on
+  a machine you own. Pulpo learns each session's real state from the agent's own hooks
+  instead of scraping terminal output, meters exactly what it costs from the agent's own
+  session files, and caps spend before you blow a limit — single node, sovereign, with one
+  webhook out to whatever you already run.
 </p>
 
 <p align="center">
@@ -51,7 +53,7 @@ Download binaries from [GitHub Releases](https://github.com/darioblanco/pulpo/re
 # Run an agent as a durable session on infrastructure you control
 pulpo spawn my-api --workdir ~/repos/my-api -- claude -p "Fix failing auth tests"
 
-# See what every agent is costing — across accounts, machines, and agents
+# See what every agent on this machine is costing — across accounts and agents
 pulpo usage
 
 # Put a hard budget on a run: alert at 80%, stop at 100%
@@ -92,13 +94,25 @@ table), enforces budgets, and forwards alerts and events to whatever observabili
 
 ## What Pulpo Does
 
-**Meter — exactly, everywhere.** Pulpo parses the session files Claude Code, Codex, and pi
-write themselves, so **token counts are exact** (not scraped) and costed from your rate
-table — attributed per session and rolled up **per repo** ("work in ~/repos/api cost €11"),
-across every machine and agent you run. (Codex reports exact subscription quota rather than
-a per-token cost.) There is no output-scraping fallback: a harness without a structured
-reader simply shows no usage. Unknown models still report tokens; `[rates.<model>]` config
-prices a new or repriced model with no code change.
+### Learns state from hooks, not scraping
+
+For Claude Code, Codex, and pi — harnesses with their own lifecycle hooks — Pulpo wires
+those hooks at spawn time so session status comes from the harness itself: a real
+`needs input (<reason>)` label instead of a scrollback guess, a real exit code when the
+harness ends the process, and `pulpo resume` replays the harness's own conversation
+(`claude --resume`, `codex resume`, pi's `--session-id`) rather than starting fresh —
+surviving a reboot with context intact. Any other command (Gemini CLI, Aider, a shell
+script, anything that runs in a terminal) still works, falling back to the same
+scrollback-pattern watchdog Pulpo always had for idle/error/completion detection.
+
+### Meters exactly, rolls up per repo
+
+Pulpo parses the session files Claude Code, Codex, and pi write themselves, so **token
+counts are exact** (not scraped) and costed from your rate table — attributed per session
+and rolled up **per repo** ("work in ~/repos/api cost €11"). (Codex reports exact
+subscription quota rather than a per-token cost.) There is no output-scraping fallback: a
+harness without a structured reader simply shows no usage. Unknown models still report
+tokens; `[rates.<model>]` config prices a new or repriced model with no code change.
 
 ```bash
 pulpo usage --scan              # zero-setup: scan ALL local Claude + Codex + pi history →
@@ -109,37 +123,37 @@ pulpo usage                     # exact per-session usage for pulpo-managed sess
 `pulpo usage --scan` is the fastest way in: it reads the agents' *own* session files and
 shows what every agent has cost you, **unified across Claude, Codex, and pi, broken down
 by agent, model, and repo** — the unified view a single-vendor `/usage` page can't give,
-plus the budgets and enforcement a read-only tool can't add. (pi sessions carry the exact dollar cost the agent recorded itself.) Nothing has to run through Pulpo first. It's **worktree-aware**: a repo's git
-worktrees and subdirectories roll up to the origin repo, so per-repo spend means *this repo*
-and not *this checkout* (add `--by-worktree` to keep each checkout separate). Narrow to a
-window with `--since <days>`, or pipe the raw numbers somewhere with `--json`.
+plus the budgets and enforcement a read-only tool can't add. (pi sessions carry the exact
+dollar cost the agent recorded itself.) Nothing has to run through Pulpo first. It's
+**worktree-aware**: a repo's git worktrees and subdirectories roll up to the origin repo,
+so per-repo spend means *this repo* and not *this checkout* (add `--by-worktree` to keep
+each checkout separate). Narrow to a window with `--since <days>`, or pipe the raw numbers
+somewhere with `--json`.
 
-**Control — pull the plug before the wall.** Per-session and per-schedule cost caps that
-alert at 80% and hard-stop at 100%, recorded as an intervention you can audit.
+### Caps spend, stops at the limit
+
+Per-session and per-schedule cost caps that alert at 80% and hard-stop at 100%, recorded
+as an intervention you can audit.
 
 ```bash
 pulpo spawn fix --budget-cost 10 -- claude -p "..."   # hard $10 cap, recorded as an intervention
 ```
 
-**Monitor — forward to your own stack.** Every lifecycle change, intervention, and usage/cost
-alert becomes a canonical event delivered as a plain POST to any number of `[[webhooks]]`
-(in-memory queue, a fixed retry schedule, then logged and dropped — no durable outbox).
-Pulpo is the event plane; your Grafana / Datadog / SIEM / Slack is the dashboard, reached
-through your own webhook receiver — see the
-[reference webhook consumer](contrib/examples/webhook-discord).
+### One webhook per event
 
-**Run — durable and unattended.** Each agent runs in a `tmux` session with explicit lifecycle
-states that survive reboots (drop into the live terminal anytime with `pulpo attach`), a
-watchdog for idle / error / completion detection, and per-session git worktrees so
-parallel agents on one repo never collide. For Claude Code, Codex, and pi — harnesses with
-their own lifecycle hooks — Pulpo wires those hooks at spawn time so status comes from the
-harness itself: a real `needs input (<reason>)` label instead of a scrollback guess, and
-`pulpo resume` replays the harness's own conversation (`claude --resume`, `codex resume`,
-pi's `--session-id`) rather than starting fresh — surviving a reboot with context intact.
-Any other command falls back to the same scrollback-pattern watchdog Pulpo always had.
+Every lifecycle change, intervention, and usage/cost alert becomes a canonical event
+delivered as a plain POST to any number of `[[webhooks]]` (in-memory queue, a fixed retry
+schedule, then logged and dropped — no durable outbox). Pulpo doesn't ship dashboards;
+your Grafana / Datadog / SIEM / Slack is the dashboard, reached through your own webhook
+receiver — see the [reference webhook consumer](contrib/examples/webhook-discord).
 
-That model works for Claude Code, Codex, Gemini CLI, Aider, shell scripts, and any other
-terminal command — Pulpo is not tied to one vendor or one model.
+### Durable, resumable, and isolated
+
+Each agent runs in a `tmux` session with explicit lifecycle states that survive reboots
+(drop into the live terminal anytime with `pulpo attach`), per-session git worktrees so
+parallel agents on one repo never collide, and cron-based schedules (`pulpo schedule`) for
+unattended recurring runs — all with the same budgets and worktree support as a one-off
+session.
 
 ## Sovereign & Self-Hosted
 
@@ -160,7 +174,7 @@ no ports exposed to the public internet).
 Developers and teams who:
 
 - run coding agents on servers or always-on machines and want to know what they cost
-- run more than one agent, account, or machine and want **one** gauge for all of them
+- run more than one agent or account on a machine and want **one** exact gauge for all of them
 - need budgets and alerts that actually intervene, not a post-hoc invoice
 - require self-hosting, private-network access, and vendor independence
 
@@ -206,8 +220,8 @@ The daemon owns the truth; every surface reflects or operates on the same sessio
 
 |  | Pulpo | vendor `/usage` | ccusage |
 |---|---|---|---|
-| Cross-account, cross-machine cost | Yes | One account / machine | Single machine |
-| Cross-agent (Claude + Codex + …) | Yes | One vendor | Yes (many CLIs) |
+| Cross-account cost on one machine | Yes | One account | Yes |
+| Cross-agent (Claude + Codex + pi) | Yes | One vendor | Yes (many CLIs) |
 | Live exact per-session & per-repo cost | Yes | No | Post-hoc |
 | Budget enforcement (auto-stop) | Yes | No | No |
 | Alerts before the wall | Yes | No | No |
@@ -215,9 +229,9 @@ The daemon owns the truth; every surface reflects or operates on the same sessio
 | Self-hosted, data stays local | Yes | n/a | Yes |
 | Runs the sessions | Yes | n/a | No (reads logs) |
 
-ccusage proves the demand for the gauge; it's read-only and single-machine because it doesn't
-run your sessions. Vendor dashboards show one account after the fact. Pulpo is live,
-cross-everything, and — because it runs the sessions — it can also pull the plug.
+ccusage proves the demand for the gauge; it's read-only, and it doesn't run your sessions.
+Vendor dashboards show one account after the fact. Pulpo is live and exact, and — because
+it runs the sessions — it can also pull the plug.
 
 <h3 align="center">
   <a href="https://pulpo.darioblanco.com/getting-started/quickstart">Quickstart</a>

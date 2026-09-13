@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Scheduled sessions — run agents on a cron schedule.
 #
-# Schedules are DB-backed rows in pulpod's own SQLite store, fired by a 60s
-# scheduler loop inside the daemon — no crontab entries are written anywhere.
+# Schedules are DB-backed rows in pulpod's own SQLite store, fired by a scheduler
+# loop inside the daemon (tick interval: `[scheduler] tick_secs`, default 60s) —
+# no crontab entries are written anywhere.
 # Useful for nightly code reviews, periodic security scans, etc.
 set -euo pipefail
 
