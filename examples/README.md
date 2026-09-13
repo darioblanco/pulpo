@@ -21,9 +21,9 @@ Claude Code Remote Control), and hosted agent clouds.
 - **Exact usage metering** — structured readers for Claude Code, Codex, and pi; cross-account/cross-agent rollups; `[rates.<model>]` for new or repriced models
 - **Cost control** — per-session/schedule budget caps (alert 80%, stop 100%) plus a burn-velocity governor
 - **Hook-driven supervision** — Claude Code, Codex, and pi report real lifecycle events (`needs input (<reason>)`, real resume) instead of scrollback guessing; any other command falls back to watchdog heuristics (idle, memory, error, completion)
-- **Monitoring backbone** — signed events to any number of webhooks (durable outbox, HMAC) plus an opt-in Prometheus `/metrics` endpoint
+- **Monitoring backbone** — events forwarded to any number of `[[webhooks]]` (plain POST, fixed retry schedule, in-memory)
 - **Command-agnostic** — runs Claude Code, Codex, Gemini CLI, Aider, shell scripts, anything
-- **4 control surfaces** — CLI, web UI (PWA with push notifications), REST API, SSE
+- **4 control surfaces** — CLI, web UI (installable PWA), REST API, SSE
 
 ## Layout
 

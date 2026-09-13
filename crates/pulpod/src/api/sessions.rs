@@ -216,7 +216,7 @@ pub async fn list_interventions(
 ///
 /// Posted by `pulpo hook <harness>`. Resolves the session's adapter, applies the
 /// resulting state transition, and emits the existing SSE `session` event (which
-/// already carries notifications through the existing webhook/push paths — no new
+/// already carries notifications through the existing webhook path — no new
 /// channel is added here).
 pub async fn harness_events(
     State(state): State<Arc<super::AppState>>,
