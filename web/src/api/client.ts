@@ -1,6 +1,6 @@
 import type {
   Session,
-  UsageProjectionResponse,
+  UsageSessionsResponse,
   NodeInfo,
   ListSessionsParams,
   InterventionEvent,
@@ -94,8 +94,8 @@ export async function getSessions(params?: ListSessionsParams): Promise<Session[
   return res.json();
 }
 
-export async function getUsageProjection(): Promise<UsageProjectionResponse> {
-  const res = await authFetch(`${resolveBaseUrl()}/usage/projection`);
+export async function getUsageSessions(): Promise<UsageSessionsResponse> {
+  const res = await authFetch(`${resolveBaseUrl()}/usage/sessions`);
   return res.json();
 }
 

@@ -228,15 +228,6 @@ export function SessionCard({
               {session.metadata.branch}
             </span>
           )}
-          {session.metadata?.auth_plan && (
-            <span
-              data-testid="auth-plan-badge"
-              title={session.metadata.auth_email || undefined}
-              className="shrink-0 rounded bg-[#1a1a2e] px-1.5 py-0.5 font-mono text-[0.55rem] text-[#8b8bcd]"
-            >
-              {session.metadata.auth_plan}
-            </span>
-          )}
           {session.metadata?.rate_limit && (
             <span
               data-testid="rate-limit-badge"
