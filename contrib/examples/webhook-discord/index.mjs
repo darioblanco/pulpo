@@ -1,38 +1,28 @@
 // Example Pulpo webhook consumer → Discord.
 //
-// Reference for building your own integration on Pulpo's universal webhook: verify the
-// signature, de-duplicate retries, filter by severity, and forward to any destination
-// (here, a Discord webhook). Zero dependencies — Node 20+ built-ins only.
+// Reference for building your own integration on Pulpo's universal webhook: de-duplicate
+// retries, filter by severity, and forward to any destination (here, a Discord webhook).
+// Zero dependencies — Node 20+ built-ins only.
 //
 // Run:  node --env-file=.env index.mjs
 
 import { createServer } from 'node:http';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 
 const PORT = Number(process.env.PORT ?? 8099);
-const SECRET = process.env.PULPO_WEBHOOK_SECRET;
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 const MIN_SEVERITY = process.env.MIN_SEVERITY ?? 'info';
 
-if (!SECRET || !DISCORD_WEBHOOK_URL) {
-  console.error('Set PULPO_WEBHOOK_SECRET and DISCORD_WEBHOOK_URL (see README).');
+if (!DISCORD_WEBHOOK_URL) {
+  console.error('Set DISCORD_WEBHOOK_URL (see README).');
   process.exit(1);
 }
 
 const SEVERITY_RANK = { info: 0, warn: 1, critical: 2 };
 const SEVERITY_EMOJI = { info: 'ℹ️', warn: '⚠️', critical: '🔴' };
 
-// Idempotency: retries reuse X-Pulpo-Event-Id. In production use a durable store with TTL.
+// Idempotency: a retry of the same delivery reuses X-Pulpo-Event-Id. In production use a
+// durable store with TTL.
 const seen = new Set();
-
-/** Verify `X-Pulpo-Signature: sha256=<hex>` against the raw body (constant-time). */
-function verifySignature(rawBody, header) {
-  if (!header) return false;
-  const expected = `sha256=${createHmac('sha256', SECRET).update(rawBody).digest('hex')}`;
-  const a = Buffer.from(header);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
 
 /** Turn the canonical envelope into a one-line Discord message. */
 function formatMessage(event) {
@@ -78,13 +68,7 @@ const server = createServer(async (req, res) => {
   }
   const raw = await readBody(req);
 
-  // 1) Verify signature — reject anything we can't authenticate.
-  if (!verifySignature(raw, req.headers['x-pulpo-signature'])) {
-    res.writeHead(401).end('bad signature');
-    return;
-  }
-
-  // 2) De-dupe retries on the event id.
+  // 1) De-dupe retries on the event id.
   const eventId = req.headers['x-pulpo-event-id'];
   if (eventId && seen.has(eventId)) {
     res.writeHead(200).end('duplicate');
@@ -100,14 +84,14 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // 3) Severity filter (Pulpo also filters server-side; this is belt-and-suspenders).
+  // 2) Severity filter (Pulpo also filters server-side; this is belt-and-suspenders).
   const rank = SEVERITY_RANK[event.severity] ?? 0;
   if (rank < (SEVERITY_RANK[MIN_SEVERITY] ?? 0)) {
     res.writeHead(200).end('below threshold');
     return;
   }
 
-  // 4) Acknowledge fast, forward async (don't hold Pulpo's delivery open on Discord).
+  // 3) Acknowledge fast, forward async (don't hold Pulpo's delivery open on Discord).
   res.writeHead(200).end('ok');
   postToDiscord(formatMessage(event)).catch((e) => console.error(e));
 });

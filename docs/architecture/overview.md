@@ -182,9 +182,9 @@ Every `pulpod` is standalone. Multi-machine operation is direct, not brokered:
   saved connection in the web UI, or plain SSH + `pulpo attach`. Sessions and schedules are
   local to the node that runs them — nothing is proxied through a third machine.
 - **Aggregated visibility**, when you want one view across machines, comes from the
-  event-forwarding backbone: every node forwards signed events to your own collector via
-  `[[webhooks]]` and exposes `/metrics` + `/usage`, so you aggregate in Grafana/Datadog/a SIEM
-  (or a single designated node) — see "Monitoring & event topology" below.
+  event-forwarding backbone: every node forwards events to your own collector via
+  `[[webhooks]]` and exposes `/usage`, so you aggregate in Grafana/Datadog/a SIEM (or a
+  single designated node) — see "Monitoring & event topology" below.
 
 Important limits:
 
@@ -197,14 +197,15 @@ Important limits:
 ### Monitoring & event topology (local-first invariant)
 
 Event forwarding is **local-first, not orchestrator-routed**. Every node runs its own event
-dispatcher and durable webhook outbox, so the events and alerts it emits are delivered to
-*its own* configured `[[webhooks]]` (and web-push / SSE) independent of any other machine.
-There is no central hop events must pass through.
+dispatcher, so the events and alerts it emits are delivered to *its own* configured
+`[[webhooks]]` (and SSE) independent of any other machine. There is no central hop events
+must pass through.
 
 Consequences, by design:
 
 - A node's own webhooks keep firing regardless of what any other node is doing — the
-  dispatcher and the durable outbox are node-local.
+  dispatcher is node-local. Delivery is in-memory and best-effort (plain POST, a fixed
+  retry schedule, then drop) — there is no durable outbox, so nothing survives a restart.
 - To get a cross-machine view, point every node's `[[webhooks]]` at the same collector (your
   own aggregator, Grafana/Datadog/a SIEM, or a single designated node). That aggregation
   point is something you own; Pulpo does not run one for you.

@@ -152,7 +152,6 @@ pub struct WebhookEndpointConfigResponse {
     /// Minimum severity floor (`info` < `warn` < `critical`). Absent ⇒ no floor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_severity: Option<String>,
-    pub has_secret: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -170,7 +169,6 @@ pub struct WebhookEndpointUpdateRequest {
     /// Minimum severity floor (`info` < `warn` < `critical`). Absent ⇒ no floor.
     #[serde(default)]
     pub min_severity: Option<String>,
-    pub secret: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -215,49 +213,6 @@ pub struct UpdateWatchdogRequest {
 #[derive(Debug, Default, Deserialize)]
 pub struct UpdateNotificationsRequest {
     pub webhooks: Option<Vec<WebhookEndpointUpdateRequest>>,
-}
-
-// -- Web Push types --
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct VapidPublicKeyResponse {
-    pub public_key: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PushSubscriptionRequest {
-    pub endpoint: String,
-    pub keys: PushSubscriptionKeys,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PushSubscriptionKeys {
-    pub p256dh: String,
-    pub auth: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PushUnsubscribeRequest {
-    pub endpoint: String,
-}
-
-/// `POST /api/v1/push/action` body.
-///
-/// The short-lived, HMAC-signed capability token carried in a `usage_alert`
-/// push payload's `action.token` field. The endpoint is deliberately
-/// unauthenticated (no bearer token): the token itself is the capability,
-/// since a service worker cannot read the app's auth token.
-#[derive(Debug, Deserialize)]
-pub struct PushActionRequest {
-    pub token: String,
-}
-
-/// `POST /api/v1/push/action` success response — enough for the client to show
-/// a confirmation notification without a follow-up lookup.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PushActionResponse {
-    pub session_id: String,
-    pub session_name: String,
 }
 
 use crate::session::InterventionCode;
@@ -1019,127 +974,6 @@ mod tests {
         assert!(debug.contains("active"));
     }
 
-    // -- Web Push type tests --
-
-    #[test]
-    fn test_vapid_public_key_response_serialize() {
-        let resp = VapidPublicKeyResponse {
-            public_key: "BPXYZ123".into(),
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        assert!(json.contains("BPXYZ123"));
-    }
-
-    #[test]
-    fn test_vapid_public_key_response_deserialize() {
-        let json = r#"{"public_key":"BPXYZ123"}"#;
-        let resp: VapidPublicKeyResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.public_key, "BPXYZ123");
-    }
-
-    #[test]
-    fn test_vapid_public_key_response_debug() {
-        let resp = VapidPublicKeyResponse {
-            public_key: "key".into(),
-        };
-        let debug = format!("{resp:?}");
-        assert!(debug.contains("VapidPublicKeyResponse"));
-    }
-
-    #[test]
-    fn test_push_subscription_request_deserialize() {
-        let json = r#"{"endpoint":"https://push.example.com","keys":{"p256dh":"p256dh-val","auth":"auth-val"}}"#;
-        let req: PushSubscriptionRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.endpoint, "https://push.example.com");
-        assert_eq!(req.keys.p256dh, "p256dh-val");
-        assert_eq!(req.keys.auth, "auth-val");
-    }
-
-    #[test]
-    fn test_push_subscription_request_missing_fields() {
-        let json = r#"{"endpoint":"https://push.example.com"}"#;
-        let result = serde_json::from_str::<PushSubscriptionRequest>(json);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_push_subscription_request_debug() {
-        let req = PushSubscriptionRequest {
-            endpoint: "https://push.example.com".into(),
-            keys: PushSubscriptionKeys {
-                p256dh: "p".into(),
-                auth: "a".into(),
-            },
-        };
-        let debug = format!("{req:?}");
-        assert!(debug.contains("PushSubscriptionRequest"));
-    }
-
-    #[test]
-    fn test_push_subscription_keys_debug() {
-        let keys = PushSubscriptionKeys {
-            p256dh: "p".into(),
-            auth: "a".into(),
-        };
-        let debug = format!("{keys:?}");
-        assert!(debug.contains("PushSubscriptionKeys"));
-    }
-
-    #[test]
-    fn test_push_unsubscribe_request_deserialize() {
-        let json = r#"{"endpoint":"https://push.example.com"}"#;
-        let req: PushUnsubscribeRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.endpoint, "https://push.example.com");
-    }
-
-    #[test]
-    fn test_push_unsubscribe_request_missing_endpoint() {
-        let json = r"{}";
-        let result = serde_json::from_str::<PushUnsubscribeRequest>(json);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_push_unsubscribe_request_debug() {
-        let req = PushUnsubscribeRequest {
-            endpoint: "ep".into(),
-        };
-        let debug = format!("{req:?}");
-        assert!(debug.contains("PushUnsubscribeRequest"));
-    }
-
-    #[test]
-    fn test_push_action_request_deserialize() {
-        let json = r#"{"token":"abc.def"}"#;
-        let req: PushActionRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(req.token, "abc.def");
-    }
-
-    #[test]
-    fn test_push_action_request_missing_token() {
-        let result = serde_json::from_str::<PushActionRequest>("{}");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_push_action_request_debug() {
-        let req = PushActionRequest { token: "t".into() };
-        let debug = format!("{req:?}");
-        assert!(debug.contains("PushActionRequest"));
-    }
-
-    #[test]
-    fn test_push_action_response_serialize_roundtrip() {
-        let resp = PushActionResponse {
-            session_id: "sid".into(),
-            session_name: "fix-auth".into(),
-        };
-        let json = serde_json::to_string(&resp).unwrap();
-        let back: PushActionResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.session_id, "sid");
-        assert_eq!(back.session_name, "fix-auth");
-    }
-
     #[test]
     fn test_auth_config_response_serialize() {
         let resp = AuthConfigResponse {};
@@ -1235,7 +1069,7 @@ mod tests {
 
     #[test]
     fn test_update_notifications_request_deserialize() {
-        let json = r#"{"webhooks":[{"name":"hook","url":"http://hook","events":["killed"],"secret":null}]}"#;
+        let json = r#"{"webhooks":[{"name":"hook","url":"http://hook","events":["killed"]}]}"#;
         let req: UpdateNotificationsRequest = serde_json::from_str(json).unwrap();
         let webhooks = req.webhooks.unwrap();
         assert_eq!(webhooks.len(), 1);
@@ -1246,10 +1080,11 @@ mod tests {
 
     #[test]
     fn test_webhook_endpoint_update_request() {
-        let json = r#"{"name":"test","url":"http://hook","events":["killed"],"secret":"s"}"#;
+        let json = r#"{"name":"test","url":"http://hook","events":["killed"]}"#;
         let req: WebhookEndpointUpdateRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.name, "test");
-        assert_eq!(req.secret, Some("s".into()));
+        assert_eq!(req.url, "http://hook");
+        assert_eq!(req.events, vec!["killed"]);
     }
 
     #[test]
@@ -1259,7 +1094,6 @@ mod tests {
             url: "http://hook".into(),
             events: vec!["killed".into()],
             min_severity: Some("warn".into()),
-            has_secret: false,
         };
         #[allow(clippy::redundant_clone)]
         let cloned = resp.clone();

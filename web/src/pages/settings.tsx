@@ -49,7 +49,7 @@ export function SettingsPage() {
       setWatchdogIdleTimeout(config.watchdog.idle_timeout_secs);
       setWatchdogIdleAction(config.watchdog.idle_action);
 
-      setWebhooks((config.notifications.webhooks ?? []).map((w) => ({ ...w, secret: '' })));
+      setWebhooks(config.notifications.webhooks ?? []);
 
       setError(null);
     } catch {
@@ -83,7 +83,6 @@ export function SettingsPage() {
             name: w.name,
             url: w.url,
             events: w.events,
-            ...(w.secret ? { secret: w.secret } : {}),
           })),
       };
 

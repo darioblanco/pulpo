@@ -40,7 +40,6 @@ fn config_to_response(config: &crate::config::Config) -> ConfigResponse {
                     url: w.url.clone(),
                     events: w.events.clone(),
                     min_severity: w.min_severity.clone(),
-                    has_secret: w.secret.is_some(),
                 })
                 .collect(),
         },
@@ -109,7 +108,7 @@ fn apply_update(config: &mut crate::config::Config, req: UpdateConfigRequest) ->
                 url: w.url,
                 events: w.events,
                 min_severity: w.min_severity,
-                secret: w.secret,
+                secret: None,
             })
             .collect();
         config.notifications.webhooks.clear();
@@ -513,10 +512,8 @@ mod tests {
         assert_eq!(w0.name, "ci-hook");
         assert_eq!(w0.url, "https://example.com/hook");
         assert_eq!(w0.events, vec!["ready", "killed"]);
-        assert!(w0.has_secret);
         let w1 = &resp.notifications.webhooks[1];
         assert_eq!(w1.name, "logs-hook");
-        assert!(!w1.has_secret);
         assert!(w1.events.is_empty());
     }
 
@@ -530,7 +527,6 @@ mod tests {
                 url: "https://example.com/webhook".into(),
                 events: vec!["active".into()],
                 min_severity: None,
-                secret: Some("key".into()),
             }]),
             ..Default::default()
         };
@@ -541,7 +537,6 @@ mod tests {
             resp.config.notifications.webhooks[0].url,
             "https://example.com/webhook"
         );
-        assert!(resp.config.notifications.webhooks[0].has_secret);
     }
 
     #[tokio::test]
@@ -556,14 +551,12 @@ mod tests {
                     url: "https://a.com".into(),
                     events: vec![],
                     min_severity: None,
-                    secret: None,
                 },
                 WebhookEndpointUpdateRequest {
                     name: "hook-2".into(),
                     url: "https://b.com".into(),
                     events: vec![],
                     min_severity: None,
-                    secret: None,
                 },
             ]),
             ..Default::default()
@@ -578,7 +571,6 @@ mod tests {
                 url: "https://c.com".into(),
                 events: vec!["killed".into()],
                 min_severity: None,
-                secret: None,
             }]),
             ..Default::default()
         };
@@ -597,7 +589,6 @@ mod tests {
                 url: "https://a.com".into(),
                 events: vec![],
                 min_severity: None,
-                secret: None,
             }]),
             ..Default::default()
         };

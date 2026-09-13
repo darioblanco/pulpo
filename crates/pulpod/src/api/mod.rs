@@ -4,10 +4,8 @@ mod embed;
 pub mod error;
 pub mod events;
 pub mod health;
-pub mod metrics;
 pub mod node;
 pub mod notifications;
-pub mod push;
 
 pub mod routes;
 pub mod schedules;

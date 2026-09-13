@@ -96,14 +96,14 @@ unchanged — see git history of this file for the full sovereignty section.)
 | Watchdog | The enforcement engine (budgets, idle, memory, thrash) |
 | Scheduler | Quota-aware dispatch |
 | Worktree spawning (`--worktree`) + cleanup | Isolation primitive: scheduled/parallel sessions on one repo can't trample each other, agent-agnostically; watchdog sweeps litter |
-| Event-forwarding backbone (`[[webhooks]]` + `/metrics`) | **The cross-node story**: forward signed events to your own collector; aggregate in Grafana/Datadog/SIEM. Replaces the removed bespoke controller for fleet visibility |
+| Event-forwarding backbone (`[[webhooks]]`) | **The cross-node story**: forward events to your own collector; aggregate in Grafana/Datadog/SIEM. Replaces the removed bespoke controller for fleet visibility |
 | Tailscale transport (`bind = "tailscale"`) | Secure zero-setup remote access to a node's UI/API over the tailnet; standalone, no fleet required |
 | Controller / cross-node control plane | **REMOVED (July 2026)** — was frozen (2026-06-14), then deleted; not kept as dormant code (see Phase C) |
 | Peer registry, peer health probing, Tailscale peer discovery, `--node` CLI routing | **REMOVED (September 2026)** — a read-only list of other nodes' sessions with no way to act on them; `bind = "tailscale"` and `tailscale serve` stay as the remote-access transport, reached with `pulpo --url <host:port>` |
 | Inks (`[inks.<name>]` preset registry) | **REMOVED (July 2026)** — command set directly per session/schedule; budget moved onto schedules (`--budget-cost`); a shared blueprint added indirection without a corresponding need |
 | Secrets store | **REMOVED (2026-09)** — every supported agent reads its own credentials from its own config; an env var a session needs is exported in the shell or wrapped into the command |
 | PWA web UI | The gauge; mobile-first; single-node-first with an optional event-fed fleet pane |
-| CLI, webhook/web-push notifications | Supporting surface |
+| CLI, webhook notifications | Supporting surface |
 
 **Cut — orchestration we're losing at, plus dead weight (Track R):**
 
@@ -488,6 +488,17 @@ Revisit only on real demand:
 Newest first. Every September 2026 entry landed the same week as harness adapters (PR
 #97) and is independent of it, except `adopt_tmux` (see below).
 
+- ~~Web Push, `/api/v1/metrics`, and the durable webhook outbox~~ (September 2026) — one
+  notification channel now: `[[webhooks]]` delivered as a plain POST (no HMAC signing,
+  no `X-Pulpo-Signature`) with a fixed retry schedule (~1s/3s/9s) from an in-memory
+  queue, best-effort with no persistence across restarts. Removed: the VAPID keys and
+  push-subscription flow, the "Stop session" push action token, the `/api/v1/push/*`
+  endpoints, the Prometheus `/api/v1/metrics` endpoint and `[metrics]` config, the
+  SQLite `webhook_outbox` table, and the per-endpoint `secret` config key. Kept: the
+  canonical event envelope, the SSE `/api/v1/events` stream, and the in-app
+  toast/desktop-notification path. Removing `web-push` also dropped the vendored
+  `openssl`/`p256`/`hmac`/`sha2`/`hex` dependencies from the tree (`cargo tree -i
+  openssl` confirmed nothing else pulled it in).
 - ~~Windows build target~~ (September 2026, PR #99) — `x86_64-pc-windows-msvc` dropped
   from `dist-workspace.toml` and every Windows-only code path deleted
   (`WindowsStubBackend`, the CLI's Windows attach/open-command branches, the `windows` arm

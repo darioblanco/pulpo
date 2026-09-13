@@ -88,7 +88,7 @@ surprise you in the morning.
 Pulpo gives you:
 
 - schedules and budgets tied to real session objects
-- signed events forwarded to your own webhooks/Grafana/Datadog, plus a `/metrics` endpoint
+- events forwarded to your own webhooks, so you can feed Grafana/Datadog/a SIEM
 - a burn-velocity governor that catches a runaway before a flat budget would trip
 - repeatable operational workflows without writing a platform from scratch
 

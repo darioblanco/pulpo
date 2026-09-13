@@ -21,7 +21,10 @@ All endpoints require auth when `bind = "public"` (pass `Authorization: Bearer <
 | PUT | `/api/v1/watchdog` | Update watchdog config (live reload) |
 | GET | `/api/v1/notifications` | Notification config |
 | PUT | `/api/v1/notifications` | Update notification config |
-| GET | `/api/v1/metrics` | Prometheus text exposition (opt-in — `404` unless `[metrics] enabled = true`) |
+
+`[[webhooks]]` is the only notification channel — see
+[Config Reference § webhooks](/reference/config#webhooks) for the config shape and
+delivery model (plain POST, fixed retry schedule, best-effort).
 
 ## Usage
 
@@ -147,22 +150,6 @@ This endpoint isn't meant to be called directly — it's what `pulpo hook <harne
 
 Like sessions, schedules accept a `budget_cost_usd` field — applied to every session the
 schedule fires (watchdog alerts at 80%, stops at 100%).
-
-## Push Notifications
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/v1/push/vapid-key` | Get the public VAPID key |
-| POST | `/api/v1/push/subscribe` | Register a Web Push subscription |
-| POST | `/api/v1/push/unsubscribe` | Remove a Web Push subscription |
-| POST | `/api/v1/push/action` | Act on a push notification's action token (currently just `stop`) — **unauthenticated**, see below |
-
-Every subscription receives `lifecycle`, `usage_alert`, and `intervention` push
-notifications; `usage_alert` payloads additionally carry a short-lived, HMAC-signed
-action token that lets the "Stop session" button on the notification stop the session
-without the app's bearer token (`POST /api/v1/push/action` is exempt from
-`bind = "public"` auth for this reason — the token itself is the capability). Full
-payload schema, token format, and status codes: [Push Notifications reference](/reference/push).
 
 ## Events (SSE)
 

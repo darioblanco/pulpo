@@ -55,7 +55,7 @@ export default defineUserConfig({
         '/guides/recovery',
         '/guides/worktrees',
       ],
-      '/reference/': ['/reference/cli', '/reference/config', '/reference/api', '/reference/push'],
+      '/reference/': ['/reference/cli', '/reference/config', '/reference/api'],
       '/operations/': ['/operations/session-lifecycle', '/operations/release-and-distribution'],
     },
   }),

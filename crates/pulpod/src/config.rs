@@ -54,8 +54,13 @@ pub struct Config {
     /// would otherwise reject them). It is ignored and dropped on save.
     #[serde(default, skip_serializing)]
     pub inks: Option<toml::Value>,
-    #[serde(default)]
-    pub metrics: MetricsConfig,
+    /// Retired `[metrics]` table (the Prometheus `/api/v1/metrics` endpoint was
+    /// removed in favor of a single plain-webhook notification channel). This
+    /// field only exists so configs written before the removal still load
+    /// (`deny_unknown_fields` would otherwise reject them); `load()` logs a
+    /// startup warning when it's present, and it is dropped on the next save.
+    #[serde(default, skip_serializing)]
+    pub metrics: Option<toml::Value>,
     /// Per-model cost rates, keyed by a model-ID substring (`[rates.<model>]`).
     ///
     /// Overrides — or adds — entries in the built-in rate table so a new or repriced
@@ -83,19 +88,6 @@ pub struct RateConfig {
     pub cache_write_5m: f64,
     #[serde(default)]
     pub cache_write_1h: f64,
-}
-
-/// Prometheus `/metrics` endpoint configuration.
-///
-/// Off by default. When enabled, `GET /api/v1/metrics` serves pull-based,
-/// stateless Prometheus text — every gauge is computed from the current store
-/// state on each scrape; nothing is persisted.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct MetricsConfig {
-    /// When `true`, the `/metrics` endpoint is served. Defaults to `false`.
-    #[serde(default)]
-    pub enabled: bool,
 }
 
 /// Per-plan quota configuration.
@@ -130,29 +122,14 @@ pub struct NotificationsConfig {
     /// promotion keep working unchanged.
     #[serde(default)]
     pub webhooks: Vec<WebhookEndpointConfig>,
-    /// VAPID keys for Web Push notifications.
-    #[serde(default)]
-    pub vapid: VapidConfig,
-}
-
-/// VAPID key configuration for Web Push notifications.
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct VapidConfig {
-    /// Base64url-encoded P-256 private key (32 bytes).
-    #[serde(default)]
-    pub private_key: String,
-    /// Base64url-encoded P-256 uncompressed public key (65 bytes).
-    #[serde(default)]
-    pub public_key: String,
-    /// Base64url-encoded 256-bit HMAC secret for signing push action tokens
-    /// (the "Stop session" capability embedded in `usage_alert` push payloads).
-    /// Stored alongside the VAPID keys and generated the same way — a fresh
-    /// server-side secret on first run, auto-backfilled for configs that
-    /// already have VAPID keys but predate this field. Never exposed over the
-    /// API (unlike `public_key`, which `GET /api/v1/push/vapid-key` serves).
-    #[serde(default)]
-    pub action_secret: String,
+    /// Retired `[notifications.vapid]` table (Web Push, VAPID keys, and the
+    /// push action-token secret were removed — webhooks are now the only
+    /// notification channel). This field only exists so configs written
+    /// before the removal still load (`deny_unknown_fields` would otherwise
+    /// reject them); `load()` logs a startup warning when it's present, and
+    /// it is dropped on the next save.
+    #[serde(default, skip_serializing)]
+    pub vapid: Option<toml::Value>,
 }
 
 /// Generic webhook endpoint configuration.
@@ -164,8 +141,8 @@ pub struct VapidConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WebhookEndpointConfig {
-    /// Human-readable name for this endpoint. Used to resolve outbox rows back
-    /// to their endpoint, so it must be unique across configured webhooks.
+    /// Human-readable name for this endpoint. Must be unique across configured
+    /// webhooks (used in logs to identify which endpoint a delivery targets).
     pub name: String,
     /// URL to POST event payloads to.
     pub url: String,
@@ -181,9 +158,12 @@ pub struct WebhookEndpointConfig {
     /// Events below this floor are dropped. Absent ⇒ no floor (all severities).
     #[serde(default)]
     pub min_severity: Option<String>,
-    /// Optional HMAC-SHA256 signing secret. When set, a `X-Pulpo-Signature`
-    /// header is included with each request.
-    #[serde(default)]
+    /// Retired: per-endpoint HMAC-SHA256 request signing (`X-Pulpo-Signature`)
+    /// was removed along with the durable outbox — delivery is now a plain
+    /// POST with a fixed retry schedule. This field only exists so configs
+    /// written before the removal still load; `load()` logs a startup warning
+    /// when any endpoint still has it set, and it is dropped on the next save.
+    #[serde(default, skip_serializing)]
     pub secret: Option<String>,
 }
 
@@ -262,42 +242,6 @@ pub fn ensure_auth_token(config: &mut Config) -> bool {
     } else {
         false
     }
-}
-
-/// If VAPID keys are empty, generate a new P-256 key pair. Returns `true` if new keys were generated.
-///
-/// Also backfills `action_secret` (the push action-token HMAC signing key)
-/// independently of the VAPID key pair, so an existing config that already has
-/// VAPID keys — but predates the push action-token feature — still gets a
-/// secret generated on the next startup. Returns `true` if *either* value was
-/// generated.
-pub fn ensure_vapid_keys(config: &mut Config) -> bool {
-    let keys_generated = if config.notifications.vapid.private_key.is_empty()
-        && config.notifications.vapid.public_key.is_empty()
-    {
-        let secret_key = p256::SecretKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
-        let private_bytes = secret_key.to_bytes();
-        let public_bytes = secret_key.public_key().to_sec1_bytes();
-
-        config.notifications.vapid.private_key =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(private_bytes);
-        config.notifications.vapid.public_key =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(public_bytes);
-        true
-    } else {
-        false
-    };
-
-    let secret_generated = if config.notifications.vapid.action_secret.is_empty() {
-        let secret_bytes: [u8; 32] = rand::random();
-        config.notifications.vapid.action_secret =
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(secret_bytes);
-        true
-    } else {
-        false
-    };
-
-    keys_generated || secret_generated
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -583,6 +527,31 @@ pub fn load(path: &str) -> Result<Config> {
                 "config: node.tag is retired (Tailscale peer discovery, its only reader, was \
                  removed) — ignoring it; it will be dropped from the config file the next \
                  time it is saved"
+            );
+        }
+        if config.metrics.is_some() {
+            warn!(
+                "config: [metrics] is retired (the Prometheus /api/v1/metrics endpoint was \
+                 removed in favor of a single plain-webhook notification channel) — ignoring \
+                 it; it will be dropped from the config file the next time it is saved"
+            );
+        }
+        if config.notifications.vapid.is_some() {
+            warn!(
+                "config: [notifications.vapid] is retired (Web Push was removed — webhooks \
+                 are now the only notification channel) — ignoring it; it will be dropped \
+                 from the config file the next time it is saved"
+            );
+        }
+        if config
+            .webhook_endpoints()
+            .iter()
+            .any(|w| w.secret.is_some())
+        {
+            warn!(
+                "config: webhook `secret` is retired (HMAC request signing was removed along \
+                 with the durable outbox) — ignoring it; it will be dropped from the config \
+                 file the next time it is saved"
             );
         }
         Ok(config)
@@ -1819,7 +1788,8 @@ data_dir = "/tmp/test"
         assert_eq!(parsed.name, "ci");
         assert_eq!(parsed.url, "https://ci.example.com/hook");
         assert_eq!(parsed.events, vec!["ready"]);
-        assert_eq!(parsed.secret, Some("s3cret".into()));
+        // Retired: `secret` is never serialized, even when set.
+        assert!(parsed.secret.is_none());
     }
 
     #[test]
@@ -1858,7 +1828,8 @@ url = "https://example.com"
         assert_eq!(wh.name, "test-hook");
         assert_eq!(wh.url, "https://example.com/hook");
         assert_eq!(wh.events, vec!["killed"]);
-        assert_eq!(wh.secret, Some("key".into()));
+        // Retired: `secret` is dropped on save, so it doesn't survive the roundtrip.
+        assert!(wh.secret.is_none());
     }
 
     // -- Node bind config tests --
@@ -2048,196 +2019,47 @@ name = "test"
         assert_eq!(loaded.node.bind, pulpo_common::auth::BindMode::Tailscale);
     }
 
-    // -- VAPID key generation tests --
+    // -- Retired `[notifications.vapid]` (Web Push) tests --
 
     #[test]
-    fn test_vapid_config_default() {
-        let vapid = VapidConfig::default();
-        assert!(vapid.private_key.is_empty());
-        assert!(vapid.public_key.is_empty());
-        assert!(vapid.action_secret.is_empty());
-    }
-
-    #[test]
-    fn test_vapid_config_debug_clone() {
-        let vapid = VapidConfig {
-            private_key: "priv".into(),
-            public_key: "pub".into(),
-            action_secret: "secret".into(),
-        };
-        let cloned = vapid.clone();
-        assert_eq!(format!("{vapid:?}"), format!("{cloned:?}"));
-    }
-
-    #[test]
-    fn test_ensure_vapid_keys_generates_when_empty() {
-        let mut config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        assert!(config.notifications.vapid.private_key.is_empty());
-        assert!(config.notifications.vapid.public_key.is_empty());
-
-        assert!(config.notifications.vapid.action_secret.is_empty());
-
-        let generated = ensure_vapid_keys(&mut config);
-        assert!(generated);
-        assert!(!config.notifications.vapid.private_key.is_empty());
-        assert!(!config.notifications.vapid.public_key.is_empty());
-        assert!(!config.notifications.vapid.action_secret.is_empty());
-    }
-
-    #[test]
-    fn test_ensure_vapid_keys_correct_lengths() {
-        let mut config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        ensure_vapid_keys(&mut config);
-
-        // Private key: 32 bytes → 43 chars base64url (no padding)
-        assert_eq!(config.notifications.vapid.private_key.len(), 43);
-        // Public key: 65 bytes → 87 chars base64url (no padding)
-        assert_eq!(config.notifications.vapid.public_key.len(), 87);
-        // Action secret: 32 bytes → 43 chars base64url (no padding)
-        assert_eq!(config.notifications.vapid.action_secret.len(), 43);
-    }
-
-    #[test]
-    fn test_ensure_vapid_keys_are_base64url() {
-        let mut config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        ensure_vapid_keys(&mut config);
-
-        for key in [
-            &config.notifications.vapid.private_key,
-            &config.notifications.vapid.public_key,
-            &config.notifications.vapid.action_secret,
-        ] {
-            assert!(
-                key.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
-                "Key should be base64url: {key}"
-            );
-        }
-    }
-
-    #[test]
-    fn test_ensure_vapid_keys_preserves_existing() {
-        let mut config = Config {
-            node: NodeConfig {
-                name: "test".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            notifications: NotificationsConfig {
-                vapid: VapidConfig {
-                    private_key: "existing-private".into(),
-                    public_key: "existing-public".into(),
-                    action_secret: "existing-secret".into(),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let generated = ensure_vapid_keys(&mut config);
-        assert!(!generated);
-        assert_eq!(config.notifications.vapid.private_key, "existing-private");
-        assert_eq!(config.notifications.vapid.public_key, "existing-public");
-        assert_eq!(config.notifications.vapid.action_secret, "existing-secret");
-    }
-
-    #[test]
-    fn test_ensure_vapid_keys_backfills_action_secret_only() {
-        // A config saved before the push action-token feature existed: VAPID keys
-        // are already present, but action_secret predates the field and is empty.
-        // The keys must survive untouched while the secret gets backfilled.
-        let mut config = Config {
-            notifications: NotificationsConfig {
-                vapid: VapidConfig {
-                    private_key: "existing-private".into(),
-                    public_key: "existing-public".into(),
-                    action_secret: String::new(),
-                },
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let generated = ensure_vapid_keys(&mut config);
-        assert!(generated);
-        assert_eq!(config.notifications.vapid.private_key, "existing-private");
-        assert_eq!(config.notifications.vapid.public_key, "existing-public");
-        assert!(!config.notifications.vapid.action_secret.is_empty());
-    }
-
-    #[test]
-    fn test_ensure_vapid_keys_uniqueness() {
-        let mut config1 = Config {
-            node: NodeConfig::default(),
-            ..Default::default()
-        };
-        let mut config2 = config1.clone();
-        ensure_vapid_keys(&mut config1);
-        ensure_vapid_keys(&mut config2);
-        assert_ne!(
-            config1.notifications.vapid.action_secret,
-            config2.notifications.vapid.action_secret
-        );
-        assert_ne!(
-            config1.notifications.vapid.private_key,
-            config2.notifications.vapid.private_key
-        );
-    }
-
-    #[test]
-    fn test_vapid_keys_save_and_load_roundtrip() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("vapid-rt.toml");
-        let mut config = Config {
-            node: NodeConfig {
-                name: "vapid-rt".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            ..Default::default()
-        };
-        ensure_vapid_keys(&mut config);
-        let private_key = config.notifications.vapid.private_key.clone();
-        let public_key = config.notifications.vapid.public_key.clone();
-        let action_secret = config.notifications.vapid.action_secret.clone();
-
-        save(&config, &path).unwrap();
-        let loaded = load(path.to_str().unwrap()).unwrap();
-        assert_eq!(loaded.notifications.vapid.private_key, private_key);
-        assert_eq!(loaded.notifications.vapid.public_key, public_key);
-        assert_eq!(loaded.notifications.vapid.action_secret, action_secret);
-    }
-
-    #[test]
-    fn test_notifications_config_default_has_empty_vapid() {
+    fn test_notifications_config_default_has_no_vapid() {
         let config = NotificationsConfig::default();
-        assert!(config.vapid.private_key.is_empty());
-        assert!(config.vapid.public_key.is_empty());
-        assert!(config.vapid.action_secret.is_empty());
+        assert!(config.vapid.is_none());
+    }
+
+    /// A config written before Web Push was removed may still carry a
+    /// `[notifications.vapid]` table. It must keep loading (`deny_unknown_fields`
+    /// would otherwise reject `NotificationsConfig`) and be dropped on save —
+    /// same tolerate-and-drop treatment as `[docker]`/`[controller]`/`[inks]`.
+    #[test]
+    fn test_load_config_tolerates_legacy_vapid_section() {
+        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            tmpfile,
+            r#"
+[node]
+name = "test"
+
+[notifications.vapid]
+private_key = "existing-priv"
+public_key = "existing-pub"
+action_secret = "existing-secret"
+"#
+        )
+        .unwrap();
+
+        let config = load(tmpfile.path().to_str().unwrap()).unwrap();
+        assert!(config.notifications.vapid.is_some());
+
+        let path = tmpfile.path();
+        save(&config, path).unwrap();
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(
+            !content.contains("vapid"),
+            "retired [notifications.vapid] is dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.notifications.vapid.is_none());
     }
 
     #[test]
@@ -2489,24 +2311,10 @@ events = ["ready", "killed"]
         assert!(loaded.notifications.discord.is_none());
     }
 
-    // -- MetricsConfig tests --
+    // -- Retired `[metrics]` (Prometheus endpoint) tests --
 
     #[test]
-    fn test_metrics_config_default_disabled() {
-        assert!(!MetricsConfig::default().enabled);
-    }
-
-    #[test]
-    fn test_metrics_config_clone_debug() {
-        let mc = MetricsConfig { enabled: true };
-        #[allow(clippy::redundant_clone)]
-        let cloned = mc.clone();
-        assert!(cloned.enabled);
-        assert!(format!("{mc:?}").contains("MetricsConfig"));
-    }
-
-    #[test]
-    fn test_load_config_without_metrics_section_defaults_off() {
+    fn test_load_config_without_metrics_section_is_none() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
@@ -2519,17 +2327,21 @@ port = 7433
         .unwrap();
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(!config.metrics.enabled);
+        assert!(config.metrics.is_none());
     }
 
+    /// A config written before the Prometheus endpoint was removed may still
+    /// carry a `[metrics]` table. It must keep loading (`deny_unknown_fields`
+    /// would otherwise reject `Config`) and be dropped on save — same
+    /// tolerate-and-drop treatment as `[docker]`/`[controller]`/`[inks]`.
     #[test]
-    fn test_load_config_with_metrics_enabled() {
+    fn test_load_config_tolerates_legacy_metrics_section() {
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         write!(
             tmpfile,
             r#"
 [node]
-name = "with-metrics"
+name = "test"
 
 [metrics]
 enabled = true
@@ -2538,47 +2350,17 @@ enabled = true
         .unwrap();
 
         let config = load(tmpfile.path().to_str().unwrap()).unwrap();
-        assert!(config.metrics.enabled);
-    }
+        assert!(config.metrics.is_some());
 
-    #[test]
-    fn test_load_config_rejects_unknown_metrics_field() {
-        let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
-        write!(
-            tmpfile,
-            r#"
-[node]
-name = "bad-metrics"
-
-[metrics]
-enabled = true
-bogus = 1
-"#
-        )
-        .unwrap();
-
-        let result = load(tmpfile.path().to_str().unwrap());
-        assert!(result.is_err());
-        assert!(format!("{:#}", result.unwrap_err()).contains("bogus"));
-    }
-
-    #[test]
-    fn test_save_and_load_roundtrip_with_metrics() {
-        let tmpdir = tempfile::tempdir().unwrap();
-        let path = tmpdir.path().join("metrics-rt.toml");
-        let config = Config {
-            node: NodeConfig {
-                name: "metrics-rt".into(),
-                port: 7433,
-                data_dir: "/tmp".into(),
-                ..NodeConfig::default()
-            },
-            metrics: MetricsConfig { enabled: true },
-            ..Default::default()
-        };
-        save(&config, &path).unwrap();
-        let loaded = load(path.to_str().unwrap()).unwrap();
-        assert!(loaded.metrics.enabled);
+        let path = tmpfile.path();
+        save(&config, path).unwrap();
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(
+            !content.contains("[metrics]"),
+            "retired [metrics] is dropped on save: {content}"
+        );
+        let reloaded = load(path.to_str().unwrap()).unwrap();
+        assert!(reloaded.metrics.is_none());
     }
 
     // --- glob_match ---

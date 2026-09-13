@@ -1,16 +1,10 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
 import { FormField } from './form-field';
-import { usePushNotifications } from '@/hooks/use-push-notifications';
 import type { WebhookEndpointConfigResponse } from '@/api/types';
 
-export interface WebhookFormData extends WebhookEndpointConfigResponse {
-  secret: string;
-}
+export type WebhookFormData = WebhookEndpointConfigResponse;
 
 interface NotificationsSettingsProps {
   webhooks: WebhookFormData[];
@@ -18,20 +12,11 @@ interface NotificationsSettingsProps {
 }
 
 export function NotificationsSettings({ webhooks, onWebhooksChange }: NotificationsSettingsProps) {
-  const { isSupported, isEnabled, isLoading, permission, enable, disable } = usePushNotifications();
-
   function addWebhook() {
-    onWebhooksChange([
-      ...webhooks,
-      { name: '', url: '', events: [], has_secret: false, secret: '' },
-    ]);
+    onWebhooksChange([...webhooks, { name: '', url: '', events: [] }]);
   }
 
-  function updateWebhook(
-    index: number,
-    field: 'name' | 'url' | 'events' | 'secret',
-    value: string,
-  ) {
+  function updateWebhook(index: number, field: 'name' | 'url' | 'events', value: string) {
     const updated = [...webhooks];
     if (field === 'events') {
       updated[index] = {
@@ -60,34 +45,9 @@ export function NotificationsSettings({ webhooks, onWebhooksChange }: Notificati
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="mb-4 grid gap-2" data-testid="push-section">
-          <div className="flex items-center gap-3">
-            <Switch
-              id="push-notifications"
-              data-testid="push-toggle"
-              checked={isEnabled}
-              disabled={!isSupported || isLoading || permission === 'denied'}
-              onCheckedChange={(checked) => (checked ? enable() : disable())}
-            />
-            <Label htmlFor="push-notifications">
-              {!isSupported
-                ? 'Not supported'
-                : permission === 'denied'
-                  ? 'Blocked'
-                  : isEnabled
-                    ? 'Enabled'
-                    : 'Disabled'}
-            </Label>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Receive notifications when sessions finish, even when the app is closed.
-          </p>
-        </div>
-        <Separator className="mb-4" />
         <div className="grid gap-4" data-testid="webhooks-content">
           <p className="text-xs text-muted-foreground">
-            Generic HTTP webhooks that POST session events as JSON. Add HMAC signing for
-            verification.
+            Generic HTTP webhooks that POST session events as JSON.
           </p>
           {webhooks.map((wh, i) => (
             <div key={i} className="rounded-lg border p-4" data-testid={`webhook-${i}`}>
@@ -131,23 +91,6 @@ export function NotificationsSettings({ webhooks, onWebhooksChange }: Notificati
                     value={wh.events.join(', ')}
                     onChange={(e) => updateWebhook(i, 'events', e.target.value)}
                     placeholder="ready, stopped, lost"
-                  />
-                </FormField>
-                <FormField
-                  label="Secret"
-                  htmlFor={`webhook-secret-${i}`}
-                  description={
-                    wh.has_secret && !wh.secret
-                      ? 'A secret is configured. Leave empty to keep it, or enter a new one to replace it.'
-                      : 'Optional HMAC-SHA256 signing key. Sent as X-Pulpo-Signature header.'
-                  }
-                >
-                  <Input
-                    id={`webhook-secret-${i}`}
-                    type="password"
-                    value={wh.secret}
-                    onChange={(e) => updateWebhook(i, 'secret', e.target.value)}
-                    placeholder={wh.has_secret ? '••••••••' : 'Optional signing secret'}
                   />
                 </FormField>
               </div>

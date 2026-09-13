@@ -1,11 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import type {
-  Session,
-  CreateSessionRequest,
-  ConfigResponse,
-  VapidPublicKeyResponse,
-  PushSubscriptionRequest,
-} from './types';
+import type { Session, CreateSessionRequest, ConfigResponse } from './types';
 
 describe('types', () => {
   it('Session type has command and description fields', () => {
@@ -83,25 +77,5 @@ describe('types', () => {
     expect(config.node.name).toBe('test');
     // Verify guards is not a property
     expect('guards' in config).toBe(false);
-  });
-
-  it('VapidPublicKeyResponse has public_key field', () => {
-    const resp: VapidPublicKeyResponse = {
-      public_key: 'BNhJo...',
-    };
-    expect(resp.public_key).toBe('BNhJo...');
-  });
-
-  it('PushSubscriptionRequest has endpoint and keys', () => {
-    const req: PushSubscriptionRequest = {
-      endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
-      keys: {
-        p256dh: 'key-data',
-        auth: 'auth-data',
-      },
-    };
-    expect(req.endpoint).toBe('https://fcm.googleapis.com/fcm/send/abc');
-    expect(req.keys.p256dh).toBe('key-data');
-    expect(req.keys.auth).toBe('auth-data');
   });
 });

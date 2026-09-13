@@ -283,9 +283,7 @@ pulpo/
 │   │   │   ├── node.rs           # Node info endpoint
 │   │   │   ├── schedules.rs      # Schedule CRUD + run-history handlers
 │   │   │   ├── notifications.rs  # Notification config endpoint
-│   │   │   ├── push.rs           # Web Push subscribe/unsubscribe/action endpoints
 │   │   │   ├── usage.rs          # Usage projection + scan endpoints
-│   │   │   ├── metrics.rs        # Prometheus /metrics endpoint
 │   │   │   ├── watchdog.rs       # Watchdog config endpoint
 │   │   │   ├── ws.rs             # WebSocket terminal streaming
 │   │   │   ├── events.rs         # SSE event stream endpoint
@@ -308,15 +306,10 @@ pulpo/
 │   │   │   ├── schedules.rs      # Schedule CRUD queries
 │   │   │   ├── session_metadata.rs      # Session metadata key/value queries
 │   │   │   ├── session_interventions.rs # Intervention event queries
-│   │   │   ├── outbox.rs         # Webhook outbox queries
-│   │   │   ├── push.rs           # Push subscription queries
 │   │   │   └── tests.rs          # Integration tests exercising the store API end-to-end
-│   │   ├── notifications/        # Push + webhook notifications
+│   │   ├── notifications/        # Webhook notifications
 │   │   │   ├── mod.rs            # Module declaration + dispatcher
-│   │   │   ├── webhook.rs        # Signed webhook delivery (lifecycle/intervention/usage_alert/fleet)
-│   │   │   ├── web_push.rs       # Web Push notifications (VAPID)
-│   │   │   ├── outbox.rs         # Retry/backoff queue for webhook delivery
-│   │   │   └── action_token.rs   # Signed action tokens (push "Stop" action)
+│   │   │   └── webhook.rs        # Plain webhook delivery (in-memory queue, fixed retry schedule)
 │   │   ├── watchdog/             # Resource monitoring
 │   │   │   ├── mod.rs            # Watchdog loop (memory + idle detection)
 │   │   │   ├── idle.rs           # Idle detection + status transitions
@@ -363,7 +356,7 @@ pulpo/
     │   ├── index.css             # Tailwind imports + dark theme CSS vars
     │   ├── main.tsx              # Entry point
     │   ├── App.tsx                # React Router setup
-    │   ├── sw.ts                  # Service worker (push notifications)
+    │   ├── sw.ts                  # Service worker (offline asset precaching + SPA fallback)
     │   ├── api/
     │   │   ├── types.ts          # Shared TypeScript interfaces
     │   │   ├── client.ts         # API fetch functions
@@ -371,14 +364,12 @@ pulpo/
     │   ├── hooks/
     │   │   ├── use-connection.tsx      # Connection context (baseUrl, token, saved)
     │   │   ├── use-sse.tsx             # SSE event stream + session state
-    │   │   ├── use-push-notifications.tsx # Push subscribe/unsubscribe
     │   │   ├── use-schedules-filter.ts # Schedule list filtering
     │   │   └── use-mobile.ts           # Mobile breakpoint detection
     │   ├── lib/
     │   │   ├── utils.ts          # cn() helper, formatDuration, formatSessionStatus
     │   │   ├── notifications.ts  # Desktop notification helpers
-    │   │   ├── cron.ts           # Cron expression parsing/formatting
-    │   │   └── push-sw.ts        # Service-worker-side push payload handling
+    │   │   └── cron.ts           # Cron expression parsing/formatting
     │   ├── components/
     │   │   ├── ui/               # shadcn generated components
     │   │   ├── layout/           # Sidebar, header, app shell, disconnected banner

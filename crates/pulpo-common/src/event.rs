@@ -125,7 +125,7 @@ pub struct EventSessionRef {
 /// One shape for *every* externally-forwarded event — session lifecycle changes,
 /// interventions, usage alerts, and fleet events — serialized to the locked
 /// webhook message contract (see ROADMAP "Webhook message contract"). Sinks
-/// (webhooks, web-push, …) consume this rather than the internal [`PulpoEvent`].
+/// (currently just webhooks) consume this rather than the internal [`PulpoEvent`].
 ///
 /// `event_id` is a fresh UUID per event and doubles as the idempotency key for
 /// at-least-once delivery (receivers dedupe on it).

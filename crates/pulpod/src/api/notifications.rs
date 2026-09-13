@@ -19,7 +19,6 @@ fn to_response(config: &crate::config::Config) -> NotificationsConfigResponse {
                 url: w.url.clone(),
                 events: w.events.clone(),
                 min_severity: w.min_severity.clone(),
-                has_secret: w.secret.is_some(),
             })
             .collect(),
     }
@@ -51,7 +50,7 @@ pub async fn update_notifications(
                 url: w.url,
                 events: w.events,
                 min_severity: w.min_severity,
-                secret: w.secret,
+                secret: None,
             })
             .collect();
         config.notifications.webhooks.clear();
@@ -93,23 +92,19 @@ mod tests {
                     url: "https://example.com/hook".into(),
                     events: vec!["ready".into()],
                     min_severity: None,
-                    secret: Some("s3cret".into()),
                 },
                 WebhookEndpointUpdateRequest {
                     name: "logs-hook".into(),
                     url: "https://logs.example.com".into(),
                     events: vec![],
                     min_severity: None,
-                    secret: None,
                 },
             ]),
         };
         let Json(resp) = update_notifications(State(state), Json(req)).await.unwrap();
         assert_eq!(resp.webhooks.len(), 2);
         assert_eq!(resp.webhooks[0].name, "ci-hook");
-        assert!(resp.webhooks[0].has_secret);
         assert_eq!(resp.webhooks[1].name, "logs-hook");
-        assert!(!resp.webhooks[1].has_secret);
     }
 
     #[tokio::test]
@@ -122,7 +117,6 @@ mod tests {
                 url: "https://old.com".into(),
                 events: vec![],
                 min_severity: None,
-                secret: None,
             }]),
         };
         let _ = update_notifications(State(state.clone()), Json(req))
@@ -135,7 +129,6 @@ mod tests {
                 url: "https://new.com".into(),
                 events: vec!["killed".into()],
                 min_severity: None,
-                secret: None,
             }]),
         };
         let Json(resp) = update_notifications(State(state), Json(req)).await.unwrap();
@@ -153,7 +146,6 @@ mod tests {
                 url: "https://a.com".into(),
                 events: vec![],
                 min_severity: None,
-                secret: None,
             }]),
         };
         let _ = update_notifications(State(state.clone()), Json(req))
@@ -184,7 +176,6 @@ mod tests {
                 url: "https://example.com/save".into(),
                 events: vec!["active".into()],
                 min_severity: None,
-                secret: None,
             }]),
         };
         let _ = update_notifications(State(state.clone()), Json(req))
@@ -224,7 +215,6 @@ mod tests {
         assert_eq!(resp.webhooks.len(), 2);
         // Top-level endpoint comes first.
         assert_eq!(resp.webhooks[0].name, "hook");
-        assert!(resp.webhooks[0].has_secret);
         assert_eq!(resp.webhooks[0].min_severity.as_deref(), Some("warn"));
         assert_eq!(resp.webhooks[1].name, "legacy");
     }

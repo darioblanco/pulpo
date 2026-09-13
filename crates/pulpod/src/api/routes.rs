@@ -12,10 +12,8 @@ use super::auth;
 use super::config;
 use super::events;
 use super::health;
-use super::metrics;
 use super::node;
 use super::notifications;
-use super::push;
 use super::schedules;
 use super::sessions;
 use super::static_files;
@@ -52,7 +50,6 @@ pub fn build(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/api/v1/health", get(health::check))
-        .route("/api/v1/metrics", get(metrics::metrics))
         .route("/api/v1/usage/projection", get(usage::projection))
         .route("/api/v1/usage/scan", get(usage::scan))
         .route("/api/v1/auth/token", get(auth::get_token))
@@ -93,10 +90,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/api/v1/sessions/{id}/stream", get(ws::stream))
         .route("/api/v1/sessions/{id}/resume", post(sessions::resume))
         .route("/api/v1/sessions/{id}/handoff", post(sessions::handoff))
-        .route("/api/v1/push/vapid-key", get(push::get_vapid_key))
-        .route("/api/v1/push/subscribe", post(push::subscribe_push))
-        .route("/api/v1/push/unsubscribe", post(push::unsubscribe_push))
-        .route("/api/v1/push/action", post(push::action))
         .route("/api/v1/events", get(events::stream))
         .route(
             "/api/v1/schedules",
@@ -1397,35 +1390,6 @@ mod tests {
         assert_eq!(body["webhooks"][0]["events"], serde_json::json!(["active"]));
     }
 
-    // -- Push endpoint integration tests --
-
-    async fn test_server_with_vapid() -> TestServer {
-        test_support::test_server_with(|cfg| {
-            cfg.notifications.vapid = crate::config::VapidConfig {
-                private_key: "test-priv-key".into(),
-                public_key: "test-pub-key".into(),
-                ..Default::default()
-            };
-        })
-        .await
-    }
-
-    #[tokio::test]
-    async fn test_get_vapid_key() {
-        let server = test_server_with_vapid().await;
-        let resp = server.get("/api/v1/push/vapid-key").await;
-        resp.assert_status_ok();
-        let body: serde_json::Value = resp.json();
-        assert_eq!(body["public_key"], "test-pub-key");
-    }
-
-    #[tokio::test]
-    async fn test_get_vapid_key_empty() {
-        let server = test_server().await;
-        let resp = server.get("/api/v1/push/vapid-key").await;
-        resp.assert_status(StatusCode::SERVICE_UNAVAILABLE);
-    }
-
     #[tokio::test]
     async fn test_secrets_route_removed() {
         // The secrets store was removed — the route no longer exists, so it falls
@@ -1437,80 +1401,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_push_subscribe_and_unsubscribe() {
-        let server = test_server_with_vapid().await;
-
-        // Subscribe
-        let resp = server
-            .post("/api/v1/push/subscribe")
-            .json(&serde_json::json!({
-                "endpoint": "https://push.example.com/sub",
-                "keys": { "p256dh": "p", "auth": "a" }
-            }))
-            .await;
-        resp.assert_status(StatusCode::NO_CONTENT);
-
-        // Unsubscribe
-        let resp = server
-            .post("/api/v1/push/unsubscribe")
-            .json(&serde_json::json!({
-                "endpoint": "https://push.example.com/sub"
-            }))
-            .await;
-        resp.assert_status(StatusCode::NO_CONTENT);
-    }
-
-    // -- Metrics endpoint integration tests --
-
-    async fn test_server_with_metrics_enabled() -> TestServer {
-        test_support::test_server_with(|cfg| cfg.metrics.enabled = true).await
-    }
-
-    #[tokio::test]
-    async fn test_metrics_disabled_returns_404() {
-        // Default config has metrics off → endpoint behaves as absent.
+    async fn test_push_and_metrics_routes_removed() {
+        // Web Push and the Prometheus /metrics endpoint were removed — both
+        // routes fall through to the SPA fallback like any other unknown path.
         let server = test_server().await;
-        let resp = server.get("/api/v1/metrics").await;
-        resp.assert_status(StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn test_metrics_enabled_returns_text() {
-        let server = test_server_with_metrics_enabled().await;
-        let resp = server.get("/api/v1/metrics").await;
-        resp.assert_status_ok();
-        assert_eq!(
-            resp.headers()
-                .get("content-type")
-                .unwrap()
-                .to_str()
-                .unwrap(),
-            "text/plain; version=0.0.4"
-        );
-        let body = resp.text();
-        assert!(body.contains("# TYPE pulpo_sessions gauge"));
-        assert!(body.contains("pulpo_sessions{status=\"active\"} 0"));
-        assert!(body.contains("pulpo_build_info{version="));
-    }
-
-    #[tokio::test]
-    async fn test_metrics_enabled_counts_sessions() {
-        let server = test_server_with_metrics_enabled().await;
-        server
-            .post("/api/v1/sessions")
-            .json(&serde_json::json!({
-                "name": "metrics-test",
-                "workdir": "/tmp",
-                "command": "test"
-            }))
-            .await;
-        let resp = server.get("/api/v1/metrics").await;
-        resp.assert_status_ok();
-        let body = resp.text();
-        // A freshly created session is active.
-        assert!(
-            body.contains("pulpo_sessions{status=\"active\"} 1"),
-            "expected one active session in:\n{body}"
-        );
+        for path in [
+            "/api/v1/push/vapid-key",
+            "/api/v1/push/subscribe",
+            "/api/v1/push/unsubscribe",
+            "/api/v1/push/action",
+            "/api/v1/metrics",
+        ] {
+            let resp = server.get(path).await;
+            assert!(
+                !resp.text().contains("\"public_key\""),
+                "{path} should no longer be routed"
+            );
+        }
     }
 }
