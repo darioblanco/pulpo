@@ -35,9 +35,11 @@ exposes them). What Pulpo adds on top:
 
 - **It also runs the sessions.** ccusage only reads what already happened; Pulpo can spawn, meter,
   and enforce a budget on the same session, so a cap actually stops something.
-- **Cross-machine.** ccusage is explicitly local/single-machine, with no aggregation across
-  systems. Pulpo's per-repo rollups and its signed-webhook event backbone are how you get one
-  number across every machine you run, without a hosted aggregator in between.
+- **Cross-machine visibility, on your own terms.** ccusage is explicitly local/single-machine,
+  with no aggregation across systems. Each Pulpo node is single-node too, but its per-repo
+  rollups and webhook event stream are built to be aggregated: point every node's `[[webhooks]]`
+  at one collector you already run and you get one view across every machine, without a hosted
+  aggregator in between.
 - **Lifecycle, not just a report.** ccusage has no concept of a session, a budget, or an alert —
   Pulpo's watchdog turns "you overspent" into "the session stopped at 100%."
 
@@ -134,9 +136,9 @@ repo living on a vendor's servers.
 Use raw tmux/cron/SSH when you want to assemble exactly what you need yourself and are willing to
 maintain it.
 
-Use Pulpo when you want to know what every agent, on every machine, is costing you; you want a
-budget that actually stops a session; and you want the runtime to stay on infrastructure you
-administer.
+Use Pulpo when you want to know what every agent on a machine is costing you (and, across
+machines, by pointing every node's webhooks at a collector you run); you want a budget that
+actually stops a session; and you want the runtime to stay on infrastructure you administer.
 
 ## Sources
 

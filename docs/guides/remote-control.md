@@ -69,11 +69,12 @@ Open the same tailnet address in a mobile browser:
 https://mac-mini.<your-tailnet-name>.ts.net
 ```
 
-Install it as a PWA (share sheet → "Add to Home Screen") for an app icon and offline shell.
-Each session card shows live status and renders the agent's output by default — a read-mostly
-view built for checking in, not for typing on a phone keyboard. A **Terminal** toggle on the
-card opens the same session as a fully interactive terminal over WebSocket if you do need to
-type something (approve a prompt, answer a question) without reaching for SSH.
+It's a plain responsive web page — bookmark the URL for a one-tap return trip; there's no
+install step or offline mode. Each session card shows live status and renders the agent's
+output by default — a read-mostly view built for checking in, not for typing on a phone
+keyboard. A **Terminal** toggle on the card opens the same session as a fully interactive
+terminal over WebSocket if you do need to type something (approve a prompt, answer a
+question) without reaching for SSH.
 
 ## Status At A Glance
 

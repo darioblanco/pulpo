@@ -38,7 +38,7 @@ pulpo attach fix
 
 The session runs in `tmux` on a machine you leave on, independent of your terminal or laptop's
 power state. Reattach over SSH from a laptop, or check status from a phone through the web UI
-(installable as a PWA).
+(a plain responsive page — bookmark it, no install needed).
 
 Best docs to read next:
 

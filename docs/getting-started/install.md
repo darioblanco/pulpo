@@ -88,4 +88,5 @@ pulpo ls
 pulpo logs hello
 ```
 
-The web dashboard is at [http://localhost:7433](http://localhost:7433) (installable as a PWA on your phone).
+The web dashboard is at [http://localhost:7433](http://localhost:7433) — a plain responsive
+page, no install step needed on a phone.
